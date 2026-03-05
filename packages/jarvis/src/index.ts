@@ -325,8 +325,66 @@ Do not apologize for security restrictions. If a tool is available, you HAVE PER
       console.log(`🔌 WebSocket: ws://0.0.0.0:${this.port}/\n`);
     });
   }
+
+  public async stop() {
+    debugLogger.debug('[Jarvis] Stopping server components...');
+    return new Promise<void>((resolve) => {
+      // 1. Close WebSocket server and terminate all clients
+      this.wss.close(() => {
+        debugLogger.debug('[Jarvis] WebSocket server closed.');
+        
+        // 2. Force close all active HTTP connections
+        if ('closeAllConnections' in this.server) {
+          (this.server as any).closeAllConnections();
+        }
+
+        // 3. Stop accepting new HTTP requests
+        this.server.close(() => {
+          debugLogger.debug('[Jarvis] HTTP server closed.');
+          resolve();
+        });
+      });
+
+      // 保底机制：如果 1 秒内正常流程没走完，强制 resolve
+      setTimeout(resolve, 1000);
+    });
+  }
 }
 
 const port = Number(process.env['JARVIS_PORT']) || 3000;
 const server = new JarvisServer(port);
 server.start();
+
+// Improved Graceful shutdown handling
+let isShuttingDown = false;
+const shutdown = async () => {
+  if (isShuttingDown) return;
+  isShuttingDown = true;
+
+  // eslint-disable-next-line no-console
+  console.log('\nShutting down Jarvis gracefully...');
+  
+  // Set a hard timeout for the entire process
+  const forceExitTimeout = setTimeout(() => {
+    // eslint-disable-next-line no-console
+    console.error('Graceful shutdown timed out, forcing exit.');
+    process.exit(1);
+  }, 3000);
+
+  try {
+    await server.stop();
+    clearTimeout(forceExitTimeout);
+    debugLogger.debug('[Jarvis] Shutdown complete.');
+    process.exit(0);
+  } catch (err) {
+    debugLogger.error('[Jarvis] Error during shutdown:', err);
+    process.exit(1);
+  }
+};
+
+process.on('SIGINT', () => {
+  void shutdown();
+});
+process.on('SIGTERM', () => {
+  void shutdown();
+});

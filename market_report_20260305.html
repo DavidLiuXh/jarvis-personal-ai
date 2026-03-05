@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>市场行情分析报告 - 2026年3月5日</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            line-height: 1.6;
+            color: #333;
+            background-color: #f4f7f6;
+            margin: 0;
+            padding: 20px;
+        }
+        .container {
+            max-width: 900px;
+            margin: 0 auto;
+            background: #fff;
+            padding: 30px;
+            border-radius: 12px;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.08);
+        }
+        h1 {
+            color: #2c3e50;
+            text-align: center;
+            border-bottom: 2px solid #eee;
+            padding-bottom: 10px;
+        }
+        .date {
+            text-align: center;
+            color: #7f8c8d;
+            margin-bottom: 30px;
+        }
+        .market-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+        .card {
+            padding: 20px;
+            border-radius: 10px;
+            text-align: center;
+            transition: transform 0.2s;
+        }
+        .card:hover {
+            transform: translateY(-5px);
+        }
+        .sp500 {
+            background-color: #fdf2f2;
+            border: 1px solid #feb2b2;
+        }
+        .nasdaq {
+            background-color: #f0fff4;
+            border: 1px solid #9ae6b4;
+        }
+        .index-name {
+            font-size: 1.2rem;
+            font-weight: bold;
+            color: #4a5568;
+        }
+        .price {
+            font-size: 2.5rem;
+            font-weight: 800;
+            margin: 10px 0;
+        }
+        .change {
+            font-size: 1.1rem;
+            font-weight: 600;
+        }
+        .negative { color: #e53e3e; }
+        .positive { color: #38a169; }
+
+        .analysis-section {
+            background: #f8fafc;
+            padding: 20px;
+            border-radius: 8px;
+            border-left: 5px solid #3498db;
+        }
+        h2 { color: #2980b9; margin-top: 0; }
+        ul { padding-left: 20px; }
+        li { margin-bottom: 10px; }
+        .footer {
+            margin-top: 40px;
+            text-align: center;
+            font-size: 0.8rem;
+            color: #95a5a6;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>美股指数行情分析报告</h1>
+        <p class="date">报告生成时间：2026年3月5日</p>
+
+        <div class="market-grid">
+            <div class="card sp500">
+                <div class="index-name">标普 500 (S&P 500)</div>
+                <div class="price">6,865.00</div>
+                <div class="change negative">▼ -0.07% (相对于昨日)</div>
+            </div>
+            <div class="card nasdaq">
+                <div class="index-name">纳斯达克 100 (Nasdaq 100)</div>
+                <div class="price">25,118.00</div>
+                <div class="change positive">▲ +0.10% (相对于昨日)</div>
+            </div>
+        </div>
+
+        <div class="analysis-section">
+            <h2>当前行情深度分析</h2>
+            <ul>
+                <li><strong>地缘政治博弈：</strong> 市场情绪受到中东局势升级的显著影响，美伊之间的博弈导致避险情绪抬头。布伦特原油站上 84 美元/桶，能源成本的上升对标普 500 中的非能源板块构成了压力。</li>
+                <li><strong>科技股的韧性：</strong> 纳斯达克 100 表现优于大盘，主要得益于半导体行业的强劲支撑。Broadcom (博通) 和 AMD 的积极财报抵消了部分宏观利空，显示出 AI 基础设施需求依然旺盛。</li>
+                <li><strong>经济数据背离：</strong> 本周发布的美国私营部门就业和劳动力市场数据强于预期，原本利好经济预期，但在当前高通胀风险（由油价推动）背景下，引发了投资者对利率维持高位的担忧。</li>
+                <li><strong>全球联动：</strong> 韩国股市在 680 亿美元稳定基金的刺激下出现史诗级反弹，为全球市场提供了部分心理支撑，缓解了美股早盘的抛售压力。</li>
+            </ul>
+        </div>
+
+        <div class="footer">
+            数据来源：实时市场监测与金融新闻汇总 | 仅供参考，不构成投资建议。
+        </div>
+    </div>
+</body>
+</html>
