@@ -45,7 +45,7 @@ jobs:
           repository: '${{ github.repository }}'
 
       - name: 'Set up Node.js ${{ matrix.node-version }}'
-        uses: 'actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020' # ratchet:actions-node@v4
+        uses: 'actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f' # ratchet:actions-node@v6.3.0
         with:
           node-version: '${{ matrix.node-version }}'
 
@@ -87,7 +87,7 @@ jobs:
           repository: '${{ github.repository }}'
 
       - name: 'Set up Node.js 20.x'
-        uses: 'actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020' # ratchet:actions-node@v4
+        uses: 'actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f' # ratchet:actions-node@v6.3.0
         with:
           node-version: '20.x'
 
@@ -125,7 +125,7 @@ jobs:
           repository: '${{ github.repository }}'
 
       - name: 'Set up Node.js 20.x'
-        uses: 'actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020' # ratchet:actions-node@v4
+        uses: 'actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f' # ratchet:actions-node@v6.3.0
         with:
           node-version: '20.x'
           cache: 'npm'
