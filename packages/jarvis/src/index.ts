@@ -325,8 +325,34 @@ Do not apologize for security restrictions. If a tool is available, you HAVE PER
       console.log(`🔌 WebSocket: ws://0.0.0.0:${this.port}/\n`);
     });
   }
+
+  public async stop() {
+    debugLogger.debug('[Jarvis] Stopping server...');
+    return new Promise<void>((resolve) => {
+      this.wss.close(() => {
+        this.server.close(() => {
+          resolve();
+        });
+      });
+    });
+  }
 }
 
 const port = Number(process.env['JARVIS_PORT']) || 3000;
 const server = new JarvisServer(port);
 server.start();
+
+// Graceful shutdown handling
+const shutdown = async () => {
+  // eslint-disable-next-line no-console
+  console.log('\nShutting down Jarvis...');
+  await server.stop();
+  process.exit(0);
+};
+
+process.on('SIGINT', () => {
+  void shutdown();
+});
+process.on('SIGTERM', () => {
+  void shutdown();
+});
