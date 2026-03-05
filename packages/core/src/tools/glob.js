@@ -1,0 +1,220 @@
+/**
+ * @license
+ * Copyright 2025 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
+ */
+import fs from 'node:fs';
+import path from 'node:path';
+import { glob, escape } from 'glob';
+import { BaseDeclarativeTool, BaseToolInvocation, Kind, } from './tools.js';
+import { shortenPath, makeRelative } from '../utils/paths.js';
+import {} from '../config/config.js';
+import { DEFAULT_FILE_FILTERING_OPTIONS } from '../config/constants.js';
+import { ToolErrorType } from './tool-error.js';
+import { GLOB_TOOL_NAME, GLOB_DISPLAY_NAME } from './tool-names.js';
+import { getErrorMessage } from '../utils/errors.js';
+import { debugLogger } from '../utils/debugLogger.js';
+import { GLOB_DEFINITION } from './definitions/coreTools.js';
+import { resolveToolDeclaration } from './definitions/resolver.js';
+/**
+ * Sorts file entries based on recency and then alphabetically.
+ * Recent files (modified within recencyThresholdMs) are listed first, newest to oldest.
+ * Older files are listed after recent ones, sorted alphabetically by path.
+ */
+export function sortFileEntries(entries, nowTimestamp, recencyThresholdMs) {
+    const sortedEntries = [...entries];
+    sortedEntries.sort((a, b) => {
+        const mtimeA = a.mtimeMs ?? 0;
+        const mtimeB = b.mtimeMs ?? 0;
+        const aIsRecent = nowTimestamp - mtimeA < recencyThresholdMs;
+        const bIsRecent = nowTimestamp - mtimeB < recencyThresholdMs;
+        if (aIsRecent && bIsRecent) {
+            return mtimeB - mtimeA;
+        }
+        else if (aIsRecent) {
+            return -1;
+        }
+        else if (bIsRecent) {
+            return 1;
+        }
+        else {
+            return a.fullpath().localeCompare(b.fullpath());
+        }
+    });
+    return sortedEntries;
+}
+class GlobToolInvocation extends BaseToolInvocation {
+    config;
+    constructor(config, params, messageBus, _toolName, _toolDisplayName) {
+        super(params, messageBus, _toolName, _toolDisplayName);
+        this.config = config;
+    }
+    getDescription() {
+        let description = `'${this.params.pattern}'`;
+        if (this.params.dir_path) {
+            const searchDir = path.resolve(this.config.getTargetDir(), this.params.dir_path || '.');
+            const relativePath = makeRelative(searchDir, this.config.getTargetDir());
+            description += ` within ${shortenPath(relativePath)}`;
+        }
+        return description;
+    }
+    async execute(signal) {
+        try {
+            const workspaceContext = this.config.getWorkspaceContext();
+            const workspaceDirectories = workspaceContext.getDirectories();
+            // If a specific path is provided, resolve it and check if it's within workspace
+            let searchDirectories;
+            if (this.params.dir_path) {
+                const searchDirAbsolute = path.resolve(this.config.getTargetDir(), this.params.dir_path);
+                const validationError = this.config.validatePathAccess(searchDirAbsolute, 'read');
+                if (validationError) {
+                    return {
+                        llmContent: validationError,
+                        returnDisplay: 'Path not in workspace.',
+                        error: {
+                            message: validationError,
+                            type: ToolErrorType.PATH_NOT_IN_WORKSPACE,
+                        },
+                    };
+                }
+                searchDirectories = [searchDirAbsolute];
+            }
+            else {
+                // Search across all workspace directories
+                searchDirectories = workspaceDirectories;
+            }
+            // Get centralized file discovery service
+            const fileDiscovery = this.config.getFileService();
+            // Collect entries from all search directories
+            const allEntries = [];
+            for (const searchDir of searchDirectories) {
+                let pattern = this.params.pattern;
+                const fullPath = path.join(searchDir, pattern);
+                if (fs.existsSync(fullPath)) {
+                    pattern = escape(pattern);
+                }
+                const entries = (await glob(pattern, {
+                    cwd: searchDir,
+                    withFileTypes: true,
+                    nodir: true,
+                    stat: true,
+                    nocase: !this.params.case_sensitive,
+                    dot: true,
+                    ignore: this.config.getFileExclusions().getGlobExcludes(),
+                    follow: false,
+                    signal,
+                }));
+                allEntries.push(...entries);
+            }
+            const relativePaths = allEntries.map((p) => path.relative(this.config.getTargetDir(), p.fullpath()));
+            const { filteredPaths, ignoredCount } = fileDiscovery.filterFilesWithReport(relativePaths, {
+                respectGitIgnore: this.params?.respect_git_ignore ??
+                    this.config.getFileFilteringOptions().respectGitIgnore ??
+                    DEFAULT_FILE_FILTERING_OPTIONS.respectGitIgnore,
+                respectGeminiIgnore: this.params?.respect_gemini_ignore ??
+                    this.config.getFileFilteringOptions().respectGeminiIgnore ??
+                    DEFAULT_FILE_FILTERING_OPTIONS.respectGeminiIgnore,
+            });
+            const filteredAbsolutePaths = new Set(filteredPaths.map((p) => path.resolve(this.config.getTargetDir(), p)));
+            const filteredEntries = allEntries.filter((entry) => filteredAbsolutePaths.has(entry.fullpath()));
+            if (!filteredEntries || filteredEntries.length === 0) {
+                let message = `No files found matching pattern "${this.params.pattern}"`;
+                if (searchDirectories.length === 1) {
+                    message += ` within ${searchDirectories[0]}`;
+                }
+                else {
+                    message += ` within ${searchDirectories.length} workspace directories`;
+                }
+                if (ignoredCount > 0) {
+                    message += ` (${ignoredCount} files were ignored)`;
+                }
+                return {
+                    llmContent: message,
+                    returnDisplay: `No files found`,
+                };
+            }
+            // Set filtering such that we first show the most recent files
+            const oneDayInMs = 24 * 60 * 60 * 1000;
+            const nowTimestamp = new Date().getTime();
+            // Sort the filtered entries using the new helper function
+            const sortedEntries = sortFileEntries(filteredEntries, nowTimestamp, oneDayInMs);
+            const sortedAbsolutePaths = sortedEntries.map((entry) => entry.fullpath());
+            const fileListDescription = sortedAbsolutePaths.join('\n');
+            const fileCount = sortedAbsolutePaths.length;
+            let resultMessage = `Found ${fileCount} file(s) matching "${this.params.pattern}"`;
+            if (searchDirectories.length === 1) {
+                resultMessage += ` within ${searchDirectories[0]}`;
+            }
+            else {
+                resultMessage += ` across ${searchDirectories.length} workspace directories`;
+            }
+            if (ignoredCount > 0) {
+                resultMessage += ` (${ignoredCount} additional files were ignored)`;
+            }
+            resultMessage += `, sorted by modification time (newest first):\n${fileListDescription}`;
+            return {
+                llmContent: resultMessage,
+                returnDisplay: `Found ${fileCount} matching file(s)`,
+            };
+        }
+        catch (error) {
+            debugLogger.warn(`GlobLogic execute Error`, error);
+            const errorMessage = getErrorMessage(error);
+            const rawError = `Error during glob search operation: ${errorMessage}`;
+            return {
+                llmContent: rawError,
+                returnDisplay: `Error: An unexpected error occurred.`,
+                error: {
+                    message: rawError,
+                    type: ToolErrorType.GLOB_EXECUTION_ERROR,
+                },
+            };
+        }
+    }
+}
+/**
+ * Implementation of the Glob tool logic
+ */
+export class GlobTool extends BaseDeclarativeTool {
+    config;
+    static Name = GLOB_TOOL_NAME;
+    constructor(config, messageBus) {
+        super(GlobTool.Name, GLOB_DISPLAY_NAME, GLOB_DEFINITION.base.description, Kind.Search, GLOB_DEFINITION.base.parametersJsonSchema, messageBus, true, false);
+        this.config = config;
+    }
+    /**
+     * Validates the parameters for the tool.
+     */
+    validateToolParamValues(params) {
+        const searchDirAbsolute = path.resolve(this.config.getTargetDir(), params.dir_path || '.');
+        const validationError = this.config.validatePathAccess(searchDirAbsolute, 'read');
+        if (validationError) {
+            return validationError;
+        }
+        const targetDir = searchDirAbsolute || this.config.getTargetDir();
+        try {
+            if (!fs.existsSync(targetDir)) {
+                return `Search path does not exist ${targetDir}`;
+            }
+            if (!fs.statSync(targetDir).isDirectory()) {
+                return `Search path is not a directory: ${targetDir}`;
+            }
+        }
+        catch (e) {
+            return `Error accessing search path: ${e}`;
+        }
+        if (!params.pattern ||
+            typeof params.pattern !== 'string' ||
+            params.pattern.trim() === '') {
+            return "The 'pattern' parameter cannot be empty.";
+        }
+        return null;
+    }
+    createInvocation(params, messageBus, _toolName, _toolDisplayName) {
+        return new GlobToolInvocation(this.config, params, messageBus, _toolName, _toolDisplayName);
+    }
+    getSchema(modelId) {
+        return resolveToolDeclaration(GLOB_DEFINITION, modelId);
+    }
+}
+//# sourceMappingURL=glob.js.map

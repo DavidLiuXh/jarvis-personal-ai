@@ -1,0 +1,1730 @@
+/**
+ * @license
+ * Copyright 2025 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+import { describe, it, expect } from 'vitest';
+import { handleVimAction } from './vim-buffer-actions.js';
+import type { TextBufferState, VisualLayout } from './text-buffer.js';
+
+const defaultVisualLayout: VisualLayout = {
+  visualLines: [''],
+  logicalToVisualMap: [[[0, 0]]],
+  visualToLogicalMap: [[0, 0]],
+  transformedToLogicalMaps: [[]],
+  visualToTransformedMap: [],
+};
+
+// Helper to create test state
+const createTestState = (
+  lines: string[] = ['hello world'],
+  cursorRow = 0,
+  cursorCol = 0,
+): TextBufferState => ({
+  lines,
+  cursorRow,
+  cursorCol,
+  preferredCol: null,
+  undoStack: [],
+  redoStack: [],
+  clipboard: null,
+  selectionAnchor: null,
+  viewportWidth: 80,
+  viewportHeight: 24,
+  transformationsByLine: [[]],
+  visualLayout: defaultVisualLayout,
+  pastedContent: {},
+  expandedPaste: null,
+});
+
+describe('vim-buffer-actions', () => {
+  describe('Movement commands', () => {
+    describe('vim_move_left', () => {
+      it('should move cursor left by count', () => {
+        const state = createTestState(['hello world'], 0, 5);
+        const action = {
+          type: 'vim_move_left' as const,
+          payload: { count: 3 },
+        };
+
+        const result = handleVimAction(state, action);
+        expect(result).toHaveOnlyValidCharacters();
+        expect(result.cursorCol).toBe(2);
+        expect(result.preferredCol).toBeNull();
+      });
+
+      it('should not move past beginning of line', () => {
+        const state = createTestState(['hello'], 0, 2);
+        const action = {
+          type: 'vim_move_left' as const,
+          payload: { count: 5 },
+        };
+
+        const result = handleVimAction(state, action);
+        expect(result).toHaveOnlyValidCharacters();
+        expect(result.cursorCol).toBe(0);
+      });
+
+      it('should wrap to previous line when at beginning', () => {
+        const state = createTestState(['line1', 'line2'], 1, 0);
+        const action = {
+          type: 'vim_move_left' as const,
+          payload: { count: 1 },
+        };
+
+        const result = handleVimAction(state, action);
+        expect(result).toHaveOnlyValidCharacters();
+        expect(result.cursorRow).toBe(0);
+        expect(result.cursorCol).toBe(4); // On last character '1' of 'line1'
+      });
+
+      it('should handle multiple line wrapping', () => {
+        const state = createTestState(['abc', 'def', 'ghi'], 2, 0);
+        const action = {
+          type: 'vim_move_left' as const,
+          payload: { count: 5 },
+        };
+
+        const result = handleVimAction(state, action);
+        expect(result).toHaveOnlyValidCharacters();
+        expect(result.cursorRow).toBe(0);
+        expect(result.cursorCol).toBe(1); // On 'b' after 5 left movements
+      });
+
+      it('should correctly handle h/l movement between lines', () => {
+        // Start at end of first line at 'd' (position 10)
+        let state = createTestState(['hello world', 'foo bar'], 0, 10);
+
+        // Move right - should go to beginning of next line
+        state = handleVimAction(state, {
+          type: 'vim_move_right' as const,
+          payload: { count: 1 },
+        });
+        expect(state).toHaveOnlyValidCharacters();
+        expect(state.cursorRow).toBe(1);
+        expect(state.cursorCol).toBe(0); // Should be on 'f'
+
+        // Move left - should go back to end of previous line on 'd'
+        state = handleVimAction(state, {
+          type: 'vim_move_left' as const,
+          payload: { count: 1 },
+        });
+        expect(state).toHaveOnlyValidCharacters();
+        expect(state.cursorRow).toBe(0);
+        expect(state.cursorCol).toBe(10); // Should be on 'd', not past it
+      });
+    });
+
+    describe('vim_move_right', () => {
+      it('should move cursor right by count', () => {
+        const state = createTestState(['hello world'], 0, 2);
+        const action = {
+          type: 'vim_move_right' as const,
+          payload: { count: 3 },
+        };
+
+        const result = handleVimAction(state, action);
+        expect(result).toHaveOnlyValidCharacters();
+        expect(result.cursorCol).toBe(5);
+      });
+
+      it('should not move past last character of line', () => {
+        const state = createTestState(['hello'], 0, 3);
+        const action = {
+          type: 'vim_move_right' as const,
+          payload: { count: 5 },
+        };
+
+        const result = handleVimAction(state, action);
+        expect(result).toHaveOnlyValidCharacters();
+        expect(result.cursorCol).toBe(4); // Last character of 'hello'
+      });
+
+      it('should wrap to next line when at end', () => {
+        const state = createTestState(['line1', 'line2'], 0, 4); // At end of 'line1'
+        const action = {
+          type: 'vim_move_right' as const,
+          payload: { count: 1 },
+        };
+
+        const result = handleVimAction(state, action);
+        expect(result).toHaveOnlyValidCharacters();
+        expect(result.cursorRow).toBe(1);
+        expect(result.cursorCol).toBe(0);
+      });
+
+      it('should skip over combining marks to avoid cursor disappearing', () => {
+        // Test case for combining character cursor disappearing bug
+        // "café test" where é is represented as e + combining acute accent
+        const state = createTestState(['cafe\u0301 test'], 0, 2); // Start at 'f'
+        const action = {
+          type: 'vim_move_right' as const,
+          payload: { count: 1 },
+        };
+
+        const result = handleVimAction(state, action);
+        expect(result).toHaveOnlyValidCharacters();
+        expect(result.cursorCol).toBe(3); // Should be on 'e' of 'café'
+
+        // Move right again - should skip combining mark and land on space
+        const result2 = handleVimAction(result, action);
+        expect(result2).toHaveOnlyValidCharacters();
+        expect(result2.cursorCol).toBe(5); // Should be on space after 'café'
+      });
+    });
+
+    describe('vim_move_up', () => {
+      it('should move cursor up by count', () => {
+        const state = createTestState(['line1', 'line2', 'line3'], 2, 3);
+        const action = { type: 'vim_move_up' as const, payload: { count: 2 } };
+
+        const result = handleVimAction(state, action);
+        expect(result).toHaveOnlyValidCharacters();
+        expect(result.cursorRow).toBe(0);
+        expect(result.cursorCol).toBe(3);
+      });
+
+      it('should not move past first line', () => {
+        const state = createTestState(['line1', 'line2'], 1, 3);
+        const action = { type: 'vim_move_up' as const, payload: { count: 5 } };
+
+        const result = handleVimAction(state, action);
+        expect(result).toHaveOnlyValidCharacters();
+        expect(result.cursorRow).toBe(0);
+      });
+
+      it('should adjust column for shorter lines', () => {
+        const state = createTestState(['short', 'very long line'], 1, 10);
+        const action = { type: 'vim_move_up' as const, payload: { count: 1 } };
+
+        const result = handleVimAction(state, action);
+        expect(result).toHaveOnlyValidCharacters();
+        expect(result.cursorRow).toBe(0);
+        expect(result.cursorCol).toBe(4); // Last character 't' of 'short', not past it
+      });
+    });
+
+    describe('vim_move_down', () => {
+      it('should move cursor down by count', () => {
+        const state = createTestState(['line1', 'line2', 'line3'], 0, 2);
+        const action = {
+          type: 'vim_move_down' as const,
+          payload: { count: 2 },
+        };
+
+        const result = handleVimAction(state, action);
+        expect(result).toHaveOnlyValidCharacters();
+        expect(result.cursorRow).toBe(2);
+        expect(result.cursorCol).toBe(2);
+      });
+
+      it('should not move past last line', () => {
+        const state = createTestState(['line1', 'line2'], 0, 2);
+        const action = {
+          type: 'vim_move_down' as const,
+          payload: { count: 5 },
+        };
+
+        const result = handleVimAction(state, action);
+        expect(result).toHaveOnlyValidCharacters();
+        expect(result.cursorRow).toBe(1);
+      });
+    });
+
+    describe('vim_move_word_forward', () => {
+      it('should move to start of next word', () => {
+        const state = createTestState(['hello world test'], 0, 0);
+        const action = {
+          type: 'vim_move_word_forward' as const,
+          payload: { count: 1 },
+        };
+
+        const result = handleVimAction(state, action);
+        expect(result).toHaveOnlyValidCharacters();
+        expect(result.cursorCol).toBe(6); // Start of 'world'
+      });
+
+      it('should handle multiple words', () => {
+        const state = createTestState(['hello world test'], 0, 0);
+        const action = {
+          type: 'vim_move_word_forward' as const,
+          payload: { count: 2 },
+        };
+
+        const result = handleVimAction(state, action);
+        expect(result).toHaveOnlyValidCharacters();
+        expect(result.cursorCol).toBe(12); // Start of 'test'
+      });
+
+      it('should handle punctuation correctly', () => {
+        const state = createTestState(['hello, world!'], 0, 0);
+        const action = {
+          type: 'vim_move_word_forward' as const,
+          payload: { count: 1 },
+        };
+
+        const result = handleVimAction(state, action);
+        expect(result).toHaveOnlyValidCharacters();
+        expect(result.cursorCol).toBe(5); // Start of ','
+      });
+
+      it('should move across empty lines when starting from within a word', () => {
+        // Testing the exact scenario: cursor on 'w' of 'hello world', w should move to next line
+        const state = createTestState(['hello world', ''], 0, 6); // At 'w' of 'world'
+        const action = {
+          type: 'vim_move_word_forward' as const,
+          payload: { count: 1 },
+        };
+
+        const result = handleVimAction(state, action);
+        expect(result).toHaveOnlyValidCharacters();
+        expect(result.cursorRow).toBe(1);
+        expect(result.cursorCol).toBe(0); // Beginning of empty line
+      });
+    });
+
+    describe('vim_move_word_backward', () => {
+      it('should move to start of previous word', () => {
+        const state = createTestState(['hello world test'], 0, 12);
+        const action = {
+          type: 'vim_move_word_backward' as const,
+          payload: { count: 1 },
+        };
+
+        const result = handleVimAction(state, action);
+        expect(result).toHaveOnlyValidCharacters();
+        expect(result.cursorCol).toBe(6); // Start of 'world'
+      });
+
+      it('should handle multiple words', () => {
+        const state = createTestState(['hello world test'], 0, 12);
+        const action = {
+          type: 'vim_move_word_backward' as const,
+          payload: { count: 2 },
+        };
+
+        const result = handleVimAction(state, action);
+        expect(result).toHaveOnlyValidCharacters();
+        expect(result.cursorCol).toBe(0); // Start of 'hello'
+      });
+    });
+
+    describe('vim_move_big_word_backward', () => {
+      it('should treat punctuation as part of the word (B)', () => {
+        const state = createTestState(['hello.world'], 0, 10);
+        const action = {
+          type: 'vim_move_big_word_backward' as const,
+          payload: { count: 1 },
+        };
+
+        const result = handleVimAction(state, action);
+        expect(result).toHaveOnlyValidCharacters();
+        expect(result.cursorCol).toBe(0); // Start of 'hello'
+      });
+
+      it('should skip punctuation when moving back to previous big word', () => {
+        const state = createTestState(['word1, word2'], 0, 7);
+        const action = {
+          type: 'vim_move_big_word_backward' as const,
+          payload: { count: 1 },
+        };
+
+        const result = handleVimAction(state, action);
+        expect(result).toHaveOnlyValidCharacters();
+        expect(result.cursorCol).toBe(0); // Start of 'word1,'
+      });
+    });
+
+    describe('vim_move_word_end', () => {
+      it('should move to end of current word', () => {
+        const state = createTestState(['hello world'], 0, 0);
+        const action = {
+          type: 'vim_move_word_end' as const,
+          payload: { count: 1 },
+        };
+
+        const result = handleVimAction(state, action);
+        expect(result).toHaveOnlyValidCharacters();
+        expect(result.cursorCol).toBe(4); // End of 'hello'
+      });
+
+      it('should move to end of next word if already at word end', () => {
+        const state = createTestState(['hello world'], 0, 4);
+        const action = {
+          type: 'vim_move_word_end' as const,
+          payload: { count: 1 },
+        };
+
+        const result = handleVimAction(state, action);
+        expect(result).toHaveOnlyValidCharacters();
+        expect(result.cursorCol).toBe(10); // End of 'world'
+      });
+
+      it('should move across empty lines when at word end', () => {
+        const state = createTestState(['hello world', '', 'test'], 0, 10); // At 'd' of 'world'
+        const action = {
+          type: 'vim_move_word_end' as const,
+          payload: { count: 1 },
+        };
+
+        const result = handleVimAction(state, action);
+        expect(result).toHaveOnlyValidCharacters();
+        expect(result.cursorRow).toBe(2);
+        expect(result.cursorCol).toBe(3); // Should be at 't' (end of 'test')
+      });
+
+      it('should handle consecutive word-end movements across empty lines', () => {
+        // Testing the exact scenario: cursor on 'w' of world, press 'e' twice
+        const state = createTestState(['hello world', ''], 0, 6); // At 'w' of 'world'
+
+        // First 'e' should move to 'd' of 'world'
+        let result = handleVimAction(state, {
+          type: 'vim_move_word_end' as const,
+          payload: { count: 1 },
+        });
+        expect(result).toHaveOnlyValidCharacters();
+        expect(result.cursorRow).toBe(0);
+        expect(result.cursorCol).toBe(10); // At 'd' of 'world'
+
+        // Second 'e' should move to the empty line (end of file in this case)
+        result = handleVimAction(result, {
+          type: 'vim_move_word_end' as const,
+          payload: { count: 1 },
+        });
+        expect(result).toHaveOnlyValidCharacters();
+        expect(result.cursorRow).toBe(1);
+        expect(result.cursorCol).toBe(0); // Empty line has col 0
+      });
+
+      it('should handle combining characters - advance from end of base character', () => {
+        // Test case for combining character word end bug
+        // "café test" where é is represented as e + combining acute accent
+        const state = createTestState(['cafe\u0301 test'], 0, 0); // Start at 'c'
+
+        // First 'e' command should move to the 'e' (position 3)
+        let result = handleVimAction(state, {
+          type: 'vim_move_word_end' as const,
+          payload: { count: 1 },
+        });
+        expect(result).toHaveOnlyValidCharacters();
+        expect(result.cursorCol).toBe(3); // At 'e' of café
+
+        // Second 'e' command should advance to end of "test" (position 9), not stay stuck
+        result = handleVimAction(result, {
+          type: 'vim_move_word_end' as const,
+          payload: { count: 1 },
+        });
+        expect(result).toHaveOnlyValidCharacters();
+        expect(result.cursorCol).toBe(9); // At 't' of "test"
+      });
+
+      it('should handle precomposed characters with diacritics', () => {
+        // Test case with precomposed é for comparison
+        const state = createTestState(['café test'], 0, 0);
+
+        // First 'e' command should move to the 'é' (position 3)
+        let result = handleVimAction(state, {
+          type: 'vim_move_word_end' as const,
+          payload: { count: 1 },
+        });
+        expect(result).toHaveOnlyValidCharacters();
+        expect(result.cursorCol).toBe(3); // At 'é' of café
+
+        // Second 'e' command should advance to end of "test" (position 8)
+        result = handleVimAction(result, {
+          type: 'vim_move_word_end' as const,
+          payload: { count: 1 },
+        });
+        expect(result).toHaveOnlyValidCharacters();
+        expect(result.cursorCol).toBe(8); // At 't' of "test"
+      });
+    });
+
+    describe('Position commands', () => {
+      it('vim_move_to_line_start should move to column 0', () => {
+        const state = createTestState(['hello world'], 0, 5);
+        const action = { type: 'vim_move_to_line_start' as const };
+
+        const result = handleVimAction(state, action);
+        expect(result).toHaveOnlyValidCharacters();
+        expect(result.cursorCol).toBe(0);
+      });
+
+      it('vim_move_to_line_end should move to last character', () => {
+        const state = createTestState(['hello world'], 0, 0);
+        const action = { type: 'vim_move_to_line_end' as const };
+
+        const result = handleVimAction(state, action);
+        expect(result).toHaveOnlyValidCharacters();
+        expect(result.cursorCol).toBe(10); // Last character of 'hello world'
+      });
+
+      it('vim_move_to_first_nonwhitespace should skip leading whitespace', () => {
+        const state = createTestState(['   hello world'], 0, 0);
+        const action = { type: 'vim_move_to_first_nonwhitespace' as const };
+
+        const result = handleVimAction(state, action);
+        expect(result).toHaveOnlyValidCharacters();
+        expect(result.cursorCol).toBe(3); // Position of 'h'
+      });
+
+      it('vim_move_to_first_nonwhitespace should go to column 0 on whitespace-only line', () => {
+        const state = createTestState(['     '], 0, 3);
+        const action = { type: 'vim_move_to_first_nonwhitespace' as const };
+
+        const result = handleVimAction(state, action);
+        expect(result).toHaveOnlyValidCharacters();
+        expect(result.cursorCol).toBe(0);
+      });
+
+      it('vim_move_to_first_nonwhitespace should go to column 0 on empty line', () => {
+        const state = createTestState([''], 0, 0);
+        const action = { type: 'vim_move_to_first_nonwhitespace' as const };
+
+        const result = handleVimAction(state, action);
+        expect(result).toHaveOnlyValidCharacters();
+        expect(result.cursorCol).toBe(0);
+      });
+
+      it('vim_move_to_first_line should move to row 0', () => {
+        const state = createTestState(['line1', 'line2', 'line3'], 2, 5);
+        const action = { type: 'vim_move_to_first_line' as const };
+
+        const result = handleVimAction(state, action);
+        expect(result).toHaveOnlyValidCharacters();
+        expect(result.cursorRow).toBe(0);
+        expect(result.cursorCol).toBe(0);
+      });
+
+      it('vim_move_to_last_line should move to last row', () => {
+        const state = createTestState(['line1', 'line2', 'line3'], 0, 5);
+        const action = { type: 'vim_move_to_last_line' as const };
+
+        const result = handleVimAction(state, action);
+        expect(result).toHaveOnlyValidCharacters();
+        expect(result.cursorRow).toBe(2);
+        expect(result.cursorCol).toBe(0);
+      });
+
+      it('vim_move_to_line should move to specific line', () => {
+        const state = createTestState(['line1', 'line2', 'line3'], 0, 5);
+        const action = {
+          type: 'vim_move_to_line' as const,
+          payload: { lineNumber: 2 },
+        };
+
+        const result = handleVimAction(state, action);
+        expect(result).toHaveOnlyValidCharacters();
+        expect(result.cursorRow).toBe(1); // 0-indexed
+        expect(result.cursorCol).toBe(0);
+      });
+
+      it('vim_move_to_line should clamp to valid range', () => {
+        const state = createTestState(['line1', 'line2'], 0, 0);
+        const action = {
+          type: 'vim_move_to_line' as const,
+          payload: { lineNumber: 10 },
+        };
+
+        const result = handleVimAction(state, action);
+        expect(result).toHaveOnlyValidCharacters();
+        expect(result.cursorRow).toBe(1); // Last line
+      });
+    });
+  });
+
+  describe('Edit commands', () => {
+    describe('vim_delete_char', () => {
+      it('should delete single character', () => {
+        const state = createTestState(['hello'], 0, 1);
+        const action = {
+          type: 'vim_delete_char' as const,
+          payload: { count: 1 },
+        };
+
+        const result = handleVimAction(state, action);
+        expect(result).toHaveOnlyValidCharacters();
+        expect(result.lines[0]).toBe('hllo');
+        expect(result.cursorCol).toBe(1);
+      });
+
+      it('should delete multiple characters', () => {
+        const state = createTestState(['hello'], 0, 1);
+        const action = {
+          type: 'vim_delete_char' as const,
+          payload: { count: 3 },
+        };
+
+        const result = handleVimAction(state, action);
+        expect(result).toHaveOnlyValidCharacters();
+        expect(result.lines[0]).toBe('ho');
+        expect(result.cursorCol).toBe(1);
+      });
+
+      it('should not delete past end of line', () => {
+        const state = createTestState(['hello'], 0, 3);
+        const action = {
+          type: 'vim_delete_char' as const,
+          payload: { count: 5 },
+        };
+
+        const result = handleVimAction(state, action);
+        expect(result).toHaveOnlyValidCharacters();
+        expect(result.lines[0]).toBe('hel');
+        expect(result.cursorCol).toBe(3);
+      });
+
+      it('should do nothing at end of line', () => {
+        const state = createTestState(['hello'], 0, 5);
+        const action = {
+          type: 'vim_delete_char' as const,
+          payload: { count: 1 },
+        };
+
+        const result = handleVimAction(state, action);
+        expect(result).toHaveOnlyValidCharacters();
+        expect(result.lines[0]).toBe('hello');
+        expect(result.cursorCol).toBe(5);
+      });
+    });
+
+    describe('vim_delete_word_forward', () => {
+      it('should delete from cursor to next word start', () => {
+        const state = createTestState(['hello world test'], 0, 0);
+        const action = {
+          type: 'vim_delete_word_forward' as const,
+          payload: { count: 1 },
+        };
+
+        const result = handleVimAction(state, action);
+        expect(result).toHaveOnlyValidCharacters();
+        expect(result.lines[0]).toBe('world test');
+        expect(result.cursorCol).toBe(0);
+      });
+
+      it('should delete multiple words', () => {
+        const state = createTestState(['hello world test'], 0, 0);
+        const action = {
+          type: 'vim_delete_word_forward' as const,
+          payload: { count: 2 },
+        };
+
+        const result = handleVimAction(state, action);
+        expect(result).toHaveOnlyValidCharacters();
+        expect(result.lines[0]).toBe('test');
+        expect(result.cursorCol).toBe(0);
+      });
+
+      it('should delete to end if no more words', () => {
+        const state = createTestState(['hello world'], 0, 6);
+        const action = {
+          type: 'vim_delete_word_forward' as const,
+          payload: { count: 2 },
+        };
+
+        const result = handleVimAction(state, action);
+        expect(result).toHaveOnlyValidCharacters();
+        expect(result.lines[0]).toBe('hello ');
+        expect(result.cursorCol).toBe(6);
+      });
+
+      it('should delete only the word characters if it is the last word followed by whitespace', () => {
+        const state = createTestState(['foo bar   '], 0, 4); // on 'b'
+        const action = {
+          type: 'vim_delete_word_forward' as const,
+          payload: { count: 1 },
+        };
+
+        const result = handleVimAction(state, action);
+        expect(result).toHaveOnlyValidCharacters();
+        expect(result.lines[0]).toBe('foo    ');
+      });
+
+      it('should do nothing if cursor is on whitespace after the last word', () => {
+        const state = createTestState(['foo bar   '], 0, 8); // on one of the trailing spaces
+        const action = {
+          type: 'vim_delete_word_forward' as const,
+          payload: { count: 1 },
+        };
+
+        const result = handleVimAction(state, action);
+        expect(result).toHaveOnlyValidCharacters();
+        expect(result.lines[0]).toBe('foo bar   ');
+      });
+    });
+
+    describe('vim_delete_big_word_forward', () => {
+      it('should delete only the big word characters if it is the last word followed by whitespace', () => {
+        const state = createTestState(['foo bar.baz   '], 0, 4); // on 'b'
+        const action = {
+          type: 'vim_delete_big_word_forward' as const,
+          payload: { count: 1 },
+        };
+
+        const result = handleVimAction(state, action);
+        expect(result).toHaveOnlyValidCharacters();
+        expect(result.lines[0]).toBe('foo    ');
+      });
+    });
+
+    describe('vim_delete_word_backward', () => {
+      it('should delete from cursor to previous word start', () => {
+        const state = createTestState(['hello world test'], 0, 12);
+        const action = {
+          type: 'vim_delete_word_backward' as const,
+          payload: { count: 1 },
+        };
+
+        const result = handleVimAction(state, action);
+        expect(result).toHaveOnlyValidCharacters();
+        expect(result.lines[0]).toBe('hello test');
+        expect(result.cursorCol).toBe(6);
+      });
+
+      it('should delete multiple words backward', () => {
+        const state = createTestState(['hello world test'], 0, 12);
+        const action = {
+          type: 'vim_delete_word_backward' as const,
+          payload: { count: 2 },
+        };
+
+        const result = handleVimAction(state, action);
+        expect(result).toHaveOnlyValidCharacters();
+        expect(result.lines[0]).toBe('test');
+        expect(result.cursorCol).toBe(0);
+      });
+    });
+
+    describe('vim_delete_line', () => {
+      it('should delete current line', () => {
+        const state = createTestState(['line1', 'line2', 'line3'], 1, 2);
+        const action = {
+          type: 'vim_delete_line' as const,
+          payload: { count: 1 },
+        };
+
+        const result = handleVimAction(state, action);
+        expect(result).toHaveOnlyValidCharacters();
+        expect(result.lines).toEqual(['line1', 'line3']);
+        expect(result.cursorRow).toBe(1);
+        expect(result.cursorCol).toBe(0);
+      });
+
+      it('should delete multiple lines', () => {
+        const state = createTestState(['line1', 'line2', 'line3'], 0, 2);
+        const action = {
+          type: 'vim_delete_line' as const,
+          payload: { count: 2 },
+        };
+
+        const result = handleVimAction(state, action);
+        expect(result).toHaveOnlyValidCharacters();
+        expect(result.lines).toEqual(['line3']);
+        expect(result.cursorRow).toBe(0);
+        expect(result.cursorCol).toBe(0);
+      });
+
+      it('should leave empty line when deleting all lines', () => {
+        const state = createTestState(['only line'], 0, 0);
+        const action = {
+          type: 'vim_delete_line' as const,
+          payload: { count: 1 },
+        };
+
+        const result = handleVimAction(state, action);
+        expect(result).toHaveOnlyValidCharacters();
+        expect(result.lines).toEqual(['']);
+        expect(result.cursorRow).toBe(0);
+        expect(result.cursorCol).toBe(0);
+      });
+    });
+
+    describe('vim_delete_to_end_of_line', () => {
+      it('should delete from cursor to end of line', () => {
+        const state = createTestState(['hello world'], 0, 5);
+        const action = {
+          type: 'vim_delete_to_end_of_line' as const,
+          payload: { count: 1 },
+        };
+
+        const result = handleVimAction(state, action);
+        expect(result).toHaveOnlyValidCharacters();
+        expect(result.lines[0]).toBe('hello');
+        expect(result.cursorCol).toBe(5);
+      });
+
+      it('should do nothing at end of line', () => {
+        const state = createTestState(['hello'], 0, 5);
+        const action = {
+          type: 'vim_delete_to_end_of_line' as const,
+          payload: { count: 1 },
+        };
+
+        const result = handleVimAction(state, action);
+        expect(result).toHaveOnlyValidCharacters();
+        expect(result.lines[0]).toBe('hello');
+      });
+
+      it('should delete to end of line plus additional lines with count > 1', () => {
+        const state = createTestState(
+          ['line one', 'line two', 'line three'],
+          0,
+          5,
+        );
+        const action = {
+          type: 'vim_delete_to_end_of_line' as const,
+          payload: { count: 2 },
+        };
+
+        const result = handleVimAction(state, action);
+        expect(result).toHaveOnlyValidCharacters();
+        // 2D at position 5 on "line one" should delete "one" + entire "line two"
+        expect(result.lines).toEqual(['line ', 'line three']);
+        expect(result.cursorCol).toBe(5);
+      });
+
+      it('should handle count exceeding available lines', () => {
+        const state = createTestState(['line one', 'line two'], 0, 5);
+        const action = {
+          type: 'vim_delete_to_end_of_line' as const,
+          payload: { count: 5 },
+        };
+
+        const result = handleVimAction(state, action);
+        expect(result).toHaveOnlyValidCharacters();
+        // Should delete to end of available lines
+        expect(result.lines).toEqual(['line ']);
+      });
+    });
+
+    describe('vim_delete_to_first_nonwhitespace', () => {
+      it('should delete from cursor backwards to first non-whitespace', () => {
+        const state = createTestState(['    hello world'], 0, 10);
+        const action = { type: 'vim_delete_to_first_nonwhitespace' as const };
+
+        const result = handleVimAction(state, action);
+        expect(result).toHaveOnlyValidCharacters();
+        // Delete from 'h' (col 4) to cursor (col 10), leaving "    world"
+        expect(result.lines[0]).toBe('    world');
+        expect(result.cursorCol).toBe(4);
+      });
+
+      it('should delete from cursor forwards when cursor is in whitespace', () => {
+        const state = createTestState(['    hello'], 0, 2);
+        const action = { type: 'vim_delete_to_first_nonwhitespace' as const };
+
+        const result = handleVimAction(state, action);
+        expect(result).toHaveOnlyValidCharacters();
+        // Delete from cursor (col 2) to first non-ws (col 4), leaving "  hello"
+        expect(result.lines[0]).toBe('  hello');
+        expect(result.cursorCol).toBe(2);
+      });
+
+      it('should do nothing when cursor is at first non-whitespace', () => {
+        const state = createTestState(['    hello'], 0, 4);
+        const action = { type: 'vim_delete_to_first_nonwhitespace' as const };
+
+        const result = handleVimAction(state, action);
+        expect(result).toHaveOnlyValidCharacters();
+        expect(result.lines[0]).toBe('    hello');
+      });
+
+      it('should delete to column 0 on whitespace-only line', () => {
+        const state = createTestState(['    '], 0, 2);
+        const action = { type: 'vim_delete_to_first_nonwhitespace' as const };
+
+        const result = handleVimAction(state, action);
+        expect(result).toHaveOnlyValidCharacters();
+        // On whitespace-only line, ^ goes to col 0, so d^ deletes cols 0-2
+        expect(result.lines[0]).toBe('  ');
+        expect(result.cursorCol).toBe(0);
+      });
+    });
+
+    describe('vim_delete_to_first_line', () => {
+      it('should delete from current line to first line (dgg)', () => {
+        const state = createTestState(
+          ['line1', 'line2', 'line3', 'line4'],
+          2,
+          0,
+        );
+        const action = {
+          type: 'vim_delete_to_first_line' as const,
+          payload: { count: 0 },
+        };
+
+        const result = handleVimAction(state, action);
+        expect(result).toHaveOnlyValidCharacters();
+        // Delete lines 0, 1, 2 (current), leaving line4
+        expect(result.lines).toEqual(['line4']);
+        expect(result.cursorRow).toBe(0);
+      });
+
+      it('should delete from current line to specified line (d5gg)', () => {
+        const state = createTestState(
+          ['line1', 'line2', 'line3', 'line4', 'line5'],
+          4,
+          0,
+        );
+        const action = {
+          type: 'vim_delete_to_first_line' as const,
+          payload: { count: 2 }, // Delete to line 2 (1-based)
+        };
+
+        const result = handleVimAction(state, action);
+        expect(result).toHaveOnlyValidCharacters();
+        // Delete lines 1-4 (line2 to line5), leaving line1
+        expect(result.lines).toEqual(['line1']);
+        expect(result.cursorRow).toBe(0);
+      });
+
+      it('should keep one empty line when deleting all lines', () => {
+        const state = createTestState(['line1', 'line2'], 1, 0);
+        const action = {
+          type: 'vim_delete_to_first_line' as const,
+          payload: { count: 0 },
+        };
+
+        const result = handleVimAction(state, action);
+        expect(result).toHaveOnlyValidCharacters();
+        expect(result.lines).toEqual(['']);
+      });
+    });
+
+    describe('vim_delete_to_last_line', () => {
+      it('should delete from current line to last line (dG)', () => {
+        const state = createTestState(
+          ['line1', 'line2', 'line3', 'line4'],
+          1,
+          0,
+        );
+        const action = {
+          type: 'vim_delete_to_last_line' as const,
+          payload: { count: 0 },
+        };
+
+        const result = handleVimAction(state, action);
+        expect(result).toHaveOnlyValidCharacters();
+        // Delete lines 1, 2, 3 (from current to last), leaving line1
+        expect(result.lines).toEqual(['line1']);
+        expect(result.cursorRow).toBe(0);
+      });
+
+      it('should delete from current line to specified line (d3G)', () => {
+        const state = createTestState(
+          ['line1', 'line2', 'line3', 'line4', 'line5'],
+          0,
+          0,
+        );
+        const action = {
+          type: 'vim_delete_to_last_line' as const,
+          payload: { count: 3 }, // Delete to line 3 (1-based)
+        };
+
+        const result = handleVimAction(state, action);
+        expect(result).toHaveOnlyValidCharacters();
+        // Delete lines 0-2 (line1 to line3), leaving line4 and line5
+        expect(result.lines).toEqual(['line4', 'line5']);
+        expect(result.cursorRow).toBe(0);
+      });
+
+      it('should keep one empty line when deleting all lines', () => {
+        const state = createTestState(['line1', 'line2'], 0, 0);
+        const action = {
+          type: 'vim_delete_to_last_line' as const,
+          payload: { count: 0 },
+        };
+
+        const result = handleVimAction(state, action);
+        expect(result).toHaveOnlyValidCharacters();
+        expect(result.lines).toEqual(['']);
+      });
+    });
+
+    describe('vim_change_to_start_of_line', () => {
+      it('should delete from start of line to cursor (c0)', () => {
+        const state = createTestState(['hello world'], 0, 6);
+        const action = { type: 'vim_change_to_start_of_line' as const };
+
+        const result = handleVimAction(state, action);
+        expect(result).toHaveOnlyValidCharacters();
+        expect(result.lines[0]).toBe('world');
+        expect(result.cursorCol).toBe(0);
+      });
+
+      it('should do nothing at start of line', () => {
+        const state = createTestState(['hello'], 0, 0);
+        const action = { type: 'vim_change_to_start_of_line' as const };
+
+        const result = handleVimAction(state, action);
+        expect(result).toHaveOnlyValidCharacters();
+        expect(result.lines[0]).toBe('hello');
+      });
+    });
+
+    describe('vim_change_to_first_nonwhitespace', () => {
+      it('should delete from first non-whitespace to cursor (c^)', () => {
+        const state = createTestState(['    hello world'], 0, 10);
+        const action = { type: 'vim_change_to_first_nonwhitespace' as const };
+
+        const result = handleVimAction(state, action);
+        expect(result).toHaveOnlyValidCharacters();
+        expect(result.lines[0]).toBe('    world');
+        expect(result.cursorCol).toBe(4);
+      });
+
+      it('should delete backwards when cursor before first non-whitespace', () => {
+        const state = createTestState(['    hello'], 0, 2);
+        const action = { type: 'vim_change_to_first_nonwhitespace' as const };
+
+        const result = handleVimAction(state, action);
+        expect(result).toHaveOnlyValidCharacters();
+        expect(result.lines[0]).toBe('  hello');
+        expect(result.cursorCol).toBe(2);
+      });
+
+      it('should handle whitespace-only line', () => {
+        const state = createTestState(['     '], 0, 3);
+        const action = { type: 'vim_change_to_first_nonwhitespace' as const };
+
+        const result = handleVimAction(state, action);
+        expect(result).toHaveOnlyValidCharacters();
+        expect(result.lines[0]).toBe('  ');
+        expect(result.cursorCol).toBe(0);
+      });
+    });
+
+    describe('vim_change_to_end_of_line', () => {
+      it('should delete from cursor to end of line (C)', () => {
+        const state = createTestState(['hello world'], 0, 6);
+        const action = {
+          type: 'vim_change_to_end_of_line' as const,
+          payload: { count: 1 },
+        };
+
+        const result = handleVimAction(state, action);
+        expect(result).toHaveOnlyValidCharacters();
+        expect(result.lines[0]).toBe('hello ');
+        expect(result.cursorCol).toBe(6);
+      });
+
+      it('should delete multiple lines with count (2C)', () => {
+        const state = createTestState(['line1 hello', 'line2', 'line3'], 0, 6);
+        const action = {
+          type: 'vim_change_to_end_of_line' as const,
+          payload: { count: 2 },
+        };
+
+        const result = handleVimAction(state, action);
+        expect(result).toHaveOnlyValidCharacters();
+        expect(result.lines).toEqual(['line1 ', 'line3']);
+        expect(result.cursorRow).toBe(0);
+        expect(result.cursorCol).toBe(6);
+      });
+
+      it('should delete remaining lines when count exceeds available (3C on 2 lines)', () => {
+        const state = createTestState(['hello world', 'end'], 0, 6);
+        const action = {
+          type: 'vim_change_to_end_of_line' as const,
+          payload: { count: 3 },
+        };
+
+        const result = handleVimAction(state, action);
+        expect(result).toHaveOnlyValidCharacters();
+        expect(result.lines).toEqual(['hello ']);
+        expect(result.cursorCol).toBe(6);
+      });
+
+      it('should handle count at last line', () => {
+        const state = createTestState(['first', 'last line'], 1, 5);
+        const action = {
+          type: 'vim_change_to_end_of_line' as const,
+          payload: { count: 2 },
+        };
+
+        const result = handleVimAction(state, action);
+        expect(result).toHaveOnlyValidCharacters();
+        expect(result.lines).toEqual(['first', 'last ']);
+        expect(result.cursorRow).toBe(1);
+        expect(result.cursorCol).toBe(5);
+      });
+    });
+
+    describe('vim_change_to_first_line', () => {
+      it('should delete from first line to current line (cgg)', () => {
+        const state = createTestState(['line1', 'line2', 'line3'], 2, 3);
+        const action = {
+          type: 'vim_delete_to_first_line' as const,
+          payload: { count: 0 },
+        };
+
+        const result = handleVimAction(state, action);
+        expect(result).toHaveOnlyValidCharacters();
+        expect(result.lines).toEqual(['']);
+        expect(result.cursorRow).toBe(0);
+      });
+
+      it('should delete from line 1 to target line (c3gg)', () => {
+        const state = createTestState(
+          ['line1', 'line2', 'line3', 'line4', 'line5'],
+          0,
+          0,
+        );
+        const action = {
+          type: 'vim_delete_to_first_line' as const,
+          payload: { count: 3 },
+        };
+
+        const result = handleVimAction(state, action);
+        expect(result).toHaveOnlyValidCharacters();
+        expect(result.lines).toEqual(['line4', 'line5']);
+        expect(result.cursorRow).toBe(0);
+      });
+
+      it('should handle cursor below target line', () => {
+        // Cursor on line 4 (index 3), target line 2 (index 1)
+        // Should delete lines 2-4 (indices 1-3), leaving line1 and line5
+        const state = createTestState(
+          ['line1', 'line2', 'line3', 'line4', 'line5'],
+          3,
+          0,
+        );
+        const action = {
+          type: 'vim_delete_to_first_line' as const,
+          payload: { count: 2 },
+        };
+
+        const result = handleVimAction(state, action);
+        expect(result).toHaveOnlyValidCharacters();
+        expect(result.lines).toEqual(['line1', 'line5']);
+        expect(result.cursorRow).toBe(1);
+      });
+    });
+
+    describe('vim_change_to_last_line', () => {
+      it('should delete from current line to last line (cG)', () => {
+        const state = createTestState(['line1', 'line2', 'line3'], 0, 3);
+        const action = {
+          type: 'vim_delete_to_last_line' as const,
+          payload: { count: 0 },
+        };
+
+        const result = handleVimAction(state, action);
+        expect(result).toHaveOnlyValidCharacters();
+        expect(result.lines).toEqual(['']);
+        expect(result.cursorRow).toBe(0);
+      });
+
+      it('should delete from cursor to target line (c2G)', () => {
+        const state = createTestState(
+          ['line1', 'line2', 'line3', 'line4'],
+          0,
+          0,
+        );
+        const action = {
+          type: 'vim_delete_to_last_line' as const,
+          payload: { count: 2 },
+        };
+
+        const result = handleVimAction(state, action);
+        expect(result).toHaveOnlyValidCharacters();
+        expect(result.lines).toEqual(['line3', 'line4']);
+        expect(result.cursorRow).toBe(0);
+      });
+
+      it('should handle cursor above target', () => {
+        // Cursor on line 2 (index 1), target line 3 (index 2)
+        // Should delete lines 2-3 (indices 1-2), leaving line1 and line4
+        const state = createTestState(
+          ['line1', 'line2', 'line3', 'line4'],
+          1,
+          0,
+        );
+        const action = {
+          type: 'vim_delete_to_last_line' as const,
+          payload: { count: 3 },
+        };
+
+        const result = handleVimAction(state, action);
+        expect(result).toHaveOnlyValidCharacters();
+        expect(result.lines).toEqual(['line1', 'line4']);
+        expect(result.cursorRow).toBe(1);
+      });
+    });
+  });
+
+  describe('Insert mode commands', () => {
+    describe('vim_insert_at_cursor', () => {
+      it('should not change cursor position', () => {
+        const state = createTestState(['hello'], 0, 2);
+        const action = { type: 'vim_insert_at_cursor' as const };
+
+        const result = handleVimAction(state, action);
+        expect(result).toHaveOnlyValidCharacters();
+        expect(result.cursorRow).toBe(0);
+        expect(result.cursorCol).toBe(2);
+      });
+    });
+
+    describe('vim_append_at_cursor', () => {
+      it('should move cursor right by one', () => {
+        const state = createTestState(['hello'], 0, 2);
+        const action = { type: 'vim_append_at_cursor' as const };
+
+        const result = handleVimAction(state, action);
+        expect(result).toHaveOnlyValidCharacters();
+        expect(result.cursorCol).toBe(3);
+      });
+
+      it('should not move past end of line', () => {
+        const state = createTestState(['hello'], 0, 5);
+        const action = { type: 'vim_append_at_cursor' as const };
+
+        const result = handleVimAction(state, action);
+        expect(result).toHaveOnlyValidCharacters();
+        expect(result.cursorCol).toBe(5);
+      });
+    });
+
+    describe('vim_append_at_line_end', () => {
+      it('should move cursor to end of line', () => {
+        const state = createTestState(['hello world'], 0, 3);
+        const action = { type: 'vim_append_at_line_end' as const };
+
+        const result = handleVimAction(state, action);
+        expect(result).toHaveOnlyValidCharacters();
+        expect(result.cursorCol).toBe(11);
+      });
+    });
+
+    describe('vim_insert_at_line_start', () => {
+      it('should move to first non-whitespace character', () => {
+        const state = createTestState(['  hello world'], 0, 5);
+        const action = { type: 'vim_insert_at_line_start' as const };
+
+        const result = handleVimAction(state, action);
+        expect(result).toHaveOnlyValidCharacters();
+        expect(result.cursorCol).toBe(2);
+      });
+
+      it('should move to column 0 for line with only whitespace', () => {
+        const state = createTestState(['   '], 0, 1);
+        const action = { type: 'vim_insert_at_line_start' as const };
+
+        const result = handleVimAction(state, action);
+        expect(result).toHaveOnlyValidCharacters();
+        expect(result.cursorCol).toBe(3);
+      });
+    });
+
+    describe('vim_open_line_below', () => {
+      it('should insert a new line below the current one', () => {
+        const state = createTestState(['hello world'], 0, 5);
+        const action = { type: 'vim_open_line_below' as const };
+
+        const result = handleVimAction(state, action);
+        expect(result).toHaveOnlyValidCharacters();
+        expect(result.lines).toEqual(['hello world', '']);
+        expect(result.cursorRow).toBe(1);
+        expect(result.cursorCol).toBe(0);
+      });
+    });
+
+    describe('vim_open_line_above', () => {
+      it('should insert a new line above the current one', () => {
+        const state = createTestState(['hello', 'world'], 1, 2);
+        const action = { type: 'vim_open_line_above' as const };
+
+        const result = handleVimAction(state, action);
+        expect(result).toHaveOnlyValidCharacters();
+        expect(result.lines).toEqual(['hello', '', 'world']);
+        expect(result.cursorRow).toBe(1);
+        expect(result.cursorCol).toBe(0);
+      });
+    });
+
+    describe('vim_escape_insert_mode', () => {
+      it('should move cursor left', () => {
+        const state = createTestState(['hello'], 0, 3);
+        const action = { type: 'vim_escape_insert_mode' as const };
+
+        const result = handleVimAction(state, action);
+        expect(result).toHaveOnlyValidCharacters();
+        expect(result.cursorCol).toBe(2);
+      });
+
+      it('should not move past beginning of line', () => {
+        const state = createTestState(['hello'], 0, 0);
+        const action = { type: 'vim_escape_insert_mode' as const };
+
+        const result = handleVimAction(state, action);
+        expect(result).toHaveOnlyValidCharacters();
+        expect(result.cursorCol).toBe(0);
+      });
+    });
+  });
+
+  describe('Change commands', () => {
+    describe('vim_change_word_forward', () => {
+      it('should delete from cursor to next word start', () => {
+        const state = createTestState(['hello world test'], 0, 0);
+        const action = {
+          type: 'vim_change_word_forward' as const,
+          payload: { count: 1 },
+        };
+
+        const result = handleVimAction(state, action);
+        expect(result).toHaveOnlyValidCharacters();
+        expect(result.lines[0]).toBe('world test');
+        expect(result.cursorCol).toBe(0);
+      });
+    });
+
+    describe('vim_change_line', () => {
+      it('should delete entire line content', () => {
+        const state = createTestState(['hello world'], 0, 5);
+        const action = {
+          type: 'vim_change_line' as const,
+          payload: { count: 1 },
+        };
+
+        const result = handleVimAction(state, action);
+        expect(result).toHaveOnlyValidCharacters();
+        expect(result.lines[0]).toBe('');
+        expect(result.cursorCol).toBe(0);
+      });
+    });
+
+    describe('vim_change_movement', () => {
+      it('should change characters to the left', () => {
+        const state = createTestState(['hello world'], 0, 5);
+        const action = {
+          type: 'vim_change_movement' as const,
+          payload: { movement: 'h' as const, count: 2 },
+        };
+
+        const result = handleVimAction(state, action);
+        expect(result).toHaveOnlyValidCharacters();
+        expect(result.lines[0]).toBe('hel world');
+        expect(result.cursorCol).toBe(3);
+      });
+
+      it('should change characters to the right', () => {
+        const state = createTestState(['hello world'], 0, 5);
+        const action = {
+          type: 'vim_change_movement' as const,
+          payload: { movement: 'l' as const, count: 3 },
+        };
+
+        const result = handleVimAction(state, action);
+        expect(result).toHaveOnlyValidCharacters();
+        expect(result.lines[0]).toBe('hellorld'); // Deletes ' wo' (3 chars to the right)
+        expect(result.cursorCol).toBe(5);
+      });
+
+      it('should change multiple lines down', () => {
+        const state = createTestState(['line1', 'line2', 'line3'], 0, 2);
+        const action = {
+          type: 'vim_change_movement' as const,
+          payload: { movement: 'j' as const, count: 2 },
+        };
+
+        const result = handleVimAction(state, action);
+        expect(result).toHaveOnlyValidCharacters();
+        // In VIM, 2cj deletes current line + 2 lines below = 3 lines total
+        // Since there are exactly 3 lines, all are deleted
+        expect(result.lines).toEqual(['']);
+        expect(result.cursorRow).toBe(0);
+        expect(result.cursorCol).toBe(0);
+      });
+
+      it('should handle Unicode characters in cj (down)', () => {
+        const state = createTestState(
+          ['hello 🎉 world', 'line2 émoji', 'line3'],
+          0,
+          0,
+        );
+        const action = {
+          type: 'vim_change_movement' as const,
+          payload: { movement: 'j' as const, count: 1 },
+        };
+
+        const result = handleVimAction(state, action);
+        expect(result).toHaveOnlyValidCharacters();
+        expect(result.lines).toEqual(['line3']);
+        expect(result.cursorRow).toBe(0);
+        expect(result.cursorCol).toBe(0);
+      });
+
+      it('should handle Unicode characters in ck (up)', () => {
+        const state = createTestState(
+          ['line1', 'hello 🎉 world', 'line3 émoji'],
+          2,
+          0,
+        );
+        const action = {
+          type: 'vim_change_movement' as const,
+          payload: { movement: 'k' as const, count: 1 },
+        };
+
+        const result = handleVimAction(state, action);
+        expect(result).toHaveOnlyValidCharacters();
+        expect(result.lines).toEqual(['line1']);
+        expect(result.cursorRow).toBe(0);
+        expect(result.cursorCol).toBe(0);
+      });
+
+      it('should handle cj on first line of 2 lines (delete all)', () => {
+        const state = createTestState(['line1', 'line2'], 0, 0);
+        const action = {
+          type: 'vim_change_movement' as const,
+          payload: { movement: 'j' as const, count: 1 },
+        };
+
+        const result = handleVimAction(state, action);
+        expect(result).toHaveOnlyValidCharacters();
+        expect(result.lines).toEqual(['']);
+        expect(result.cursorRow).toBe(0);
+        expect(result.cursorCol).toBe(0);
+      });
+
+      it('should handle cj on last line (delete only current line)', () => {
+        const state = createTestState(['line1', 'line2', 'line3'], 2, 0);
+        const action = {
+          type: 'vim_change_movement' as const,
+          payload: { movement: 'j' as const, count: 1 },
+        };
+
+        const result = handleVimAction(state, action);
+        expect(result).toHaveOnlyValidCharacters();
+        expect(result.lines).toEqual(['line1', 'line2']);
+        expect(result.cursorRow).toBe(1);
+        expect(result.cursorCol).toBe(0);
+      });
+
+      it('should handle ck on first line (delete only current line)', () => {
+        const state = createTestState(['line1', 'line2', 'line3'], 0, 0);
+        const action = {
+          type: 'vim_change_movement' as const,
+          payload: { movement: 'k' as const, count: 1 },
+        };
+
+        const result = handleVimAction(state, action);
+        expect(result).toHaveOnlyValidCharacters();
+        expect(result.lines).toEqual(['line2', 'line3']);
+        expect(result.cursorRow).toBe(0);
+        expect(result.cursorCol).toBe(0);
+      });
+
+      it('should handle 2cj from middle line', () => {
+        const state = createTestState(
+          ['line1', 'line2', 'line3', 'line4', 'line5'],
+          1,
+          0,
+        );
+        const action = {
+          type: 'vim_change_movement' as const,
+          payload: { movement: 'j' as const, count: 2 },
+        };
+
+        const result = handleVimAction(state, action);
+        expect(result).toHaveOnlyValidCharacters();
+        // 2cj from line 1: delete lines 1, 2, 3 (current + 2 below)
+        expect(result.lines).toEqual(['line1', 'line5']);
+        expect(result.cursorRow).toBe(1);
+        expect(result.cursorCol).toBe(0);
+      });
+
+      it('should handle 2ck from middle line', () => {
+        const state = createTestState(
+          ['line1', 'line2', 'line3', 'line4', 'line5'],
+          3,
+          0,
+        );
+        const action = {
+          type: 'vim_change_movement' as const,
+          payload: { movement: 'k' as const, count: 2 },
+        };
+
+        const result = handleVimAction(state, action);
+        expect(result).toHaveOnlyValidCharacters();
+        // 2ck from line 3: delete lines 1, 2, 3 (current + 2 above)
+        expect(result.lines).toEqual(['line1', 'line5']);
+        expect(result.cursorRow).toBe(1);
+        expect(result.cursorCol).toBe(0);
+      });
+    });
+  });
+
+  describe('Edge cases', () => {
+    it('should handle empty text', () => {
+      const state = createTestState([''], 0, 0);
+      const action = {
+        type: 'vim_move_word_forward' as const,
+        payload: { count: 1 },
+      };
+
+      const result = handleVimAction(state, action);
+      expect(result).toHaveOnlyValidCharacters();
+      expect(result.cursorRow).toBe(0);
+      expect(result.cursorCol).toBe(0);
+    });
+
+    it('should handle single character line', () => {
+      const state = createTestState(['a'], 0, 0);
+      const action = { type: 'vim_move_to_line_end' as const };
+
+      const result = handleVimAction(state, action);
+      expect(result).toHaveOnlyValidCharacters();
+      expect(result.cursorCol).toBe(0); // Should be last character position
+    });
+
+    it('should handle empty lines in multi-line text', () => {
+      const state = createTestState(['line1', '', 'line3'], 1, 0);
+      const action = {
+        type: 'vim_move_word_forward' as const,
+        payload: { count: 1 },
+      };
+
+      const result = handleVimAction(state, action);
+      expect(result).toHaveOnlyValidCharacters();
+      // Should move to next line with content
+      expect(result.cursorRow).toBe(2);
+      expect(result.cursorCol).toBe(0);
+    });
+
+    it('should preserve undo stack in operations', () => {
+      const state = createTestState(['hello'], 0, 0);
+      state.undoStack = [
+        {
+          lines: ['previous'],
+          cursorRow: 0,
+          cursorCol: 0,
+          pastedContent: {},
+          expandedPaste: null,
+        },
+      ];
+
+      const action = {
+        type: 'vim_delete_char' as const,
+        payload: { count: 1 },
+      };
+
+      const result = handleVimAction(state, action);
+      expect(result).toHaveOnlyValidCharacters();
+      expect(result.undoStack).toHaveLength(2); // Original plus new snapshot
+    });
+  });
+
+  describe('UTF-32 character handling in word/line operations', () => {
+    describe('Right-to-left text handling', () => {
+      it('should handle Arabic text in word movements', () => {
+        const state = createTestState(['hello مرحبا world'], 0, 0);
+
+        // Move to end of 'hello'
+        let result = handleVimAction(state, {
+          type: 'vim_move_word_end' as const,
+          payload: { count: 1 },
+        });
+        expect(result).toHaveOnlyValidCharacters();
+        expect(result.cursorCol).toBe(4); // End of 'hello'
+
+        // Move to end of Arabic word
+        result = handleVimAction(result, {
+          type: 'vim_move_word_end' as const,
+          payload: { count: 1 },
+        });
+        expect(result).toHaveOnlyValidCharacters();
+        expect(result.cursorCol).toBe(10); // End of Arabic word 'مرحبا'
+      });
+    });
+
+    describe('Chinese character handling', () => {
+      it('should handle Chinese characters in word movements', () => {
+        const state = createTestState(['hello 你好 world'], 0, 0);
+
+        // Move to end of 'hello'
+        let result = handleVimAction(state, {
+          type: 'vim_move_word_end' as const,
+          payload: { count: 1 },
+        });
+        expect(result).toHaveOnlyValidCharacters();
+        expect(result.cursorCol).toBe(4); // End of 'hello'
+
+        // Move forward to start of 'world'
+        result = handleVimAction(result, {
+          type: 'vim_move_word_forward' as const,
+          payload: { count: 1 },
+        });
+        expect(result).toHaveOnlyValidCharacters();
+        expect(result.cursorCol).toBe(6); // Start of '你好'
+      });
+    });
+
+    describe('Mixed script handling', () => {
+      it('should handle mixed Latin and non-Latin scripts with word end commands', () => {
+        const state = createTestState(['test中文test'], 0, 0);
+
+        let result = handleVimAction(state, {
+          type: 'vim_move_word_end' as const,
+          payload: { count: 1 },
+        });
+        expect(result).toHaveOnlyValidCharacters();
+        expect(result.cursorCol).toBe(3); // End of 'test'
+
+        // Second word end command should move to end of '中文'
+        result = handleVimAction(result, {
+          type: 'vim_move_word_end' as const,
+          payload: { count: 1 },
+        });
+        expect(result).toHaveOnlyValidCharacters();
+        expect(result.cursorCol).toBe(5); // End of '中文'
+      });
+
+      it('should handle mixed Latin and non-Latin scripts with word forward commands', () => {
+        const state = createTestState(['test中文test'], 0, 0);
+
+        let result = handleVimAction(state, {
+          type: 'vim_move_word_forward' as const,
+          payload: { count: 1 },
+        });
+        expect(result).toHaveOnlyValidCharacters();
+        expect(result.cursorCol).toBe(4); // Start of '中'
+
+        // Second word forward command should move to start of final 'test'
+        result = handleVimAction(result, {
+          type: 'vim_move_word_forward' as const,
+          payload: { count: 1 },
+        });
+        expect(result).toHaveOnlyValidCharacters();
+        expect(result.cursorCol).toBe(6); // Start of final 'test'
+      });
+
+      it('should handle mixed Latin and non-Latin scripts with word backward commands', () => {
+        const state = createTestState(['test中文test'], 0, 9); // Start at end of final 'test'
+
+        let result = handleVimAction(state, {
+          type: 'vim_move_word_backward' as const,
+          payload: { count: 1 },
+        });
+        expect(result).toHaveOnlyValidCharacters();
+        expect(result.cursorCol).toBe(6); // Start of final 'test'
+
+        // Second word backward command should move to start of '中文'
+        result = handleVimAction(result, {
+          type: 'vim_move_word_backward' as const,
+          payload: { count: 1 },
+        });
+        expect(result).toHaveOnlyValidCharacters();
+        expect(result.cursorCol).toBe(4); // Start of '中'
+      });
+
+      it('should handle Unicode block characters consistently with w and e commands', () => {
+        const state = createTestState(['██ █████ ██'], 0, 0);
+
+        // Test w command progression
+        let wResult = handleVimAction(state, {
+          type: 'vim_move_word_forward' as const,
+          payload: { count: 1 },
+        });
+        expect(wResult).toHaveOnlyValidCharacters();
+        expect(wResult.cursorCol).toBe(3); // Start of second block sequence
+
+        wResult = handleVimAction(wResult, {
+          type: 'vim_move_word_forward' as const,
+          payload: { count: 1 },
+        });
+        expect(wResult).toHaveOnlyValidCharacters();
+        expect(wResult.cursorCol).toBe(9); // Start of third block sequence
+
+        // Test e command progression from beginning
+        let eResult = handleVimAction(state, {
+          type: 'vim_move_word_end' as const,
+          payload: { count: 1 },
+        });
+        expect(eResult).toHaveOnlyValidCharacters();
+        expect(eResult.cursorCol).toBe(1); // End of first block sequence
+
+        eResult = handleVimAction(eResult, {
+          type: 'vim_move_word_end' as const,
+          payload: { count: 1 },
+        });
+        expect(eResult).toHaveOnlyValidCharacters();
+        expect(eResult.cursorCol).toBe(7); // End of second block sequence
+
+        eResult = handleVimAction(eResult, {
+          type: 'vim_move_word_end' as const,
+          payload: { count: 1 },
+        });
+        expect(eResult).toHaveOnlyValidCharacters();
+        expect(eResult.cursorCol).toBe(10); // End of third block sequence
+      });
+
+      it('should handle strings starting with Chinese characters', () => {
+        const state = createTestState(['中文test英文word'], 0, 0);
+
+        // Test 'w' command - when at start of non-Latin word, w moves to next word
+        let wResult = handleVimAction(state, {
+          type: 'vim_move_word_forward' as const,
+          payload: { count: 1 },
+        });
+        expect(wResult).toHaveOnlyValidCharacters();
+        expect(wResult.cursorCol).toBe(2); // Start of 'test'
+
+        wResult = handleVimAction(wResult, {
+          type: 'vim_move_word_forward' as const,
+          payload: { count: 1 },
+        });
+        expect(wResult.cursorCol).toBe(6); // Start of '英文'
+
+        // Test 'e' command
+        let eResult = handleVimAction(state, {
+          type: 'vim_move_word_end' as const,
+          payload: { count: 1 },
+        });
+        expect(eResult).toHaveOnlyValidCharacters();
+        expect(eResult.cursorCol).toBe(1); // End of 中文
+
+        eResult = handleVimAction(eResult, {
+          type: 'vim_move_word_end' as const,
+          payload: { count: 1 },
+        });
+        expect(eResult.cursorCol).toBe(5); // End of test
+      });
+
+      it('should handle strings starting with Arabic characters', () => {
+        const state = createTestState(['مرحباhelloسلام'], 0, 0);
+
+        // Test 'w' command - when at start of non-Latin word, w moves to next word
+        let wResult = handleVimAction(state, {
+          type: 'vim_move_word_forward' as const,
+          payload: { count: 1 },
+        });
+        expect(wResult).toHaveOnlyValidCharacters();
+        expect(wResult.cursorCol).toBe(5); // Start of 'hello'
+
+        wResult = handleVimAction(wResult, {
+          type: 'vim_move_word_forward' as const,
+          payload: { count: 1 },
+        });
+        expect(wResult.cursorCol).toBe(10); // Start of 'سلام'
+
+        // Test 'b' command from end
+        const bState = createTestState(['مرحباhelloسلام'], 0, 13);
+        let bResult = handleVimAction(bState, {
+          type: 'vim_move_word_backward' as const,
+          payload: { count: 1 },
+        });
+        expect(bResult).toHaveOnlyValidCharacters();
+        expect(bResult.cursorCol).toBe(10); // Start of سلام
+
+        bResult = handleVimAction(bResult, {
+          type: 'vim_move_word_backward' as const,
+          payload: { count: 1 },
+        });
+        expect(bResult.cursorCol).toBe(5); // Start of hello
+      });
+    });
+  });
+});

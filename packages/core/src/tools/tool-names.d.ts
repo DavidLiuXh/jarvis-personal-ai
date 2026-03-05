@@ -1,0 +1,50 @@
+/**
+ * @license
+ * Copyright 2025 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
+ */
+import { GLOB_TOOL_NAME, GREP_TOOL_NAME, LS_TOOL_NAME, READ_FILE_TOOL_NAME, SHELL_TOOL_NAME, WRITE_FILE_TOOL_NAME, EDIT_TOOL_NAME, WEB_SEARCH_TOOL_NAME, WRITE_TODOS_TOOL_NAME, WEB_FETCH_TOOL_NAME, READ_MANY_FILES_TOOL_NAME, MEMORY_TOOL_NAME, GET_INTERNAL_DOCS_TOOL_NAME, ACTIVATE_SKILL_TOOL_NAME, ASK_USER_TOOL_NAME, EXIT_PLAN_MODE_TOOL_NAME, ENTER_PLAN_MODE_TOOL_NAME, PARAM_FILE_PATH, PARAM_DIR_PATH, PARAM_PATTERN, PARAM_CASE_SENSITIVE, PARAM_RESPECT_GIT_IGNORE, PARAM_RESPECT_GEMINI_IGNORE, PARAM_FILE_FILTERING_OPTIONS, PARAM_DESCRIPTION, READ_FILE_PARAM_START_LINE, READ_FILE_PARAM_END_LINE, WRITE_FILE_PARAM_CONTENT, GREP_PARAM_INCLUDE_PATTERN, GREP_PARAM_EXCLUDE_PATTERN, GREP_PARAM_NAMES_ONLY, GREP_PARAM_MAX_MATCHES_PER_FILE, GREP_PARAM_TOTAL_MAX_MATCHES, GREP_PARAM_FIXED_STRINGS, GREP_PARAM_CONTEXT, GREP_PARAM_AFTER, GREP_PARAM_BEFORE, GREP_PARAM_NO_IGNORE, EDIT_PARAM_INSTRUCTION, EDIT_PARAM_OLD_STRING, EDIT_PARAM_NEW_STRING, EDIT_PARAM_ALLOW_MULTIPLE, LS_PARAM_IGNORE, SHELL_PARAM_COMMAND, SHELL_PARAM_IS_BACKGROUND, WEB_SEARCH_PARAM_QUERY, WEB_FETCH_PARAM_PROMPT, READ_MANY_PARAM_INCLUDE, READ_MANY_PARAM_EXCLUDE, READ_MANY_PARAM_RECURSIVE, READ_MANY_PARAM_USE_DEFAULT_EXCLUDES, MEMORY_PARAM_FACT, TODOS_PARAM_TODOS, TODOS_ITEM_PARAM_DESCRIPTION, TODOS_ITEM_PARAM_STATUS, DOCS_PARAM_PATH, ASK_USER_PARAM_QUESTIONS, ASK_USER_QUESTION_PARAM_QUESTION, ASK_USER_QUESTION_PARAM_HEADER, ASK_USER_QUESTION_PARAM_TYPE, ASK_USER_QUESTION_PARAM_OPTIONS, ASK_USER_QUESTION_PARAM_MULTI_SELECT, ASK_USER_QUESTION_PARAM_PLACEHOLDER, ASK_USER_OPTION_PARAM_LABEL, ASK_USER_OPTION_PARAM_DESCRIPTION, PLAN_MODE_PARAM_REASON, EXIT_PLAN_PARAM_PLAN_PATH, SKILL_PARAM_NAME } from './definitions/coreTools.js';
+export { GLOB_TOOL_NAME, GREP_TOOL_NAME, LS_TOOL_NAME, READ_FILE_TOOL_NAME, SHELL_TOOL_NAME, WRITE_FILE_TOOL_NAME, EDIT_TOOL_NAME, WEB_SEARCH_TOOL_NAME, WRITE_TODOS_TOOL_NAME, WEB_FETCH_TOOL_NAME, READ_MANY_FILES_TOOL_NAME, MEMORY_TOOL_NAME, GET_INTERNAL_DOCS_TOOL_NAME, ACTIVATE_SKILL_TOOL_NAME, ASK_USER_TOOL_NAME, EXIT_PLAN_MODE_TOOL_NAME, ENTER_PLAN_MODE_TOOL_NAME, PARAM_FILE_PATH, PARAM_DIR_PATH, PARAM_PATTERN, PARAM_CASE_SENSITIVE, PARAM_RESPECT_GIT_IGNORE, PARAM_RESPECT_GEMINI_IGNORE, PARAM_FILE_FILTERING_OPTIONS, PARAM_DESCRIPTION, READ_FILE_PARAM_START_LINE, READ_FILE_PARAM_END_LINE, WRITE_FILE_PARAM_CONTENT, GREP_PARAM_INCLUDE_PATTERN, GREP_PARAM_EXCLUDE_PATTERN, GREP_PARAM_NAMES_ONLY, GREP_PARAM_MAX_MATCHES_PER_FILE, GREP_PARAM_TOTAL_MAX_MATCHES, GREP_PARAM_FIXED_STRINGS, GREP_PARAM_CONTEXT, GREP_PARAM_AFTER, GREP_PARAM_BEFORE, GREP_PARAM_NO_IGNORE, EDIT_PARAM_INSTRUCTION, EDIT_PARAM_OLD_STRING, EDIT_PARAM_NEW_STRING, EDIT_PARAM_ALLOW_MULTIPLE, LS_PARAM_IGNORE, SHELL_PARAM_COMMAND, SHELL_PARAM_IS_BACKGROUND, WEB_SEARCH_PARAM_QUERY, WEB_FETCH_PARAM_PROMPT, READ_MANY_PARAM_INCLUDE, READ_MANY_PARAM_EXCLUDE, READ_MANY_PARAM_RECURSIVE, READ_MANY_PARAM_USE_DEFAULT_EXCLUDES, MEMORY_PARAM_FACT, TODOS_PARAM_TODOS, TODOS_ITEM_PARAM_DESCRIPTION, TODOS_ITEM_PARAM_STATUS, DOCS_PARAM_PATH, ASK_USER_PARAM_QUESTIONS, ASK_USER_QUESTION_PARAM_QUESTION, ASK_USER_QUESTION_PARAM_HEADER, ASK_USER_QUESTION_PARAM_TYPE, ASK_USER_QUESTION_PARAM_OPTIONS, ASK_USER_QUESTION_PARAM_MULTI_SELECT, ASK_USER_QUESTION_PARAM_PLACEHOLDER, ASK_USER_OPTION_PARAM_LABEL, ASK_USER_OPTION_PARAM_DESCRIPTION, PLAN_MODE_PARAM_REASON, EXIT_PLAN_PARAM_PLAN_PATH, SKILL_PARAM_NAME, };
+export declare const LS_TOOL_NAME_LEGACY = "list_directory";
+export declare const EDIT_TOOL_NAMES: Set<string>;
+export declare const TRACKER_CREATE_TASK_TOOL_NAME = "tracker_create_task";
+export declare const TRACKER_UPDATE_TASK_TOOL_NAME = "tracker_update_task";
+export declare const TRACKER_GET_TASK_TOOL_NAME = "tracker_get_task";
+export declare const TRACKER_LIST_TASKS_TOOL_NAME = "tracker_list_tasks";
+export declare const TRACKER_ADD_DEPENDENCY_TOOL_NAME = "tracker_add_dependency";
+export declare const TRACKER_VISUALIZE_TOOL_NAME = "tracker_visualize";
+export declare const WRITE_FILE_DISPLAY_NAME = "WriteFile";
+export declare const EDIT_DISPLAY_NAME = "Edit";
+export declare const ASK_USER_DISPLAY_NAME = "Ask User";
+export declare const READ_FILE_DISPLAY_NAME = "ReadFile";
+export declare const GLOB_DISPLAY_NAME = "FindFiles";
+/**
+ * Mapping of legacy tool names to their current names.
+ * This ensures backward compatibility for user-defined policies, skills, and hooks.
+ */
+export declare const TOOL_LEGACY_ALIASES: Record<string, string>;
+/**
+ * Returns all associated names for a tool (including legacy aliases and current name).
+ * This ensures that if multiple legacy names point to the same tool, we consider all of them
+ * for policy application.
+ */
+export declare function getToolAliases(name: string): string[];
+/** Prefix used for tools discovered via the tool DiscoveryCommand. */
+export declare const DISCOVERED_TOOL_PREFIX = "discovered_tool_";
+/**
+ * List of all built-in tool names.
+ */
+export declare const ALL_BUILTIN_TOOL_NAMES: readonly ["glob", "write_todos", "write_file", "google_web_search", "web_fetch", "replace", "run_shell_command", "grep_search", "read_many_files", "read_file", "list_directory", "save_memory", "activate_skill", "ask_user", "tracker_create_task", "tracker_update_task", "tracker_get_task", "tracker_list_tasks", "tracker_add_dependency", "tracker_visualize", "get_internal_docs", "enter_plan_mode", "exit_plan_mode"];
+/**
+ * Read-only tools available in Plan Mode.
+ * This list is used to dynamically generate the Plan Mode prompt,
+ * filtered by what tools are actually enabled in the current configuration.
+ */
+export declare const PLAN_MODE_TOOLS: readonly ["glob", "grep_search", "read_file", "list_directory", "google_web_search", "ask_user", "activate_skill"];
+/**
+ * Validates if a tool name is syntactically valid.
+ * Checks against built-in tools, discovered tools, and MCP naming conventions.
+ */
+export declare function isValidToolName(name: string, options?: {
+    allowWildcards?: boolean;
+}): boolean;

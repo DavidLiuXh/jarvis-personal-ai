@@ -1,0 +1,164 @@
+/**
+ * @license
+ * Copyright 2025 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
+ */
+import { BaseToolInvocation, } from '../tools/tools.js';
+import { DEFAULT_QUERY_STRING, } from './types.js';
+import { A2AClientManager, } from './a2a-client-manager.js';
+import { extractIdsFromResponse, A2AResultReassembler } from './a2aUtils.js';
+import { GoogleAuth } from 'google-auth-library';
+import { debugLogger } from '../utils/debugLogger.js';
+import { A2AAuthProviderFactory } from './auth-provider/factory.js';
+/**
+ * Authentication handler implementation using Google Application Default Credentials (ADC).
+ */
+export class ADCHandler {
+    auth = new GoogleAuth({
+        scopes: ['https://www.googleapis.com/auth/cloud-platform'],
+    });
+    async headers() {
+        try {
+            const client = await this.auth.getClient();
+            const token = await client.getAccessToken();
+            if (token.token) {
+                return { Authorization: `Bearer ${token.token}` };
+            }
+            throw new Error('Failed to retrieve ADC access token.');
+        }
+        catch (e) {
+            const errorMessage = `Failed to get ADC token: ${e instanceof Error ? e.message : String(e)}`;
+            debugLogger.log('ERROR', errorMessage);
+            throw new Error(errorMessage);
+        }
+    }
+    async shouldRetryWithHeaders(_response) {
+        // For ADC, we usually just re-fetch the token if needed.
+        return this.headers();
+    }
+}
+/**
+ * A tool invocation that proxies to a remote A2A agent.
+ *
+ * This implementation bypasses the local `LocalAgentExecutor` loop and directly
+ * invokes the configured A2A tool.
+ */
+export class RemoteAgentInvocation extends BaseToolInvocation {
+    definition;
+    // Persist state across ephemeral invocation instances.
+    static sessionState = new Map();
+    // State for the ongoing conversation with the remote agent
+    contextId;
+    taskId;
+    // TODO: See if we can reuse the singleton from AppContainer or similar, but for now use getInstance directly
+    // as per the current pattern in the codebase.
+    clientManager = A2AClientManager.getInstance();
+    authHandler;
+    constructor(definition, params, messageBus, _toolName, _toolDisplayName) {
+        const query = params['query'] ?? DEFAULT_QUERY_STRING;
+        if (typeof query !== 'string') {
+            throw new Error(`Remote agent '${definition.name}' requires a string 'query' input.`);
+        }
+        // Safe to pass strict object to super
+        super({ query }, messageBus, _toolName ?? definition.name, _toolDisplayName ?? definition.displayName);
+        this.definition = definition;
+    }
+    getDescription() {
+        return `Calling remote agent ${this.definition.displayName ?? this.definition.name}`;
+    }
+    async getAuthHandler() {
+        if (this.authHandler) {
+            return this.authHandler;
+        }
+        if (this.definition.auth) {
+            const provider = await A2AAuthProviderFactory.create({
+                authConfig: this.definition.auth,
+                agentName: this.definition.name,
+            });
+            if (!provider) {
+                throw new Error(`Failed to create auth provider for agent '${this.definition.name}'`);
+            }
+            this.authHandler = provider;
+        }
+        return this.authHandler;
+    }
+    async getConfirmationDetails(_abortSignal) {
+        // For now, always require confirmation for remote agents until we have a policy system for them.
+        return {
+            type: 'info',
+            title: `Call Remote Agent: ${this.definition.displayName ?? this.definition.name}`,
+            prompt: `Calling remote agent: "${this.params.query}"`,
+            onConfirm: async (_outcome) => {
+                // Policy updates are now handled centrally by the scheduler
+            },
+        };
+    }
+    async execute(_signal, updateOutput) {
+        // 1. Ensure the agent is loaded (cached by manager)
+        // We assume the user has provided an access token via some mechanism (TODO),
+        // or we rely on ADC.
+        const reassembler = new A2AResultReassembler();
+        try {
+            const priorState = RemoteAgentInvocation.sessionState.get(this.definition.name);
+            if (priorState) {
+                this.contextId = priorState.contextId;
+                this.taskId = priorState.taskId;
+            }
+            const authHandler = await this.getAuthHandler();
+            if (!this.clientManager.getClient(this.definition.name)) {
+                await this.clientManager.loadAgent(this.definition.name, this.definition.agentCardUrl, authHandler);
+            }
+            const message = this.params.query;
+            const stream = this.clientManager.sendMessageStream(this.definition.name, message, {
+                contextId: this.contextId,
+                taskId: this.taskId,
+                signal: _signal,
+            });
+            let finalResponse;
+            for await (const chunk of stream) {
+                if (_signal.aborted) {
+                    throw new Error('Operation aborted');
+                }
+                finalResponse = chunk;
+                reassembler.update(chunk);
+                if (updateOutput) {
+                    updateOutput(reassembler.toString());
+                }
+                const { contextId: newContextId, taskId: newTaskId, clearTaskId, } = extractIdsFromResponse(chunk);
+                if (newContextId) {
+                    this.contextId = newContextId;
+                }
+                this.taskId = clearTaskId ? undefined : (newTaskId ?? this.taskId);
+            }
+            if (!finalResponse) {
+                throw new Error('No response from remote agent.');
+            }
+            const finalOutput = reassembler.toString();
+            debugLogger.debug(`[RemoteAgent] Final response from ${this.definition.name}:\n${JSON.stringify(finalResponse, null, 2)}`);
+            return {
+                llmContent: [{ text: finalOutput }],
+                returnDisplay: finalOutput,
+            };
+        }
+        catch (error) {
+            const partialOutput = reassembler.toString();
+            const errorMessage = `Error calling remote agent: ${error instanceof Error ? error.message : String(error)}`;
+            const fullDisplay = partialOutput
+                ? `${partialOutput}\n\n${errorMessage}`
+                : errorMessage;
+            return {
+                llmContent: [{ text: fullDisplay }],
+                returnDisplay: fullDisplay,
+                error: { message: errorMessage },
+            };
+        }
+        finally {
+            // Persist state even on partial failures or aborts to maintain conversational continuity.
+            RemoteAgentInvocation.sessionState.set(this.definition.name, {
+                contextId: this.contextId,
+                taskId: this.taskId,
+            });
+        }
+    }
+}
+//# sourceMappingURL=remote-invocation.js.map
