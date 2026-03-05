@@ -197,9 +197,7 @@
     </header>
 
     <div id="chat-window">
-        <div class="message jarvis">
-            <div class="markdown-body">Hello! I am **Jarvis**, your personal AI assistant. I've been upgraded with **Markdown** and **Code Highlighting** support. How can I help you today?</div>
-        </div>
+        <!-- Messages will be injected here -->
     </div>
 
     <footer>
@@ -222,6 +220,13 @@
         let currentMarkdownBuffer = '';
         let lastThoughtSubject = '';
 
+        // Get or create Session ID
+        let sessionId = localStorage.getItem('jarvis_session_id');
+        if (!sessionId) {
+            sessionId = 'session-' + Math.random().toString(36).substr(2, 9);
+            localStorage.setItem('jarvis_session_id', sessionId);
+        }
+
         // Configure marked to use highlight.js
         marked.setOptions({
             highlight: function(code, lang) {
@@ -230,6 +235,21 @@
             },
             langPrefix: 'hljs language-'
         });
+
+        function appendMessage(role, content, isHistory = false) {
+            const msgEl = document.createElement('div');
+            msgEl.className = `message ${role}`;
+            if (isHistory) msgEl.style.opacity = '0.7';
+            
+            const mdContainer = document.createElement('div');
+            mdContainer.className = 'markdown-body';
+            mdContainer.innerHTML = marked.parse(content);
+            msgEl.appendChild(mdContainer);
+            
+            chatWindow.appendChild(msgEl);
+            mdContainer.querySelectorAll('pre code').forEach(el => hljs.highlightElement(el));
+            chatWindow.scrollTop = chatWindow.scrollHeight;
+        }
 
         function connect() {
             const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -240,6 +260,9 @@
                 statusDot.style.color = 'var(--success)';
                 statusDot.style.backgroundColor = 'var(--success)';
                 sendBtn.disabled = false;
+                
+                // Request history restoration
+                ws.send(JSON.stringify({ type: 'restore', sessionId: sessionId }));
             };
 
             ws.onclose = () => {
@@ -270,10 +293,7 @@
                     if (eventData.type === 'content') {
                         currentMarkdownBuffer += eventData.value;
                         mdContainer.innerHTML = marked.parse(currentMarkdownBuffer);
-                        // Trigger highlight for the new content
-                        mdContainer.querySelectorAll('pre code').forEach((block) => {
-                            hljs.highlightElement(block);
-                        });
+                        mdContainer.querySelectorAll('pre code').forEach(el => hljs.highlightElement(el));
                     } 
                     else if (eventData.type === 'thought') {
                         const thought = eventData.value;
@@ -328,15 +348,15 @@
             const text = userInput.value.trim();
             if (!text || !ws || ws.readyState !== WebSocket.OPEN) return;
 
-            const userEl = document.createElement('div');
-            userEl.className = 'message user';
-            userEl.innerText = text;
-            chatWindow.appendChild(userEl);
+            appendMessage('user', text);
             
             sendBtn.disabled = true;
-            ws.send(JSON.stringify({ type: 'chat', payload: text }));
+            ws.send(JSON.stringify({ 
+                type: 'chat', 
+                payload: text,
+                sessionId: sessionId 
+            }));
             userInput.value = '';
-            chatWindow.scrollTop = chatWindow.scrollHeight;
         };
 
         connect();
