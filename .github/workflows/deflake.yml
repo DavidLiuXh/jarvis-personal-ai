@@ -39,7 +39,7 @@ jobs:
 
     steps:
       - name: 'Checkout'
-        uses: 'actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955' # ratchet:actions/checkout@v5
+        uses: 'actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd' # ratchet:actions/checkout@v5
         with:
           ref: '${{ github.event.pull_request.head.sha }}'
           repository: '${{ github.repository }}'
@@ -81,7 +81,7 @@ jobs:
     if: "github.repository == 'google-gemini/gemini-cli'"
     steps:
       - name: 'Checkout'
-        uses: 'actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955' # ratchet:actions/checkout@v5
+        uses: 'actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd' # ratchet:actions/checkout@v5
         with:
           ref: '${{ github.event.pull_request.head.sha }}'
           repository: '${{ github.repository }}'
@@ -119,7 +119,7 @@ jobs:
     if: "github.repository == 'google-gemini/gemini-cli'"
     steps:
       - name: 'Checkout'
-        uses: 'actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955' # ratchet:actions/checkout@v5
+        uses: 'actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd' # ratchet:actions/checkout@v5
         with:
           ref: '${{ github.event.pull_request.head.sha }}'
           repository: '${{ github.repository }}'
