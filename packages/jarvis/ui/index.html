@@ -1,0 +1,270 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Jarvis - Personal AI Assistant</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            background-color: #0f172a;
+            color: #f1f5f9;
+            margin: 0;
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+        }
+        header {
+            padding: 1rem 2rem;
+            background-color: #1e293b;
+            border-bottom: 1px solid #334155;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+        #chat-window {
+            flex: 1;
+            overflow-y: auto;
+            padding: 2rem;
+            display: flex;
+            flex-direction: column;
+            gap: 1rem;
+        }
+        .message {
+            max-width: 85%;
+            padding: 1rem;
+            border-radius: 0.75rem;
+            line-height: 1.5;
+            word-wrap: break-word;
+            white-space: pre-wrap;
+        }
+        .user {
+            align-self: flex-end;
+            background-color: #3b82f6;
+            color: white;
+        }
+        .jarvis {
+            align-self: flex-start;
+            background-color: #334155;
+            border: 1px solid #475569;
+        }
+        .thought-container {
+            background-color: #1e293b;
+            border-left: 3px solid #64748b;
+            padding: 0.5rem 1rem;
+            margin-bottom: 0.75rem;
+            border-radius: 0.25rem;
+        }
+        .thought-subject {
+            font-weight: bold;
+            color: #94a3b8;
+            font-size: 0.85rem;
+            margin-bottom: 0.25rem;
+        }
+        .thought-desc {
+            font-style: italic;
+            color: #64748b;
+            font-size: 0.85rem;
+        }
+        .tool-container {
+            background-color: #0f172a;
+            border: 1px dashed #475569;
+            padding: 0.5rem 1rem;
+            margin: 0.5rem 0;
+            border-radius: 0.25rem;
+            font-family: monospace;
+            font-size: 0.85rem;
+        }
+        .tool-header {
+            color: #10b981;
+            font-weight: bold;
+            margin-bottom: 0.25rem;
+        }
+        .tool-output {
+            color: #94a3b8;
+            max-height: 100px;
+            overflow-y: auto;
+        }
+        footer {
+            padding: 2rem;
+            background-color: #0f172a;
+            border-top: 1px solid #334155;
+        }
+        .input-container {
+            max-width: 800px;
+            margin: 0 auto;
+            display: flex;
+            gap: 1rem;
+        }
+        input {
+            flex: 1;
+            background-color: #1e293b;
+            border: 1px solid #334155;
+            color: white;
+            padding: 0.75rem 1rem;
+            border-radius: 0.5rem;
+            outline: none;
+        }
+        input:focus {
+            border-color: #3b82f6;
+        }
+        button {
+            background-color: #3b82f6;
+            color: white;
+            border: none;
+            padding: 0.75rem 1.5rem;
+            border-radius: 0.5rem;
+            cursor: pointer;
+            font-weight: 600;
+        }
+        button:hover:not(:disabled) {
+            background-color: #2563eb;
+        }
+        button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            display: inline-block;
+            margin-right: 6px;
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <div style="font-size: 1.5rem; font-weight: bold; color: #3b82f6;">🤖 Jarvis</div>
+        <div id="status-container" style="font-size: 0.8rem; color: #94a3b8; display: flex; align-items: center;">
+            <span id="status-dot" class="status-dot" style="background-color: #ef4444;"></span>
+            <span id="status-text">Disconnected</span>
+        </div>
+    </header>
+
+    <div id="chat-window">
+        <div class="message jarvis">Hello! I am Jarvis, your personal AI assistant. How can I help you today?</div>
+    </div>
+
+    <footer>
+        <form id="chat-form" class="input-container">
+            <input type="text" id="user-input" placeholder="Ask Jarvis something..." autocomplete="off">
+            <button type="submit" id="send-btn">Send</button>
+        </form>
+    </footer>
+
+    <script>
+        const chatWindow = document.getElementById('chat-window');
+        const chatForm = document.getElementById('chat-form');
+        const userInput = document.getElementById('user-input');
+        const statusText = document.getElementById('status-text');
+        const statusDot = document.getElementById('status-dot');
+        const sendBtn = document.getElementById('send-btn');
+        
+        let ws;
+        let currentResponseEl = null;
+        let lastThoughtSubject = '';
+
+        function connect() {
+            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            ws = new WebSocket(`${protocol}//${window.location.host}`);
+
+            ws.onopen = () => {
+                statusText.innerText = 'Online';
+                statusDot.style.background = '#10b981';
+                sendBtn.disabled = false;
+            };
+
+            ws.onclose = () => {
+                statusText.innerText = 'Disconnected - Retrying...';
+                statusDot.style.background = '#ef4444';
+                sendBtn.disabled = true;
+                setTimeout(connect, 3000);
+            };
+
+            ws.onmessage = (event) => {
+                const msg = JSON.parse(event.data);
+                
+                if (msg.type === 'stream') {
+                    const eventData = msg.payload;
+                    
+                    if (!currentResponseEl) {
+                        currentResponseEl = document.createElement('div');
+                        currentResponseEl.className = 'message jarvis';
+                        chatWindow.appendChild(currentResponseEl);
+                    }
+
+                    if (eventData.type === 'content') {
+                        const text = eventData.value;
+                        if (text) {
+                            const textNode = document.createTextNode(text);
+                            currentResponseEl.appendChild(textNode);
+                        }
+                    } 
+                    else if (eventData.type === 'thought') {
+                        const thought = eventData.value;
+                        if (thought.subject !== lastThoughtSubject) {
+                            const thoughtContainer = document.createElement('div');
+                            thoughtContainer.className = 'thought-container';
+                            thoughtContainer.innerHTML = `<div class="thought-subject">${thought.subject}</div><div class="thought-desc">${thought.description || ''}</div>`;
+                            currentResponseEl.appendChild(thoughtContainer);
+                            lastThoughtSubject = thought.subject;
+                        } else {
+                            const lastThoughtDesc = currentResponseEl.querySelector('.thought-container:last-child .thought-desc');
+                            if (lastThoughtDesc && thought.description) {
+                                lastThoughtDesc.innerText = thought.description;
+                            }
+                        }
+                    }
+                    else if (eventData.type === 'tool_call_request') {
+                        const tool = eventData.value;
+                        const toolEl = document.createElement('div');
+                        toolEl.className = 'tool-container';
+                        toolEl.id = 'tool-' + tool.callId;
+                        toolEl.innerHTML = `<div class="tool-header">🛠️ Calling ${tool.name}...</div><div class="tool-args" style="color: #64748b; font-size: 0.75rem;">${JSON.stringify(tool.args)}</div>`;
+                        currentResponseEl.appendChild(toolEl);
+                    }
+                    else if (eventData.type === 'tool_call_response') {
+                        const toolResult = eventData.value;
+                        const toolEl = document.getElementById('tool-' + toolResult.callId) || currentResponseEl.querySelector('.tool-container:last-child');
+                        if (toolEl) {
+                            toolEl.innerHTML += `<div class="tool-header" style="color: #3b82f6;">✅ ${toolResult.name} finished (${toolResult.status})</div><div class="tool-output">${toolResult.output || ''}</div>`;
+                        }
+                    }
+                    
+                    chatWindow.scrollTop = chatWindow.scrollHeight;
+                } else if (msg.type === 'done') {
+                    currentResponseEl = null;
+                    lastThoughtSubject = '';
+                    sendBtn.disabled = false;
+                } else if (msg.type === 'error') {
+                    const errorEl = document.createElement('div');
+                    errorEl.className = 'message jarvis';
+                    errorEl.style.color = '#f87171';
+                    errorEl.innerText = 'Error: ' + msg.message;
+                    chatWindow.appendChild(errorEl);
+                    sendBtn.disabled = false;
+                }
+            };
+        }
+
+        chatForm.onsubmit = (e) => {
+            e.preventDefault();
+            const text = userInput.value.trim();
+            if (!text || !ws || ws.readyState !== WebSocket.OPEN) return;
+
+            const userEl = document.createElement('div');
+            userEl.className = 'message user';
+            userEl.innerText = text;
+            chatWindow.appendChild(userEl);
+            
+            sendBtn.disabled = true;
+            ws.send(JSON.stringify({ type: 'chat', payload: text }));
+            userInput.value = '';
+            chatWindow.scrollTop = chatWindow.scrollHeight;
+        };
+
+        connect();
+    </script>
+</body>
+</html>

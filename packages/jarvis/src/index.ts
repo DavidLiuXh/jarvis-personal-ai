@@ -63,7 +63,7 @@ class JarvisServer {
       });
     });
 
-    const uiPath = path.join(process.cwd(), 'packages/jarvis/ui/dist');
+    const uiPath = path.join(process.cwd(), 'packages/jarvis/ui');
     this.app.use(express.static(uiPath));
     
     this.app.use((req, res, next) => {
