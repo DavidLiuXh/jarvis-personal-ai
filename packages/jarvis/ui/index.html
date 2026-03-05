@@ -4,11 +4,25 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Jarvis - Personal AI Assistant</title>
+    <!-- Libraries for Markdown and Highlighting -->
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/styles/github-dark.min.css">
+    <script src="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/highlight.min.js"></script>
     <style>
+        :root {
+            --bg-main: #0f172a;
+            --bg-card: #1e293b;
+            --bg-hover: #334155;
+            --text-main: #f1f5f9;
+            --text-muted: #94a3b8;
+            --accent: #3b82f6;
+            --success: #10b981;
+            --error: #f87171;
+        }
         body {
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-            background-color: #0f172a;
-            color: #f1f5f9;
+            background-color: var(--bg-main);
+            color: var(--text-main);
             margin: 0;
             display: flex;
             flex-direction: column;
@@ -16,11 +30,12 @@
         }
         header {
             padding: 1rem 2rem;
-            background-color: #1e293b;
-            border-bottom: 1px solid #334155;
+            background-color: var(--bg-card);
+            border-bottom: 1px solid var(--bg-hover);
             display: flex;
             align-items: center;
             justify-content: space-between;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
         }
         #chat-window {
             flex: 1;
@@ -28,127 +43,168 @@
             padding: 2rem;
             display: flex;
             flex-direction: column;
-            gap: 1rem;
+            gap: 1.5rem;
+            scroll-behavior: smooth;
         }
         .message {
-            max-width: 85%;
-            padding: 1rem;
-            border-radius: 0.75rem;
-            line-height: 1.5;
+            max-width: 90%;
+            padding: 1.25rem;
+            border-radius: 1rem;
+            line-height: 1.6;
             word-wrap: break-word;
-            white-space: pre-wrap;
+            position: relative;
+            animation: fadeIn 0.3s ease-out;
+        }
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
         }
         .user {
             align-self: flex-end;
-            background-color: #3b82f6;
+            background-color: var(--accent);
             color: white;
+            border-bottom-right-radius: 0.25rem;
         }
         .jarvis {
             align-self: flex-start;
-            background-color: #334155;
-            border: 1px solid #475569;
+            background-color: var(--bg-card);
+            border: 1px solid var(--bg-hover);
+            border-bottom-left-radius: 0.25rem;
         }
+        /* Markdown Styling */
+        .markdown-body pre {
+            background-color: #011627;
+            padding: 1rem;
+            border-radius: 0.5rem;
+            overflow-x: auto;
+            margin: 1rem 0;
+        }
+        .markdown-body code {
+            font-family: 'Fira Code', 'Cascadia Code', monospace;
+            font-size: 0.9rem;
+        }
+        .markdown-body p { margin: 0.5rem 0; }
+        .markdown-body ul, .markdown-body ol { padding-left: 1.5rem; }
+        
         .thought-container {
-            background-color: #1e293b;
-            border-left: 3px solid #64748b;
-            padding: 0.5rem 1rem;
-            margin-bottom: 0.75rem;
-            border-radius: 0.25rem;
+            background-color: #0f172a;
+            border-left: 4px solid #64748b;
+            padding: 0.75rem 1rem;
+            margin-bottom: 1rem;
+            border-radius: 0.4rem;
+            font-size: 0.9rem;
         }
         .thought-subject {
             font-weight: bold;
-            color: #94a3b8;
-            font-size: 0.85rem;
+            color: var(--text-muted);
             margin-bottom: 0.25rem;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
         }
+        .thought-subject::before { content: '💭'; }
         .thought-desc {
             font-style: italic;
             color: #64748b;
-            font-size: 0.85rem;
         }
         .tool-container {
-            background-color: #0f172a;
-            border: 1px dashed #475569;
-            padding: 0.5rem 1rem;
-            margin: 0.5rem 0;
-            border-radius: 0.25rem;
+            background-color: #011627;
+            border: 1px dashed var(--bg-hover);
+            padding: 0.75rem 1rem;
+            margin: 0.75rem 0;
+            border-radius: 0.5rem;
             font-family: monospace;
             font-size: 0.85rem;
         }
         .tool-header {
-            color: #10b981;
+            color: var(--success);
             font-weight: bold;
-            margin-bottom: 0.25rem;
+            margin-bottom: 0.5rem;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
         }
         .tool-output {
-            color: #94a3b8;
-            max-height: 100px;
+            color: var(--text-muted);
+            max-height: 200px;
             overflow-y: auto;
+            white-space: pre-wrap;
+            background: #000;
+            padding: 0.5rem;
+            border-radius: 0.25rem;
         }
         footer {
-            padding: 2rem;
-            background-color: #0f172a;
-            border-top: 1px solid #334155;
+            padding: 1.5rem 2rem;
+            background-color: var(--bg-main);
+            border-top: 1px solid var(--bg-hover);
         }
         .input-container {
-            max-width: 800px;
+            max-width: 900px;
             margin: 0 auto;
             display: flex;
             gap: 1rem;
+            background: var(--bg-card);
+            padding: 0.5rem;
+            border-radius: 0.75rem;
+            border: 1px solid var(--bg-hover);
         }
         input {
             flex: 1;
-            background-color: #1e293b;
-            border: 1px solid #334155;
+            background: transparent;
+            border: none;
             color: white;
             padding: 0.75rem 1rem;
-            border-radius: 0.5rem;
             outline: none;
-        }
-        input:focus {
-            border-color: #3b82f6;
+            font-size: 1rem;
         }
         button {
-            background-color: #3b82f6;
+            background-color: var(--accent);
             color: white;
             border: none;
             padding: 0.75rem 1.5rem;
             border-radius: 0.5rem;
             cursor: pointer;
             font-weight: 600;
+            transition: all 0.2s;
         }
         button:hover:not(:disabled) {
             background-color: #2563eb;
+            transform: translateY(-1px);
         }
         button:disabled {
             opacity: 0.5;
             cursor: not-allowed;
         }
         .status-dot {
-            width: 8px;
-            height: 8px;
+            width: 10px;
+            height: 10px;
             border-radius: 50%;
             display: inline-block;
-            margin-right: 6px;
+            margin-right: 8px;
+            box-shadow: 0 0 8px currentColor;
         }
     </style>
 </head>
 <body>
     <header>
-        <div style="font-size: 1.5rem; font-weight: bold; color: #3b82f6;">🤖 Jarvis</div>
-        <div id="status-container" style="font-size: 0.8rem; color: #94a3b8; display: flex; align-items: center;">
-            <span id="status-dot" class="status-dot" style="background-color: #ef4444;"></span>
+        <div style="font-size: 1.5rem; font-weight: bold; color: var(--accent); display: flex; align-items: center; gap: 0.5rem;">
+            <span>🤖</span> Jarvis
+        </div>
+        <div id="status-container" style="font-size: 0.85rem; color: var(--text-muted); display: flex; align-items: center; background: var(--bg-main); padding: 0.4rem 0.8rem; border-radius: 2rem;">
+            <span id="status-dot" class="status-dot" style="color: var(--error); background-color: var(--error);"></span>
             <span id="status-text">Disconnected</span>
         </div>
     </header>
 
     <div id="chat-window">
-        <div class="message jarvis">Hello! I am Jarvis, your personal AI assistant. How can I help you today?</div>
+        <div class="message jarvis">
+            <div class="markdown-body">Hello! I am **Jarvis**, your personal AI assistant. I've been upgraded with **Markdown** and **Code Highlighting** support. How can I help you today?</div>
+        </div>
     </div>
 
     <footer>
         <form id="chat-form" class="input-container">
-            <input type="text" id="user-input" placeholder="Ask Jarvis something..." autocomplete="off">
+            <input type="text" id="user-input" placeholder="Ask Jarvis to do something..." autocomplete="off">
             <button type="submit" id="send-btn">Send</button>
         </form>
     </footer>
@@ -163,7 +219,17 @@
         
         let ws;
         let currentResponseEl = null;
+        let currentMarkdownBuffer = '';
         let lastThoughtSubject = '';
+
+        // Configure marked to use highlight.js
+        marked.setOptions({
+            highlight: function(code, lang) {
+                const language = hljs.getLanguage(lang) ? lang : 'plaintext';
+                return hljs.highlight(code, { language }).value;
+            },
+            langPrefix: 'hljs language-'
+        });
 
         function connect() {
             const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -171,13 +237,15 @@
 
             ws.onopen = () => {
                 statusText.innerText = 'Online';
-                statusDot.style.background = '#10b981';
+                statusDot.style.color = 'var(--success)';
+                statusDot.style.backgroundColor = 'var(--success)';
                 sendBtn.disabled = false;
             };
 
             ws.onclose = () => {
-                statusText.innerText = 'Disconnected - Retrying...';
-                statusDot.style.background = '#ef4444';
+                statusText.innerText = 'Offline - Reconnecting...';
+                statusDot.style.color = 'var(--error)';
+                statusDot.style.backgroundColor = 'var(--error)';
                 sendBtn.disabled = true;
                 setTimeout(connect, 3000);
             };
@@ -191,15 +259,21 @@
                     if (!currentResponseEl) {
                         currentResponseEl = document.createElement('div');
                         currentResponseEl.className = 'message jarvis';
+                        const mdContainer = document.createElement('div');
+                        mdContainer.className = 'markdown-body';
+                        currentResponseEl.appendChild(mdContainer);
                         chatWindow.appendChild(currentResponseEl);
                     }
 
+                    const mdContainer = currentResponseEl.querySelector('.markdown-body');
+
                     if (eventData.type === 'content') {
-                        const text = eventData.value;
-                        if (text) {
-                            const textNode = document.createTextNode(text);
-                            currentResponseEl.appendChild(textNode);
-                        }
+                        currentMarkdownBuffer += eventData.value;
+                        mdContainer.innerHTML = marked.parse(currentMarkdownBuffer);
+                        // Trigger highlight for the new content
+                        mdContainer.querySelectorAll('pre code').forEach((block) => {
+                            hljs.highlightElement(block);
+                        });
                     } 
                     else if (eventData.type === 'thought') {
                         const thought = eventData.value;
@@ -207,7 +281,7 @@
                             const thoughtContainer = document.createElement('div');
                             thoughtContainer.className = 'thought-container';
                             thoughtContainer.innerHTML = `<div class="thought-subject">${thought.subject}</div><div class="thought-desc">${thought.description || ''}</div>`;
-                            currentResponseEl.appendChild(thoughtContainer);
+                            currentResponseEl.insertBefore(thoughtContainer, mdContainer);
                             lastThoughtSubject = thought.subject;
                         } else {
                             const lastThoughtDesc = currentResponseEl.querySelector('.thought-container:last-child .thought-desc');
@@ -221,27 +295,28 @@
                         const toolEl = document.createElement('div');
                         toolEl.className = 'tool-container';
                         toolEl.id = 'tool-' + tool.callId;
-                        toolEl.innerHTML = `<div class="tool-header">🛠️ Calling ${tool.name}...</div><div class="tool-args" style="color: #64748b; font-size: 0.75rem;">${JSON.stringify(tool.args)}</div>`;
-                        currentResponseEl.appendChild(toolEl);
+                        toolEl.innerHTML = `<div class="tool-header">🛠️ Invoking ${tool.name}...</div><div class="tool-args" style="color: #64748b; font-size: 0.75rem; margin-bottom: 0.5rem;">Args: ${JSON.stringify(tool.args)}</div>`;
+                        currentResponseEl.insertBefore(toolEl, mdContainer);
                     }
-                    else if (eventData.type === 'tool_call_response') {
+                    else if (eventData.type === 'tool_call_response' || eventData.type === 'tool_call_finished') {
                         const toolResult = eventData.value;
                         const toolEl = document.getElementById('tool-' + toolResult.callId) || currentResponseEl.querySelector('.tool-container:last-child');
-                        if (toolEl) {
-                            toolEl.innerHTML += `<div class="tool-header" style="color: #3b82f6;">✅ ${toolResult.name} finished (${toolResult.status})</div><div class="tool-output">${toolResult.output || ''}</div>`;
+                        if (toolEl && !toolEl.querySelector('.tool-output')) {
+                            toolEl.innerHTML += `<div class="tool-header" style="color: var(--accent);">✅ Execution Complete</div><div class="tool-output">${toolResult.output || 'Success'}</div>`;
                         }
                     }
                     
                     chatWindow.scrollTop = chatWindow.scrollHeight;
                 } else if (msg.type === 'done') {
                     currentResponseEl = null;
+                    currentMarkdownBuffer = '';
                     lastThoughtSubject = '';
                     sendBtn.disabled = false;
                 } else if (msg.type === 'error') {
                     const errorEl = document.createElement('div');
                     errorEl.className = 'message jarvis';
-                    errorEl.style.color = '#f87171';
-                    errorEl.innerText = 'Error: ' + msg.message;
+                    errorEl.style.color = 'var(--error)';
+                    errorEl.innerHTML = `<strong>Error:</strong> ${msg.message}`;
                     chatWindow.appendChild(errorEl);
                     sendBtn.disabled = false;
                 }
