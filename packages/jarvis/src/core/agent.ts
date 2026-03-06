@@ -63,6 +63,10 @@ export class JarvisAgent extends EventEmitter {
     if (!settings.merged.context) {
       settings.merged.context = {};
     }
+    // Disable the massive directory tree injection. Jarvis is a universal assistant, 
+    // it doesn't need to be strictly bound to the local workspace context.
+    settings.merged.context.includeDirectoryTree = false;
+
     if (!settings.merged.context.trustedFolders) {
       settings.merged.context.trustedFolders = [];
     }
