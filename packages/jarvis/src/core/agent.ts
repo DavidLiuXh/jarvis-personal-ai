@@ -187,6 +187,8 @@ You are NOT limited to coding or software engineering tasks. You are a universal
         debugLogger.debug(`[JarvisAgent] Session ${this.sessionId} Turn ${turnCount}`);
 
         const toolCallRequests: unknown[] = [];
+        let turnTextAccumulated = ''; // Track text in THIS turn to detect re-generation
+
         const responseStream = this.client.sendMessageStream(
           currentQueryParts,
           abortController.signal,
@@ -194,8 +196,21 @@ You are NOT limited to coding or software engineering tasks. You are a universal
         );
 
         for await (const event of responseStream) {
-          // Emit events for the communication layer to relay
-          this.emit(JarvisEventType.CONTENT, event);
+          if (event.type === GeminiEventType.Content) {
+            const newText = event.value;
+            
+            // DEDUPLICATION LOGIC:
+            // If the model restarts and sends text we've already seen in this turn, skip it.
+            if (turnTextAccumulated.includes(newText) && turnTextAccumulated.length > 0) {
+              continue; 
+            }
+            
+            turnTextAccumulated += newText;
+            this.emit(JarvisEventType.CONTENT, event);
+          } else {
+            // Forward other events (thoughts, tool calls) normally
+            this.emit(JarvisEventType.CONTENT, event);
+          }
 
           if (event.type === GeminiEventType.ToolCallRequest) {
             toolCallRequests.push(event.value);

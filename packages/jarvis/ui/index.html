@@ -276,10 +276,20 @@
             ws.onmessage = (event) => {
                 const msg = JSON.parse(event.data);
                 
-                if (msg.type === 'stream') {
+                if (msg.type === 'history') {
+                    chatWindow.innerHTML = '';
+                    msg.payload.forEach(m => {
+                        appendMessage(m.role, m.content, true);
+                    });
+                }
+                else if (msg.type === 'stream') {
                     const eventData = msg.payload;
                     
                     if (!currentResponseEl) {
+                        // NEW STREAM STARTED: Reset buffer to prevent duplication
+                        currentMarkdownBuffer = '';
+                        lastThoughtSubject = '';
+                        
                         currentResponseEl = document.createElement('div');
                         currentResponseEl.className = 'message jarvis';
                         const mdContainer = document.createElement('div');
@@ -291,6 +301,12 @@
                     const mdContainer = currentResponseEl.querySelector('.markdown-body');
 
                     if (eventData.type === 'content') {
+                        // Prevent identical back-to-back chunks if the model/server glitches
+                        if (currentMarkdownBuffer.endsWith(eventData.value)) {
+                            console.warn('Deduplicated identical chunk:', eventData.value);
+                            return;
+                        }
+                        
                         currentMarkdownBuffer += eventData.value;
                         mdContainer.innerHTML = marked.parse(currentMarkdownBuffer);
                         mdContainer.querySelectorAll('pre code').forEach(el => hljs.highlightElement(el));

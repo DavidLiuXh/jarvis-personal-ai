@@ -16,11 +16,8 @@ import { debugLogger } from '../../core/src/index.js';
 import { JarvisManager } from './core/manager.js';
 import { JarvisEventType, type JarvisIncomingMessage } from './core/types.js';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-
 /**
- * Jarvis Persistent AI Assistant Server (Communication Gateway)
+ * Jarvis Persistent AI Assistant Server
  */
 class JarvisServer {
   private wss: WebSocketServer;
@@ -31,9 +28,7 @@ class JarvisServer {
   constructor(private port: number = 3000) {
     this.app = express();
     this.server = createServer(this.app);
-    this.wss = new WebSocketServer({
-      server: this.server,
-    });
+    this.wss = new WebSocketServer({ server: this.server });
     this.manager = JarvisManager.getInstance();
 
     this.setupRoutes();
@@ -60,103 +55,120 @@ class JarvisServer {
   private setupWebSocket() {
     this.wss.on('connection', (ws: WebSocket) => {
       const connectionId = uuidv4();
-      debugLogger.debug(`[JarvisServer] New connection: ${connectionId}`);
+      debugLogger.debug(`[JarvisServer] Connection opened: ${connectionId}`);
 
-      ws.on('message', async (data: string) => {
+      // Track active session for this specific WS connection
+      let currentSessionId: string | null = null;
+
+      const messageHandler = async (data: string) => {
         try {
           const message = JSON.parse(data.toString()) as JarvisIncomingMessage;
-          await this.handleIncomingMessage(ws, connectionId, message);
-        } catch (error: unknown) {
-          debugLogger.error('[JarvisServer] Msg parse error:', error);
-          ws.send(JSON.stringify({ type: 'error', message: 'Invalid protocol' }));
-        }
-      });
+          const sessionId = ('sessionId' in message && message.sessionId) || connectionId;
+          currentSessionId = sessionId;
 
+          if (message.type === 'chat') {
+            await this.handleChat(ws, sessionId, message.payload);
+          } else if (message.type === 'restore') {
+            await this.handleRestore(ws, sessionId);
+          } else if (message.type === 'ping') {
+            ws.send(JSON.stringify({ type: 'pong' }));
+          }
+        } catch (error: unknown) {
+          debugLogger.error('[JarvisServer] Msg handle error:', error);
+          ws.send(JSON.stringify({ type: 'error', message: 'Protocol error' }));
+        }
+      };
+
+      ws.on('message', messageHandler);
       ws.on('close', () => {
         debugLogger.debug(`[JarvisServer] Connection closed: ${connectionId}`);
       });
     });
   }
 
-  private async handleIncomingMessage(
-    ws: WebSocket,
-    connectionId: string,
-    message: JarvisIncomingMessage,
-  ) {
-    const sessionId = ('sessionId' in message && message.sessionId) || connectionId;
+  private async handleChat(ws: WebSocket, sessionId: string, payload: string) {
     const agent = await this.manager.getAgent(sessionId);
 
-    // Setup event relay for this WebSocket connection
-    const relayEvent = (type: string) => (data: any) => {
-      if (ws.readyState === ws.OPEN) {
-        ws.send(JSON.stringify({ type: 'stream', sessionId, payload: { type, value: data } }));
-      }
-    };
-
-    // Special: Forward content directly as it's already in the correct structure
-    const relayContent = (event: any) => {
+    // FIXED: Define listeners as stable constants to ensure off() works
+    const onContent = (event: any) => {
       if (ws.readyState === ws.OPEN) {
         ws.send(JSON.stringify({ type: 'stream', sessionId, payload: event }));
       }
     };
 
-    // Attach listeners
-    agent.on(JarvisEventType.CONTENT, relayContent);
-    agent.on(JarvisEventType.TOOL_CALL_RESPONSE, relayEvent(JarvisEventType.TOOL_CALL_RESPONSE));
-    
+    const onToolResponse = (data: any) => {
+      if (ws.readyState === ws.OPEN) {
+        ws.send(JSON.stringify({
+          type: 'stream',
+          sessionId,
+          payload: { type: JarvisEventType.TOOL_CALL_RESPONSE, value: data }
+        }));
+      }
+    };
+
     const onDone = () => {
-      ws.send(JSON.stringify({ type: 'done', sessionId }));
+      if (ws.readyState === ws.OPEN) {
+        ws.send(JSON.stringify({ type: 'done', sessionId }));
+      }
       cleanup();
     };
 
     const onError = (err: any) => {
-      ws.send(JSON.stringify({ type: 'error', sessionId, message: err.message || 'Agent error' }));
+      if (ws.readyState === ws.OPEN) {
+        ws.send(JSON.stringify({ type: 'error', sessionId, message: err.message || 'Agent error' }));
+      }
       cleanup();
     };
 
     const cleanup = () => {
-      agent.off(JarvisEventType.CONTENT, relayContent);
-      agent.off(JarvisEventType.TOOL_CALL_RESPONSE, relayEvent(JarvisEventType.TOOL_CALL_RESPONSE));
+      agent.off(JarvisEventType.CONTENT, onContent);
+      agent.off(JarvisEventType.TOOL_CALL_RESPONSE, onToolResponse);
       agent.off(JarvisEventType.DONE, onDone);
       agent.off(JarvisEventType.ERROR, onError);
     };
 
-    agent.on(JarvisEventType.DONE, onDone);
-    agent.on(JarvisEventType.ERROR, onError);
+    // Attach listeners BEFORE starting the process
+    agent.on(JarvisEventType.CONTENT, onContent);
+    agent.on(JarvisEventType.TOOL_CALL_RESPONSE, onToolResponse);
+    agent.once(JarvisEventType.DONE, onDone);
+    agent.once(JarvisEventType.ERROR, onError);
 
-    switch (message.type) {
-      case 'chat':
-        await agent.processMessage(message.payload);
-        break;
-      case 'restore':
-        await this.handleRestore(ws, sessionId);
-        break;
-      case 'ping':
-        ws.send(JSON.stringify({ type: 'pong' }));
-        break;
-    }
+    await agent.processMessage(payload);
   }
 
   private async handleRestore(ws: WebSocket, sessionId: string) {
-    const agent = await this.manager.getAgent(sessionId);
-    const history = agent.getHistory();
-    for (const content of history) {
-      const text = content.parts.map((p) => p.text || '').join('');
-      if (text.trim()) {
-        ws.send(JSON.stringify({
-          type: 'stream',
-          sessionId,
-          payload: { type: 'content', value: text },
-        }));
+    try {
+      const agent = await this.manager.getAgent(sessionId);
+      const history = agent.getHistory();
+      
+      const messages: any[] = [];
+      for (const content of history) {
+        let text = content.parts.map((p) => (p as any).text || '').join('');
+        
+        if (text.includes('<session_context>')) {
+          text = text.replace(/<session_context>[\s\S]*?<\/session_context>/g, '').trim();
+        }
+
+        if (text.trim()) {
+          messages.push({
+            role: content.role === 'user' ? 'user' : 'jarvis',
+            content: text
+          });
+        }
       }
+
+      ws.send(JSON.stringify({ type: 'history', sessionId, payload: messages }));
+      ws.send(JSON.stringify({ type: 'done', sessionId }));
+    } catch (error) {
+      debugLogger.error('[Jarvis] Restore error:', error);
+      ws.send(JSON.stringify({ type: 'error', message: 'Failed to restore session' }));
     }
-    ws.send(JSON.stringify({ type: 'done', sessionId }));
   }
 
   public start() {
     this.server.listen(this.port, '0.0.0.0', () => {
       // eslint-disable-next-line no-console
-      console.log(`\n🤖 Jarvis AI Assistant 2.0 (Event-Driven) is active!`);
+      console.log(`\n🤖 Jarvis AI Assistant 2.0 (Stable) is active!`);
       // eslint-disable-next-line no-console
       console.log(`📡 Health: http://localhost:${this.port}/health`);
       // eslint-disable-next-line no-console
@@ -167,7 +179,6 @@ class JarvisServer {
   }
 
   public async stop() {
-    debugLogger.debug('[JarvisServer] Stopping...');
     await this.manager.cleanup();
     return new Promise<void>((resolve) => {
       this.wss.close(() => {
