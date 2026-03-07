@@ -5,13 +5,37 @@
  */
 
 import 'dotenv/config';
+
+// --- 1. THE STABLE SANDBOX LAYER ---
+import os from 'node:os';
+import path from 'node:path';
+import fs from 'node:fs';
+import process from 'node:process';
+
+/**
+ * JARVIS RUNTIME SANDBOX
+ * Switching CWD to this directory forces the core library to isolate its storage.
+ */
+const JARVIS_BASE_DIR = path.join(os.homedir(), '.gemini-jarvis');
+const JARVIS_RUNTIME = path.join(JARVIS_BASE_DIR, 'runtime');
+const JARVIS_STORAGE = path.join(JARVIS_BASE_DIR, 'storage');
+
+// Ensure the private structure exists
+[JARVIS_BASE_DIR, JARVIS_RUNTIME, JARVIS_STORAGE].forEach(dir => {
+  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+});
+
+// Save original project root
+const SOURCE_ROOT = process.cwd();
+
+// SWITCH TO SANDBOX
+process.chdir(JARVIS_RUNTIME);
+// ------------------------------------
+
 import { WebSocketServer, type WebSocket } from 'ws';
 import express, { type Request, type Response, type NextFunction } from 'express';
 import { createServer, type Server } from 'node:http';
 import { v4 as uuidv4 } from 'uuid';
-import process from 'node:process';
-import path from 'node:path';
-import os from 'node:os';
 import { fileURLToPath } from 'node:url';
 
 import { debugLogger, AuthType } from '../../core/src/index.js';
@@ -27,7 +51,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 /**
- * Jarvis Persistent AI Assistant Server (Communication Gateway)
+ * Jarvis Persistent AI Assistant Server
  */
 class JarvisServer {
   private wss: WebSocketServer;
@@ -39,17 +63,15 @@ class JarvisServer {
     this.app = express();
     this.server = createServer(this.app);
     this.wss = new WebSocketServer({ server: this.server });
-    this.manager = JarvisManager.getInstance();
+    this.manager = JarvisManager.getInstance(SOURCE_ROOT);
 
     this.setupRoutes();
     this.setupWebSocket();
 
-    // IMMEDIATE START: Trigger memory backfill if API key is available
     const apiKey = process.env.GOOGLE_API_KEY || process.env.GEMINI_API_KEY;
     if (apiKey) {
       this.manager.getMemoryService().startWithApiKey(apiKey);
     } else {
-      // Fallback to lazy sync via config if no env var
       void this.initializeMemorySync();
     }
   }
@@ -57,31 +79,27 @@ class JarvisServer {
   private async initializeMemorySync() {
     try {
       debugLogger.debug('[JarvisServer] Initializing background memory sync...');
-      const settings = loadSettings(process.cwd());
+      const settings = loadSettings(SOURCE_ROOT);
       const config = await loadCliConfig(
         settings.merged,
         'startup-sync',
         { _: [], yolo: true },
-        { 
-          cwd: process.cwd(),
-          projectTmpDir: path.join(os.homedir(), '.gemini', 'jarvis', 'storage')
-        }
+        { cwd: process.cwd() } // Use Sandbox CWD
       );
       await config.refreshAuth(settings.merged.security.auth.selectedType || AuthType.LOGIN_WITH_GOOGLE);
       await config.initialize();
-      
       this.manager.getMemoryService().setConfig(config);
     } catch (err) {
-      debugLogger.error('[JarvisServer] Background sync init failed:', err);
+      debugLogger.error('[JarvisServer] Startup sync failed:', err);
     }
   }
 
   private setupRoutes() {
     this.app.get('/health', (_req: Request, res: Response) => {
-      res.json({ status: 'ok', branding: 'Jarvis' });
+      res.json({ status: 'ok', branding: 'Jarvis', runtime: process.cwd() });
     });
 
-    const uiPath = path.join(process.cwd(), 'packages/jarvis/ui');
+    const uiPath = path.join(SOURCE_ROOT, 'packages/jarvis/ui');
     this.app.use(express.static(uiPath));
 
     this.app.use((req: Request, res: Response, next: NextFunction) => {
@@ -179,19 +197,13 @@ class JarvisServer {
       const messages: any[] = [];
       for (const content of history) {
         let text = content.parts.map((p) => (p as any).text || '').join('');
-        
         if (text.includes('<session_context>')) {
           text = text.replace(/<session_context>[\s\S]*?<\/session_context>/g, '').trim();
         }
-
         if (text.trim()) {
-          messages.push({
-            role: content.role === 'user' ? 'user' : 'jarvis',
-            content: text
-          });
+          messages.push({ role: content.role === 'user' ? 'user' : 'jarvis', content: text });
         }
       }
-
       ws.send(JSON.stringify({ type: 'history', sessionId, payload: messages }));
       ws.send(JSON.stringify({ type: 'done', sessionId }));
     } catch (error) {
@@ -203,7 +215,7 @@ class JarvisServer {
   public start() {
     this.server.listen(this.port, '0.0.0.0', () => {
       // eslint-disable-next-line no-console
-      console.log(`\n🤖 Jarvis AI Assistant 2.0 (Stable) is active!`);
+      console.log(`\n🤖 Jarvis AI Assistant 3.0 (STABLE SANDBOX) is active!`);
       // eslint-disable-next-line no-console
       console.log(`📡 Health: http://localhost:${this.port}/health`);
       // eslint-disable-next-line no-console

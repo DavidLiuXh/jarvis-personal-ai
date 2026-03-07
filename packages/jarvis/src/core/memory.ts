@@ -11,23 +11,24 @@ import fs from 'node:fs';
 import os from 'node:os';
 import { execSync } from 'node:child_process';
 import { createRequire } from 'node:module';
+import { HttpsProxyAgent } from 'https-proxy-agent';
 import { debugLogger, type Config, type ConversationRecord } from '../../../core/src/index.js';
 
 const require = createRequire(import.meta.url);
 const { GoogleGenAI } = require('@google/genai');
 
-const INGESTION_DELAY_MS = 500;
+const INGESTION_DELAY_MS = 800; 
 const EMBEDDING_MODEL = 'text-embedding-004';
+const JARVIS_ROOT = path.join(os.homedir(), '.gemini-jarvis');
 
 export class MemoryService {
   private db: Database.Database;
   private queue: Array<{ sessionId: string; text: string }> = [];
   private isProcessing = false;
-  private config?: Config;
   private client?: any;
 
   constructor() {
-    const memoryDir = path.join(os.homedir(), '.gemini', 'jarvis');
+    const memoryDir = path.join(JARVIS_ROOT, 'memory');
     const dbPath = path.join(memoryDir, 'memory.db');
 
     if (!fs.existsSync(memoryDir)) {
@@ -56,48 +57,67 @@ export class MemoryService {
         last_mtime INTEGER
       );
     `);
+    debugLogger.debug('[MemoryService V2] Database ready.');
   }
 
-  public startWithApiKey(apiKey: string) {
-    if (apiKey && !this.client) {
-      this.client = new GoogleGenAI({ apiKey });
-      debugLogger.debug('[MemoryService] AI client ready (New SDK).');
-      void this.syncHistoricalSessions();
-      void this.processQueue();
-    }
-  }
-
+  /**
+   * Legacy compatibility method to set config and start AI client.
+   */
   public setConfig(config: Config) {
-    this.config = config;
     const apiKey = (config as any).apiKey || process.env.GOOGLE_API_KEY;
-    if (apiKey && !this.client) {
+    if (apiKey) {
       this.startWithApiKey(apiKey);
     }
   }
 
   /**
-   * SYSTEM-POWERED SYNC: Uses native 'find' command for bulletproof session discovery.
+   * Initializes the AI client with optional proxy support.
    */
+  public startWithApiKey(apiKey: string) {
+    if (this.client) return;
+
+    const proxy = process.env.HTTPS_PROXY || process.env.https_proxy || process.env.HTTP_PROXY || process.env.http_proxy;
+    let fetchOptions = {};
+    
+    if (proxy) {
+      debugLogger.debug(`[MemoryService V2] Using proxy: ${proxy}`);
+      const agent = new HttpsProxyAgent(proxy);
+      // @ts-ignore - SDK internal support
+      fetchOptions = { agent };
+    }
+
+    this.client = new GoogleGenAI({ 
+      apiKey,
+      // @ts-ignore - SDK internal support
+      httpClient: fetchOptions 
+    });
+
+    debugLogger.debug('[MemoryService V2] AI Engine online.');
+    void this.syncHistoricalSessions();
+    void this.processQueue();
+  }
+
   private async syncHistoricalSessions() {
     if (!this.client) return;
 
     try {
-      const home = os.homedir();
-      const cmd = `find "${home}/.gemini" -name "session-*.json" 2>/dev/null`;
-      const output = execSync(cmd).toString();
-      const allSessionFiles = output.split('\n').filter(f => f.trim().length > 0);
+      const searchRoot = path.join(JARVIS_ROOT, 'storage', 'chats');
+      if (!fs.existsSync(searchRoot)) return;
 
-      console.log(`[MemoryService] DISCOVERED ${allSessionFiles.length} HISTORICAL SESSIONS.`);
+      const output = execSync(`find "${searchRoot}" -name "session-*.json" 2>/dev/null`).toString();
+      const sessionFiles = output.split('\n').filter(f => f.trim().length > 0);
 
-      for (const filePath of allSessionFiles) {
+      debugLogger.debug(`[MemoryService V2] Found ${sessionFiles.length} internal sessions.`);
+
+      for (const filePath of sessionFiles) {
         try {
           const stats = fs.statSync(filePath);
-          const trackingKey = filePath.replace(home, '~');
+          const trackingKey = filePath.replace(os.homedir(), '~');
           
           const row = this.db.prepare('SELECT last_mtime FROM processed_files WHERE filename = ?').get(trackingKey) as any;
           if (row && row.last_mtime >= stats.mtimeMs) continue;
 
-          console.log(`[MemoryService] Indexing: ${path.basename(filePath)}`);
+          debugLogger.debug(`[MemoryService V2] Backfilling: ${path.basename(filePath)}`);
           const content = fs.readFileSync(filePath, 'utf8');
           const record = JSON.parse(content) as ConversationRecord;
           
@@ -105,20 +125,18 @@ export class MemoryService {
             if (msg.type === 'user' || msg.type === 'gemini') {
               const text = Array.isArray(msg.content) ? msg.content.map((p: any) => p.text || '').join('') : String(msg.content);
               if (text.length > 50) {
-                await this.saveChunk(record.sessionId || 'imported', text);
+                await this.saveChunk(record.sessionId || 'legacy', text);
                 await new Promise(r => setTimeout(r, INGESTION_DELAY_MS));
               }
             }
           }
           this.db.prepare('INSERT OR REPLACE INTO processed_files (filename, last_mtime) VALUES (?, ?)').run(trackingKey, stats.mtimeMs);
-        } catch (e) {
-          console.error(`[MemoryService] Skipped ${filePath} due to error.`);
-        }
+        } catch (e) {}
       }
       const finalCount = this.db.prepare('SELECT count(*) as c FROM memories').get() as any;
-      console.log(`[MemoryService] SYNC COMPLETE. Records in DB: ${finalCount.c}`);
+      debugLogger.debug(`[MemoryService V2] Sync complete. Records: ${finalCount.c}`);
     } catch (err) {
-      console.error('[MemoryService] Sync failed:', err);
+      debugLogger.error('[MemoryService V2] Global sync failure', err);
     }
   }
 
@@ -147,33 +165,26 @@ export class MemoryService {
   private async saveChunk(sessionId: string, text: string) {
     if (!this.client) return;
     try {
-      // NEW SDK SYNTAX
       const result = await this.client.models.embedContent({
         model: EMBEDDING_MODEL,
         contents: [{ parts: [{ text }] }]
       });
-      
       const vector = result.embeddings[0].values;
 
       const info = this.db.prepare('INSERT INTO memories (sessionId, text, timestamp) VALUES (?, ?, ?)').run(sessionId, text, Date.now());
       this.db.prepare('INSERT INTO vec_memories (id, embedding) VALUES (last_insert_rowid(), ?)').run(new Float32Array(vector));
-      debugLogger.debug(`[MemoryService] Indexed ${vector.length}d chunk.`);
     } catch (err: any) {
-      const cause = err.cause ? ` | Cause: ${err.cause.message || err.cause}` : '';
-      const status = err.status || (err.response ? err.response.status : '');
-      console.error(`[MemoryService] API Save Error: ${err.message}${status ? ' (Status: ' + status + ')' : ''}${cause}`);
+      debugLogger.error(`[MemoryService V2] Embedding failed: ${err.message}`);
     }
   }
 
   public async search(query: string, limit: number = 5): Promise<string[]> {
     if (!this.client) return [];
     try {
-      // NEW SDK SYNTAX
       const result = await this.client.models.embedContent({
         model: EMBEDDING_MODEL,
         contents: [{ parts: [{ text: query }] }]
       });
-      
       const vector = result.embeddings[0].values;
 
       const results = this.db.prepare(`
