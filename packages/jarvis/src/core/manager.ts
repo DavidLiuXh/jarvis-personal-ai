@@ -5,15 +5,18 @@
  */
 
 import { JarvisAgent } from './agent.js';
+import { MemoryService } from './memory.js';
 import { debugLogger } from '../../../core/src/index.js';
 
 export class JarvisManager {
   private static instance: JarvisManager;
   private agents: Map<string, JarvisAgent> = new Map();
+  private memoryService: MemoryService;
   private cwd: string;
 
   private constructor(cwd: string = process.cwd()) {
     this.cwd = cwd;
+    this.memoryService = new MemoryService();
   }
 
   public static getInstance(cwd?: string): JarvisManager {
@@ -23,13 +26,18 @@ export class JarvisManager {
     return JarvisManager.instance;
   }
 
+  public getMemoryService(): MemoryService {
+    return this.memoryService;
+  }
+
   public async getAgent(sessionId: string): Promise<JarvisAgent> {
     let agent = this.agents.get(sessionId);
     if (!agent) {
       debugLogger.debug(`[JarvisManager] Creating new agent for session: ${sessionId}`);
       agent = new JarvisAgent({
         sessionId,
-        cwd: this.cwd
+        cwd: this.cwd,
+        memoryService: this.memoryService
       });
       // Initializing can be done lazily on first message or here
       await agent.initialize();
