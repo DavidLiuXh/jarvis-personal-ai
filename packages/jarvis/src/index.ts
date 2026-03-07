@@ -4,20 +4,30 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+import 'dotenv/config';
 import { WebSocketServer, type WebSocket } from 'ws';
 import express, { type Request, type Response, type NextFunction } from 'express';
 import { createServer, type Server } from 'node:http';
 import { v4 as uuidv4 } from 'uuid';
 import process from 'node:process';
 import path from 'node:path';
+import os from 'node:os';
 import { fileURLToPath } from 'node:url';
 
-import { debugLogger } from '../../core/src/index.js';
+import { debugLogger, AuthType } from '../../core/src/index.js';
 import { JarvisManager } from './core/manager.js';
 import { JarvisEventType, type JarvisIncomingMessage } from './core/types.js';
 
+// @ts-expect-error - Relative import
+import { loadCliConfig } from '../../cli/src/config/config.js';
+// @ts-expect-error - Relative import
+import { loadSettings } from '../../cli/src/config/settings.js';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
 /**
- * Jarvis Persistent AI Assistant Server
+ * Jarvis Persistent AI Assistant Server (Communication Gateway)
  */
 class JarvisServer {
   private wss: WebSocketServer;
@@ -33,6 +43,37 @@ class JarvisServer {
 
     this.setupRoutes();
     this.setupWebSocket();
+
+    // IMMEDIATE START: Trigger memory backfill if API key is available
+    const apiKey = process.env.GOOGLE_API_KEY || process.env.GEMINI_API_KEY;
+    if (apiKey) {
+      this.manager.getMemoryService().startWithApiKey(apiKey);
+    } else {
+      // Fallback to lazy sync via config if no env var
+      void this.initializeMemorySync();
+    }
+  }
+
+  private async initializeMemorySync() {
+    try {
+      debugLogger.debug('[JarvisServer] Initializing background memory sync...');
+      const settings = loadSettings(process.cwd());
+      const config = await loadCliConfig(
+        settings.merged,
+        'startup-sync',
+        { _: [], yolo: true },
+        { 
+          cwd: process.cwd(),
+          projectTmpDir: path.join(os.homedir(), '.gemini', 'jarvis', 'storage')
+        }
+      );
+      await config.refreshAuth(settings.merged.security.auth.selectedType || AuthType.LOGIN_WITH_GOOGLE);
+      await config.initialize();
+      
+      this.manager.getMemoryService().setConfig(config);
+    } catch (err) {
+      debugLogger.error('[JarvisServer] Background sync init failed:', err);
+    }
   }
 
   private setupRoutes() {
@@ -57,14 +98,10 @@ class JarvisServer {
       const connectionId = uuidv4();
       debugLogger.debug(`[JarvisServer] Connection opened: ${connectionId}`);
 
-      // Track active session for this specific WS connection
-      let currentSessionId: string | null = null;
-
       const messageHandler = async (data: string) => {
         try {
           const message = JSON.parse(data.toString()) as JarvisIncomingMessage;
           const sessionId = ('sessionId' in message && message.sessionId) || connectionId;
-          currentSessionId = sessionId;
 
           if (message.type === 'chat') {
             await this.handleChat(ws, sessionId, message.payload);
@@ -89,7 +126,6 @@ class JarvisServer {
   private async handleChat(ws: WebSocket, sessionId: string, payload: string) {
     const agent = await this.manager.getAgent(sessionId);
 
-    // FIXED: Define listeners as stable constants to ensure off() works
     const onContent = (event: any) => {
       if (ws.readyState === ws.OPEN) {
         ws.send(JSON.stringify({ type: 'stream', sessionId, payload: event }));
@@ -127,7 +163,6 @@ class JarvisServer {
       agent.off(JarvisEventType.ERROR, onError);
     };
 
-    // Attach listeners BEFORE starting the process
     agent.on(JarvisEventType.CONTENT, onContent);
     agent.on(JarvisEventType.TOOL_CALL_RESPONSE, onToolResponse);
     agent.once(JarvisEventType.DONE, onDone);

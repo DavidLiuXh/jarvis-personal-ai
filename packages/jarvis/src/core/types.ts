@@ -5,6 +5,7 @@
  */
 
 import { type Part } from '../../../core/src/index.js';
+import { type MemoryService } from './memory.js';
 
 export enum JarvisEventType {
   CONTENT = 'content',
@@ -25,6 +26,7 @@ export interface JarvisEvent {
 export interface JarvisAgentOptions {
   sessionId: string;
   cwd: string;
+  memoryService: MemoryService;
 }
 
 export interface JarvisChatMessage {
