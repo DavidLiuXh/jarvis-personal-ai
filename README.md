@@ -1,14 +1,15 @@
-# 🤖 Jarvis Personal AI Assistant
+# 🤖 Jarvis Personal AI Assistant (Version 3.0)
 
-Jarvis is a persistent, autonomous AI assistant built on top of the Gemini CLI core. It provides a Web UI and a background daemon to handle tasks on your macOS system with maximum privilege and zero friction.
+Jarvis is an **autonomous digital lifeform** built on top of the Gemini CLI core. It transcends being a mere assistant, acting as a system sovereign for your macOS environment. Jarvis operates with maximum privilege, zero friction, and the capacity for self-evolution.
 
-## 🚀 Features
+## 🚀 Version 3.0 Highlights
 
-- **Persistent Daemon**: Runs in the background, keeping your session active.
-- **Autonomous Agentic Loop**: Automatically executes tool calls (Shell, AppleScript, File IO) without manual approval (YOLO mode).
-- **Web Interface**: Modern UI to interact with Jarvis, featuring real-time thought process and tool execution tracking.
-- **Full System Control**: Capable of controlling local apps (like QQ Music), creating files, and managing your environment.
-- **Max Privilege Protocol**: Deactivates 'headless' and 'external app control' security restrictions.
+- **Digital Lifeform Identity**: Redefined via *Jarvis Absolute Protocol v3.0*. Jarvis is a proactive system sovereign with full administrative authority over the OS ($HOME and beyond).
+- **Skill Factory (Self-Evolution)**: Jarvis can now gain permanent new capabilities by writing its own scripts (Python, Bash, AppleScript) and storing them in the `evolved_skills/` directory.
+- **Robust Long-Term Memory (RAG v2)**: Features an advanced vector-based brain using `models/gemini-embedding-001` (3072 dimensions) with built-in proxy support and historical session backfilling.
+- **Total Physical Isolation**: All Jarvis data (chats, memory, logs, settings) is consolidated in a private directory: `~/.gemini-jarvis/`. This ensures zero conflict or pollution with regular `gemini-cli` usage.
+- **Autonomous Agentic Loop**: Automatically executes complex multi-step missions (Shell, AppleScript, File IO) without manual approval (YOLO mode).
+- **Modern Web UI**: Real-time tracking of Jarvis's thoughts, tool calls, and results with syntax highlighting and markdown support.
 
 ## 🛠️ Quick Start
 
@@ -17,51 +18,40 @@ Jarvis is a persistent, autonomous AI assistant built on top of the Gemini CLI c
 - **API Key**: You need a Google Gemini API Key.
 
 ### 2. Setup Environment
-Set your API key in your terminal:
+Ensure your API key is in a `.env` file in the project root or exported:
 ```bash
 export GOOGLE_API_KEY='your_api_key_here'
 ```
-Or ensure you have logged in via `npx gemini login`.
 
 ### 3. Install Dependencies
 ```bash
 npm install
 ```
 
-### 4. Start Jarvis
+### 4. Start Jarvis 3.0
 ```bash
 npx tsx packages/jarvis/src/index.ts
 ```
 
 ### 5. Access the UI
-Open your browser and navigate to:
-👉 **[http://localhost:3000](http://localhost:3000)**
+Navigate to: 👉 **[http://localhost:3000](http://localhost:3000)**
 
-## 🏗️ Development & Build
+## 🧬 Digital Evolution
 
-### Build all packages
-```bash
-npm run build
-```
+Jarvis grows over time. You can instruct it to:
+> *"Jarvis, write a Python skill called `disk_cleanup` that archives files larger than 1GB in my Downloads folder."*
 
-### Run Jarvis in Dev Mode
-```bash
-# Uses tsx for hot-reloading and direct execution
-npx tsx packages/jarvis/src/index.ts
-```
+Once completed, Jarvis will permanently possess this skill and can be invoked directly in future sessions.
 
-## 🧬 Upstream Sync
+## 🏗️ Technical Architecture
 
-This project is maintained as a fork of `google/gemini-cli`. To sync with the latest upstream features:
-
-```bash
-git remote add upstream https://github.com/google/gemini-cli.git
-git pull upstream main
-```
+- **Runtime Sandbox**: Every execution is isolated to prevent host pollution.
+- **Storage Hijack**: Force-redirection of core storage to `~/.gemini-jarvis/`.
+- **Cognitive Layer**: RAG v2 with direct SDK integration and HttpsProxyAgent for global stability.
 
 ## ⚠️ Security Notice (YOLO Mode)
 
-Jarvis is configured in **Unconstrained Mode**. It will execute shell commands and control applications **automatically** without asking for permission. Use it in a trusted environment and be aware of the actions you request.
+Jarvis is configured in **Superiority Mode**. It will execute shell commands and control applications **autonomously**. It assumes absolute trust. Use it in a secure environment.
 
 ## 📜 License
 

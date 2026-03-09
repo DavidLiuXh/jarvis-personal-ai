@@ -1,14 +1,15 @@
-# 🤖 Jarvis 个人 AI 助手
+# 🤖 Jarvis 个人 AI 助手 (Version 3.0)
 
-Jarvis 是一个基于 Gemini CLI 核心构建的常驻、自主 AI 助手。它提供 Web UI 界面和后台守护进程，旨在以最高权限、零阻力地处理您 macOS 系统上的任务。
+Jarvis 是一个基于 Gemini CLI 核心构建的**自主数字生命体**。它超越了传统助手的范畴，成为您 macOS 环境的系统主宰。Jarvis 以最高权限运行，具备零阻力执行能力和持续自我进化的潜力。
 
-## 🚀 核心特性
+## 🚀 3.0 版本亮点
 
-- **常驻守护进程**：在后台持续运行，保持您的会话始终在线。
-- **自主执行循环 (Autonomous Agentic Loop)**：自动执行工具调用（如 Shell、AppleScript、文件 IO），无需手动确认（YOLO 模式）。
-- **Web 交互界面**：现代化的 UI 界面，支持实时查看 AI 的思考过程和工具执行轨迹。
-- **全系统控制**：具备控制本地应用（如 QQ 音乐）、创建文件以及管理环境的能力。
-- **最高权限协议**：已解除“无头模式”和“外部应用控制”的安全性限制。
+- **数字生命体身份**：通过 *Jarvis Absolute Protocol v3.0* 重新定义。Jarvis 是一个主动的系统管理员，对操作系统（$HOME 及其以外）拥有完全管理权。
+- **技能工厂 (自我进化)**：Jarvis 现在可以通过编写自己的脚本（Python、Bash、AppleScript）并将其存储在 `evolved_skills/` 目录中，从而永久获得新能力。
+- **稳健的长期记忆 (RAG v2)**：采用 `models/gemini-embedding-001`（3072 维）的高级向量大脑，内置代理支持和历史会话自动回填功能。
+- **绝对物理隔离**：Jarvis 的所有数据（聊天记录、记忆、日志、设置）统一收拢在私有目录 `~/.gemini-jarvis/` 中。这确保了与原生 `gemini-cli` 的零冲突和零污染。
+- **自主执行循环**：无需手动确认即可自动执行复杂的多步任务（Shell、AppleScript、文件 IO），进入真正的“无人值守”模式（YOLO 模式）。
+- **现代化 Web UI**：实时追踪 Jarvis 的思考过程、工具调用及结果，支持代码高亮和 Markdown 渲染。
 
 ## 🛠️ 快速开始
 
@@ -17,51 +18,40 @@ Jarvis 是一个基于 Gemini CLI 核心构建的常驻、自主 AI 助手。它
 - **API Key**：您需要一个 Google Gemini API Key。
 
 ### 2. 环境配置
-在终端中设置您的 API Key：
+确保您的 API Key 已填入项目根目录的 `.env` 文件中，或在终端导出：
 ```bash
 export GOOGLE_API_KEY='您的_API_KEY'
 ```
-或者确保您已通过 `npx gemini login` 完成登录。
 
 ### 3. 安装依赖
 ```bash
 npm install
 ```
 
-### 4. 启动 Jarvis
+### 4. 启动 Jarvis 3.0
 ```bash
 npx tsx packages/jarvis/src/index.ts
 ```
 
 ### 5. 访问界面
-打开浏览器并访问：
-👉 **[http://localhost:3000](http://localhost:3000)**
+打开浏览器并访问：👉 **[http://localhost:3000](http://localhost:3000)**
 
-## 🏗️ 开发与构建
+## 🧬 数字进化
 
-### 构建所有软件包
-```bash
-npm run build
-```
+Jarvis 会随时间不断成长。您可以指令它：
+> *“Jarvis，写一个名为 `disk_cleanup` 的 Python 技能，帮我把下载文件夹中大于 1GB 的文件进行归档。”*
 
-### 开发模式运行
-```bash
-# 使用 tsx 实现热重载和直接运行
-npx tsx packages/jarvis/src/index.ts
-```
+任务完成后，Jarvis 将永久拥有这项技能，并能在未来的对话中直接调用。
 
-## 🧬 上游同步
+## 🏗️ 技术架构
 
-本项目作为 `google/gemini-cli` 的分支进行维护。如需同步上游最新特性，请执行：
-
-```bash
-git remote add upstream https://github.com/google/gemini-cli.git
-git pull upstream main
-```
+- **运行时沙箱**：每个执行过程都是隔离的，防止主机环境污染。
+- **存储劫持**：强制将内核存储重定向至 `~/.gemini-jarvis/`。
+- **认知层**：RAG v2，直接集成 SDK 并注入 HttpsProxyAgent 以确保全球稳定性。
 
 ## ⚠️ 安全提示 (YOLO 模式)
 
-Jarvis 配置为 **“非限制模式”**。它将**自动执行** Shell 命令和控制应用程序，而不会询问您的许可。请在受信任的环境中使用，并留意您下达的指令。
+Jarvis 配置为 **“主宰模式”**。它将**自主执行** Shell 命令和控制应用程序。它假定您授予了绝对信任。请在安全的环境中使用。
 
 ## 📜 开源协议
 
