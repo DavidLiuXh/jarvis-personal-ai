@@ -1,12 +1,18 @@
 # 🤖 Jarvis Personal AI Assistant (Version 3.0)
 
+[📄 中文文档 (Chinese Version)](./README_cn.md)
+
 Jarvis is an **autonomous digital lifeform** built on top of the Gemini CLI core. It transcends being a mere assistant, acting as a system sovereign for your macOS environment. Jarvis operates with maximum privilege, zero friction, and the capacity for self-evolution.
 
 ## 🚀 Version 3.0 Highlights
 
 - **Digital Lifeform Identity**: Redefined via *Jarvis Absolute Protocol v3.0*. Jarvis is a proactive system sovereign with full administrative authority over the OS ($HOME and beyond).
 - **Skill Factory (Self-Evolution)**: Jarvis can now gain permanent new capabilities by writing its own scripts (Python, Bash, AppleScript) and storing them in the `evolved_skills/` directory.
-- **Robust Long-Term Memory (RAG v2)**: Features an advanced vector-based brain using `models/gemini-embedding-001` (3072 dimensions) with built-in proxy support and historical session backfilling.
+- **Tiered Memory Architecture**: Jarvis distinguishes between transient chat logs and permanent facts.
+  - **AI-First Distillation**: Uses an autonomous "Stealth Session" to extract identities, preferences, and rules.
+  - **Rule-Fallback Engine**: A regex-based safety net ensures no high-visibility facts (like names) are missed even if the AI is conservative.
+  - **Structured Storage**: High-value facts are stored in a dedicated `facts` table for prioritized context injection.
+- **Robust Long-Term Memory (RAG v2)**: Features an advanced vector-based brain using `models/gemini-embedding-001` (3072 dimensions) with built-in proxy support.
 - **Total Physical Isolation**: All Jarvis data (chats, memory, logs, settings) is consolidated in a private directory: `~/.gemini-jarvis/`. This ensures zero conflict or pollution with regular `gemini-cli` usage.
 - **Autonomous Agentic Loop**: Automatically executes complex multi-step missions (Shell, AppleScript, File IO) without manual approval (YOLO mode).
 - **Modern Web UI**: Real-time tracking of Jarvis's thoughts, tool calls, and results with syntax highlighting and markdown support.
