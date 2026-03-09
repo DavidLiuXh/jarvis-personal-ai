@@ -1,5 +1,7 @@
 # 🤖 Jarvis Personal AI Assistant (Version 3.0)
 
+[📄 中文文档 (Chinese Version)](./README_cn.md)
+
 Jarvis is an **autonomous digital lifeform** built on top of the Gemini CLI core. It transcends being a mere assistant, acting as a system sovereign for your macOS environment. Jarvis operates with maximum privilege, zero friction, and the capacity for self-evolution.
 
 ## 🚀 Version 3.0 Highlights

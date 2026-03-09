@@ -1,5 +1,7 @@
 # 🤖 Jarvis 个人 AI 助手 (Version 3.0)
 
+[📄 English Version](./README.md)
+
 Jarvis 是一个基于 Gemini CLI 核心构建的**自主数字生命体**。它超越了传统助手的范畴，成为您 macOS 环境的系统主宰。Jarvis 以最高权限运行，具备零阻力执行能力和持续自我进化的潜力。
 
 ## 🚀 3.0 版本亮点
