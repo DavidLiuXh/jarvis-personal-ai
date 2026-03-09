@@ -4,31 +4,29 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import 'dotenv/config';
+// --- 1. PRE-INITIALIZATION LAYER ---
+const SOURCE_ROOT = process.cwd();
 
-// --- 1. THE STABLE SANDBOX LAYER ---
-import os from 'node:os';
+import dotenv from 'dotenv';
 import path from 'node:path';
+// Explicitly load .env from the source root
+dotenv.config({ path: path.join(SOURCE_ROOT, '.env') });
+dotenv.config({ path: path.join(SOURCE_ROOT, 'packages/jarvis/.env') });
+
+// --- 2. THE STABLE SANDBOX LAYER ---
+import os from 'node:os';
 import fs from 'node:fs';
 import process from 'node:process';
 
 /**
  * JARVIS RUNTIME SANDBOX
- * Switching CWD to this directory forces the core library to isolate its storage.
  */
-const JARVIS_BASE_DIR = path.join(os.homedir(), '.gemini-jarvis');
-const JARVIS_RUNTIME = path.join(JARVIS_BASE_DIR, 'runtime');
-const JARVIS_STORAGE = path.join(JARVIS_BASE_DIR, 'storage');
+const JARVIS_RUNTIME = path.join(os.homedir(), '.gemini-jarvis', 'runtime');
+if (!fs.existsSync(JARVIS_RUNTIME)) {
+  fs.mkdirSync(JARVIS_RUNTIME, { recursive: true });
+}
 
-// Ensure the private structure exists
-[JARVIS_BASE_DIR, JARVIS_RUNTIME, JARVIS_STORAGE].forEach(dir => {
-  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-});
-
-// Save original project root
-const SOURCE_ROOT = process.cwd();
-
-// SWITCH TO SANDBOX
+// SWITCH CWD TO SANDBOX
 process.chdir(JARVIS_RUNTIME);
 // ------------------------------------
 
@@ -70,6 +68,7 @@ class JarvisServer {
 
     const apiKey = process.env.GOOGLE_API_KEY || process.env.GEMINI_API_KEY;
     if (apiKey) {
+      debugLogger.debug('[JarvisServer] API Key found, starting Memory Service.');
       this.manager.getMemoryService().startWithApiKey(apiKey);
     } else {
       void this.initializeMemorySync();
@@ -78,13 +77,13 @@ class JarvisServer {
 
   private async initializeMemorySync() {
     try {
-      debugLogger.debug('[JarvisServer] Initializing background memory sync...');
+      debugLogger.debug('[JarvisServer] API Key missing in process.env, trying Config discovery...');
       const settings = loadSettings(SOURCE_ROOT);
       const config = await loadCliConfig(
         settings.merged,
         'startup-sync',
         { _: [], yolo: true },
-        { cwd: process.cwd() } // Use Sandbox CWD
+        { cwd: process.cwd() }
       );
       await config.refreshAuth(settings.merged.security.auth.selectedType || AuthType.LOGIN_WITH_GOOGLE);
       await config.initialize();
@@ -215,7 +214,7 @@ class JarvisServer {
   public start() {
     this.server.listen(this.port, '0.0.0.0', () => {
       // eslint-disable-next-line no-console
-      console.log(`\n🤖 Jarvis AI Assistant 3.0 (STABLE SANDBOX) is active!`);
+      console.log(`\n🤖 Jarvis AI Assistant 3.0 (STRICT ISOLATION) is active!`);
       // eslint-disable-next-line no-console
       console.log(`📡 Health: http://localhost:${this.port}/health`);
       // eslint-disable-next-line no-console
