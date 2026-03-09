@@ -5,7 +5,8 @@ import path from 'node:path';
 import os from 'node:os';
 
 async function checkDatabase() {
-  const dbPath = path.join(os.homedir(), '.gemini', 'jarvis', 'memory.db');
+  // CORRECT PATH FOR RAG V2
+  const dbPath = path.join(os.homedir(), '.gemini-jarvis', 'memory', 'memory.db');
   console.log('Checking database at:', dbPath);
   
   try {
@@ -19,9 +20,9 @@ async function checkDatabase() {
     console.log('Total processed files:', files.c);
     
     if (count.c > 0) {
-      console.log('\nLast 3 entries:');
+      console.log('\nSample entries (last 3):');
       const entries = db.prepare('SELECT text FROM memories ORDER BY id DESC LIMIT 3').all();
-      entries.forEach((e, i) => console.log(`[${i+1}] ${e.text.substring(0, 100)}...`));
+      entries.forEach((e, i) => console.log(`[${i+1}] ${e.text.substring(0, 150)}...`));
     }
     
     db.close();

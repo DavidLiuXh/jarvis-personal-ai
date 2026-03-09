@@ -80,6 +80,12 @@ export class JarvisAgent extends EventEmitter {
     }
     settings.merged.context.trustedFolders.push(os.homedir());
 
+    // Force stable embeddings
+    if (!settings.merged.model) {
+      settings.merged.model = {};
+    }
+    settings.merged.model.embeddingModel = 'embedding-001';
+
     // II. CORE INITIALIZATION WITH FORCE ISOLATION
     const jarvisStorageRoot = path.join(os.homedir(), '.gemini-jarvis', 'storage');
     if (!fs.existsSync(jarvisStorageRoot)) {
