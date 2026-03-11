@@ -13,11 +13,9 @@ import { execSync } from 'node:child_process';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { HttpsProxyAgent } from 'https-proxy-agent';
 import { debugLogger, type Config, type ConversationRecord } from '../../../core/src/index.js';
+import { ConfigManager } from './configManager.js';
 
-const INGESTION_DELAY_MS = 800; 
 const JARVIS_ROOT = path.join(os.homedir(), '.gemini-jarvis');
-const FIXED_EMBEDDING_MODEL = 'models/gemini-embedding-001';
-const EMBEDDING_DIMENSION = 3072;
 
 export class MemoryService {
   private db: Database.Database;
@@ -25,6 +23,7 @@ export class MemoryService {
   private isProcessing = false;
   private genAI?: GoogleGenerativeAI;
   private config?: Config;
+  private jarvisConfig = ConfigManager.getInstance().get();
 
   constructor() {
     const memoryDir = path.join(JARVIS_ROOT, 'memory');
@@ -61,10 +60,10 @@ export class MemoryService {
       this.db.exec(`
         CREATE VIRTUAL TABLE IF NOT EXISTS vec_memories USING vec0(
           id INTEGER PRIMARY KEY,
-          embedding FLOAT[${EMBEDDING_DIMENSION}]
+          embedding FLOAT[${this.jarvisConfig.models.embeddingDimension}]
         );
       `);
-      debugLogger.debug('[MemoryService V2] Vector support enabled.');
+      debugLogger.debug(`[MemoryService V2] Vector support enabled (${this.jarvisConfig.models.embeddingDimension} dims).`);
     } catch (e: any) {
       console.error('⚠️ [MemoryService] Vector extension failed to load. Running in text-only mode.', e.message);
     }
@@ -72,7 +71,7 @@ export class MemoryService {
 
   public setConfig(config: Config) {
     this.config = config;
-    const apiKey = (config as any).apiKey || process.env.GOOGLE_API_KEY;
+    const apiKey = this.jarvisConfig.api.key || (config as any).apiKey || process.env.GOOGLE_API_KEY;
     if (apiKey) this.startWithApiKey(apiKey);
   }
 
@@ -93,9 +92,7 @@ export class MemoryService {
 
       this.db.prepare('INSERT INTO facts (category, content, importance, timestamp) VALUES (?, ?, ?, ?)')
         .run(category, content, importance, Date.now());
-      
-      const check = this.db.prepare('SELECT count(*) as c FROM facts').get() as any;
-      console.log(`🔥 [MemoryService] FACT PHYSICALLY STORED. CURRENT COUNT: ${check.c}`);
+      console.log(`🔥 [MemoryService] FACT PHYSICALLY STORED. CURRENT COUNT: ${this.db.prepare('SELECT count(*) as c FROM facts').get().c}`);
     } catch (e: any) {
       console.error(`❌ [MemoryService] Fact save failed: ${e.message}`);
     }
@@ -141,7 +138,7 @@ export class MemoryService {
               const text = Array.isArray(msg.content) ? msg.content.map((p: any) => p.text || '').join('') : String(msg.content);
               if (text.length > 50) {
                 await this.saveChunk(record.sessionId || 'legacy', text);
-                await new Promise(r => setTimeout(r, INGESTION_DELAY_MS));
+                await new Promise(r => setTimeout(r, this.jarvisConfig.memory.ingestionDelayMs));
               }
             }
             this.db.prepare('INSERT OR REPLACE INTO processed_files (filename, last_mtime) VALUES (?, ?)').run(filePath, stats.mtimeMs);
@@ -167,7 +164,7 @@ export class MemoryService {
         const item = this.queue.shift();
         if (item) {
           await this.saveChunk(item.sessionId, item.text);
-          await new Promise(r => setTimeout(r, INGESTION_DELAY_MS));
+          await new Promise(r => setTimeout(r, this.jarvisConfig.memory.ingestionDelayMs));
         }
       }
     } finally { this.isProcessing = false; }
@@ -176,13 +173,12 @@ export class MemoryService {
   private async saveChunk(sessionId: string, text: string): Promise<boolean> {
     if (!this.genAI) return false;
     try {
-      const proxy = process.env.HTTPS_PROXY || process.env.https_proxy || process.env.HTTP_PROXY || process.env.http_proxy;
-      const model = this.genAI.getGenerativeModel({ model: FIXED_EMBEDDING_MODEL }, proxy ? { agent: new HttpsProxyAgent(proxy) } : {});
+      const proxy = this.jarvisConfig.api.proxy || process.env.HTTPS_PROXY || process.env.https_proxy;
+      const model = this.genAI.getGenerativeModel({ model: this.jarvisConfig.models.embedding }, proxy ? { agent: new HttpsProxyAgent(proxy) } : {});
       const result = await model.embedContent(text);
       
       const info = this.db.prepare('INSERT INTO memories (sessionId, text, timestamp) VALUES (?, ?, ?)').run(sessionId, text, Date.now());
       
-      // Separate vector write to prevent total failure
       try {
         this.db.prepare('INSERT INTO vec_memories (id, embedding) VALUES (?, ?)').run(info.lastInsertRowid, new Float32Array(result.embedding.values));
       } catch (vecErr) {}
@@ -194,13 +190,13 @@ export class MemoryService {
   public async search(query: string, limit: number = 5): Promise<string[]> {
     if (!this.genAI) return [];
     try {
-      const proxy = process.env.HTTPS_PROXY || process.env.https_proxy || process.env.HTTP_PROXY || process.env.http_proxy;
-      const model = this.genAI.getGenerativeModel({ model: FIXED_EMBEDDING_MODEL }, proxy ? { agent: new HttpsProxyAgent(proxy) } : {});
+      const proxy = this.jarvisConfig.api.proxy || process.env.HTTPS_PROXY || process.env.https_proxy;
+      const model = this.genAI.getGenerativeModel({ model: this.jarvisConfig.models.embedding }, proxy ? { agent: new HttpsProxyAgent(proxy) } : {});
       const result = await model.embedContent(query);
       const results = this.db.prepare(`
         SELECT m.text FROM memories m JOIN vec_memories v ON m.id = v.id
         WHERE v.embedding MATCH ? ORDER BY v.distance LIMIT ?
-      `).all(new Float32Array(result.embedding.values), limit) as any[];
+      `).all(new Float32Array(result.embedding.values), limit || this.jarvisConfig.memory.retrievalLimit) as any[];
       return results.map(r => r.text);
     } catch (e) { return []; }
   }

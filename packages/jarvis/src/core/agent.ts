@@ -35,6 +35,7 @@ import { SESSION_FILE_PREFIX } from '../../../core/src/services/chatRecordingSer
 import { JarvisEventType, type JarvisAgentOptions } from './types.js';
 import { type MemoryService } from './memory.js';
 import { DynamicToolRegistry } from './dynamicToolRegistry.js';
+import { ConfigManager } from './configManager.js';
 
 /**
  * JARVIS 3.0: The Digital Lifeform Agent
@@ -48,6 +49,7 @@ export class JarvisAgent extends EventEmitter {
   private dynamicRegistry: DynamicToolRegistry;
   private initialized = false;
   private isProcessing = false;
+  private jarvisConfig = ConfigManager.getInstance().get();
 
   constructor(options: JarvisAgentOptions) {
     super();
@@ -78,13 +80,16 @@ export class JarvisAgent extends EventEmitter {
     }
     settings.merged.context.trustedFolders.push(os.homedir());
 
-    // Force stable embeddings
+    // II. MODEL & ROUTING CONFIG
     if (!settings.merged.model) {
       settings.merged.model = {};
     }
-    settings.merged.model.embeddingModel = 'models/gemini-embedding-001';
+    if (this.jarvisConfig.models.chat !== 'auto') {
+      settings.merged.model.primaryModel = this.jarvisConfig.models.chat;
+    }
+    settings.merged.model.embeddingModel = this.jarvisConfig.models.embedding;
 
-    // II. CORE INITIALIZATION
+    // III. CORE INITIALIZATION
     const jarvisStorageRoot = path.join(os.homedir(), '.gemini-jarvis', 'storage');
     if (!fs.existsSync(jarvisStorageRoot)) {
       fs.mkdirSync(jarvisStorageRoot, { recursive: true });
@@ -193,7 +198,7 @@ export class JarvisAgent extends EventEmitter {
       await promptIdContext.run(pId, async () => {
         // 1. TIERED MEMORY RETRIEVAL
         const coreFacts = this.memoryService.getCoreFacts();
-        const searchMemories = await this.memoryService.search(userPrompt, 5);
+        const searchMemories = await this.memoryService.search(userPrompt, this.jarvisConfig.memory.retrievalLimit);
         
         const memoryContext = `
 # USER CORE FACTS (Highest Priority):

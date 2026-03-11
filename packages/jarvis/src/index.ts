@@ -36,9 +36,10 @@ import { createServer, type Server } from 'node:http';
 import { v4 as uuidv4 } from 'uuid';
 import { fileURLToPath } from 'node:url';
 
-import { debugLogger, AuthType } from '../../core/src/index.js';
+import { debugLogger, AuthType, Storage } from '../../core/src/index.js';
 import { JarvisManager } from './core/manager.js';
 import { JarvisEventType, type JarvisIncomingMessage } from './core/types.js';
+import { ConfigManager } from './core/configManager.js';
 
 // @ts-expect-error - Relative import
 import { loadCliConfig } from '../../cli/src/config/config.js';
@@ -56,8 +57,9 @@ class JarvisServer {
   private app: express.Application;
   private server: Server;
   private manager: JarvisManager;
+  private jarvisConfig = ConfigManager.getInstance().get();
 
-  constructor(private port: number = 3000) {
+  constructor() {
     this.app = express();
     this.server = createServer(this.app);
     this.wss = new WebSocketServer({ server: this.server });
@@ -66,9 +68,9 @@ class JarvisServer {
     this.setupRoutes();
     this.setupWebSocket();
 
-    const apiKey = process.env.GOOGLE_API_KEY || process.env.GEMINI_API_KEY;
+    const apiKey = this.jarvisConfig.api.key || process.env.GOOGLE_API_KEY || process.env.GEMINI_API_KEY;
     if (apiKey) {
-      debugLogger.debug('[JarvisServer] API Key found, starting Memory Service.');
+      debugLogger.debug('[JarvisServer] Starting Memory Service via Config.');
       this.manager.getMemoryService().startWithApiKey(apiKey);
     } else {
       void this.initializeMemorySync();
@@ -77,7 +79,7 @@ class JarvisServer {
 
   private async initializeMemorySync() {
     try {
-      debugLogger.debug('[JarvisServer] API Key missing in process.env, trying Config discovery...');
+      debugLogger.debug('[JarvisServer] Initializing background memory sync...');
       const settings = loadSettings(SOURCE_ROOT);
       const config = await loadCliConfig(
         settings.merged,
@@ -95,7 +97,15 @@ class JarvisServer {
 
   private setupRoutes() {
     this.app.get('/health', (_req: Request, res: Response) => {
-      res.json({ status: 'ok', branding: 'Jarvis', runtime: process.cwd() });
+      res.json({ 
+        status: 'ok', 
+        branding: 'Jarvis', 
+        runtime: process.cwd(),
+        config: {
+          port: this.jarvisConfig.server.port,
+          model: this.jarvisConfig.models.chat
+        }
+      });
     });
 
     const uiPath = path.join(SOURCE_ROOT, 'packages/jarvis/ui');
@@ -212,15 +222,16 @@ class JarvisServer {
   }
 
   public start() {
-    this.server.listen(this.port, '0.0.0.0', () => {
+    const port = this.jarvisConfig.server.port;
+    this.server.listen(port, '0.0.0.0', () => {
       // eslint-disable-next-line no-console
-      console.log(`\n🤖 Jarvis AI Assistant 3.0 (STRICT ISOLATION) is active!`);
+      console.log(`\n🤖 Jarvis AI Assistant 3.0 (CONFIGURED) is active!`);
       // eslint-disable-next-line no-console
-      console.log(`📡 Health: http://localhost:${this.port}/health`);
+      console.log(`📡 Health: http://localhost:${port}/health`);
       // eslint-disable-next-line no-console
-      console.log(`🖥️ Web UI: http://localhost:${this.port}/`);
+      console.log(`🖥️ Web UI: http://localhost:${port}/`);
       // eslint-disable-next-line no-console
-      console.log(`🔌 WebSocket: ws://0.0.0.0:${this.port}/\n`);
+      console.log(`🔌 WebSocket: ws://0.0.0.0:${port}/\n`);
     });
   }
 
@@ -238,8 +249,7 @@ class JarvisServer {
   }
 }
 
-const port = Number(process.env['JARVIS_PORT']) || 3000;
-const server = new JarvisServer(port);
+const server = new JarvisServer();
 server.start();
 
 let isShuttingDown = false;
