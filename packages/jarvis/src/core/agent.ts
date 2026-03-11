@@ -80,7 +80,7 @@ export class JarvisAgent extends EventEmitter {
     }
     settings.merged.context.trustedFolders.push(os.homedir());
 
-    // II. MODEL & ROUTING CONFIG
+    // Force settings from our config
     if (!settings.merged.model) {
       settings.merged.model = {};
     }
@@ -89,7 +89,7 @@ export class JarvisAgent extends EventEmitter {
     }
     settings.merged.model.embeddingModel = this.jarvisConfig.models.embedding;
 
-    // III. CORE INITIALIZATION
+    // II. CORE INITIALIZATION
     const jarvisStorageRoot = path.join(os.homedir(), '.gemini-jarvis', 'storage');
     if (!fs.existsSync(jarvisStorageRoot)) {
       fs.mkdirSync(jarvisStorageRoot, { recursive: true });
@@ -320,9 +320,17 @@ Jarvis: ${assistantText}
       let fullText = '';
       try {
         for await (const chunk of responseStream) {
-          if (chunk.type === GeminiEventType.Content) fullText += chunk.value;
+          if (chunk.type === GeminiEventType.Content) {
+            fullText += chunk.value;
+          } else if (chunk.type === GeminiEventType.Error) {
+            console.error('🤫 [JarvisAgent] Distiller Stream Error:', chunk.value);
+          }
         }
-      } catch (e) {}
+      } catch (e: any) {
+        console.error('🤫 [JarvisAgent] Distiller connection failed:', e.message);
+      }
+
+      console.log(`🤫 [JarvisAgent] Distillation raw result (Length: ${fullText.length}): ${fullText.substring(0, 100)}...`);
 
       const match = fullText.match(/\{[\s\S]*\}/);
       if (match) {
@@ -333,9 +341,13 @@ Jarvis: ${assistantText}
               await this.memoryService.saveFact(fact.category, fact.content, 10);
             }
           }
-        } catch (e) {}
+        } catch (e: any) {
+          console.error('🤫 [JarvisAgent] Distiller JSON Parse Error:', e.message);
+        }
       }
-    } catch (e: any) {}
+    } catch (e: any) {
+      console.error('🤫 [JarvisAgent] Stealth Distillation Critical Failure:', e.message);
+    }
   }
 
   public getHistory() {
