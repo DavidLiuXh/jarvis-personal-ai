@@ -35,6 +35,7 @@ import { SESSION_FILE_PREFIX } from '../../../core/src/services/chatRecordingSer
 import { JarvisEventType, type JarvisAgentOptions } from './types.js';
 import { type MemoryService } from './memory.js';
 import { DynamicToolRegistry } from './dynamicToolRegistry.js';
+import { ConfigManager } from './configManager.js';
 
 /**
  * JARVIS 3.0: The Digital Lifeform Agent
@@ -48,6 +49,7 @@ export class JarvisAgent extends EventEmitter {
   private dynamicRegistry: DynamicToolRegistry;
   private initialized = false;
   private isProcessing = false;
+  private jarvisConfig = ConfigManager.getInstance().get();
 
   constructor(options: JarvisAgentOptions) {
     super();
@@ -78,13 +80,16 @@ export class JarvisAgent extends EventEmitter {
     }
     settings.merged.context.trustedFolders.push(os.homedir());
 
-    // Force stable embeddings
+    // II. MODEL & ROUTING CONFIG
     if (!settings.merged.model) {
       settings.merged.model = {};
     }
-    settings.merged.model.embeddingModel = 'models/gemini-embedding-001';
+    if (this.jarvisConfig.models.chat !== 'auto') {
+      settings.merged.model.primaryModel = this.jarvisConfig.models.chat;
+    }
+    settings.merged.model.embeddingModel = this.jarvisConfig.models.embedding;
 
-    // II. CORE INITIALIZATION
+    // III. CORE INITIALIZATION
     const jarvisStorageRoot = path.join(os.homedir(), '.gemini-jarvis', 'storage');
     if (!fs.existsSync(jarvisStorageRoot)) {
       fs.mkdirSync(jarvisStorageRoot, { recursive: true });
@@ -193,7 +198,7 @@ export class JarvisAgent extends EventEmitter {
       await promptIdContext.run(pId, async () => {
         // 1. TIERED MEMORY RETRIEVAL
         const coreFacts = this.memoryService.getCoreFacts();
-        const searchMemories = await this.memoryService.search(userPrompt, 5);
+        const searchMemories = await this.memoryService.search(userPrompt, this.jarvisConfig.memory.retrievalLimit);
         
         const memoryContext = `
 # USER CORE FACTS (Highest Priority):
@@ -281,6 +286,8 @@ ${memoryContext}
 
         // 3. LOGGING & DISTILLATION
         this.memoryService.enqueue(this.sessionId, userPrompt, finalAssistantText);
+        
+        // 🚀 CRITICAL FIX: Transfer execution to stealthDistill which handles its own context
         void this.stealthDistill(userPrompt, finalAssistantText);
       });
       this.emit(JarvisEventType.DONE);
@@ -293,9 +300,13 @@ ${memoryContext}
   }
 
   private async stealthDistill(userPrompt: string, assistantText: string) {
-    try {
-      console.log('🤫 [JarvisAgent] Initiating Compatible Stealth Distillation...');
-      const frozenPrompt = `
+    // 🚀 NEW CONTEXT WRAPPER
+    const dId = `distill-${this.sessionId}-${Date.now()}`;
+    
+    await promptIdContext.run(dId, async () => {
+      try {
+        console.log(`🤫 [JarvisAgent] Initiating Stealth Distillation (PID: ${dId})...`);
+        const frozenPrompt = `
 You are a MANDATORY Fact Extractor. Identify ANY identity info, names, locations, or technical preferences.
 Respond ONLY with this JSON: {"found": true, "facts": [{"category": "identity|preference", "content": "..."}]}
 If absolutely zero info, respond: {"found": false}
@@ -304,33 +315,38 @@ Interaction:
 User: ${userPrompt}
 Jarvis: ${assistantText}
 `;
-      const stealthChat = new GeminiChat(this.client.config, "", [], []);
-      const responseStream = this.client.sendMessageStream(
-        [{ text: frozenPrompt }],
-        new AbortController().signal,
-        `distill-${Date.now()}`,
-        stealthChat
-      );
+        const stealthChat = new GeminiChat(this.client.config, "", [], []);
+        
+        // Pass dId explicitly here too
+        const responseStream = this.client.sendMessageStream(
+          [{ text: frozenPrompt }],
+          new AbortController().signal,
+          dId,
+          stealthChat
+        );
 
-      let fullText = '';
-      try {
-        for await (const chunk of responseStream) {
-          if (chunk.type === GeminiEventType.Content) fullText += chunk.value;
-        }
-      } catch (e) {}
-
-      const match = fullText.match(/\{[\s\S]*\}/);
-      if (match) {
+        let fullText = '';
         try {
-          const data = JSON.parse(match[0].replace(/\n/g, ' '));
-          if (data.found && data.facts) {
-            for (const fact of data.facts) {
-              await this.memoryService.saveFact(fact.category, fact.content, 10);
-            }
+          for await (const chunk of responseStream) {
+            if (chunk.type === GeminiEventType.Content) fullText += chunk.value;
           }
         } catch (e) {}
+
+        const match = fullText.match(/\{[\s\S]*\}/);
+        if (match) {
+          try {
+            const data = JSON.parse(match[0].replace(/\n/g, ' '));
+            if (data.found && data.facts) {
+              for (const fact of data.facts) {
+                await this.memoryService.saveFact(fact.category, fact.content, 10);
+              }
+            }
+          } catch (e) {}
+        }
+      } catch (e: any) {
+        debugLogger.warn('[JarvisAgent] Stealth Distillation internal error', e);
       }
-    } catch (e: any) {}
+    });
   }
 
   public getHistory() {
