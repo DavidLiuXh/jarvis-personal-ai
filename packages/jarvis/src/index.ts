@@ -9,9 +9,20 @@ const SOURCE_ROOT = process.cwd();
 
 import dotenv from 'dotenv';
 import path from 'node:path';
+import { setGlobalDispatcher, ProxyAgent } from 'undici';
+
 // Explicitly load .env from the source root
 dotenv.config({ path: path.join(SOURCE_ROOT, '.env') });
 dotenv.config({ path: path.join(SOURCE_ROOT, 'packages/jarvis/.env') });
+
+// GLOBAL PROXY INJECTION (Critical for Node 20+ fetch)
+const proxy = process.env.HTTPS_PROXY || process.env.https_proxy || process.env.HTTP_PROXY || process.env.http_proxy;
+if (proxy) {
+  // eslint-disable-next-line no-console
+  console.log(`📡 [Jarvis] Setting global proxy: ${proxy}`);
+  const dispatcher = new ProxyAgent(proxy);
+  setGlobalDispatcher(dispatcher);
+}
 
 // --- 2. THE STABLE SANDBOX LAYER ---
 import os from 'node:os';
@@ -36,7 +47,7 @@ import { createServer, type Server } from 'node:http';
 import { v4 as uuidv4 } from 'uuid';
 import { fileURLToPath } from 'node:url';
 
-import { debugLogger, AuthType, Storage } from '../../core/src/index.js';
+import { debugLogger, AuthType } from '../../core/src/index.js';
 import { JarvisManager } from './core/manager.js';
 import { JarvisEventType, type JarvisIncomingMessage } from './core/types.js';
 import { ConfigManager } from './core/configManager.js';
@@ -169,6 +180,16 @@ class JarvisServer {
       }
     };
 
+    const onSubAgentActivity = (data: any) => {
+      if (ws.readyState === ws.OPEN) {
+        ws.send(JSON.stringify({
+          type: 'stream',
+          sessionId,
+          payload: { type: JarvisEventType.SUBAGENT_ACTIVITY, value: data }
+        }));
+      }
+    };
+
     const onDone = () => {
       if (ws.readyState === ws.OPEN) {
         ws.send(JSON.stringify({ type: 'done', sessionId }));
@@ -186,12 +207,14 @@ class JarvisServer {
     const cleanup = () => {
       agent.off(JarvisEventType.CONTENT, onContent);
       agent.off(JarvisEventType.TOOL_CALL_RESPONSE, onToolResponse);
+      agent.off(JarvisEventType.SUBAGENT_ACTIVITY, onSubAgentActivity);
       agent.off(JarvisEventType.DONE, onDone);
       agent.off(JarvisEventType.ERROR, onError);
     };
 
     agent.on(JarvisEventType.CONTENT, onContent);
     agent.on(JarvisEventType.TOOL_CALL_RESPONSE, onToolResponse);
+    agent.on(JarvisEventType.SUBAGENT_ACTIVITY, onSubAgentActivity);
     agent.once(JarvisEventType.DONE, onDone);
     agent.once(JarvisEventType.ERROR, onError);
 
