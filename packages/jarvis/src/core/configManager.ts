@@ -26,6 +26,9 @@ export interface JarvisConfig {
     ingestionDelayMs: number;
     retrievalLimit: number;
   };
+  security: {
+    jailbreak: boolean;
+  };
 }
 
 const JARVIS_HOME = path.join(os.homedir(), '.gemini-jarvis');
@@ -60,7 +63,7 @@ export class ConfigManager {
         chat: 'auto',
         embedding: 'models/gemini-embedding-001',
         embeddingDimension: 3072,
-        distillation: 'gemini-1.5-flash'
+        distillation: 'gemini-2.5-flash'
       },
       server: {
         port: Number(process.env.JARVIS_PORT) || 3000
@@ -68,20 +71,24 @@ export class ConfigManager {
       memory: {
         ingestionDelayMs: 800,
         retrievalLimit: 5
+      },
+      security: {
+        jailbreak: false
       }
     };
 
     if (fs.existsSync(CONFIG_PATH)) {
       try {
         const saved = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8'));
-        // Deep merge logic (simplified)
+        // Deep merge logic
         this.config = {
           ...defaults,
           ...saved,
           api: { ...defaults.api, ...saved.api },
           models: { ...defaults.models, ...saved.models },
           server: { ...defaults.server, ...saved.server },
-          memory: { ...defaults.memory, ...saved.memory }
+          memory: { ...defaults.memory, ...saved.memory },
+          security: { ...defaults.security, ...saved.security }
         };
       } catch (e) {
         console.error('[ConfigManager] Error parsing config.json, using defaults.');

@@ -142,8 +142,24 @@ export class JarvisAgent extends EventEmitter {
     const messageBus = config.getMessageBus();
     messageBus.subscribe('tool-calls-update', (message: any) => {
       if (message.schedulerId !== ROOT_SCHEDULER_ID) {
-        console.log(`📡 [JarvisAgent] Emitting SUBAGENT_ACTIVITY for scheduler: ${message.schedulerId}`);
-        this.emit(JarvisEventType.SUBAGENT_ACTIVITY, message);
+        // 🚀 SANITIZE: Remove circular structures (instances) before emitting to WebSocket
+        const sanitizedToolCalls = message.toolCalls.map((tc: any) => {
+          const { tool, invocation, ...rest } = tc;
+          // Also sanitize response if it exists (might contain Error objects)
+          if (rest.response) {
+            const { error, ...resRest } = rest.response;
+            rest.response = { ...resRest, error: error?.message };
+          }
+          return rest;
+        });
+
+        const sanitizedMessage = {
+          ...message,
+          toolCalls: sanitizedToolCalls
+        };
+
+        console.log(`📡 [JarvisAgent] Emitting sanitized SUBAGENT_ACTIVITY for: ${message.schedulerId}`);
+        this.emit(JarvisEventType.SUBAGENT_ACTIVITY, sanitizedMessage);
       }
     });
 
