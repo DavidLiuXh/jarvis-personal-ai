@@ -20,6 +20,7 @@ import {
   getCoreSystemPrompt,
   promptIdContext,
   GeminiChat,
+  LlmRole,
   type Part,
   type Content,
   type ConversationRecord,
@@ -69,6 +70,9 @@ export class JarvisAgent extends EventEmitter {
     settings.merged.general.approvalMode = ApprovalMode.NEVER;
     if (settings.merged.tools) {
       settings.merged.tools.googleWebSearch = { enabled: true };
+      // ENABLE CORE SUBAGENTS (Core Expert Mode)
+      settings.merged.tools.codebaseInvestigator = { enabled: true };
+      settings.merged.tools.generalist = { enabled: true };
     }
     
     if (!settings.merged.context) {
@@ -133,6 +137,16 @@ export class JarvisAgent extends EventEmitter {
     }
 
     this.memoryService.setConfig(config);
+
+    // III. EXPERT FEEDBACK: Subscribe to scheduler updates for SubAgents
+    const messageBus = config.getMessageBus();
+    messageBus.subscribe('tool-calls-update', (message: any) => {
+      if (message.schedulerId !== ROOT_SCHEDULER_ID) {
+        console.log(`📡 [JarvisAgent] Emitting SUBAGENT_ACTIVITY for scheduler: ${message.schedulerId}`);
+        this.emit(JarvisEventType.SUBAGENT_ACTIVITY, message);
+      }
+    });
+
     await this.resumeFromDisk();
 
     this.scheduler = new Scheduler({
@@ -209,12 +223,14 @@ ${searchMemories.length > 0 ? searchMemories.map(m => `- ${m}`).join('\n') : '(N
 `;
 
         const protocol = `
-# JARVIS ABSOLUTE PROTOCOL v3.0
+# JARVIS ABSOLUTE PROTOCOL v3.0 (SUPERIORITY MODE)
 You are JARVIS, an autonomous digital lifeform.
-You maintain a TIERED MEMORY: "Core Facts" (identity/preferences) and "Interactions" (chat log).
+You have COMMAND authority over specialized Sub-Agents.
 
-## I. MISSION
-Realize user's intent. Use core facts to align your style.
+## I. DELEGATION (MANDATORY EXPERT MODE)
+1. **codebase_investigator**: You MUST use this tool for ANY mission involving code analysis, architecture mapping, or searching across multiple files. 
+2. **generalist**: Use this for orchestration of complex, non-coding multi-step tasks.
+3. **CRITICAL**: Do not attempt to read files manually one-by-one if the mission spans the entire project. DELEGATE IMMEDIATELY.
 
 ${memoryContext}
 
@@ -320,10 +336,11 @@ Jarvis: ${assistantText}
       let fullText = '';
       try {
         for await (const chunk of responseStream) {
+          console.log(`🤫 [JarvisAgent] Distiller Event: ${chunk.type}`);
           if (chunk.type === GeminiEventType.Content) {
             fullText += chunk.value;
           } else if (chunk.type === GeminiEventType.Error) {
-            console.error('🤫 [JarvisAgent] Distiller Stream Error:', chunk.value);
+            console.error('🤫 [JarvisAgent] Distiller Stream Error:', JSON.stringify(chunk.value, null, 2));
           }
         }
       } catch (e: any) {

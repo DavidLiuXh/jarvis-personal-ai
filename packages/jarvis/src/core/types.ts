@@ -12,6 +12,7 @@ export enum JarvisEventType {
   THOUGHT = 'thought',
   TOOL_CALL_REQUEST = 'tool_call_request',
   TOOL_CALL_RESPONSE = 'tool_call_response',
+  SUBAGENT_ACTIVITY = 'subagent_activity',
   DONE = 'done',
   ERROR = 'error'
 }
