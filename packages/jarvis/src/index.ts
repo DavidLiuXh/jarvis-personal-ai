@@ -155,8 +155,9 @@ class JarvisServer {
           } else if (message.type === 'ping') {
             ws.send(JSON.stringify({ type: 'pong' }));
           }
-        } catch (error: unknown) {
-          ws.send(JSON.stringify({ type: 'error', message: 'Protocol error' }));
+        } catch (error: any) {
+          debugLogger.error('[JarvisServer] Protocol error:', error);
+          ws.send(JSON.stringify({ type: 'error', message: `Protocol error: ${error.message}` }));
         }
       };
 
