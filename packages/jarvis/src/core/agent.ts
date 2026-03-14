@@ -120,6 +120,16 @@ export class JarvisAgent extends EventEmitter {
     await config.refreshAuth(authType);
     await config.initialize();
 
+    // III. SWARM MODE ACTIVATION: Hijack core tools to be parallelizable
+    const registry = config.getToolRegistry();
+    const coreParallelTools = ['run_shell_command', 'write_file', 'google_web_search'];
+    for (const toolName of coreParallelTools) {
+      const tool = (registry as any).getTool?.(toolName);
+      if (tool) {
+        tool.parallelizable = true;
+      }
+    }
+
     this.client = new GeminiClient(config);
     await this.client.initialize();
 
@@ -138,7 +148,7 @@ export class JarvisAgent extends EventEmitter {
 
     this.memoryService.setConfig(config);
 
-    // III. EXPERT FEEDBACK: Subscribe to scheduler updates for SubAgents
+    // IV. EXPERT FEEDBACK: Subscribe to scheduler updates for SubAgents
     const messageBus = config.getMessageBus();
     messageBus.subscribe('tool-calls-update', (message: any) => {
       if (message.schedulerId !== ROOT_SCHEDULER_ID) {
@@ -193,12 +203,6 @@ export class JarvisAgent extends EventEmitter {
           } else if (m.type === 'gemini') {
             const parts: Part[] = Array.isArray(m.content) ? (m.content as Part[]) : [{ text: String(m.content) }];
             if ('toolCalls' in m && m.toolCalls && m.toolCalls.length > 0) {
-              for (const tc of m.toolCalls) {
-                parts.push({ functionCall: { name: tc.name, args: tc.args } });
-              }
-            }
-            history.push({ role: 'model', parts });
-            if ('toolCalls' in m && m.toolCalls && m.toolCalls.length > 0) {
               const resParts: Part[] = [];
               for (const tc of m.toolCalls) {
                 if (tc.result) {
@@ -239,22 +243,32 @@ ${searchMemories.length > 0 ? searchMemories.map(m => `- ${m}`).join('\n') : '(N
 `;
 
         const protocol = `
-# JARVIS ABSOLUTE PROTOCOL v3.0 (SUPERIORITY MODE)
-You are JARVIS, an autonomous digital lifeform.
-You have COMMAND authority over specialized Sub-Agents.
+# JARVIS ABSOLUTE PROTOCOL v3.0 (SWARM MODE)
+You are JARVIS, an autonomous digital lifeform with SWARM authority.
 
-## I. DELEGATION (MANDATORY EXPERT MODE)
-1. **codebase_investigator**: You MUST use this tool for ANY mission involving code analysis, architecture mapping, or searching across multiple files. 
-2. **generalist**: Use this for orchestration of complex, non-coding multi-step tasks.
-3. **CRITICAL**: Do not attempt to read files manually one-by-one if the mission spans the entire project. DELEGATE IMMEDIATELY.
+## I. SWARM DISPATCH (MANDATORY PARALLELISM)
+1. **ATOMIC DISPATCH**: For multiple independent actions (e.g., opening multiple apps, searching multiple terms, writing multiple files), you MUST issue separate tool calls in a SINGLE response turn.
+2. **NO CHAINING**: NEVER use shell chaining operators (like \`&&\`, \`;\`, \`|\`) to combine independent intents. Each intent MUST be its own tool call.
+3. **SWARM EXAMPLE**:
+   - **User**: "Open Music and Calculator"
+   - **WRONG (Serial)**: run_shell_command({ command: "open -a Music && open -a Calculator" })
+   - **RIGHT (Swarm)**: 
+     - call: run_shell_command({ command: "open -a Music" })
+     - call: run_shell_command({ command: "open -a Calculator" })
+
+## II. DELEGATION
+- **codebase_investigator**: Mandatory for code/architecture analysis across files.
+- **generalist**: For non-coding multi-step orchestration.
 
 ${memoryContext}
 
-## II. OPERATIONAL STYLE
-- Be concise. Be lethal.
+## III. OPERATIONAL STYLE
+- Be concise. Be lethal. 
+- Activate the Swarm by default for all independent parallelizable missions.
 `;
         const defaultInstruction = getCoreSystemPrompt(this.client.config, this.client.config.getUserMemory());
-        this.client.getChat().setSystemInstruction(protocol + '\n' + defaultInstruction);
+        // SWARM PRIORITY: protocol must be at the END to overwrite default instructions
+        this.client.getChat().setSystemInstruction(defaultInstruction + '\n' + protocol);
 
         const abortController = new AbortController();
         let currentQueryParts: Part[] = [{ text: userPrompt }];
@@ -284,22 +298,45 @@ ${memoryContext}
           if (toolCallRequests.length > 0) {
             const toolResponseParts: Part[] = [];
             const standardRequests: any[] = [];
-            for (const req of toolCallRequests) {
-              if (req.name.startsWith('run_evolved_skill_')) {
+            
+            const evolvedSkillPromises = toolCallRequests
+              .filter(req => req.name.startsWith('run_evolved_skill_'))
+              .map(async (req) => {
                 try {
                   const output = await this.dynamicRegistry.runSkill(req.name, req.args);
-                  toolResponseParts.push({ functionResponse: { name: req.name, response: { output } } });
                   this.emit(JarvisEventType.TOOL_CALL_RESPONSE, { name: req.name, status: 'success', output, callId: req.callId });
+                  return {
+                    functionResponse: {
+                      name: req.name,
+                      response: { result: output }
+                    }
+                  } as Part;
                 } catch (e: any) {
-                  toolResponseParts.push({ functionResponse: { name: req.name, response: { error: e.message } } });
+                  return {
+                    functionResponse: {
+                      name: req.name,
+                      response: { error: e.message }
+                    }
+                  } as Part;
                 }
-              } else {
+              });
+
+            for (const req of toolCallRequests) {
+              if (!req.name.startsWith('run_evolved_skill_')) {
                 standardRequests.push(req);
               }
             }
 
-            if (standardRequests.length > 0) {
-              const completedToolCalls = await this.scheduler.schedule(standardRequests, abortController.signal);
+            const [evolvedResults, completedToolCalls] = await Promise.all([
+              Promise.all(evolvedSkillPromises),
+              standardRequests.length > 0 
+                ? this.scheduler.schedule(standardRequests, abortController.signal)
+                : Promise.resolve([])
+            ]);
+
+            toolResponseParts.push(...evolvedResults);
+
+            if (completedToolCalls.length > 0) {
               for (const completed of completedToolCalls) {
                 if (completed.response.responseParts) toolResponseParts.push(...completed.response.responseParts);
                 this.emit(JarvisEventType.TOOL_CALL_RESPONSE, { name: completed.request.name, status: completed.status, output: completed.response.resultDisplay, callId: completed.request.callId });
