@@ -33,7 +33,21 @@ CLI 核心构建的**自主数字生命体**。它超越了传统助手的范畴
 - **Node.js**：>= 20.0.0
 - **API Key**：您需要一个 Google Gemini API Key。
 
-### 2. 环境配置
+### 2. 身份认证配置
+
+Jarvis 通过底层 Gemini CLI 核心支持两种认证方式：
+
+#### 方案 A：Google 账号登录 (推荐 OAuth 方式)
+
+如果您希望使用 Google 账号，请先通过 Gemini
+CLI 完成初始化登录。Jarvis 会自动继承您的活跃会话：
+
+```bash
+# 在浏览器中完成授权登录
+npx gemini login
+```
+
+#### 方案 B：使用 API Key
 
 确保您的 API Key 已填入项目根目录的 `.env` 文件中，或在终端导出：
 
