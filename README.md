@@ -46,7 +46,21 @@ and the capacity for self-evolution.
 - **Node.js**: >= 20.0.0
 - **API Key**: You need a Google Gemini API Key.
 
-### 2. Setup Environment
+### 2. Authentication Setup
+
+Jarvis supports two authentication methods via the underlying Gemini CLI core:
+
+#### Option A: Google Login (Recommended for OAuth)
+
+If you prefer using your Google Account, first initialize and log in through the
+Gemini CLI. This allows Jarvis to inherit your active session:
+
+```bash
+# Log in via your browser
+npx gemini login
+```
+
+#### Option B: API Key
 
 Ensure your API key is in a `.env` file in the project root or exported:
 
