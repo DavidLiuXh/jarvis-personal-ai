@@ -142,13 +142,14 @@
             max-width: 900px;
             margin: 0 auto;
             display: flex;
+            align-items: flex-end;
             gap: 1rem;
             background: var(--bg-card);
             padding: 0.5rem;
             border-radius: 0.75rem;
             border: 1px solid var(--bg-hover);
         }
-        input {
+        textarea {
             flex: 1;
             background: transparent;
             border: none;
@@ -156,6 +157,10 @@
             padding: 0.75rem 1rem;
             outline: none;
             font-size: 1rem;
+            resize: none;
+            max-height: 200px;
+            font-family: inherit;
+            overflow-y: hidden;
         }
         button {
             background-color: var(--accent);
@@ -202,7 +207,7 @@
 
     <footer>
         <form id="chat-form" class="input-container">
-            <input type="text" id="user-input" placeholder="Ask Jarvis to do something..." autocomplete="off">
+            <textarea id="user-input" placeholder="Ask Jarvis to do something..." autocomplete="off" rows="1"></textarea>
             <button type="submit" id="send-btn">Send</button>
         </form>
     </footer>
@@ -214,6 +219,24 @@
         const statusText = document.getElementById('status-text');
         const statusDot = document.getElementById('status-dot');
         const sendBtn = document.getElementById('send-btn');
+
+        function adjustHeight() {
+            userInput.style.height = 'auto';
+            userInput.style.height = (userInput.scrollHeight) + 'px';
+            if (userInput.scrollHeight > 200) {
+                userInput.style.overflowY = 'auto';
+            } else {
+                userInput.style.overflowY = 'hidden';
+            }
+        }
+
+        userInput.addEventListener('input', adjustHeight);
+        userInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                chatForm.dispatchEvent(new Event('submit'));
+            }
+        });
         
         let ws;
         let currentResponseEl = null;
@@ -373,6 +396,7 @@
                 sessionId: sessionId 
             }));
             userInput.value = '';
+            userInput.style.height = 'auto';
         };
 
         connect();
