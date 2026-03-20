@@ -33,7 +33,7 @@ jobs:
           private-key: '${{ secrets.PRIVATE_KEY }}'
 
       - name: 'Process Stale PRs'
-        uses: 'actions/github-script@v7'
+        uses: 'actions/github-script@v8'
         env:
           DRY_RUN: '${{ inputs.dry_run }}'
         with:
