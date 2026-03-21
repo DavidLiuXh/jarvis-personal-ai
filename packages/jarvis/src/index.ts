@@ -15,13 +15,6 @@ import { setGlobalDispatcher, ProxyAgent } from 'undici';
 dotenv.config({ path: path.join(SOURCE_ROOT, '.env') });
 dotenv.config({ path: path.join(SOURCE_ROOT, 'packages/jarvis/.env') });
 
-// GLOBAL PROXY INJECTION
-const proxy = process.env.HTTPS_PROXY || process.env.https_proxy || process.env.HTTP_PROXY || process.env.http_proxy;
-if (proxy) {
-  const dispatcher = new ProxyAgent(proxy);
-  setGlobalDispatcher(dispatcher);
-}
-
 // --- 2. CONFIG LOAD (REQUIRED FOR JAILBREAK DECISION) ---
 import { ConfigManager } from './core/configManager.js';
 const jarvisConfig = ConfigManager.getInstance().get();
@@ -66,6 +59,7 @@ import { fileURLToPath } from 'node:url';
 import { debugLogger, AuthType } from '../../core/src/index.js';
 import { JarvisManager } from './core/manager.js';
 import { JarvisEventType, type JarvisIncomingMessage } from './core/types.js';
+import { FeishuChannel } from './core/channels/feishu.js';
 
 // @ts-expect-error - Relative import
 import { loadCliConfig } from '../../cli/src/config/config.js';
@@ -92,6 +86,16 @@ class JarvisServer {
 
     this.setupRoutes();
     this.setupWebSocket();
+
+    if (jarvisConfig.feishu.enabled) {
+      console.error(`🔌 [Jarvis] Activating Feishu Swarm Link for AppID: ${jarvisConfig.feishu.appId}`);
+      const feishu = new FeishuChannel(
+        jarvisConfig.feishu.appId,
+        jarvisConfig.feishu.appSecret,
+        this.manager
+      );
+      void feishu.start();
+    }
 
     const apiKey = jarvisConfig.api.key || process.env.GOOGLE_API_KEY || process.env.GEMINI_API_KEY;
     if (apiKey) {
