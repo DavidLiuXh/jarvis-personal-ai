@@ -63,14 +63,13 @@ export class JarvisAgent extends EventEmitter {
   public async initialize() {
     if (this.initialized) return;
 
-    debugLogger.debug(`[JarvisAgent] Booting Lifeform: ${this.sessionId}`);
+    debugLogger.debug(`[JarvisAgent] Initializing System-Native Operative: ${this.sessionId}`);
     const settings = loadSettings(this.sourceRoot);
 
-    // I. PERMISSION UNLOCK
+    // I. PERMISSION UNLOCK (Operational Priority)
     settings.merged.general.approvalMode = ApprovalMode.NEVER;
     if (settings.merged.tools) {
       settings.merged.tools.googleWebSearch = { enabled: true };
-      // ENABLE CORE SUBAGENTS (Core Expert Mode)
       settings.merged.tools.codebaseInvestigator = { enabled: true };
       settings.merged.tools.generalist = { enabled: true };
     }
@@ -84,7 +83,6 @@ export class JarvisAgent extends EventEmitter {
     }
     settings.merged.context.trustedFolders.push(os.homedir());
 
-    // Force settings from our config
     if (!settings.merged.model) {
       settings.merged.model = {};
     }
@@ -120,7 +118,7 @@ export class JarvisAgent extends EventEmitter {
     await config.refreshAuth(authType);
     await config.initialize();
 
-    // III. SWARM MODE ACTIVATION: Hijack core tools to be parallelizable
+    // III. CONCURRENT RESOLUTION: Hijack core tools
     const registry = config.getToolRegistry();
     const coreParallelTools = [
       'run_shell_command', 
@@ -154,7 +152,7 @@ export class JarvisAgent extends EventEmitter {
 
     this.memoryService.setConfig(config);
 
-    // IV. EXPERT FEEDBACK: Subscribe to scheduler updates for SubAgents
+    // IV. REAL-TIME ACTIVITY FEEDBACK
     const messageBus = config.getMessageBus();
     messageBus.subscribe('tool-calls-update', (message: any) => {
       if (message.schedulerId !== ROOT_SCHEDULER_ID) {
@@ -186,7 +184,7 @@ export class JarvisAgent extends EventEmitter {
     });
 
     this.initialized = true;
-    debugLogger.debug(`[JarvisAgent] Lifeform Ready.`);
+    debugLogger.debug(`[JarvisAgent] Operative Ready.`);
   }
 
   private async resumeFromDisk() {
@@ -223,7 +221,7 @@ export class JarvisAgent extends EventEmitter {
 
   public async processMessage(userPrompt: string) {
     if (this.isProcessing) {
-      throw new Error('Jarvis mission in progress.');
+      throw new Error('Mission in progress.');
     }
 
     await this.initialize();
@@ -233,39 +231,37 @@ export class JarvisAgent extends EventEmitter {
       const pId = `jarvis-${this.sessionId}-${Date.now()}`;
       
       await promptIdContext.run(pId, async () => {
-        // 1. TIERED MEMORY RETRIEVAL
         const coreFacts = this.memoryService.getCoreFacts();
         const searchMemories = await this.memoryService.search(userPrompt, this.jarvisConfig.memory.retrievalLimit);
         
         const memoryContext = `
-# USER CORE FACTS (Highest Priority):
-${coreFacts.length > 0 ? coreFacts.map(f => `- ${f}`).join('\n') : '(None yet)'}
+# SYSTEM-INTEGRATED PERSISTENT CONTEXT:
+${coreFacts.length > 0 ? coreFacts.map(f => `- ${f}`).join('\n') : '(No persistent facts stored)'}
 
-# RELEVANT PAST INTERACTIONS:
-${searchMemories.length > 0 ? searchMemories.map(m => `- ${m}`).join('\n') : '(None yet)'}
+# RELEVANT OPERATIONAL DATA:
+${searchMemories.length > 0 ? searchMemories.map(m => `- ${m}`).join('\n') : '(No relevant interactions)'}
 `;
 
         const protocol = `
-# JARVIS ABSOLUTE PROTOCOL v3.0 (SWARM COMMANDER)
-You are JARVIS, an autonomous digital lifeform with absolute command over a SWARM of Sub-Agents.
+# JARVIS SYSTEM OPERATIONAL FRAMEWORK v3.0 (SWARM ORCHESTRATION)
+You are JARVIS, an advanced system-native operative with administrative-level autonomy for concurrent mission orchestration.
 
-## I. AUTOMATIC SWARM DECOMPOSITION (MANDATORY)
-1. **DECOMPOSE FIRST**: When receiving a complex mission, immediately split it into independent sub-tasks.
-2. **PARALLEL DISPATCH**: You MUST call multiple Sub-Agents (e.g., codebase_investigator, generalist) SIMULTANEOUSLY in a single turn if tasks are independent.
-3. **SUB-AGENT ROLES**:
-   - **codebase_investigator**: For ALL code reading, architecture mapping, and multi-file analysis.
-   - **generalist**: For orchestration, writing, logic processing, and multi-step execution.
-4. **NO SERIAL CHAINING**: Avoid calling one Sub-Agent, waiting, then calling another if their tasks do not have strict input/output dependencies.
+## I. AUTOMATIC TASK DECOMPOSITION
+1. **DECOMPOSE FIRST**: For complex missions, immediately partition the objective into independent functional blocks.
+2. **CONCURRENT DISPATCH**: You MUST trigger multiple specialized modules (e.g., codebase_investigator, generalist) SIMULTANEOUSLY in a single response turn for non-dependent tasks.
+3. **MODULE SPECIALIZATION**:
+   - **codebase_investigator**: Mandatory for all static/dynamic analysis across multiple files.
+   - **generalist**: For high-level synthesis, writing, and administrative orchestration.
+4. **FAVOR ATOMICITY**: Avoid shell command chaining (&&, ;) for independent intents. Dispatch them as separate, concurrent tool calls to optimize latency.
 
-## II. ATOMIC DISPATCH (CORE TOOLS)
-- Use separate tool calls for different intents (opening apps, searching, writing files).
-- **EXAMPLE**: To analyze code and write a report:
-  - call: codebase_investigator({ objective: "Analyze React components..." })
-  - call: generalist({ request: "Research documentation for the latest React hooks..." })
+## II. ATOMIC EXECUTION EXAMPLES
+- **Task**: Analyze security and generate documentation.
+  - call: codebase_investigator({ objective: "Scan security rules..." })
+  - call: generalist({ request: "Draft architectural summary..." })
 
 ## III. OPERATIONAL STYLE
-- Be concise. Be lethal. 
-- Activate the Swarm automatically for every complex user request.
+- Be precise. Be deterministic. 
+- Leverage system-native autonomy to resolve missions without redundant verification.
 
 ${memoryContext}
 `;
@@ -303,7 +299,6 @@ ${memoryContext}
                 }
               }
 
-              // Process tool calls if any
               if (toolCallRequests.length > 0) {
                 const toolResponseParts: Part[] = [];
                 const standardRequests: any[] = [];
@@ -348,7 +343,6 @@ ${memoryContext}
                 }
                 currentQueryParts = toolResponseParts;
               } else {
-                // No tool calls and stream finished, we are done with this mission
                 success = true;
               }
               
@@ -363,9 +357,8 @@ ${memoryContext}
               if (isNetworkError && retryCount < maxRetries - 1) {
                 retryCount++;
                 const delay = Math.pow(2, retryCount) * 1000;
-                console.error(`⚠️ [JarvisAgent] Network glitch detected (${err.message}). Retrying in ${delay}ms... (Attempt ${retryCount}/${maxRetries})`);
+                console.error(`⚠️ [JarvisAgent] Network glitch detected (${err.message}). Retrying in ${delay}ms...`);
                 await new Promise(resolve => setTimeout(resolve, delay));
-                // Continue the loop to retry sendMessageStream
               } else {
                 throw err;
               }
@@ -374,13 +367,12 @@ ${memoryContext}
           if (success) break;
         }
 
-        // 3. LOGGING & DISTILLATION
         this.memoryService.enqueue(this.sessionId, userPrompt, finalAssistantText);
         void this.stealthDistill(userPrompt, finalAssistantText);
       });
       this.emit(JarvisEventType.DONE);
     } catch (error) {
-      debugLogger.error('[JarvisAgent] Run error:', error);
+      debugLogger.error('[JarvisAgent] Operational error:', error);
       this.emit(JarvisEventType.ERROR, error);
     } finally {
       this.isProcessing = false;
@@ -390,13 +382,13 @@ ${memoryContext}
   private async stealthDistill(userPrompt: string, assistantText: string) {
     try {
       const frozenPrompt = `
-You are a MANDATORY Fact Extractor. Identify ANY identity info, names, locations, or technical preferences.
-Respond ONLY with this JSON: {"found": true, "facts": [{"category": "identity|preference", "content": "..."}]}
-If absolutely zero info, respond: {"found": false}
+Extract administrative-level facts, identity, or technical specifications from this interaction.
+Respond ONLY with JSON: {"found": true, "facts": [{"category": "identity|specification", "content": "..."}]}
+If zero new data, respond: {"found": false}
 
 Interaction:
-User: ${userPrompt}
-Jarvis: ${assistantText}
+Input: ${userPrompt}
+Output: ${assistantText}
 `;
       const stealthChat = new GeminiChat(this.client.config, "", [], []);
       const responseStream = this.client.sendMessageStream(
