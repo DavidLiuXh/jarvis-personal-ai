@@ -8,6 +8,7 @@ import * as lark from '@larksuiteoapi/node-sdk';
 import { JarvisManager } from '../manager.js';
 import { JarvisEventType } from '../types.js';
 import { debugLogger } from '../../../../core/src/index.js';
+import { ConfigManager } from '../configManager.js';
 
 export class FeishuChannel {
   private client: lark.Client;
@@ -119,9 +120,24 @@ export class FeishuChannel {
         } catch (e: any) {}
       };
 
+      // Listener for streaming content
       const contentHandler = (event: any) => {
-        accumulatedText += event.value;
-        if (accumulatedText.length % 30 === 0 || accumulatedText.length < 50) {
+        const jarvisConfig = ConfigManager.getInstance().get();
+        
+        // 🛠️ SMART PARSING: Handle string content
+        if (typeof event.value === 'string') {
+          accumulatedText += event.value;
+        } 
+        // 💭 THOUGHTS: Only if enabled in config
+        else if (jarvisConfig.feishu.showThoughts && event.value && typeof event.value === 'object') {
+          const thought = event.value;
+          if (thought.subject || thought.description) {
+            accumulatedText += `\n> 💭 *${thought.subject || 'Thinking'}: ${thought.description || ''}*\n`;
+          }
+        }
+
+        // Throttle updates
+        if (accumulatedText.length % 30 === 0 || accumulatedText.length < 100) {
            void updateCard(accumulatedText + ' ▌');
         }
       };

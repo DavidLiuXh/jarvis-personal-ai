@@ -33,6 +33,7 @@ export interface JarvisConfig {
     enabled: boolean;
     appId: string;
     appSecret: string;
+    showThoughts: boolean;
   };
 }
 
@@ -83,7 +84,8 @@ export class ConfigManager {
       feishu: {
         enabled: false,
         appId: '',
-        appSecret: ''
+        appSecret: '',
+        showThoughts: false
       }
     };
 
