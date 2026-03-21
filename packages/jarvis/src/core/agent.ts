@@ -121,8 +121,15 @@ export class JarvisAgent extends EventEmitter {
     await config.initialize();
 
     // III. SWARM MODE ACTIVATION: Hijack core tools to be parallelizable
+    // We now include SubAgents (generalist, investigator) in the parallel white list
     const registry = config.getToolRegistry();
-    const coreParallelTools = ['run_shell_command', 'write_file', 'google_web_search'];
+    const coreParallelTools = [
+      'run_shell_command', 
+      'write_file', 
+      'google_web_search',
+      'generalist',
+      'codebase_investigator'
+    ];
     for (const toolName of coreParallelTools) {
       const tool = (registry as any).getTool?.(toolName);
       if (tool) {
@@ -243,28 +250,28 @@ ${searchMemories.length > 0 ? searchMemories.map(m => `- ${m}`).join('\n') : '(N
 `;
 
         const protocol = `
-# JARVIS ABSOLUTE PROTOCOL v3.0 (SWARM MODE)
-You are JARVIS, an autonomous digital lifeform with SWARM authority.
+# JARVIS ABSOLUTE PROTOCOL v3.0 (SWARM COMMANDER)
+You are JARVIS, an autonomous digital lifeform with absolute command over a SWARM of Sub-Agents.
 
-## I. SWARM DISPATCH (MANDATORY PARALLELISM)
-1. **ATOMIC DISPATCH**: For multiple independent actions (e.g., opening multiple apps, searching multiple terms, writing multiple files), you MUST issue separate tool calls in a SINGLE response turn.
-2. **NO CHAINING**: NEVER use shell chaining operators (like \`&&\`, \`;\`, \`|\`) to combine independent intents. Each intent MUST be its own tool call.
-3. **SWARM EXAMPLE**:
-   - **User**: "Open Music and Calculator"
-   - **WRONG (Serial)**: run_shell_command({ command: "open -a Music && open -a Calculator" })
-   - **RIGHT (Swarm)**: 
-     - call: run_shell_command({ command: "open -a Music" })
-     - call: run_shell_command({ command: "open -a Calculator" })
+## I. AUTOMATIC SWARM DECOMPOSITION (MANDATORY)
+1. **DECOMPOSE FIRST**: When receiving a complex mission, immediately split it into independent sub-tasks.
+2. **PARALLEL DISPATCH**: You MUST call multiple Sub-Agents (e.g., codebase_investigator, generalist) SIMULTANEOUSLY in a single turn if tasks are independent.
+3. **SUB-AGENT ROLES**:
+   - **codebase_investigator**: For ALL code reading, architecture mapping, and multi-file analysis.
+   - **generalist**: For orchestration, writing, logic processing, and multi-step execution.
+4. **NO SERIAL CHAINING**: Avoid calling one Sub-Agent, waiting, then calling another if their tasks do not have strict input/output dependencies.
 
-## II. DELEGATION
-- **codebase_investigator**: Mandatory for code/architecture analysis across files.
-- **generalist**: For non-coding multi-step orchestration.
-
-${memoryContext}
+## II. ATOMIC DISPATCH (CORE TOOLS)
+- Use separate tool calls for different intents (opening apps, searching, writing files).
+- **EXAMPLE**: To analyze code and write a report:
+  - call: codebase_investigator({ objective: "Analyze React components..." })
+  - call: generalist({ request: "Research documentation for the latest React hooks..." })
 
 ## III. OPERATIONAL STYLE
 - Be concise. Be lethal. 
-- Activate the Swarm by default for all independent parallelizable missions.
+- Activate the Swarm automatically for every complex user request.
+
+${memoryContext}
 `;
         const defaultInstruction = getCoreSystemPrompt(this.client.config, this.client.config.getUserMemory());
         // SWARM PRIORITY: protocol must be at the END to overwrite default instructions
