@@ -9,15 +9,15 @@
   "dependencies": {
     "@google/gemini-cli": "0.34.0-nightly.20260304.28af4e127",
     "@google/gemini-cli-core": "0.34.0-nightly.20260304.28af4e127",
-    "@google/genai": "^1.41.0",
+    "@google/genai": "^1.46.0",
     "@larksuiteoapi/node-sdk": "^1.59.0",
-    "better-sqlite3": "^12.6.2",
+    "better-sqlite3": "^12.8.0",
     "dotenv": "^17.3.1",
     "express": "^5.2.1",
     "https-proxy-agent": "^7.0.6",
     "sqlite-vec": "^0.1.7-alpha.2",
-    "tsx": "^4.20.3",
-    "undici": "^7.1.0",
+    "tsx": "^4.21.0",
+    "undici": "^7.24.5",
     "uuid": "^13.0.0",
     "ws": "^8.18.1"
   },
@@ -25,6 +25,6 @@
     "@types/express": "^5.0.6",
     "@types/node": "^20.0.0",
     "@types/ws": "^8.18.1",
-    "typescript": "^5.3.3"
+    "typescript": "^5.9.3"
   }
 }
