@@ -29,6 +29,11 @@ export interface JarvisConfig {
   security: {
     jailbreak: boolean;
   };
+  feishu: {
+    enabled: boolean;
+    appId: string;
+    appSecret: string;
+  };
 }
 
 const JARVIS_HOME = path.join(os.homedir(), '.gemini-jarvis');
@@ -74,6 +79,11 @@ export class ConfigManager {
       },
       security: {
         jailbreak: false
+      },
+      feishu: {
+        enabled: false,
+        appId: '',
+        appSecret: ''
       }
     };
 
@@ -88,7 +98,8 @@ export class ConfigManager {
           models: { ...defaults.models, ...saved.models },
           server: { ...defaults.server, ...saved.server },
           memory: { ...defaults.memory, ...saved.memory },
-          security: { ...defaults.security, ...saved.security }
+          security: { ...defaults.security, ...saved.security },
+          feishu: { ...defaults.feishu, ...saved.feishu }
         };
       } catch (e) {
         console.error('[ConfigManager] Error parsing config.json, using defaults.');
