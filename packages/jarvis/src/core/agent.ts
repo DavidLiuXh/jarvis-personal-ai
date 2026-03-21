@@ -121,7 +121,6 @@ export class JarvisAgent extends EventEmitter {
     await config.initialize();
 
     // III. SWARM MODE ACTIVATION: Hijack core tools to be parallelizable
-    // We now include SubAgents (generalist, investigator) in the parallel white list
     const registry = config.getToolRegistry();
     const coreParallelTools = [
       'run_shell_command', 
@@ -159,10 +158,8 @@ export class JarvisAgent extends EventEmitter {
     const messageBus = config.getMessageBus();
     messageBus.subscribe('tool-calls-update', (message: any) => {
       if (message.schedulerId !== ROOT_SCHEDULER_ID) {
-        // 🚀 SANITIZE: Remove circular structures (instances) before emitting to WebSocket
         const sanitizedToolCalls = message.toolCalls.map((tc: any) => {
           const { tool, invocation, ...rest } = tc;
-          // Also sanitize response if it exists (might contain Error objects)
           if (rest.response) {
             const { error, ...resRest } = rest.response;
             rest.response = { ...resRest, error: error?.message };
@@ -175,7 +172,6 @@ export class JarvisAgent extends EventEmitter {
           toolCalls: sanitizedToolCalls
         };
 
-        console.log(`📡 [JarvisAgent] Emitting sanitized SUBAGENT_ACTIVITY for: ${message.schedulerId}`);
         this.emit(JarvisEventType.SUBAGENT_ACTIVITY, sanitizedMessage);
       }
     });
@@ -274,7 +270,6 @@ You are JARVIS, an autonomous digital lifeform with absolute command over a SWAR
 ${memoryContext}
 `;
         const defaultInstruction = getCoreSystemPrompt(this.client.config, this.client.config.getUserMemory());
-        // SWARM PRIORITY: protocol must be at the END to overwrite default instructions
         this.client.getChat().setSystemInstruction(defaultInstruction + '\n' + protocol);
 
         const abortController = new AbortController();
@@ -282,82 +277,101 @@ ${memoryContext}
         let finalAssistantText = '';
 
         while (true) {
-          const responseStream = this.client.sendMessageStream(currentQueryParts, abortController.signal, pId);
-          const toolCallRequests: any[] = [];
-          let turnTextAccumulated = '';
+          let retryCount = 0;
+          const maxRetries = 3;
+          let success = false;
 
-          for await (const event of responseStream) {
-            if (event.type === GeminiEventType.Content) {
-              const newText = event.value;
-              if (turnTextAccumulated.includes(newText) && turnTextAccumulated.length > 0) continue;
-              turnTextAccumulated += newText;
-              finalAssistantText += newText;
-              this.emit(JarvisEventType.CONTENT, event);
-            } else if (event.type === GeminiEventType.ToolCallRequest) {
-              toolCallRequests.push(event.value);
-            } else if (event.type === GeminiEventType.Error) {
-              throw event.value.error;
-            } else {
-              this.emit(JarvisEventType.CONTENT, event);
-            }
-          }
+          while (retryCount < maxRetries && !success) {
+            try {
+              const responseStream = this.client.sendMessageStream(currentQueryParts, abortController.signal, pId);
+              const toolCallRequests: any[] = [];
+              let turnTextAccumulated = '';
 
-          if (toolCallRequests.length > 0) {
-            const toolResponseParts: Part[] = [];
-            const standardRequests: any[] = [];
-            
-            const evolvedSkillPromises = toolCallRequests
-              .filter(req => req.name.startsWith('run_evolved_skill_'))
-              .map(async (req) => {
-                try {
-                  const output = await this.dynamicRegistry.runSkill(req.name, req.args);
-                  this.emit(JarvisEventType.TOOL_CALL_RESPONSE, { name: req.name, status: 'success', output, callId: req.callId });
-                  return {
-                    functionResponse: {
-                      name: req.name,
-                      response: { result: output }
-                    }
-                  } as Part;
-                } catch (e: any) {
-                  return {
-                    functionResponse: {
-                      name: req.name,
-                      response: { error: e.message }
-                    }
-                  } as Part;
+              for await (const event of responseStream) {
+                if (event.type === GeminiEventType.Content) {
+                  const newText = event.value;
+                  if (turnTextAccumulated.includes(newText) && turnTextAccumulated.length > 0) continue;
+                  turnTextAccumulated += newText;
+                  finalAssistantText += newText;
+                  this.emit(JarvisEventType.CONTENT, event);
+                } else if (event.type === GeminiEventType.ToolCallRequest) {
+                  toolCallRequests.push(event.value);
+                } else if (event.type === GeminiEventType.Error) {
+                  throw event.value.error;
+                } else {
+                  this.emit(JarvisEventType.CONTENT, event);
                 }
-              });
+              }
 
-            for (const req of toolCallRequests) {
-              if (!req.name.startsWith('run_evolved_skill_')) {
-                standardRequests.push(req);
+              // Process tool calls if any
+              if (toolCallRequests.length > 0) {
+                const toolResponseParts: Part[] = [];
+                const standardRequests: any[] = [];
+                
+                const evolvedSkillPromises = toolCallRequests
+                  .filter(req => req.name.startsWith('run_evolved_skill_'))
+                  .map(async (req) => {
+                    try {
+                      const output = await this.dynamicRegistry.runSkill(req.name, req.args);
+                      this.emit(JarvisEventType.TOOL_CALL_RESPONSE, { name: req.name, status: 'success', output, callId: req.callId });
+                      return { functionResponse: { name: req.name, response: { result: output } } } as Part;
+                    } catch (e: any) {
+                      return { functionResponse: { name: req.name, response: { error: e.message } } } as Part;
+                    }
+                  });
+
+                for (const req of toolCallRequests) {
+                  if (!req.name.startsWith('run_evolved_skill_')) {
+                    standardRequests.push(req);
+                  }
+                }
+
+                const [evolvedResults, completedToolCalls] = await Promise.all([
+                  Promise.all(evolvedSkillPromises),
+                  standardRequests.length > 0 
+                    ? this.scheduler.schedule(standardRequests, abortController.signal)
+                    : Promise.resolve([])
+                ]);
+
+                toolResponseParts.push(...evolvedResults);
+
+                if (completedToolCalls.length > 0) {
+                  for (const completed of completedToolCalls) {
+                    if (completed.response.responseParts) toolResponseParts.push(...completed.response.responseParts);
+                    this.emit(JarvisEventType.TOOL_CALL_RESPONSE, { name: completed.request.name, status: completed.status, output: completed.response.resultDisplay, callId: completed.request.callId });
+                  }
+                  try {
+                    const currentModel = this.client.getCurrentSequenceModel() || this.client.getChat().getModel();
+                    this.client.getChat().recordCompletedToolCalls(currentModel, completedToolCalls);
+                    await recordToolCallInteractions(this.client.config, completedToolCalls);
+                  } catch (e) {}
+                }
+                currentQueryParts = toolResponseParts;
+              } else {
+                // No tool calls and stream finished, we are done with this mission
+                success = true;
+              }
+              
+              if (!toolCallRequests.length) {
+                success = true;
+              }
+            } catch (err: any) {
+              const isNetworkError = err.message?.includes('Premature close') || 
+                                    err.code === 'ERR_STREAM_PREMATURE_CLOSE' || 
+                                    err.message?.includes('ECONNRESET');
+              
+              if (isNetworkError && retryCount < maxRetries - 1) {
+                retryCount++;
+                const delay = Math.pow(2, retryCount) * 1000;
+                console.error(`⚠️ [JarvisAgent] Network glitch detected (${err.message}). Retrying in ${delay}ms... (Attempt ${retryCount}/${maxRetries})`);
+                await new Promise(resolve => setTimeout(resolve, delay));
+                // Continue the loop to retry sendMessageStream
+              } else {
+                throw err;
               }
             }
-
-            const [evolvedResults, completedToolCalls] = await Promise.all([
-              Promise.all(evolvedSkillPromises),
-              standardRequests.length > 0 
-                ? this.scheduler.schedule(standardRequests, abortController.signal)
-                : Promise.resolve([])
-            ]);
-
-            toolResponseParts.push(...evolvedResults);
-
-            if (completedToolCalls.length > 0) {
-              for (const completed of completedToolCalls) {
-                if (completed.response.responseParts) toolResponseParts.push(...completed.response.responseParts);
-                this.emit(JarvisEventType.TOOL_CALL_RESPONSE, { name: completed.request.name, status: completed.status, output: completed.response.resultDisplay, callId: completed.request.callId });
-              }
-              try {
-                const currentModel = this.client.getCurrentSequenceModel() || this.client.getChat().getModel();
-                this.client.getChat().recordCompletedToolCalls(currentModel, completedToolCalls);
-                await recordToolCallInteractions(this.client.config, completedToolCalls);
-              } catch (e) {}
-            }
-            currentQueryParts = toolResponseParts;
-          } else {
-            break;
           }
+          if (success) break;
         }
 
         // 3. LOGGING & DISTILLATION
@@ -375,7 +389,6 @@ ${memoryContext}
 
   private async stealthDistill(userPrompt: string, assistantText: string) {
     try {
-      console.log('🤫 [JarvisAgent] Initiating Compatible Stealth Distillation...');
       const frozenPrompt = `
 You are a MANDATORY Fact Extractor. Identify ANY identity info, names, locations, or technical preferences.
 Respond ONLY with this JSON: {"found": true, "facts": [{"category": "identity|preference", "content": "..."}]}
@@ -396,18 +409,11 @@ Jarvis: ${assistantText}
       let fullText = '';
       try {
         for await (const chunk of responseStream) {
-          console.log(`🤫 [JarvisAgent] Distiller Event: ${chunk.type}`);
           if (chunk.type === GeminiEventType.Content) {
             fullText += chunk.value;
-          } else if (chunk.type === GeminiEventType.Error) {
-            console.error('🤫 [JarvisAgent] Distiller Stream Error:', JSON.stringify(chunk.value, null, 2));
           }
         }
-      } catch (e: any) {
-        console.error('🤫 [JarvisAgent] Distiller connection failed:', e.message);
-      }
-
-      console.log(`🤫 [JarvisAgent] Distillation raw result (Length: ${fullText.length}): ${fullText.substring(0, 100)}...`);
+      } catch (e: any) {}
 
       const match = fullText.match(/\{[\s\S]*\}/);
       if (match) {
@@ -418,13 +424,9 @@ Jarvis: ${assistantText}
               await this.memoryService.saveFact(fact.category, fact.content, 10);
             }
           }
-        } catch (e: any) {
-          console.error('🤫 [JarvisAgent] Distiller JSON Parse Error:', e.message);
-        }
+        } catch (e: any) {}
       }
-    } catch (e: any) {
-      console.error('🤫 [JarvisAgent] Stealth Distillation Critical Failure:', e.message);
-    }
+    } catch (e: any) {}
   }
 
   public getHistory() {
