@@ -60,6 +60,7 @@ import { debugLogger, AuthType } from '../../core/src/index.js';
 import { JarvisManager } from './core/manager.js';
 import { JarvisEventType, type JarvisIncomingMessage } from './core/types.js';
 import { FeishuChannel } from './core/channels/feishu.js';
+import { WechatChannel } from './core/channels/wechat.js';
 
 // @ts-expect-error - Relative import
 import { loadCliConfig } from '../../cli/src/config/config.js';
@@ -95,6 +96,12 @@ class JarvisServer {
         this.manager
       );
       void feishu.start();
+    }
+
+    if (jarvisConfig.wechat.enabled) {
+      console.error('🔌 [Jarvis] Activating Official WeChat Channel...');
+      const wechat = new WechatChannel(this.manager);
+      void wechat.start();
     }
 
     const apiKey = jarvisConfig.api.key || process.env.GOOGLE_API_KEY || process.env.GEMINI_API_KEY;

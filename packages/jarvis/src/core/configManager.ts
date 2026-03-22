@@ -35,6 +35,10 @@ export interface JarvisConfig {
     appSecret: string;
     showThoughts: boolean;
   };
+  wechat: {
+    enabled: boolean;
+    apiBaseUrl: string; // The Tencent ilink gateway URL
+  };
 }
 
 const JARVIS_HOME = path.join(os.homedir(), '.gemini-jarvis');
@@ -86,6 +90,10 @@ export class ConfigManager {
         appId: '',
         appSecret: '',
         showThoughts: false
+      },
+      wechat: {
+        enabled: false,
+        apiBaseUrl: 'https://ilinkai.weixin.qq.com' // Correct production gateway
       }
     };
 
@@ -101,7 +109,8 @@ export class ConfigManager {
           server: { ...defaults.server, ...saved.server },
           memory: { ...defaults.memory, ...saved.memory },
           security: { ...defaults.security, ...saved.security },
-          feishu: { ...defaults.feishu, ...saved.feishu }
+          feishu: { ...defaults.feishu, ...saved.feishu },
+          wechat: { ...defaults.wechat, ...saved.wechat }
         };
       } catch (e) {
         console.error('[ConfigManager] Error parsing config.json, using defaults.');
