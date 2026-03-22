@@ -16,9 +16,10 @@ export class FeishuChannel {
   private manager: JarvisManager;
   private processedMessages = new Set<string>();
   private startTime = Date.now();
+  private heartbeatTimer: NodeJS.Timeout | null = null;
 
   constructor(appId: string, appSecret: string, manager: JarvisManager) {
-    const baseConfig: any = {
+    const baseConfig = {
       appId,
       appSecret,
       domain: lark.Domain.Feishu,
@@ -31,7 +32,7 @@ export class FeishuChannel {
   }
 
   public async start() {
-    console.error('\n📡 [Feishu] Swarm Link Online. Vision modules enabled.');
+    console.error('\n📡 [Feishu] Swarm Link Booting (Industrial Resilience Mode)...');
     
     const eventDispatcher = new lark.EventDispatcher({}).register({
       'im.message.receive_v1': async (data) => {
@@ -39,24 +40,20 @@ export class FeishuChannel {
         const msgId = message.message_id;
         const createTime = parseInt(message.create_time);
 
-        if (this.processedMessages.has(msgId)) return;
-        if (createTime < this.startTime) return;
+        if (this.processedMessages.has(msgId)) return {};
+        if (createTime < this.startTime) return {};
         this.processedMessages.add(msgId);
 
         const msgType = message.msg_type || (message as any).message_type;
         const chatId = message.chat_id;
         
-        console.error('----------------------------------------');
-        console.error(`📩 From Chat: ${chatId} | Type: ${msgType}`);
-        
         if (msgType === 'text') {
           const content = JSON.parse(message.content).text;
-          console.error(`💬 Content: ${content}`);
+          console.error(`📩 [Feishu] New Message: ${content}`);
           void this.handleUserMessage(chatId, content, `feishu-${chatId}`);
         } 
         else if (msgType === 'image') {
           const imageKey = JSON.parse(message.content).image_key;
-          console.error(`🖼️ Image received: ${imageKey}. Downloading...`);
           void this.handleImageMessage(chatId, imageKey, message.message_id, `feishu-${chatId}`);
         }
 
@@ -66,25 +63,63 @@ export class FeishuChannel {
 
     try {
       await this.wsClient.start({ eventDispatcher });
+      console.error('🚀 [Feishu] WebSocket Link Online. Swarm ready.');
+      this.startHeartbeat();
     } catch (err: any) {
-      console.error(`❌ [Feishu] WebSocket Error: ${err.message}`);
+      console.error(`❌ [Feishu] WebSocket critical failure: ${err.message}`);
     }
   }
 
   /**
-   * 🛠️ ROBUST STREAM TO BUFFER (Inspired by OpenClaw)
-   * Handles multiple Feishu SDK response formats.
+   * 🛡️ ROBUST PING: Verifies connectivity without crashing on SDK structure variations.
    */
+  private async pingFeishu(): Promise<boolean> {
+    try {
+      // Try Level 1: Standard SDK path
+      if ((this.client as any).res?.bot?.get) {
+        await (this.client as any).res.bot.get();
+        return true;
+      }
+      // Try Level 2: Alternative SDK path
+      if ((this.client as any).bot?.info?.get) {
+        await (this.client as any).bot.info.get();
+        return true;
+      }
+      
+      // Level 3: Raw Request (Final Boss Fallback)
+      // This is 100% path-safe as it doesn't use the client's dynamic properties
+      const token = await this.client.tokenManager.getTenantAccessToken();
+      const res = await fetch('https://open.feishu.cn/open-apis/bot/v3/info', {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      return res.ok;
+    } catch (e) {
+      return false;
+    }
+  }
+
+  private startHeartbeat() {
+    if (this.heartbeatTimer) clearInterval(this.heartbeatTimer);
+    
+    this.heartbeatTimer = setInterval(async () => {
+      const isHealthy = await this.pingFeishu();
+      if (isHealthy) {
+        debugLogger.debug('[FeishuChannel] Heartbeat pulse: Connection is alive.');
+      } else {
+        console.error('⚠️ [Feishu] Heartbeat detected a stale connection. Re-warming tokens...');
+        // Just getting the token again often fixes the state
+        try { await this.client.tokenManager.getTenantAccessToken(); } catch(e) {}
+      }
+    }, 120000); 
+  }
+
   private async getResourceBuffer(response: any): Promise<Buffer> {
     if (Buffer.isBuffer(response)) return response;
     if (response instanceof ArrayBuffer) return Buffer.from(response);
-    
     if (response.data) {
       if (Buffer.isBuffer(response.data)) return response.data;
       if (response.data instanceof ArrayBuffer) return Buffer.from(response.data);
     }
-
-    // Handle SDK stream wrapper
     if (typeof response.getReadableStream === 'function') {
       const stream = response.getReadableStream();
       const chunks: Buffer[] = [];
@@ -93,17 +128,7 @@ export class FeishuChannel {
       }
       return Buffer.concat(chunks);
     }
-
-    // Fallback to async iterator (if supported)
-    if (typeof response[Symbol.asyncIterator] === 'function') {
-      const chunks: Buffer[] = [];
-      for await (const chunk of response) {
-        chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
-      }
-      return Buffer.concat(chunks);
-    }
-
-    throw new Error(`Unexpected Feishu resource format. Keys: [${Object.keys(response).join(', ')}]`);
+    throw new Error(`Unexpected Feishu resource format.`);
   }
 
   private async handleImageMessage(chatId: string, imageKey: string, messageId: string, sessionId: string) {
@@ -112,16 +137,11 @@ export class FeishuChannel {
         path: { message_id: messageId, file_key: imageKey },
         params: { type: 'image' },
       });
-      
       const buffer = await this.getResourceBuffer(response);
-      
-      console.error(`✅ Image downloaded (${buffer.length} bytes). Dispatching to Jarvis Vision...`);
-
       await this.handleUserMessage(chatId, "[Vision Request: Analyzing attached image]", sessionId, {
         data: buffer,
         mimeType: 'image/png'
       });
-
     } catch (error: any) {
       console.error(`❌ [Feishu] Image processing failed: ${error.message}`);
     }
@@ -164,7 +184,6 @@ export class FeishuChannel {
             accumulatedText += `\n> 💭 *${thought.subject || 'Thinking'}: ${thought.description || ''}*\n`;
           }
         }
-
         if (accumulatedText.length % 30 === 0 || accumulatedText.length < 50) {
            void updateCard(accumulatedText + ' ▌');
         }
