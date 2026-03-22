@@ -219,7 +219,7 @@ export class JarvisAgent extends EventEmitter {
     } catch (e) {}
   }
 
-  public async processMessage(userPrompt: string) {
+  public async processMessage(userPrompt: string, imageAttachment?: { data: Buffer, mimeType: string }) {
     if (this.isProcessing) {
       throw new Error('Mission in progress.');
     }
@@ -269,7 +269,18 @@ ${memoryContext}
         this.client.getChat().setSystemInstruction(defaultInstruction + '\n' + protocol);
 
         const abortController = new AbortController();
+        
+        // 🚀 MULTIMODAL PAYLOAD CONSTRUCTION
         let currentQueryParts: Part[] = [{ text: userPrompt }];
+        if (imageAttachment) {
+          currentQueryParts.push({
+            inlineData: {
+              mimeType: imageAttachment.mimeType,
+              data: imageAttachment.data.toString('base64')
+            }
+          });
+        }
+
         let finalAssistantText = '';
 
         while (true) {
