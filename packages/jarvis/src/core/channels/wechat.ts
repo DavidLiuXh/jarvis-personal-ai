@@ -32,6 +32,8 @@ export class WechatChannel {
   private session: WechatSession | null = null;
   private isRunning = false;
   private abortController: AbortController | null = null;
+  private processedMessages = new Set<string>();
+  private startTime = Date.now();
 
   constructor(manager: JarvisManager) {
     this.manager = manager;
@@ -69,9 +71,6 @@ export class WechatChannel {
     }
   }
 
-  /**
-   * TENCENT ILINK LOGIN FLOW
-   */
   private async performLogin() {
     const config = ConfigManager.getInstance().get();
     let baseUrl = config.wechat.apiBaseUrl;
@@ -80,7 +79,6 @@ export class WechatChannel {
     let loginSuccessful = false;
     while (!loginSuccessful) {
       try {
-        // 1. Get QR Code
         const qrResp = await fetch(`${baseUrl}ilink/bot/get_bot_qrcode?bot_type=3`);
         const qrData = await qrResp.json();
         
@@ -88,7 +86,6 @@ export class WechatChannel {
         qrcode.generate(qrData.qrcode_img_content, { small: true });
         console.error('💡 TIP: Use your phone to scan the QR code above.\n');
 
-        // 2. Poll Status
         let qrExpired = false;
         while (!qrExpired && !loginSuccessful) {
           const statusResp = await fetch(`${baseUrl}ilink/bot/get_qrcode_status?qrcode=${qrData.qrcode}`);
@@ -106,23 +103,18 @@ export class WechatChannel {
             loginSuccessful = true;
           } else if (statusData.status === 'expired') {
             console.error('⏳ [Wechat] QR Code expired. Refreshing new code...');
-            qrExpired = true; // Break inner loop to fetch new QR
+            qrExpired = true;
           } else {
-            // Wait, scanned, etc.
             await new Promise(r => setTimeout(r, 2000));
           }
         }
       } catch (e: any) {
         console.error('❌ [Wechat] Login attempt failed:', e.message);
-        console.error('🔄 Retrying login initialization in 5s...');
         await new Promise(r => setTimeout(r, 5000));
       }
     }
   }
 
-  /**
-   * LONG POLLING LOOP (Tencent getupdates)
-   */
   private async monitorLoop() {
     this.abortController = new AbortController();
     
@@ -143,59 +135,61 @@ export class WechatChannel {
 
         if (response.status === 200) {
           const data = await response.json();
-          // DEBUG: Print every poll result
-          debugLogger.debug(`[Wechat] Poll result: msgs=${data.msgs?.length || 0}, next_buf=${data.get_updates_buf?.substring(0, 10)}...`);
-
-          // 🛠️ ROBUST SUCCESS CHECK: Proceed if we have a buf or messages, even if ret is undefined
           const isSuccess = data.ret === 0 || (data.get_updates_buf && data.msgs);
 
           if (isSuccess || data.msgs?.length > 0) {
-            // Update Sync Buffer: CRITICAL for receiving next events
             if (data.get_updates_buf && data.get_updates_buf !== this.session.syncBuf) {
               this.session.syncBuf = data.get_updates_buf;
               this.saveSession(this.session);
             }
 
             if (data.msgs && data.msgs.length > 0) {
-              console.error(`🔥 [Wechat] Caught ${data.msgs.length} message(s)! Processing...`);
               for (const msg of data.msgs) {
-                // EXTREME DEBUG: Print the exact message structure
-                console.error(`📦 [Wechat] RAW MSG Payload: ${JSON.stringify(msg)}`);
-                await this.handleIncomingMessage(msg);
+                void this.handleIncomingMessage(msg);
               }
             }
           }
-        }
-
- else {
-          debugLogger.debug('[Wechat] Connection ripple detected, retrying...');
+        } else {
           await new Promise(r => setTimeout(r, 5000));
         }
       } catch (e: any) {
         if (e.name === 'AbortError') break;
-        console.error('⚠️ [Wechat] Monitor loop error:', e.message);
-        await new Promise(r => setTimeout(r, 10000)); // Backoff
+        debugLogger.debug(`[Wechat] Monitor minor ripple: ${e.message}`);
+        await new Promise(r => setTimeout(r, 5000));
       }
     }
   }
 
   private async handleIncomingMessage(msg: any) {
+    const msgId = String(msg.message_id || msg.seq);
+    const createTime = msg.create_time_ms || Date.now();
+
+    // 🛡️ DEDUPLICATION
+    if (this.processedMessages.has(msgId)) {
+      debugLogger.debug(`[Wechat] Skipping duplicate msg: ${msgId}`);
+      return;
+    }
+    this.processedMessages.add(msgId);
+
+    // 🛡️ HISTORICAL FILTER
+    if (createTime < this.startTime) {
+      return;
+    }
+
     const fromUser = msg.from_user_id;
-    const textItem = msg.item_list?.find((i: any) => i.type === 1); // TEXT = 1
-    const imageItem = msg.item_list?.find((i: any) => i.type === 2); // IMAGE = 2
+    const textItem = msg.item_list?.find((i: any) => i.type === 1);
     const contextToken = msg.context_token;
 
-    if (!textItem && !imageItem) return;
+    if (!textItem) return;
 
-    console.error(`📩 [Wechat] New Swarm Intel from [${fromUser}]`);
+    console.error(`📩 [Wechat] Processing mission from [${fromUser}]`);
     
     const sessionId = `wechat-${fromUser}`;
     const agent = await this.manager.getAgent(sessionId);
-    
     let accumulatedText = '';
     
-    // Wechat requires context_token for all replies
     const reply = async (text: string, isFinish: boolean = false) => {
+      if (!text.trim()) return;
       try {
         await fetch(new URL('ilink/bot/sendmessage', this.session!.baseUrl).toString(), {
           method: 'POST',
@@ -204,32 +198,51 @@ export class WechatChannel {
             base_info: { channel_version: '1.0.2' },
             msg: {
               to_user_id: fromUser,
-              client_id: `jarvis-${Date.now()}`,
-              message_type: 2, // BOT = 2
-              message_state: isFinish ? 2 : 1, // FINISH = 2, GENERATING = 1
+              client_id: `jarvis-${Date.now()}-${Math.random().toString(36).substring(7)}`,
+              message_type: 2,
+              message_state: isFinish ? 2 : 1,
               item_list: [{ type: 1, text_item: { text } }],
               context_token: contextToken
             }
           })
         });
-      } catch (e) {}
-    };
-
-    const contentHandler = (event: any) => {
-      if (typeof event.value === 'string') {
-        accumulatedText += event.value;
-        // Optional: Implement incremental updates for WeChat if the gateway supports GENERATING state
+      } catch (e) {
+        console.error(`❌ [Wechat] Failed to send reply: ${e.message}`);
       }
     };
 
-    agent.on(JarvisEventType.CONTENT, contentHandler);
-    agent.on(JarvisEventType.DONE, async () => {
-      await reply(accumulatedText, true);
+    // 🛠️ FIX: Proper event handling to avoid duplicate listeners
+    const contentHandler = (event: any) => {
+      if (typeof event.value === 'string') {
+        accumulatedText += event.value;
+      }
+    };
+
+    // Cleanup function to ensure no listeners leak
+    const cleanup = () => {
       agent.removeListener(JarvisEventType.CONTENT, contentHandler);
+    };
+
+    agent.on(JarvisEventType.CONTENT, contentHandler);
+    
+    // Use .once to ensure the reply only fires ONE time per mission
+    agent.once(JarvisEventType.DONE, async () => {
+      await reply(accumulatedText, true);
+      cleanup();
+      console.error(`✅ [Wechat] Mission dispatched to [${fromUser}]`);
     });
 
-    // Start Jarvis Mission
-    await agent.processMessage(textItem?.text_item?.text || "[Visual Content Provided]");
+    agent.once(JarvisEventType.ERROR, async (err: any) => {
+      await reply(`⚠️ Jarvis encountered an operational error: ${err.message}`, true);
+      cleanup();
+    });
+
+    try {
+      await agent.processMessage(textItem.text_item.text);
+    } catch (e: any) {
+      console.error(`❌ [Wechat] Jarvis Execution Error: ${e.message}`);
+      cleanup();
+    }
   }
 
   private buildHeaders(): Record<string, string> {
