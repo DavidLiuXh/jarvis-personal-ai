@@ -37,7 +37,11 @@ export interface JarvisConfig {
   };
   wechat: {
     enabled: boolean;
-    apiBaseUrl: string; // The Tencent ilink gateway URL
+    apiBaseUrl: string;
+  };
+  session: {
+    useGlobalSession: boolean;
+    globalSessionId: string;
   };
 }
 
@@ -93,14 +97,17 @@ export class ConfigManager {
       },
       wechat: {
         enabled: false,
-        apiBaseUrl: 'https://ilinkai.weixin.qq.com' // Correct production gateway
+        apiBaseUrl: 'https://ilinkai.weixin.qq.com'
+      },
+      session: {
+        useGlobalSession: false,
+        globalSessionId: 'jarvis-global-master'
       }
     };
 
     if (fs.existsSync(CONFIG_PATH)) {
       try {
         const saved = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8'));
-        // Deep merge logic
         this.config = {
           ...defaults,
           ...saved,
@@ -110,7 +117,8 @@ export class ConfigManager {
           memory: { ...defaults.memory, ...saved.memory },
           security: { ...defaults.security, ...saved.security },
           feishu: { ...defaults.feishu, ...saved.feishu },
-          wechat: { ...defaults.wechat, ...saved.wechat }
+          wechat: { ...defaults.wechat, ...saved.wechat },
+          session: { ...defaults.session, ...saved.session }
         };
       } catch (e) {
         console.error('[ConfigManager] Error parsing config.json, using defaults.');

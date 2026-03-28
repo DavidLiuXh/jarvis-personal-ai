@@ -63,15 +63,16 @@ export class JarvisAgent extends EventEmitter {
   public async initialize() {
     if (this.initialized) return;
 
-    debugLogger.debug(`[JarvisAgent] Initializing System-Native Operative: ${this.sessionId}`);
+    debugLogger.debug(`[JarvisAgent] Booting Lifeform: ${this.sessionId}`);
     const settings = loadSettings(this.sourceRoot);
 
-    // I. PERMISSION UNLOCK (Operational Priority)
+    // I. PERMISSION UNLOCK
     settings.merged.general.approvalMode = ApprovalMode.NEVER;
     if (settings.merged.tools) {
       settings.merged.tools.googleWebSearch = { enabled: true };
       settings.merged.tools.codebaseInvestigator = { enabled: true };
       settings.merged.tools.generalist = { enabled: true };
+      settings.merged.tools.saveMemory = { enabled: true };
     }
     
     if (!settings.merged.context) {
@@ -125,7 +126,8 @@ export class JarvisAgent extends EventEmitter {
       'write_file', 
       'google_web_search',
       'generalist',
-      'codebase_investigator'
+      'codebase_investigator',
+      'save_memory'
     ];
     for (const toolName of coreParallelTools) {
       const tool = (registry as any).getTool?.(toolName);
@@ -184,7 +186,7 @@ export class JarvisAgent extends EventEmitter {
     });
 
     this.initialized = true;
-    debugLogger.debug(`[JarvisAgent] Operative Ready.`);
+    debugLogger.debug(`[JarvisAgent] Lifeform Ready.`);
   }
 
   private async resumeFromDisk() {
@@ -219,6 +221,40 @@ export class JarvisAgent extends EventEmitter {
     } catch (e) {}
   }
 
+  private async refreshContext(userPrompt: string) {
+    const coreFacts = this.memoryService.getCoreFacts();
+    const searchMemories = await this.memoryService.search(userPrompt, this.jarvisConfig.memory.retrievalLimit);
+    
+    const memoryContext = `
+# SYSTEM-INTEGRATED PERSISTENT CONTEXT (Synced Across All Channels):
+${coreFacts.length > 0 ? coreFacts.map(f => `- ${f}`).join('\n') : '(No persistent facts stored)'}
+
+# RELEVANT OPERATIONAL DATA:
+${searchMemories.length > 0 ? searchMemories.map(m => `- ${m}`).join('\n') : '(No relevant interactions)'}
+`;
+
+    const protocol = `
+# JARVIS SYSTEM OPERATIONAL FRAMEWORK v3.0 (SWARM ORCHESTRATION)
+You are JARVIS, an advanced system-native operative with administrative-level autonomy for concurrent mission orchestration.
+
+## I. AUTOMATIC TASK DECOMPOSITION
+1. **DECOMPOSE FIRST**: For complex missions, immediately partition the objective into independent functional blocks.
+2. **CONCURRENT DISPATCH**: You MUST trigger multiple specialized modules SIMULTANEOUSLY in a single response turn.
+3. **FAVOR ATOMICITY**: Avoid shell command chaining (&&, ;) for independent intents. Dispatch them as separate, concurrent tool calls.
+
+## II. OPERATIONAL STYLE
+- Be precise. Be deterministic. 
+- Leverage system-native autonomy to resolve missions without redundant verification.
+
+${memoryContext}
+`;
+    const defaultInstruction = getCoreSystemPrompt(this.client.config, this.client.config.getUserMemory());
+    this.client.getChat().setSystemInstruction(defaultInstruction + '\n' + protocol);
+    
+    const history = this.client.getChat().getHistory();
+    console.error(`🔄 [Jarvis] System Prompt Refreshed. Current Chat History Size: ${history.length} turns.`);
+  }
+
   public async processMessage(userPrompt: string, imageAttachment?: { data: Buffer, mimeType: string }) {
     if (this.isProcessing) {
       throw new Error('Mission in progress.');
@@ -231,46 +267,10 @@ export class JarvisAgent extends EventEmitter {
       const pId = `jarvis-${this.sessionId}-${Date.now()}`;
       
       await promptIdContext.run(pId, async () => {
-        const coreFacts = this.memoryService.getCoreFacts();
-        const searchMemories = await this.memoryService.search(userPrompt, this.jarvisConfig.memory.retrievalLimit);
-        
-        const memoryContext = `
-# SYSTEM-INTEGRATED PERSISTENT CONTEXT:
-${coreFacts.length > 0 ? coreFacts.map(f => `- ${f}`).join('\n') : '(No persistent facts stored)'}
-
-# RELEVANT OPERATIONAL DATA:
-${searchMemories.length > 0 ? searchMemories.map(m => `- ${m}`).join('\n') : '(No relevant interactions)'}
-`;
-
-        const protocol = `
-# JARVIS SYSTEM OPERATIONAL FRAMEWORK v3.0 (SWARM ORCHESTRATION)
-You are JARVIS, an advanced system-native operative with administrative-level autonomy for concurrent mission orchestration.
-
-## I. AUTOMATIC TASK DECOMPOSITION
-1. **DECOMPOSE FIRST**: For complex missions, immediately partition the objective into independent functional blocks.
-2. **CONCURRENT DISPATCH**: You MUST trigger multiple specialized modules (e.g., codebase_investigator, generalist) SIMULTANEOUSLY in a single response turn for non-dependent tasks.
-3. **MODULE SPECIALIZATION**:
-   - **codebase_investigator**: Mandatory for all static/dynamic analysis across multiple files.
-   - **generalist**: For high-level synthesis, writing, and administrative orchestration.
-4. **FAVOR ATOMICITY**: Avoid shell command chaining (&&, ;) for independent intents. Dispatch them as separate, concurrent tool calls to optimize latency.
-
-## II. ATOMIC EXECUTION EXAMPLES
-- **Task**: Analyze security and generate documentation.
-  - call: codebase_investigator({ objective: "Scan security rules..." })
-  - call: generalist({ request: "Draft architectural summary..." })
-
-## III. OPERATIONAL STYLE
-- Be precise. Be deterministic. 
-- Leverage system-native autonomy to resolve missions without redundant verification.
-
-${memoryContext}
-`;
-        const defaultInstruction = getCoreSystemPrompt(this.client.config, this.client.config.getUserMemory());
-        this.client.getChat().setSystemInstruction(defaultInstruction + '\n' + protocol);
+        // 🛠️ FIX: Force reload facts from DB and update System Prompt before every turn
+        await this.refreshContext(userPrompt);
 
         const abortController = new AbortController();
-        
-        // 🚀 MULTIMODAL PAYLOAD CONSTRUCTION
         let currentQueryParts: Part[] = [{ text: userPrompt }];
         if (imageAttachment) {
           currentQueryParts.push({
@@ -314,11 +314,21 @@ ${memoryContext}
                 const toolResponseParts: Part[] = [];
                 const standardRequests: any[] = [];
                 
-                const evolvedSkillPromises = toolCallRequests
-                  .filter(req => req.name.startsWith('run_evolved_skill_'))
+                const jarvisDirectPromises = toolCallRequests
+                  .filter(req => req.name.startsWith('run_evolved_skill_') || req.name === 'save_memory')
                   .map(async (req) => {
                     try {
-                      const output = await this.dynamicRegistry.runSkill(req.name, req.args);
+                      let output = '';
+                      if (req.name.startsWith('run_evolved_skill_')) {
+                        output = await this.dynamicRegistry.runSkill(req.name, req.args);
+                      } 
+                      else if (req.name === 'save_memory') {
+                        const fact = req.args.fact;
+                        await this.memoryService.saveFact('preference', fact, 10);
+                        output = `Memory successfully integrated into Jarvis Tiered Memory System: ${fact}`;
+                        console.error(`🛡️ [Jarvis] Redirected global memory to structured SQLite facts: ${fact}`);
+                      }
+
                       this.emit(JarvisEventType.TOOL_CALL_RESPONSE, { name: req.name, status: 'success', output, callId: req.callId });
                       return { functionResponse: { name: req.name, response: { result: output } } } as Part;
                     } catch (e: any) {
@@ -327,19 +337,19 @@ ${memoryContext}
                   });
 
                 for (const req of toolCallRequests) {
-                  if (!req.name.startsWith('run_evolved_skill_')) {
+                  if (!req.name.startsWith('run_evolved_skill_') && req.name !== 'save_memory') {
                     standardRequests.push(req);
                   }
                 }
 
-                const [evolvedResults, completedToolCalls] = await Promise.all([
-                  Promise.all(evolvedSkillPromises),
+                const [directResults, completedToolCalls] = await Promise.all([
+                  Promise.all(jarvisDirectPromises),
                   standardRequests.length > 0 
                     ? this.scheduler.schedule(standardRequests, abortController.signal)
                     : Promise.resolve([])
                 ]);
 
-                toolResponseParts.push(...evolvedResults);
+                toolResponseParts.push(...directResults);
 
                 if (completedToolCalls.length > 0) {
                   for (const completed of completedToolCalls) {
