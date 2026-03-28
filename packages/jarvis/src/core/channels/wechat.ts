@@ -82,10 +82,18 @@ export class WechatChannel {
         const qrResp = await fetch(`${baseUrl}ilink/bot/get_bot_qrcode?bot_type=3`);
         const qrData = await qrResp.json();
         
-        console.error('\n🛡️ [Wechat] SCAN TO CONNECT JARVIS TO WECHAT (Official):');
-        qrcode.generate(qrData.qrcode_img_content, { small: true });
-        console.error('💡 TIP: Use your phone to scan the QR code above.\n');
+        console.error('\n' + '='.repeat(40));
+        console.error('🛡️ [Wechat] SCAN TO CONNECT (Official Login)');
+        console.error('='.repeat(40) + '\n');
 
+        // Use small: false if small: true causes parsing artifacts in some terminals
+        qrcode.generate(qrData.qrcode_img_content, { small: true });
+
+        console.error('\n' + '-'.repeat(40));
+        console.error('💡 TIP: Use your phone to scan the QR code above.');
+        console.error('🔗 OR open this URL if QR is garbled:');
+        console.error(qrData.qrcode_img_content);
+        console.error('-'.repeat(40) + '\n');
         let qrExpired = false;
         while (!qrExpired && !loginSuccessful) {
           const statusResp = await fetch(`${baseUrl}ilink/bot/get_qrcode_status?qrcode=${qrData.qrcode}`);

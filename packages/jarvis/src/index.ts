@@ -157,7 +157,12 @@ class JarvisServer {
       const messageHandler = async (data: string) => {
         try {
           const message = JSON.parse(data.toString()) as JarvisIncomingMessage;
-          const sessionId = ('sessionId' in message && message.sessionId) || connectionId;
+          
+          // 🌍 GLOBAL SESSION REDIRECTION (Applied to all message types)
+          let sessionId = ('sessionId' in message && message.sessionId) || connectionId;
+          if (jarvisConfig.session.useGlobalSession) {
+            sessionId = jarvisConfig.session.globalSessionId;
+          }
 
           if (message.type === 'chat') {
             await this.handleChat(ws, sessionId, message.payload);
