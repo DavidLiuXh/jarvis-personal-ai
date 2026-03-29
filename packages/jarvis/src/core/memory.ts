@@ -9,31 +9,29 @@ import * as sqliteVec from 'sqlite-vec';
 import path from 'node:path';
 import fs from 'node:fs';
 import os from 'node:os';
-import { execSync } from 'node:child_process';
-import { GoogleGenerativeAI } from '@google/generative-ai';
+import * as genai from '@google/genai';
 import { HttpsProxyAgent } from 'https-proxy-agent';
-import { debugLogger, type Config, type ConversationRecord } from '../../../core/src/index.js';
+import { debugLogger } from '../../../core/src/index.js';
 import { ConfigManager } from './configManager.js';
-
-const JARVIS_ROOT = path.join(os.homedir(), '.gemini-jarvis');
 
 export class MemoryService {
   private db: Database.Database;
-  private queue: Array<{ sessionId: string; text: string }> = [];
-  private isProcessing = false;
-  private genAI?: GoogleGenerativeAI;
-  private config?: Config;
   private jarvisConfig = ConfigManager.getInstance().get();
+  private client: any = null;
+  private queue: { sessionId: string; userPrompt: string; assistantText: string }[] = [];
+  private isProcessing = false;
+  private config: any;
+  private lastConsolidatedCount = 0;
 
-  constructor() {
-    const memoryDir = path.join(JARVIS_ROOT, 'memory');
-    const dbPath = path.join(memoryDir, 'memory.db');
+  constructor(sourceRoot: string) {
+    const memoryDir = path.join(os.homedir(), '.gemini-jarvis', 'memory');
+    if (!fs.existsSync(memoryDir)) {
+      fs.mkdirSync(memoryDir, { recursive: true });
+    }
 
-    if (!fs.existsSync(memoryDir)) fs.mkdirSync(memoryDir, { recursive: true });
-
-    this.db = new Database(dbPath);
+    this.db = new Database(path.join(memoryDir, 'memory.db'));
     
-    // 1. First, init normal tables
+    // Initialize Schema
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS memories (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -54,7 +52,6 @@ export class MemoryService {
       );
     `);
 
-    // 2. Then, attempt to load vector extension and virtual table
     try {
       sqliteVec.load(this.db);
       this.db.exec(`
@@ -63,141 +60,186 @@ export class MemoryService {
           embedding FLOAT[${this.jarvisConfig.models.embeddingDimension}]
         );
       `);
-      debugLogger.debug(`[MemoryService V2] Vector support enabled (${this.jarvisConfig.models.embeddingDimension} dims).`);
+      debugLogger.debug(`[MemoryService V2] Vector support enabled.`);
     } catch (e: any) {
-      console.error('⚠️ [MemoryService] Vector extension failed to load. Running in text-only mode.', e.message);
+      console.error('⚠️ [MemoryService] Vector extension failed to load.', e.message);
     }
   }
 
-  public setConfig(config: Config) {
+  public setConfig(config: any) {
     this.config = config;
-    const apiKey = this.jarvisConfig.api.key || (config as any).apiKey || process.env.GOOGLE_API_KEY;
+    const apiKey = this.jarvisConfig.api.key || config.apiKey || process.env.GOOGLE_API_KEY;
     if (apiKey) this.startWithApiKey(apiKey);
   }
 
   public startWithApiKey(apiKey: string) {
-    if (this.genAI) return;
+    if (this.client) return;
     try {
-      this.genAI = new GoogleGenerativeAI(apiKey);
+      const proxy = this.jarvisConfig.api.proxy;
+      // Use namespace-based access which is most reliable in this environment
+      this.client = new (genai as any).GoogleGenAI({ 
+        apiKey,
+        httpClient: proxy ? { agent: new HttpsProxyAgent(proxy) } : undefined
+      });
       debugLogger.debug('[MemoryService V2] AI Engine ready.');
       void this.syncHistoricalSessions();
       void this.processQueue();
-    } catch (e) {}
+    } catch (e) {
+      debugLogger.error(`[MemoryService] Failed to init SDK: ${e.message}`);
+    }
   }
 
-  public saveFact(category: string, content: string, importance: number = 5) {
+  public async saveFact(category: string, content: string, importance: number = 5) {
     try {
       const exists = this.db.prepare('SELECT id FROM facts WHERE content = ?').get(content);
       if (exists) return;
 
       this.db.prepare('INSERT INTO facts (category, content, importance, timestamp) VALUES (?, ?, ?, ?)')
         .run(category, content, importance, Date.now());
-      console.log(`🔥 [MemoryService] FACT PHYSICALLY STORED. CURRENT COUNT: ${this.db.prepare('SELECT count(*) as c FROM facts').get().c}`);
+      
+      const count = this.db.prepare('SELECT count(*) as c FROM facts').get() as any;
+      console.error(`🔥 [MemoryService] New fact distilled. Total: ${count.c}`);
+
+      if (count.c > this.lastConsolidatedCount + 10) {
+        void this.consolidateFacts();
+      }
     } catch (e: any) {
       console.error(`❌ [MemoryService] Fact save failed: ${e.message}`);
     }
   }
 
-  public runRegexFallback(userText: string) {
-    const identityRegex = /(?:I am|my name is|call me|我是|我叫|称呼我为)\s*([^.!?\n,，。]+)/i;
-    const prefRegex = /(?:I love|I hate|I prefer|remember that|my favorite|我喜欢|我讨厌|我更倾向于|记得)\s*([^.!?\n,，。]+)/i;
+  public async consolidateFacts() {
+    if (!this.client || this.isProcessing) return;
+    
+    this.isProcessing = true;
+    console.error('\n🧠 [Jarvis Reflection] Memory saturation detected. Initiating internal synthesis...');
 
-    const idMatch = userText.match(identityRegex);
-    if (idMatch) this.saveFact('identity', idMatch[1].trim(), 10);
+    try {
+      const allFacts = this.db.prepare('SELECT * FROM facts ORDER BY category, importance DESC').all() as any[];
+      if (allFacts.length < 5) return;
 
-    const prefMatch = userText.match(prefRegex);
-    if (prefMatch) this.saveFact('preference', prefMatch[1].trim(), 8);
+      const factsText = allFacts.map(f => `[${f.category}] (Importance: ${f.importance}) ${f.content}`).join('\n');
+      
+      const reflectionPrompt = `
+You are the Cognitive Maintenance Module of JARVIS.
+Objective: Perform semantic deduplication and hierarchical consolidation.
+Respond ONLY with a JSON array: [{"category": "...", "content": "...", "importance": 1-10}]
+
+Input Facts:
+${factsText}
+`;
+
+      const result = await this.client.models.generateContent({
+        model: this.jarvisConfig.models.distillation,
+        contents: [{ role: 'user', parts: [{ text: reflectionPrompt }] }]
+      });
+      
+      const responseText = result.response.text();
+      const match = responseText.match(/\[[\s\S]*\]/);
+      if (match) {
+        const newFacts = JSON.parse(match[0]);
+        const runUpdate = this.db.transaction(() => {
+          this.db.prepare('DELETE FROM facts').run();
+          for (const f of newFacts) {
+            this.db.prepare('INSERT INTO facts (category, content, importance, timestamp) VALUES (?, ?, ?, ?)')
+              .run(f.category, f.content, f.importance || 5, Date.now());
+          }
+        });
+        
+        runUpdate();
+        this.lastConsolidatedCount = newFacts.length;
+        console.error(`✨ [Jarvis Reflection] Consolidation complete. Condensed ${allFacts.length} fragments into ${newFacts.length} core insights.`);
+      }
+    } catch (e: any) {
+      console.error(`⚠️ [Jarvis Reflection] Synthesis failed: ${e.message}`);
+    } finally {
+      this.isProcessing = false;
+    }
+  }
+
+  public enqueue(sessionId: string, userPrompt: string, assistantText: string) {
+    this.queue.push({ sessionId, userPrompt, assistantText });
+  }
+
+  private async processQueue() {
+    if (this.isProcessing) return;
+    while (this.queue.length > 0) {
+      const item = this.queue.shift();
+      if (item) {
+        this.isProcessing = true;
+        await this.ingestMemory(item.sessionId, item.userPrompt, item.assistantText);
+        this.isProcessing = false;
+      }
+      await new Promise(r => setTimeout(r, this.jarvisConfig.memory.ingestionDelayMs));
+    }
+    setTimeout(() => this.processQueue(), 2000);
+  }
+
+  private async ingestMemory(sessionId: string, userPrompt: string, assistantText: string) {
+    if (!this.client) return;
+    try {
+      const text = `User: ${userPrompt}\nAssistant: ${assistantText}`;
+      const result = await this.client.models.embedContent({
+        model: this.jarvisConfig.models.embedding,
+        content: { role: 'user', parts: [{ text }] }
+      });
+      
+      const info = this.db.prepare('INSERT INTO memories (sessionId, text, timestamp) VALUES (?, ?, ?)').run(sessionId, text, Date.now());
+      try {
+        const embeddings = result.embeddings || [result.embedding];
+        this.db.prepare('INSERT INTO vec_memories (id, embedding) VALUES (?, ?)').run(info.lastInsertRowid, new Float32Array(embeddings[0].values));
+      } catch (vecErr) {}
+    } catch (e) {}
+  }
+
+  public async search(query: string, limit: number = 5): Promise<string[]> {
+    if (!this.client) return [];
+    try {
+      const result = await this.client.models.embedContent({
+        model: this.jarvisConfig.models.embedding,
+        content: { role: 'user', parts: [{ text: query }] }
+      });
+      const embeddings = result.embeddings || [result.embedding];
+      const results = this.db.prepare(`
+        SELECT m.text FROM memories m JOIN vec_memories v ON m.id = v.id
+        WHERE v.embedding MATCH ? ORDER BY v.distance LIMIT ?
+      `).all(new Float32Array(embeddings[0].values), limit || this.jarvisConfig.memory.retrievalLimit) as any[];
+      return results.map(r => r.text);
+    } catch (e) { return []; }
   }
 
   public getCoreFacts(): string[] {
     try {
-      const rows = this.db.prepare('SELECT category, content FROM facts ORDER BY importance DESC').all() as any[];
-      return rows.map(r => `[${r.category}] ${r.content}`);
+      const results = this.db.prepare('SELECT category, content FROM facts ORDER BY importance DESC').all() as any[];
+      return results.map(f => `[${f.category}] ${f.content}`);
     } catch (e) { return []; }
   }
 
   private async syncHistoricalSessions() {
-    if (!this.genAI) return;
-    try {
-      const roots = [];
-      if (this.config?.storage) roots.push(path.join(this.config.storage.getProjectTempDir(), 'chats'));
-      roots.push(path.join(JARVIS_ROOT, 'storage', 'chats'));
-      
-      for (const root of roots) {
-        if (!fs.existsSync(root)) continue;
-        const output = execSync(`find "${root}" -name "session-*.json" 2>/dev/null`).toString();
-        const files = output.split('\n').filter(f => f.trim());
-        for (const filePath of files) {
-          try {
-            const stats = fs.statSync(filePath);
-            const row = this.db.prepare('SELECT last_mtime FROM processed_files WHERE filename = ?').get(filePath) as any;
-            if (row && row.last_mtime >= stats.mtimeMs) continue;
+    const chatsDir = path.join(os.homedir(), '.gemini-jarvis', 'storage', 'chats');
+    if (!fs.existsSync(chatsDir)) return;
 
-            const record = JSON.parse(fs.readFileSync(filePath, 'utf8')) as ConversationRecord;
-            for (const msg of record.messages) {
-              const text = Array.isArray(msg.content) ? msg.content.map((p: any) => p.text || '').join('') : String(msg.content);
-              if (text.length > 50) {
-                await this.saveChunk(record.sessionId || 'legacy', text);
-                await new Promise(r => setTimeout(r, this.jarvisConfig.memory.ingestionDelayMs));
-              }
+    const files = fs.readdirSync(chatsDir).filter(f => f.endsWith('.json'));
+    for (const file of files) {
+      const filePath = path.join(chatsDir, file);
+      const stats = fs.statSync(filePath);
+      const processed = this.db.prepare('SELECT last_mtime FROM processed_files WHERE filename = ?').get(file) as any;
+
+      if (!processed || processed.last_mtime < stats.mtimeMs) {
+        debugLogger.debug(`[MemoryService] Syncing historical session: ${file}`);
+        try {
+          const content = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+          const messages = content.messages || [];
+          for (let i = 0; i < messages.length; i += 2) {
+            const userMsg = messages[i];
+            const assistantMsg = messages[i+1];
+            if (userMsg && assistantMsg && userMsg.type === 'user' && assistantMsg.type === 'gemini') {
+              this.enqueue(file.replace('.json', ''), userMsg.content, assistantMsg.content);
             }
-            this.db.prepare('INSERT OR REPLACE INTO processed_files (filename, last_mtime) VALUES (?, ?)').run(filePath, stats.mtimeMs);
-          } catch (e) {}
-        }
+          }
+          this.db.prepare('INSERT OR REPLACE INTO processed_files (filename, last_mtime) VALUES (?, ?)').run(file, stats.mtimeMs);
+        } catch (e) {}
       }
-    } catch (err) {}
-  }
-
-  public enqueue(sessionId: string, userText: string, assistantText: string) {
-    const cleanText = userText.replace(/<session_context>[\s\S]*?<\/session_context>/g, '').trim();
-    this.runRegexFallback(cleanText);
-
-    this.queue.push({ sessionId, text: `User: ${userText}\nAssistant: ${assistantText}` });
-    void this.processQueue();
-  }
-
-  private async processQueue() {
-    if (this.isProcessing || this.queue.length === 0 || !this.genAI) return;
-    this.isProcessing = true;
-    try {
-      while (this.queue.length > 0) {
-        const item = this.queue.shift();
-        if (item) {
-          await this.saveChunk(item.sessionId, item.text);
-          await new Promise(r => setTimeout(r, this.jarvisConfig.memory.ingestionDelayMs));
-        }
-      }
-    } finally { this.isProcessing = false; }
-  }
-
-  private async saveChunk(sessionId: string, text: string): Promise<boolean> {
-    if (!this.genAI) return false;
-    try {
-      const proxy = this.jarvisConfig.api.proxy || process.env.HTTPS_PROXY || process.env.https_proxy;
-      const model = this.genAI.getGenerativeModel({ model: this.jarvisConfig.models.embedding }, proxy ? { agent: new HttpsProxyAgent(proxy) } : {});
-      const result = await model.embedContent(text);
-      
-      const info = this.db.prepare('INSERT INTO memories (sessionId, text, timestamp) VALUES (?, ?, ?)').run(sessionId, text, Date.now());
-      
-      try {
-        this.db.prepare('INSERT INTO vec_memories (id, embedding) VALUES (?, ?)').run(info.lastInsertRowid, new Float32Array(result.embedding.values));
-      } catch (vecErr) {}
-      
-      return true;
-    } catch (e) { return false; }
-  }
-
-  public async search(query: string, limit: number = 5): Promise<string[]> {
-    if (!this.genAI) return [];
-    try {
-      const proxy = this.jarvisConfig.api.proxy || process.env.HTTPS_PROXY || process.env.https_proxy;
-      const model = this.genAI.getGenerativeModel({ model: this.jarvisConfig.models.embedding }, proxy ? { agent: new HttpsProxyAgent(proxy) } : {});
-      const result = await model.embedContent(query);
-      const results = this.db.prepare(`
-        SELECT m.text FROM memories m JOIN vec_memories v ON m.id = v.id
-        WHERE v.embedding MATCH ? ORDER BY v.distance LIMIT ?
-      `).all(new Float32Array(result.embedding.values), limit || this.jarvisConfig.memory.retrievalLimit) as any[];
-      return results.map(r => r.text);
-    } catch (e) { return []; }
+    }
   }
 }
