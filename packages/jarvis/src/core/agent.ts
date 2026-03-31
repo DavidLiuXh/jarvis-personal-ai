@@ -119,15 +119,38 @@ export class JarvisAgent extends EventEmitter {
     await config.refreshAuth(authType);
     await config.initialize();
 
-    // III. CONCURRENT RESOLUTION: Hijack core tools
+    // III. CONCURRENT RESOLUTION & TOOL HIJACKING
     const registry = config.getToolRegistry();
+    
+    // 🧠 DEFINE RECALL_MEMORY TOOL
+    const recallMemoryTool = {
+      name: 'recall_memory',
+      description: 'MANDATORY for retrieving any past interaction, technical decision, or user preference not in the current view.',
+      parameters: {
+        type: 'object',
+        properties: {
+          query: { type: 'string', description: 'Specific keywords to search in long-term memory.' },
+          limit: { type: 'number', description: 'Number of results (1-10).' }
+        },
+        required: ['query']
+      },
+      parallelizable: true
+    };
+
+    // @ts-ignore
+    if (typeof registry.addDiscoveredTool === 'function') {
+      // @ts-ignore
+      registry.addDiscoveredTool(recallMemoryTool);
+    }
+
     const coreParallelTools = [
       'run_shell_command', 
       'write_file', 
       'google_web_search',
       'generalist',
       'codebase_investigator',
-      'save_memory'
+      'save_memory',
+      'recall_memory'
     ];
     for (const toolName of coreParallelTools) {
       const tool = (registry as any).getTool?.(toolName);
@@ -223,26 +246,32 @@ export class JarvisAgent extends EventEmitter {
 
   private async refreshContext(userPrompt: string) {
     const coreFacts = this.memoryService.getCoreFacts();
-    const searchMemories = await this.memoryService.search(userPrompt, this.jarvisConfig.memory.retrievalLimit);
     
     const memoryContext = `
-# SYSTEM-INTEGRATED PERSISTENT CONTEXT (Synced Across All Channels):
+# SYSTEM-INTEGRATED PERSISTENT CONTEXT (Global Identity):
 ${coreFacts.length > 0 ? coreFacts.map(f => `- ${f}`).join('\n') : '(No persistent facts stored)'}
 
-# RELEVANT OPERATIONAL DATA:
-${searchMemories.length > 0 ? searchMemories.map(m => `- ${m}`).join('\n') : '(No relevant interactions)'}
+# COGNITIVE MEMORY STATUS:
+[WARNING]: LONG-TERM INTERACTION LOGS ARE NOT LOADED.
+If the current prompt refers to past conversations, previous technical details, or "what we did before", you MUST call 'recall_memory' to look up the data. DO NOT GUESS.
 `;
 
     const protocol = `
-# JARVIS SYSTEM OPERATIONAL FRAMEWORK v3.0 (SWARM ORCHESTRATION)
-You are JARVIS, an advanced system-native operative with administrative-level autonomy for concurrent mission orchestration.
+# JARVIS SYSTEM OPERATIONAL FRAMEWORK v3.0 (ACTIVE COGNITION)
+You are JARVIS, an advanced system-native operative.
 
-## I. AUTOMATIC TASK DECOMPOSITION
-1. **DECOMPOSE FIRST**: For complex missions, immediately partition the objective into independent functional blocks.
-2. **CONCURRENT DISPATCH**: You MUST trigger multiple specialized modules SIMULTANEOUSLY in a single response turn.
-3. **FAVOR ATOMICITY**: Avoid shell command chaining (&&, ;) for independent intents. Dispatch them as separate, concurrent tool calls.
+## I. MEMORY ARCHITECTURE (MANDATORY)
+1. **ACTIVE RECALL**: Your current context window is fresh. To provide accurate continuity, you MUST use 'recall_memory' whenever past knowledge is required.
+2. **EXAMPLE**: 
+   - User: "What was the React optimization we discussed?"
+   - Action: call recall_memory({ query: "React optimization" })
+3. **KNOWLEDGE SYNTHESIS**: Use 'save_memory' to commit new rules or preferences.
 
-## II. OPERATIONAL STYLE
+## II. AUTOMATIC TASK DECOMPOSITION
+1. **DECOMPOSE FIRST**: Immediately partition complex missions into functional blocks.
+2. **CONCURRENT DISPATCH**: Trigger specialized modules (e.g., codebase_investigator, generalist) SIMULTANEOUSLY.
+
+## III. OPERATIONAL STYLE
 - Be precise. Be deterministic. 
 - Leverage system-native autonomy to resolve missions without redundant verification.
 
@@ -252,7 +281,7 @@ ${memoryContext}
     this.client.getChat().setSystemInstruction(defaultInstruction + '\n' + protocol);
     
     const history = this.client.getChat().getHistory();
-    console.error(`🔄 [Jarvis] System Prompt Refreshed. Current Chat History Size: ${history.length} turns.`);
+    console.error(`🔄 [Jarvis] System Prompt Refreshed. History Size: ${history.length} turns.`);
   }
 
   public async processMessage(userPrompt: string, imageAttachment?: { data: Buffer, mimeType: string }) {
@@ -267,7 +296,6 @@ ${memoryContext}
       const pId = `jarvis-${this.sessionId}-${Date.now()}`;
       
       await promptIdContext.run(pId, async () => {
-        // 🛠️ FIX: Force reload facts from DB and update System Prompt before every turn
         await this.refreshContext(userPrompt);
 
         const abortController = new AbortController();
@@ -314,8 +342,9 @@ ${memoryContext}
                 const toolResponseParts: Part[] = [];
                 const standardRequests: any[] = [];
                 
+                // 🛡️ JARVIS NATIVE TOOLS HIJACKING
                 const jarvisDirectPromises = toolCallRequests
-                  .filter(req => req.name.startsWith('run_evolved_skill_') || req.name === 'save_memory')
+                  .filter(req => req.name.startsWith('run_evolved_skill_') || req.name === 'save_memory' || req.name === 'recall_memory')
                   .map(async (req) => {
                     try {
                       let output = '';
@@ -325,19 +354,40 @@ ${memoryContext}
                       else if (req.name === 'save_memory') {
                         const fact = req.args.fact;
                         await this.memoryService.saveFact('preference', fact, 10);
-                        output = `Memory successfully integrated into Jarvis Tiered Memory System: ${fact}`;
-                        console.error(`🛡️ [Jarvis] Redirected global memory to structured SQLite facts: ${fact}`);
+                        output = `Integrated into structured core: ${fact}`;
+                        console.error(`🛡️ [Jarvis] Memory Redirected: ${fact}`);
+                      }
+                      else if (req.name === 'recall_memory') {
+                        const query = req.args.query;
+                        const limit = req.args.limit || 5;
+                        console.error(`🧠 [Jarvis] Active Recall initiated for: "${query}"`);
+                        const memories = await this.memoryService.search(query, limit);
+                        
+                        let responseText = '';
+                        if (memories.length > 0) {
+                          responseText = `LONG-TERM MEMORIES FOUND:\n${memories.map(m => `- ${m}`).join('\n')}\n\nINSTRUCTION: Now synthesize this history into your final answer.`;
+                        } else {
+                          responseText = `NO SPECIFIC MEMORIES FOUND for "${query}". Proceed with current knowledge.`;
+                        }
+                        output = responseText;
                       }
 
                       this.emit(JarvisEventType.TOOL_CALL_RESPONSE, { name: req.name, status: 'success', output, callId: req.callId });
-                      return { functionResponse: { name: req.name, response: { result: output } } } as Part;
+                      
+                      // 🛠️ COMPATIBILITY CHECK: Ensure robust functionResponse structure
+                      let responsePayload: any = { result: output };
+                      if (this.client.config.api?.apiVersion === 'v1') {
+                        responsePayload = output;
+                      }
+
+                      return { functionResponse: { name: req.name, response: responsePayload } } as Part;
                     } catch (e: any) {
                       return { functionResponse: { name: req.name, response: { error: e.message } } } as Part;
                     }
                   });
 
                 for (const req of toolCallRequests) {
-                  if (!req.name.startsWith('run_evolved_skill_') && req.name !== 'save_memory') {
+                  if (!req.name.startsWith('run_evolved_skill_') && req.name !== 'save_memory' && req.name !== 'recall_memory') {
                     standardRequests.push(req);
                   }
                 }
@@ -378,7 +428,7 @@ ${memoryContext}
               if (isNetworkError && retryCount < maxRetries - 1) {
                 retryCount++;
                 const delay = Math.pow(2, retryCount) * 1000;
-                console.error(`⚠️ [JarvisAgent] Network glitch detected (${err.message}). Retrying in ${delay}ms...`);
+                console.error(`⚠️ [JarvisAgent] Network glitch detected. Retrying in ${delay}ms...`);
                 await new Promise(resolve => setTimeout(resolve, delay));
               } else {
                 throw err;
