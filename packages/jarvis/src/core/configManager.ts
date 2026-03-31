@@ -25,6 +25,7 @@ export interface JarvisConfig {
   memory: {
     ingestionDelayMs: number;
     retrievalLimit: number;
+    consolidationThreshold: number;
   };
   security: {
     jailbreak: boolean;
@@ -84,7 +85,8 @@ export class ConfigManager {
       },
       memory: {
         ingestionDelayMs: 800,
-        retrievalLimit: 5
+        retrievalLimit: 5,
+        consolidationThreshold: 3 // Set to 3 as requested
       },
       security: {
         jailbreak: false

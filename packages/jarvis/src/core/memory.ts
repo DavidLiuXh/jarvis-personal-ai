@@ -100,7 +100,8 @@ export class MemoryService {
       const count = this.db.prepare('SELECT count(*) as c FROM facts').get() as any;
       console.error(`🔥 [MemoryService] New fact distilled. Total: ${count.c}`);
 
-      if (count.c > this.lastConsolidatedCount + 10) {
+      // 🧠 TRIGGER REFLECTION: Use dynamic threshold from config
+      if (count.c > this.lastConsolidatedCount + this.jarvisConfig.memory.consolidationThreshold) {
         void this.consolidateFacts();
       }
     } catch (e: any) {
@@ -134,7 +135,22 @@ ${factsText}
         contents: [{ role: 'user', parts: [{ text: reflectionPrompt }] }]
       });
       
-      const responseText = result.response.text();
+      // DEBUG: Identify the actual response structure
+      // console.error('[DEBUG] Reflection Raw Result:', JSON.stringify(result, null, 2));
+
+      let responseText = '';
+      if (result.response?.candidates?.[0]?.content?.parts?.[0]?.text) {
+        responseText = result.response.candidates[0].content.parts[0].text;
+      } else if ((result as any).candidates?.[0]?.content?.parts?.[0]?.text) {
+        responseText = (result as any).candidates[0].content.parts[0].text;
+      } else if (typeof result.response?.text === 'function') {
+        responseText = result.response.text();
+      }
+
+      if (!responseText) {
+        console.error('❌ [Jarvis Reflection] Failed to extract text. Structure:', Object.keys(result));
+        throw new Error('Empty response from reflection model');
+      }
       const match = responseText.match(/\[[\s\S]*\]/);
       if (match) {
         const newFacts = JSON.parse(match[0]);
