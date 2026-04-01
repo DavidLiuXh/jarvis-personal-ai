@@ -109,22 +109,63 @@ export class MemoryService {
     }
   }
 
-  private static readonly DEDUP_JACCARD_THRESHOLD = 0.55;
+  private static readonly DEDUP_JACCARD_THRESHOLD_LATIN = 0.55;
+  private static readonly DEDUP_JACCARD_THRESHOLD_CJK = 0.30;
   private static readonly DEDUP_COSINE_THRESHOLD = 0.90;
 
-  /** Jaccard similarity on word-level tokens (case-insensitive, stop words removed). */
+  private static readonly STOP_WORDS_LATIN = new Set([
+    'the', 'a', 'an', 'is', 'are', 'was', 'user', 'david', 'jarvis',
+    'at', 'least', 'in', 'of', 'to', 'and', 'for', 'this', 'that',
+    'with', 'has', 'have', 'should', 'be', 'my', 'i', 'me', 'his', 'her',
+  ]);
+  private static readonly STOP_WORDS_CJK = new Set([
+    '的', '了', '在', '是', '我', '有', '和', '就', '不', '都',
+    '也', '很', '到', '说', '要', '去', '你', '会', '着', '看',
+    '好', '自己', '这', '他', '她',
+  ]);
+
+  private static hasCJK(s: string): boolean {
+    return /[\u4e00-\u9fff]/.test(s);
+  }
+
+  /**
+   * Tokenizes text into a set of tokens for Jaccard comparison.
+   * Latin: word tokens (length > 1, stop words removed).
+   * CJK: unigrams + bigrams (stop words removed).
+   */
+  private tokenize(s: string): Set<string> {
+    const lower = s.toLowerCase();
+    const tokens = new Set<string>();
+    // Latin words
+    lower.replace(/[^a-z0-9\u4e00-\u9fff]/g, ' ').split(/\s+/)
+      .filter(w => w.length > 1 && !MemoryService.STOP_WORDS_LATIN.has(w))
+      .forEach(w => tokens.add(w));
+    // CJK: unigrams + bigrams
+    const cjkChunks = lower.match(/[\u4e00-\u9fff]+/g) ?? [];
+    for (const chunk of cjkChunks) {
+      for (let i = 0; i < chunk.length; i++) {
+        if (!MemoryService.STOP_WORDS_CJK.has(chunk[i])) tokens.add(chunk[i]);
+        if (i < chunk.length - 1) tokens.add(chunk.slice(i, i + 2));
+      }
+    }
+    return tokens;
+  }
+
+  /** Jaccard similarity with language-aware threshold selection. */
   private jaccardSimilarity(a: string, b: string): number {
-    const stopWords = new Set(['the', 'a', 'an', 'is', 'are', 'was', 'user', 'david', 'jarvis', 'at', 'least', 'in', 'of', 'to', 'and', 'for', 'this', 'that', 'with', 'has', 'have', 'should', 'be', 'my', 'i', 'me', 'his', 'her']);
-    const tokenize = (s: string) => new Set(
-      s.toLowerCase().replace(/[^a-z0-9\u4e00-\u9fff]/g, ' ').split(/\s+/).filter(w => w.length > 1 && !stopWords.has(w))
-    );
-    const setA = tokenize(a);
-    const setB = tokenize(b);
+    const setA = this.tokenize(a);
+    const setB = this.tokenize(b);
     if (setA.size === 0 && setB.size === 0) return 1;
     let intersection = 0;
     for (const w of setA) if (setB.has(w)) intersection++;
     const union = setA.size + setB.size - intersection;
     return union === 0 ? 0 : intersection / union;
+  }
+
+  private jaccardThreshold(a: string, b: string): number {
+    return (MemoryService.hasCJK(a) || MemoryService.hasCJK(b))
+      ? MemoryService.DEDUP_JACCARD_THRESHOLD_CJK
+      : MemoryService.DEDUP_JACCARD_THRESHOLD_LATIN;
   }
 
   /** Cosine similarity between two equal-length float arrays. */
@@ -144,8 +185,9 @@ export class MemoryService {
     const existing = this.db.prepare('SELECT content FROM facts').all() as Array<{ content: string }>;
     for (const row of existing) {
       const sim = this.jaccardSimilarity(content, row.content);
-      if (sim >= MemoryService.DEDUP_JACCARD_THRESHOLD) {
-        console.error(`♻️ [MemoryService] Duplicate skipped: "${content}" ≈ "${row.content}" (jaccard=${sim.toFixed(2)})`);
+      const threshold = this.jaccardThreshold(content, row.content);
+      if (sim >= threshold) {
+        console.error(`♻️ [MemoryService] Duplicate skipped: "${content}" ≈ "${row.content}" (jaccard=${sim.toFixed(2)}, threshold=${threshold})`);
         return true;
       }
     }
