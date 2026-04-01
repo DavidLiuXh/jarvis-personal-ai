@@ -84,11 +84,12 @@ export class JarvisAgent extends EventEmitter {
 
     const embedContent = async (text: string): Promise<number[]> => {
       const generator = this.client.config.getContentGenerator();
+      const model = this.client.config.getEmbeddingModel();
       const response = await generator.embedContent({
-        model: 'models/gemini-embedding-001',
-        content: { role: 'user', parts: [{ text }] },
-      });
-      return (response as any).embedding?.values ?? (response as any).embeddings?.[0]?.values ?? [];
+        model,
+        contents: [text],
+      } as Parameters<typeof generator.embedContent>[0]);
+      return (response as any).embeddings?.[0]?.values ?? [];
     };
     this.memoryService.setEmbedContent(embedContent);
 
