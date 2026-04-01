@@ -19,8 +19,6 @@ import {
   ApprovalMode,
   getCoreSystemPrompt,
   promptIdContext,
-  GeminiChat,
-  LlmRole,
   type Part,
   type Content,
   type ConversationRecord,
@@ -38,6 +36,7 @@ import { type MemoryService } from './memory.js';
 import { DynamicToolRegistry } from './dynamicToolRegistry.js';
 import { ConfigManager } from './configManager.js';
 import { SystemPromptBuilder } from './systemPromptBuilder.js';
+import { BackgroundDistiller } from './backgroundDistiller.js';
 
 /**
  * JARVIS 3.0: The Digital Lifeform Agent
@@ -53,6 +52,7 @@ export class JarvisAgent extends EventEmitter {
   private isProcessing = false;
   private jarvisConfig = ConfigManager.getInstance().get();
   private promptBuilder = new SystemPromptBuilder();
+  private distiller!: BackgroundDistiller;
 
   constructor(options: JarvisAgentOptions) {
     super();
@@ -163,6 +163,11 @@ export class JarvisAgent extends EventEmitter {
 
     this.client = new GeminiClient(config);
     await this.client.initialize();
+
+    this.distiller = new BackgroundDistiller(
+      this.client,
+      (category, content, importance) => this.memoryService.saveFact(category, content, importance),
+    );
 
     // Inject evolved skills
     const evolvedTools = this.dynamicRegistry.getDynamicToolSchemas();
@@ -423,45 +428,7 @@ export class JarvisAgent extends EventEmitter {
   }
 
   private async stealthDistill(userPrompt: string, assistantText: string) {
-    try {
-      const frozenPrompt = `
-Extract administrative-level facts, identity, or technical specifications from this interaction.
-Respond ONLY with JSON: {"found": true, "facts": [{"category": "identity|specification", "content": "..."}]}
-If zero new data, respond: {"found": false}
-
-Interaction:
-Input: ${userPrompt}
-Output: ${assistantText}
-`;
-      const stealthChat = new GeminiChat(this.client.config, "", [], []);
-      const responseStream = this.client.sendMessageStream(
-        [{ text: frozenPrompt }],
-        new AbortController().signal,
-        `distill-${Date.now()}`,
-        stealthChat
-      );
-
-      let fullText = '';
-      try {
-        for await (const chunk of responseStream) {
-          if (chunk.type === GeminiEventType.Content) {
-            fullText += chunk.value;
-          }
-        }
-      } catch (e: any) {}
-
-      const match = fullText.match(/\{[\s\S]*\}/);
-      if (match) {
-        try {
-          const data = JSON.parse(match[0].replace(/\n/g, ' '));
-          if (data.found && data.facts) {
-            for (const fact of data.facts) {
-              await this.memoryService.saveFact(fact.category, fact.content, 10);
-            }
-          }
-        } catch (e: any) {}
-      }
-    } catch (e: any) {}
+    await this.distiller.distill(userPrompt, assistantText);
   }
 
   public getHistory() {
