@@ -161,10 +161,15 @@ ${factsText}
               .run(f.category, f.content, f.importance || 5, Date.now());
           }
         });
-        
+
         runUpdate();
         this.lastConsolidatedCount = newFacts.length;
         console.error(`✨ [Jarvis Reflection] Consolidation complete. Condensed ${allFacts.length} fragments into ${newFacts.length} core insights.`);
+      } else {
+        // LLM returned text but no valid JSON array — update the baseline to
+        // prevent immediately re-triggering consolidation on the next saveFact.
+        this.lastConsolidatedCount = allFacts.length;
+        console.error('⚠️ [Jarvis Reflection] No valid JSON array in response. Skipping consolidation.');
       }
     } catch (e: any) {
       console.error(`⚠️ [Jarvis Reflection] Synthesis failed: ${e.message}`);
