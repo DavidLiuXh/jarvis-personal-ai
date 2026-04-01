@@ -65,19 +65,22 @@ export class JarvisAgent extends EventEmitter {
     this.client = client;
     this.scheduler = scheduler;
 
+    const generateText = async (prompt: string): Promise<string> => {
+      const generator = this.client.config.getContentGenerator();
+      const response = await generator.generateContent(
+        { model: 'gemini-2.5-flash', contents: [{ role: 'user', parts: [{ text: prompt }] }] },
+        `distill-${Date.now()}`,
+        LlmRole.UTILITY_TOOL,
+      );
+      return response.candidates?.[0]?.content?.parts?.[0]?.text ?? '';
+    };
+
     this.distiller = new BackgroundDistiller(
-      async (prompt) => {
-        const generator = this.client.config.getContentGenerator();
-        const response = await generator.generateContent(
-          { model: 'gemini-2.5-flash', contents: [{ role: 'user', parts: [{ text: prompt }] }] },
-          `distill-${Date.now()}`,
-          LlmRole.UTILITY_TOOL,
-        );
-        const text = response.candidates?.[0]?.content?.parts?.[0]?.text ?? '';
-        return text;
-      },
+      generateText,
       (category, content, importance) => this.memoryService.saveFact(category, content, importance),
     );
+
+    this.memoryService.setGenerateText(generateText);
 
     this.toolRouter = new ToolRouter(
       this.memoryService,

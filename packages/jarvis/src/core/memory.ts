@@ -22,6 +22,7 @@ export class MemoryService {
   private isProcessing = false;
   private config: any;
   private lastConsolidatedCount = 0;
+  private generateTextFn: ((prompt: string) => Promise<string>) | null = null;
 
   constructor(sourceRoot: string) {
     const memoryDir = path.join(os.homedir(), '.gemini-jarvis', 'memory');
@@ -72,6 +73,11 @@ export class MemoryService {
     if (apiKey) this.startWithApiKey(apiKey);
   }
 
+  /** Inject a CLI-auth generateText function to replace the API-key-based client for LLM calls. */
+  public setGenerateText(fn: (prompt: string) => Promise<string>) {
+    this.generateTextFn = fn;
+  }
+
   public startWithApiKey(apiKey: string) {
     if (this.client) return;
     try {
@@ -110,7 +116,8 @@ export class MemoryService {
   }
 
   public async consolidateFacts() {
-    if (!this.client || this.isProcessing) return;
+    if (!this.generateTextFn && !this.client) return;
+    if (this.isProcessing) return;
     
     this.isProcessing = true;
     console.error('\n🧠 [Jarvis Reflection] Memory saturation detected. Initiating internal synthesis...');
@@ -130,25 +137,25 @@ Input Facts:
 ${factsText}
 `;
 
-      const result = await this.client.models.generateContent({
-        model: this.jarvisConfig.models.distillation,
-        contents: [{ role: 'user', parts: [{ text: reflectionPrompt }] }]
-      });
-      
-      // DEBUG: Identify the actual response structure
-      // console.error('[DEBUG] Reflection Raw Result:', JSON.stringify(result, null, 2));
-
       let responseText = '';
-      if (result.response?.candidates?.[0]?.content?.parts?.[0]?.text) {
-        responseText = result.response.candidates[0].content.parts[0].text;
-      } else if ((result as any).candidates?.[0]?.content?.parts?.[0]?.text) {
-        responseText = (result as any).candidates[0].content.parts[0].text;
-      } else if (typeof result.response?.text === 'function') {
-        responseText = result.response.text();
+      if (this.generateTextFn) {
+        responseText = await this.generateTextFn(reflectionPrompt);
+      } else {
+        const result = await this.client.models.generateContent({
+          model: this.jarvisConfig.models.distillation,
+          contents: [{ role: 'user', parts: [{ text: reflectionPrompt }] }]
+        });
+        if (result.response?.candidates?.[0]?.content?.parts?.[0]?.text) {
+          responseText = result.response.candidates[0].content.parts[0].text;
+        } else if ((result as any).candidates?.[0]?.content?.parts?.[0]?.text) {
+          responseText = (result as any).candidates[0].content.parts[0].text;
+        } else if (typeof result.response?.text === 'function') {
+          responseText = result.response.text();
+        }
       }
 
       if (!responseText) {
-        console.error('❌ [Jarvis Reflection] Failed to extract text. Structure:', Object.keys(result));
+        console.error('❌ [Jarvis Reflection] Failed to extract text from consolidation model');
         throw new Error('Empty response from reflection model');
       }
       const match = responseText.match(/\[[\s\S]*\]/);
