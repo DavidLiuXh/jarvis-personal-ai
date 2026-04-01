@@ -236,6 +236,12 @@ ${factsText}
     } catch (e) { return []; }
   }
 
+  public getStructuredFacts(): Array<{ category: string; content: string }> {
+    try {
+      return this.db.prepare('SELECT category, content FROM facts ORDER BY importance DESC').all() as any[];
+    } catch (e) { return []; }
+  }
+
   private async syncHistoricalSessions() {
     const chatsDir = path.join(os.homedir(), '.gemini-jarvis', 'storage', 'chats');
     if (!fs.existsSync(chatsDir)) return;

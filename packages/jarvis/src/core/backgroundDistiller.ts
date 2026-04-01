@@ -46,9 +46,14 @@ export class BackgroundDistiller {
   async distill(userPrompt: string, assistantText: string): Promise<void> {
     try {
       const frozenPrompt = `
-Extract administrative-level facts, identity, or technical specifications from this interaction.
-Respond ONLY with JSON: {"found": true, "facts": [{"category": "identity|specification", "content": "..."}]}
-If zero new data, respond: {"found": false}
+Extract persistent facts from this interaction across four categories:
+- identity: who the user is, their role, background, or name
+- specification: technical decisions, system constraints, or project rules
+- preference: how the user likes responses (format, length, style, e.g. "prefers tables", "wants concise answers")
+- behavior: recurring patterns in how the user asks questions or works (e.g. "always asks for background first")
+
+Respond ONLY with JSON: {"found": true, "facts": [{"category": "identity|specification|preference|behavior", "content": "..."}]}
+If zero new data worth persisting, respond: {"found": false}
 
 Interaction:
 Input: ${userPrompt}

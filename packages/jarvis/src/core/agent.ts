@@ -18,7 +18,7 @@ import {
 import { JarvisEventType, type JarvisAgentOptions } from './types.js';
 import { type MemoryService } from './memory.js';
 import { DynamicToolRegistry } from './dynamicToolRegistry.js';
-import { SystemPromptBuilder } from './systemPromptBuilder.js';
+import { SystemPromptBuilder, type FactRecord } from './systemPromptBuilder.js';
 import { BackgroundDistiller } from './backgroundDistiller.js';
 import { ToolRouter } from './toolRouter.js';
 import { AgentInitializer } from './agentInitializer.js';
@@ -81,8 +81,8 @@ export class JarvisAgent extends EventEmitter {
   }
 
   private async refreshContext(_userPrompt: string) {
-    const coreFacts = this.memoryService.getCoreFacts();
-    const protocol = this.promptBuilder.build(coreFacts);
+    const facts = this.memoryService.getStructuredFacts() as FactRecord[];
+    const protocol = this.promptBuilder.buildFromFacts(facts);
     const defaultInstruction = getCoreSystemPrompt(this.client.config, this.client.config.getUserMemory());
     this.client.getChat().setSystemInstruction(defaultInstruction + '\n' + protocol);
 
