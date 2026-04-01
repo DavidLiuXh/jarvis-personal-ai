@@ -82,6 +82,17 @@ export class JarvisAgent extends EventEmitter {
 
     this.memoryService.setGenerateText(generateText);
 
+    const embedContent = async (text: string): Promise<number[]> => {
+      const generator = this.client.config.getContentGenerator();
+      const model = this.client.config.getEmbeddingModel();
+      const response = await generator.embedContent({
+        model,
+        contents: [text],
+      } as Parameters<typeof generator.embedContent>[0]);
+      return (response as any).embeddings?.[0]?.values ?? [];
+    };
+    this.memoryService.setEmbedContent(embedContent);
+
     this.toolRouter = new ToolRouter(
       this.memoryService,
       this.dynamicRegistry,

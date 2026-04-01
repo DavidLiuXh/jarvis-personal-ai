@@ -52,7 +52,7 @@ async function createService(fakeGenerateContent: () => Promise<unknown>) {
   // Use a temp dir so the real DB file isn't created in ~/.gemini-jarvis
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'jarvis-test-'));
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const service = new (MemoryService as new (root: string) => InstanceType<typeof MemoryService>)(tmpDir);
+  const service = new (MemoryService as new (root: string, dbPath?: string) => InstanceType<typeof MemoryService>)('', tmpDir);
 
   // Inject a fake AI client directly (bypasses API key / network)
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -192,5 +192,114 @@ describe('MemoryService.consolidateFacts', () => {
 
     // After success, lastConsolidatedCount should equal the number of consolidated facts
     expect((service as unknown as Record<string, unknown>).lastConsolidatedCount).toBe(consolidatedFacts.length);
+  });
+});
+
+describe('MemoryService.saveFact semantic dedup', () => {
+  afterEach(() => {
+    vi.resetModules();
+    vi.clearAllMocks();
+  });
+
+  async function createDedupeService(dedupStrategy?: 'jaccard' | 'embedding') {
+    vi.doMock('./configManager.js', () => ({
+      ConfigManager: {
+        getInstance: vi.fn().mockReturnValue({
+          get: vi.fn().mockReturnValue({
+            api: { key: 'test-key', proxy: null },
+            models: {
+              embedding: 'test-embedding-model',
+              embeddingDimension: 128,
+              distillation: 'test-distillation-model',
+            },
+            memory: {
+              ingestionDelayMs: 0,
+              retrievalLimit: 5,
+              consolidationThreshold: 100, // high threshold to avoid triggering consolidation
+              dedupStrategy: dedupStrategy ?? 'jaccard',
+            },
+          }),
+        }),
+      },
+    }));
+    const { MemoryService } = await import('./memory.js');
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'jarvis-dedup-'));
+    const service = new (MemoryService as new (root: string, dbPath?: string) => InstanceType<typeof MemoryService>)('', tmpDir);
+    return { service, tmpDir };
+  }
+
+  it('skips saving a fact when a textually similar fact already exists', async () => {
+    const { service } = await createDedupeService();
+
+    await service.saveFact('behavior', 'user runs 3 times a week', 8);
+
+    const db = (service as unknown as Record<string, unknown>).db as any;
+    const countAfterFirst = (db.prepare('SELECT count(*) as c FROM facts').get() as any).c;
+    expect(countAfterFirst).toBe(1);
+
+    // Textually similar (same key words: runs, times, week) — should be skipped
+    await service.saveFact('behavior', 'runs at least 3 times per week', 8);
+
+    const countAfterSecond = (db.prepare('SELECT count(*) as c FROM facts').get() as any).c;
+    expect(countAfterSecond).toBe(1);
+  });
+
+  it('saves a fact when it is semantically different from existing facts', async () => {
+    const { service } = await createDedupeService();
+
+    await service.saveFact('behavior', 'user runs 3 times a week', 8);
+    await service.saveFact('behavior', 'user codes every day', 8);
+
+    const db = (service as unknown as Record<string, unknown>).db as any;
+    const count = (db.prepare('SELECT count(*) as c FROM facts').get() as any).c;
+    expect(count).toBe(2);
+  });
+
+  it('logs a message when a duplicate is skipped', async () => {
+    const { service } = await createDedupeService();
+    const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    await service.saveFact('behavior', 'user runs 3 times a week', 8);
+    await service.saveFact('behavior', 'runs at least 3 times per week', 8);
+
+    expect(consoleSpy).toHaveBeenCalledWith(
+      expect.stringContaining('Duplicate skipped'),
+    );
+    consoleSpy.mockRestore();
+  });
+
+  it('uses embedding strategy when dedupStrategy is embedding and embedContentFn is injected', async () => {
+    const { service } = await createDedupeService('embedding');
+
+    // Two nearly-identical vectors (cosine sim ≈ 1.0)
+    const vec1 = new Array(128).fill(0); vec1[0] = 1.0;
+    const vec2 = new Array(128).fill(0); vec2[0] = 0.9999;
+
+    let callCount = 0;
+    service.setEmbedContent(async (_text: string) => {
+      return callCount++ === 0 ? vec1 : vec2;
+    });
+
+    await service.saveFact('behavior', 'user runs 3 times a week', 8);
+    await service.saveFact('behavior', '每周跑步三次', 8); // different text, similar vector
+
+    const db = (service as unknown as Record<string, unknown>).db as any;
+    const count = (db.prepare('SELECT count(*) as c FROM facts').get() as any).c;
+    expect(count).toBe(1); // duplicate rejected via embedding similarity
+  });
+
+  it('falls back to jaccard when embedding strategy fails', async () => {
+    const { service } = await createDedupeService('embedding');
+
+    service.setEmbedContent(async (_text: string) => {
+      throw new Error('embedding API unavailable');
+    });
+
+    await service.saveFact('behavior', 'user runs 3 times a week', 8);
+    await service.saveFact('behavior', 'runs at least 3 times per week', 8); // similar via jaccard
+
+    const db = (service as unknown as Record<string, unknown>).db as any;
+    const count = (db.prepare('SELECT count(*) as c FROM facts').get() as any).c;
+    expect(count).toBe(1); // still deduped via jaccard fallback
   });
 });
