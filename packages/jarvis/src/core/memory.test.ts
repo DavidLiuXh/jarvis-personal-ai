@@ -136,6 +136,29 @@ describe('MemoryService.consolidateFacts', () => {
     expect((service as unknown as Record<string, unknown>).lastConsolidatedCount).toBe(1);
   });
 
+  it('consolidation prompt includes category definitions and dedup rules', async () => {
+    const generateText = vi.fn().mockResolvedValue('[]');
+    const { service } = await createService(vi.fn());
+    service.setGenerateText(generateText);
+
+    const svc = service as unknown as Record<string, unknown>;
+    const db = svc.db as { prepare: (sql: string) => { run: (...args: unknown[]) => void } };
+    for (let i = 0; i < 6; i++) {
+      db.prepare('INSERT INTO facts (category, content, importance, timestamp) VALUES (?, ?, ?, ?)')
+        .run('behavior', `fact-${i}`, 5, Date.now());
+    }
+    svc.lastConsolidatedCount = 0;
+
+    await service.consolidateFacts();
+
+    const prompt = generateText.mock.calls[0][0] as string;
+    expect(prompt).toContain('mutually exclusive');
+    expect(prompt).toContain('behavior');
+    expect(prompt).toContain('preference');
+    expect(prompt).toContain('identity');
+    expect(prompt).toContain('specification');
+  });
+
   it('updates lastConsolidatedCount after successful consolidation', async () => {
     const consolidatedFacts = [
       { category: 'test', content: 'merged-fact-1', importance: 8 },

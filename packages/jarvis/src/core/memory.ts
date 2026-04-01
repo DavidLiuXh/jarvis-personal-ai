@@ -130,8 +130,22 @@ export class MemoryService {
       
       const reflectionPrompt = `
 You are the Cognitive Maintenance Module of JARVIS.
-Objective: Perform semantic deduplication and hierarchical consolidation.
-Respond ONLY with a JSON array: [{"category": "...", "content": "...", "importance": 1-10}]
+Objective: Merge semantically duplicate facts, fix miscategorized facts, and output a clean consolidated list.
+
+Category definitions (mutually exclusive — each fact belongs to exactly ONE):
+- identity: static facts about who the user IS — name, job title, profession
+- behavior: user's habits, lifestyle, routines, recurring patterns in how they live or work
+- preference: ONLY how the user wants Jarvis to respond — output format, tone, language, length
+- specification: technical decisions, project constraints, system rules
+
+Rules:
+1. Merge facts that express the same information (even if worded differently or in different languages).
+2. Fix any miscategorized facts using the definitions above.
+3. Each output fact must belong to exactly ONE category.
+4. Use English for all output content.
+5. Preserve importance score (1-10); use the highest score among merged duplicates.
+
+Respond ONLY with a JSON array: [{"category": "identity|behavior|preference|specification", "content": "...", "importance": 1-10}]
 
 Input Facts:
 ${factsText}
