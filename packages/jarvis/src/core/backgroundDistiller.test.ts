@@ -31,7 +31,7 @@ describe('BackgroundDistiller', () => {
     expect(fakeSaveFact).not.toHaveBeenCalled();
   });
 
-  it('distill prompt includes all four categories and dedup rule', async () => {
+  it('distill prompt includes all four categories, dedup rule, and preference clarification', async () => {
     const generateText = vi.fn().mockResolvedValue('{"found": false}');
     const fakeSaveFact = vi.fn();
     const distiller = new BackgroundDistiller(generateText, fakeSaveFact);
@@ -43,8 +43,9 @@ describe('BackgroundDistiller', () => {
     expect(calledPrompt).toContain('behavior');
     expect(calledPrompt).toContain('preference');
     expect(calledPrompt).toContain('specification');
-    // Must include the dedup rule
     expect(calledPrompt).toContain('exactly ONE category');
+    // preference must be restricted to response style, not user traits
+    expect(calledPrompt).toContain('FORMAT or STYLE');
   });
 
   it('saves preference facts with correct category', async () => {
