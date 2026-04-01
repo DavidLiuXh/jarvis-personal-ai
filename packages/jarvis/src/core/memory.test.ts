@@ -108,6 +108,57 @@ describe('MemoryService.consolidateFacts', () => {
     expect(generateContent.mock.calls.length).toBe(1); // still 1, no second call
   });
 
+  it('uses injected generateText instead of this.client when available', async () => {
+    const consolidatedFacts = [
+      { category: 'behavior', content: 'user runs 3 times a week', importance: 7 },
+    ];
+
+    // this.client.generateContent should NOT be called
+    const legacyGenerateContent = vi.fn();
+    const { service } = await createService(legacyGenerateContent);
+
+    // Inject the CLI-auth generateText function
+    const generateText = vi.fn().mockResolvedValue(JSON.stringify(consolidatedFacts));
+    service.setGenerateText(generateText);
+
+    const svc = service as unknown as Record<string, unknown>;
+    const db = svc.db as { prepare: (sql: string) => { run: (...args: unknown[]) => void } };
+    for (let i = 0; i < 6; i++) {
+      db.prepare('INSERT INTO facts (category, content, importance, timestamp) VALUES (?, ?, ?, ?)')
+        .run('test', `fact-${i}`, 5, Date.now());
+    }
+    svc.lastConsolidatedCount = 0;
+
+    await service.consolidateFacts();
+
+    expect(generateText).toHaveBeenCalledOnce();
+    expect(legacyGenerateContent).not.toHaveBeenCalled();
+    expect((service as unknown as Record<string, unknown>).lastConsolidatedCount).toBe(1);
+  });
+
+  it('consolidation prompt includes category definitions and dedup rules', async () => {
+    const generateText = vi.fn().mockResolvedValue('[]');
+    const { service } = await createService(vi.fn());
+    service.setGenerateText(generateText);
+
+    const svc = service as unknown as Record<string, unknown>;
+    const db = svc.db as { prepare: (sql: string) => { run: (...args: unknown[]) => void } };
+    for (let i = 0; i < 6; i++) {
+      db.prepare('INSERT INTO facts (category, content, importance, timestamp) VALUES (?, ?, ?, ?)')
+        .run('behavior', `fact-${i}`, 5, Date.now());
+    }
+    svc.lastConsolidatedCount = 0;
+
+    await service.consolidateFacts();
+
+    const prompt = generateText.mock.calls[0][0] as string;
+    expect(prompt).toContain('mutually exclusive');
+    expect(prompt).toContain('behavior');
+    expect(prompt).toContain('preference');
+    expect(prompt).toContain('identity');
+    expect(prompt).toContain('specification');
+  });
+
   it('updates lastConsolidatedCount after successful consolidation', async () => {
     const consolidatedFacts = [
       { category: 'test', content: 'merged-fact-1', importance: 8 },

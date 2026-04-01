@@ -12,13 +12,14 @@ import {
   Scheduler,
   getCoreSystemPrompt,
   promptIdContext,
+  LlmRole,
   type Part,
 } from '../../../core/src/index.js';
 
 import { JarvisEventType, type JarvisAgentOptions } from './types.js';
 import { type MemoryService } from './memory.js';
 import { DynamicToolRegistry } from './dynamicToolRegistry.js';
-import { SystemPromptBuilder } from './systemPromptBuilder.js';
+import { SystemPromptBuilder, type FactRecord } from './systemPromptBuilder.js';
 import { BackgroundDistiller } from './backgroundDistiller.js';
 import { ToolRouter } from './toolRouter.js';
 import { AgentInitializer } from './agentInitializer.js';
@@ -64,10 +65,22 @@ export class JarvisAgent extends EventEmitter {
     this.client = client;
     this.scheduler = scheduler;
 
+    const generateText = async (prompt: string): Promise<string> => {
+      const generator = this.client.config.getContentGenerator();
+      const response = await generator.generateContent(
+        { model: 'gemini-2.5-flash', contents: [{ role: 'user', parts: [{ text: prompt }] }] },
+        `distill-${Date.now()}`,
+        LlmRole.UTILITY_TOOL,
+      );
+      return response.candidates?.[0]?.content?.parts?.[0]?.text ?? '';
+    };
+
     this.distiller = new BackgroundDistiller(
-      this.client,
+      generateText,
       (category, content, importance) => this.memoryService.saveFact(category, content, importance),
     );
+
+    this.memoryService.setGenerateText(generateText);
 
     this.toolRouter = new ToolRouter(
       this.memoryService,
@@ -81,8 +94,8 @@ export class JarvisAgent extends EventEmitter {
   }
 
   private async refreshContext(_userPrompt: string) {
-    const coreFacts = this.memoryService.getCoreFacts();
-    const protocol = this.promptBuilder.build(coreFacts);
+    const facts = this.memoryService.getStructuredFacts() as FactRecord[];
+    const protocol = this.promptBuilder.buildFromFacts(facts);
     const defaultInstruction = getCoreSystemPrompt(this.client.config, this.client.config.getUserMemory());
     this.client.getChat().setSystemInstruction(defaultInstruction + '\n' + protocol);
 
