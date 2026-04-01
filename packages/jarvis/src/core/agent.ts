@@ -12,6 +12,7 @@ import {
   Scheduler,
   getCoreSystemPrompt,
   promptIdContext,
+  LlmRole,
   type Part,
 } from '../../../core/src/index.js';
 
@@ -65,7 +66,16 @@ export class JarvisAgent extends EventEmitter {
     this.scheduler = scheduler;
 
     this.distiller = new BackgroundDistiller(
-      (prompt) => this.memoryService.generateText(prompt),
+      async (prompt) => {
+        const generator = this.client.config.getContentGenerator();
+        const response = await generator.generateContent(
+          { model: 'gemini-2.5-flash', contents: [{ role: 'user', parts: [{ text: prompt }] }] },
+          `distill-${Date.now()}`,
+          LlmRole.UTILITY_TOOL,
+        );
+        const text = response.candidates?.[0]?.content?.parts?.[0]?.text ?? '';
+        return text;
+      },
       (category, content, importance) => this.memoryService.saveFact(category, content, importance),
     );
 
