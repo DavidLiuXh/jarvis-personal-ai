@@ -28,13 +28,20 @@ export class BackgroundDistiller {
   async distill(userPrompt: string, assistantText: string): Promise<void> {
     try {
       const frozenPrompt = `
-Extract persistent facts from this interaction across four categories:
-- identity: who the user is, their role, background, or name
-- specification: technical decisions, system constraints, or project rules
-- preference: how the user likes responses (format, length, style, e.g. "prefers tables", "wants concise answers")
-- behavior: recurring patterns in how the user asks questions or works (e.g. "always asks for background first")
+Extract persistent facts from this interaction. Use exactly one category per fact — do NOT write the same fact under multiple categories.
 
-Respond ONLY with JSON: {"found": true, "facts": [{"category": "identity|specification|preference|behavior", "content": "..."}]}
+Category definitions (mutually exclusive):
+- identity: ONLY static facts about who the user IS — name, job title, profession (e.g. "user is a software engineer named David")
+- behavior: user's habits, lifestyle, routines, or recurring patterns in how they work or live (e.g. "runs 3 times a week", "always asks for background before details")
+- preference: ONLY how the user wants Jarvis to respond — output format, tone, length (e.g. "prefers table format", "wants concise answers in Chinese")
+- specification: technical decisions, project constraints, or system rules (e.g. "project uses TypeScript", "do not modify gemini-cli source")
+
+Rules:
+- Each fact belongs to exactly ONE category. If unsure between identity/behavior, use behavior.
+- Do not repeat the same information under different categories.
+- Only extract facts that are genuinely new and worth remembering long-term.
+
+Respond ONLY with JSON: {"found": true, "facts": [{"category": "identity|behavior|preference|specification", "content": "..."}]}
 If zero new data worth persisting, respond: {"found": false}
 
 Interaction:

@@ -31,7 +31,7 @@ describe('BackgroundDistiller', () => {
     expect(fakeSaveFact).not.toHaveBeenCalled();
   });
 
-  it('distill prompt includes preference and behavior categories', async () => {
+  it('distill prompt includes all four categories and dedup rule', async () => {
     const generateText = vi.fn().mockResolvedValue('{"found": false}');
     const fakeSaveFact = vi.fn();
     const distiller = new BackgroundDistiller(generateText, fakeSaveFact);
@@ -39,8 +39,12 @@ describe('BackgroundDistiller', () => {
     await distiller.distill('show me data', 'here is a table');
 
     const calledPrompt = generateText.mock.calls[0][0] as string;
-    expect(calledPrompt).toContain('preference');
+    expect(calledPrompt).toContain('identity');
     expect(calledPrompt).toContain('behavior');
+    expect(calledPrompt).toContain('preference');
+    expect(calledPrompt).toContain('specification');
+    // Must include the dedup rule
+    expect(calledPrompt).toContain('exactly ONE category');
   });
 
   it('saves preference facts with correct category', async () => {
