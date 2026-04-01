@@ -31,13 +31,14 @@ export class BackgroundDistiller {
 Extract persistent facts from this interaction. Use exactly one category per fact — do NOT write the same fact under multiple categories.
 
 Category definitions (mutually exclusive):
-- identity: ONLY static facts about who the user IS — name, job title, profession (e.g. "user is a software engineer named David")
-- behavior: user's habits, lifestyle, routines, or recurring patterns in how they work or live (e.g. "runs 3 times a week", "always asks for background before details")
-- preference: ONLY how the user wants Jarvis to respond — output format, tone, length (e.g. "prefers table format", "wants concise answers in Chinese")
-- specification: technical decisions, project constraints, or system rules (e.g. "project uses TypeScript", "do not modify gemini-cli source")
+- identity: Static facts about who the user IS — name, job title, profession, skills, nationality (e.g. "user is a software engineer named David", "user is good at cooking")
+- behavior: User's habits, lifestyle, routines, or recurring patterns (e.g. "runs 3 times a week", "always asks for background before details")
+- preference: ONLY about how the user wants Jarvis to FORMAT or STYLE responses — output format, tone, language, length. NOT about the user's personal traits or interests. (e.g. "prefers table format for data", "wants concise answers in Chinese")
+- specification: Technical decisions, project constraints, or system rules (e.g. "project uses TypeScript", "do not modify gemini-cli source")
 
 Rules:
 - Each fact belongs to exactly ONE category. If unsure between identity/behavior, use behavior.
+- "preference" means response style only. User skills, hobbies, interests → identity or behavior, NOT preference.
 - Do not repeat the same information under different categories.
 - Only extract facts that are genuinely new and worth remembering long-term.
 
