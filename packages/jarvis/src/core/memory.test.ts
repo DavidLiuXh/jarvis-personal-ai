@@ -52,7 +52,7 @@ async function createService(fakeGenerateContent: () => Promise<unknown>) {
   // Use a temp dir so the real DB file isn't created in ~/.gemini-jarvis
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'jarvis-test-'));
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const service = new (MemoryService as new (root: string) => InstanceType<typeof MemoryService>)(tmpDir);
+  const service = new (MemoryService as new (root: string, dbPath?: string) => InstanceType<typeof MemoryService>)('', tmpDir);
 
   // Inject a fake AI client directly (bypasses API key / network)
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -192,5 +192,83 @@ describe('MemoryService.consolidateFacts', () => {
 
     // After success, lastConsolidatedCount should equal the number of consolidated facts
     expect((service as unknown as Record<string, unknown>).lastConsolidatedCount).toBe(consolidatedFacts.length);
+  });
+});
+
+describe('MemoryService.saveFact semantic dedup', () => {
+  afterEach(() => {
+    vi.resetModules();
+    vi.clearAllMocks();
+  });
+
+  /**
+   * Creates a service with controllable embeddings.
+   * embedVectors: map from content substring → float array to return
+   */
+  async function createServiceWithEmbeddings(embedVectors: Record<string, number[]>) {
+    const { MemoryService } = await import('./memory.js');
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'jarvis-dedup-'));
+    const service = new (MemoryService as new (root: string, dbPath?: string) => InstanceType<typeof MemoryService>)('', tmpDir);
+
+    const embedContent = vi.fn().mockImplementation(async (req: any) => {
+      const text: string = req?.content?.parts?.[0]?.text ?? '';
+      for (const [key, vec] of Object.entries(embedVectors)) {
+        if (text.includes(key)) {
+          return { embeddings: [{ values: vec }] };
+        }
+      }
+      return { embeddings: [{ values: new Array(128).fill(0) }] };
+    });
+
+    (service as unknown as Record<string, unknown>).client = {
+      models: { embedContent, generateContent: vi.fn() },
+    };
+
+    return { service, tmpDir };
+  }
+
+  it('skips saving a fact when a semantically similar fact already exists', async () => {
+    // Two vectors that are nearly identical (cosine similarity ≈ 1.0)
+    const vec = new Array(128).fill(0);
+    vec[0] = 1.0;
+    const nearlyIdenticalVec = new Array(128).fill(0);
+    nearlyIdenticalVec[0] = 0.9999;
+
+    const { service } = await createServiceWithEmbeddings({
+      'runs 3 times': vec,
+      '每周跑步': nearlyIdenticalVec,
+    });
+
+    // First fact: written successfully
+    await service.saveFact('behavior', 'user runs 3 times a week', 8);
+
+    const db = (service as unknown as Record<string, unknown>).db as any;
+    const countAfterFirst = (db.prepare('SELECT count(*) as c FROM facts').get() as any).c;
+    expect(countAfterFirst).toBe(1);
+
+    // Second fact: semantically identical — should be skipped
+    await service.saveFact('behavior', '每周跑步三次', 8);
+
+    const countAfterSecond = (db.prepare('SELECT count(*) as c FROM facts').get() as any).c;
+    expect(countAfterSecond).toBe(1); // still 1, duplicate rejected
+  });
+
+  it('saves a fact when it is semantically different from existing facts', async () => {
+    const vecRunning = new Array(128).fill(0);
+    vecRunning[0] = 1.0;
+    const vecCoding = new Array(128).fill(0);
+    vecCoding[1] = 1.0; // orthogonal — similarity = 0
+
+    const { service } = await createServiceWithEmbeddings({
+      'runs': vecRunning,
+      'codes': vecCoding,
+    });
+
+    await service.saveFact('behavior', 'user runs 3 times a week', 8);
+    await service.saveFact('behavior', 'user codes every day', 8);
+
+    const db = (service as unknown as Record<string, unknown>).db as any;
+    const count = (db.prepare('SELECT count(*) as c FROM facts').get() as any).c;
+    expect(count).toBe(2);
   });
 });

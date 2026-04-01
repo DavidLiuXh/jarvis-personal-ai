@@ -24,8 +24,8 @@ export class MemoryService {
   private lastConsolidatedCount = 0;
   private generateTextFn: ((prompt: string) => Promise<string>) | null = null;
 
-  constructor(sourceRoot: string) {
-    const memoryDir = path.join(os.homedir(), '.gemini-jarvis', 'memory');
+  constructor(sourceRoot: string, dbPath?: string) {
+    const memoryDir = dbPath ?? path.join(os.homedir(), '.gemini-jarvis', 'memory');
     if (!fs.existsSync(memoryDir)) {
       fs.mkdirSync(memoryDir, { recursive: true });
     }
@@ -45,7 +45,8 @@ export class MemoryService {
         category TEXT,
         content TEXT,
         importance INTEGER DEFAULT 5,
-        timestamp INTEGER
+        timestamp INTEGER,
+        embedding BLOB
       );
       CREATE TABLE IF NOT EXISTS processed_files (
         filename TEXT PRIMARY KEY,
@@ -53,10 +54,17 @@ export class MemoryService {
       );
     `);
 
+    // Migration: add embedding column to existing facts tables
+    try { this.db.exec('ALTER TABLE facts ADD COLUMN embedding BLOB'); } catch (_) {}
+
     try {
       sqliteVec.load(this.db);
       this.db.exec(`
         CREATE VIRTUAL TABLE IF NOT EXISTS vec_memories USING vec0(
+          id INTEGER PRIMARY KEY,
+          embedding FLOAT[${this.jarvisConfig.models.embeddingDimension}]
+        );
+        CREATE VIRTUAL TABLE IF NOT EXISTS vec_facts USING vec0(
           id INTEGER PRIMARY KEY,
           embedding FLOAT[${this.jarvisConfig.models.embeddingDimension}]
         );
@@ -95,14 +103,64 @@ export class MemoryService {
     }
   }
 
+  private static readonly DEDUP_SIMILARITY_THRESHOLD = 0.85;
+
+  /** Cosine similarity between two equal-length float arrays. */
+  private cosineSimilarity(a: number[], b: number[]): number {
+    let dot = 0, normA = 0, normB = 0;
+    for (let i = 0; i < a.length; i++) {
+      dot += a[i] * b[i];
+      normA += a[i] * a[i];
+      normB += b[i] * b[i];
+    }
+    const denom = Math.sqrt(normA) * Math.sqrt(normB);
+    return denom === 0 ? 0 : dot / denom;
+  }
+
   public async saveFact(category: string, content: string, importance: number = 5) {
     try {
+      // Exact-string dedup (fast path)
       const exists = this.db.prepare('SELECT id FROM facts WHERE content = ?').get(content);
       if (exists) return;
 
-      this.db.prepare('INSERT INTO facts (category, content, importance, timestamp) VALUES (?, ?, ?, ?)')
-        .run(category, content, importance, Date.now());
-      
+      // Semantic dedup via embedding + in-memory cosine similarity
+      if (this.client) {
+        try {
+          const result = await this.client.models.embedContent({
+            model: this.jarvisConfig.models.embedding,
+            content: { role: 'user', parts: [{ text: content }] },
+          });
+          const embeddings = result.embeddings || [result.embedding];
+          const newVec: number[] = embeddings[0].values;
+
+          // Compare against all existing fact embeddings stored in the facts table
+          const existingFacts = this.db.prepare(
+            'SELECT id, content, embedding FROM facts WHERE embedding IS NOT NULL'
+          ).all() as Array<{ id: number; content: string; embedding: Buffer }>;
+
+          for (const row of existingFacts) {
+            const existingVec = Array.from(new Float32Array(row.embedding.buffer));
+            const sim = this.cosineSimilarity(newVec, existingVec);
+            if (sim >= MemoryService.DEDUP_SIMILARITY_THRESHOLD) {
+              console.error(`♻️ [MemoryService] Semantic duplicate skipped: "${content}" ≈ "${row.content}" (sim=${sim.toFixed(3)})`);
+              return;
+            }
+          }
+
+          // Insert fact with embedding
+          this.db.prepare(
+            'INSERT INTO facts (category, content, importance, timestamp, embedding) VALUES (?, ?, ?, ?, ?)'
+          ).run(category, content, importance, Date.now(), Buffer.from(new Float32Array(newVec).buffer));
+        } catch (_embedErr) {
+          // Embedding unavailable — fall back to exact-only dedup
+          this.db.prepare('INSERT INTO facts (category, content, importance, timestamp) VALUES (?, ?, ?, ?)')
+            .run(category, content, importance, Date.now());
+        }
+      } else {
+        this.db.prepare('INSERT INTO facts (category, content, importance, timestamp) VALUES (?, ?, ?, ?)')
+          .run(category, content, importance, Date.now());
+      }
+
       const count = this.db.prepare('SELECT count(*) as c FROM facts').get() as any;
       console.error(`🔥 [MemoryService] New fact distilled. Total: ${count.c}`);
 
