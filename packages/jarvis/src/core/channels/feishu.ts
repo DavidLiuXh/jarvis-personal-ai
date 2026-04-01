@@ -190,7 +190,7 @@ export class FeishuChannel {
       };
 
       agent.on(JarvisEventType.CONTENT, contentHandler);
-      agent.on(JarvisEventType.DONE, () => {
+      agent.once(JarvisEventType.DONE, () => {
         void updateCard(accumulatedText);
         agent.removeListener(JarvisEventType.CONTENT, contentHandler);
       });
