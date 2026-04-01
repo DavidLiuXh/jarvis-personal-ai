@@ -201,68 +201,51 @@ describe('MemoryService.saveFact semantic dedup', () => {
     vi.clearAllMocks();
   });
 
-  /**
-   * Creates a service with controllable embeddings.
-   * embedVectors: map from content substring → float array to return
-   */
-  async function createServiceWithEmbeddings(embedVectors: Record<string, number[]>) {
+  async function createDedupeService(dedupStrategy?: 'jaccard' | 'embedding') {
+    vi.doMock('./configManager.js', () => ({
+      ConfigManager: {
+        getInstance: vi.fn().mockReturnValue({
+          get: vi.fn().mockReturnValue({
+            api: { key: 'test-key', proxy: null },
+            models: {
+              embedding: 'test-embedding-model',
+              embeddingDimension: 128,
+              distillation: 'test-distillation-model',
+            },
+            memory: {
+              ingestionDelayMs: 0,
+              retrievalLimit: 5,
+              consolidationThreshold: 100, // high threshold to avoid triggering consolidation
+              dedupStrategy: dedupStrategy ?? 'jaccard',
+            },
+          }),
+        }),
+      },
+    }));
     const { MemoryService } = await import('./memory.js');
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'jarvis-dedup-'));
     const service = new (MemoryService as new (root: string, dbPath?: string) => InstanceType<typeof MemoryService>)('', tmpDir);
-
-    const embedContent = vi.fn().mockImplementation(async (req: any) => {
-      const text: string = req?.content?.parts?.[0]?.text ?? '';
-      for (const [key, vec] of Object.entries(embedVectors)) {
-        if (text.includes(key)) {
-          return { embeddings: [{ values: vec }] };
-        }
-      }
-      return { embeddings: [{ values: new Array(128).fill(0) }] };
-    });
-
-    (service as unknown as Record<string, unknown>).client = {
-      models: { embedContent, generateContent: vi.fn() },
-    };
-
     return { service, tmpDir };
   }
 
-  it('skips saving a fact when a semantically similar fact already exists', async () => {
-    // Two vectors that are nearly identical (cosine similarity ≈ 1.0)
-    const vec = new Array(128).fill(0);
-    vec[0] = 1.0;
-    const nearlyIdenticalVec = new Array(128).fill(0);
-    nearlyIdenticalVec[0] = 0.9999;
+  it('skips saving a fact when a textually similar fact already exists', async () => {
+    const { service } = await createDedupeService();
 
-    const { service } = await createServiceWithEmbeddings({
-      'runs 3 times': vec,
-      '每周跑步': nearlyIdenticalVec,
-    });
-
-    // First fact: written successfully
     await service.saveFact('behavior', 'user runs 3 times a week', 8);
 
     const db = (service as unknown as Record<string, unknown>).db as any;
     const countAfterFirst = (db.prepare('SELECT count(*) as c FROM facts').get() as any).c;
     expect(countAfterFirst).toBe(1);
 
-    // Second fact: semantically identical — should be skipped
-    await service.saveFact('behavior', '每周跑步三次', 8);
+    // Textually similar (same key words: runs, times, week) — should be skipped
+    await service.saveFact('behavior', 'runs at least 3 times per week', 8);
 
     const countAfterSecond = (db.prepare('SELECT count(*) as c FROM facts').get() as any).c;
-    expect(countAfterSecond).toBe(1); // still 1, duplicate rejected
+    expect(countAfterSecond).toBe(1);
   });
 
   it('saves a fact when it is semantically different from existing facts', async () => {
-    const vecRunning = new Array(128).fill(0);
-    vecRunning[0] = 1.0;
-    const vecCoding = new Array(128).fill(0);
-    vecCoding[1] = 1.0; // orthogonal — similarity = 0
-
-    const { service } = await createServiceWithEmbeddings({
-      'runs': vecRunning,
-      'codes': vecCoding,
-    });
+    const { service } = await createDedupeService();
 
     await service.saveFact('behavior', 'user runs 3 times a week', 8);
     await service.saveFact('behavior', 'user codes every day', 8);
@@ -270,5 +253,53 @@ describe('MemoryService.saveFact semantic dedup', () => {
     const db = (service as unknown as Record<string, unknown>).db as any;
     const count = (db.prepare('SELECT count(*) as c FROM facts').get() as any).c;
     expect(count).toBe(2);
+  });
+
+  it('logs a message when a duplicate is skipped', async () => {
+    const { service } = await createDedupeService();
+    const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    await service.saveFact('behavior', 'user runs 3 times a week', 8);
+    await service.saveFact('behavior', 'runs at least 3 times per week', 8);
+
+    expect(consoleSpy).toHaveBeenCalledWith(
+      expect.stringContaining('Duplicate skipped'),
+    );
+    consoleSpy.mockRestore();
+  });
+
+  it('uses embedding strategy when dedupStrategy is embedding and embedContentFn is injected', async () => {
+    const { service } = await createDedupeService('embedding');
+
+    // Two nearly-identical vectors (cosine sim ≈ 1.0)
+    const vec1 = new Array(128).fill(0); vec1[0] = 1.0;
+    const vec2 = new Array(128).fill(0); vec2[0] = 0.9999;
+
+    let callCount = 0;
+    service.setEmbedContent(async (_text: string) => {
+      return callCount++ === 0 ? vec1 : vec2;
+    });
+
+    await service.saveFact('behavior', 'user runs 3 times a week', 8);
+    await service.saveFact('behavior', '每周跑步三次', 8); // different text, similar vector
+
+    const db = (service as unknown as Record<string, unknown>).db as any;
+    const count = (db.prepare('SELECT count(*) as c FROM facts').get() as any).c;
+    expect(count).toBe(1); // duplicate rejected via embedding similarity
+  });
+
+  it('falls back to jaccard when embedding strategy fails', async () => {
+    const { service } = await createDedupeService('embedding');
+
+    service.setEmbedContent(async (_text: string) => {
+      throw new Error('embedding API unavailable');
+    });
+
+    await service.saveFact('behavior', 'user runs 3 times a week', 8);
+    await service.saveFact('behavior', 'runs at least 3 times per week', 8); // similar via jaccard
+
+    const db = (service as unknown as Record<string, unknown>).db as any;
+    const count = (db.prepare('SELECT count(*) as c FROM facts').get() as any).c;
+    expect(count).toBe(1); // still deduped via jaccard fallback
   });
 });

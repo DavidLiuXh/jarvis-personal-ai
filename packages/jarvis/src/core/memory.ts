@@ -109,7 +109,23 @@ export class MemoryService {
     }
   }
 
-  private static readonly DEDUP_SIMILARITY_THRESHOLD = 0.85;
+  private static readonly DEDUP_JACCARD_THRESHOLD = 0.55;
+  private static readonly DEDUP_COSINE_THRESHOLD = 0.90;
+
+  /** Jaccard similarity on word-level tokens (case-insensitive, stop words removed). */
+  private jaccardSimilarity(a: string, b: string): number {
+    const stopWords = new Set(['the', 'a', 'an', 'is', 'are', 'was', 'user', 'david', 'jarvis', 'at', 'least', 'in', 'of', 'to', 'and', 'for', 'this', 'that', 'with', 'has', 'have', 'should', 'be', 'my', 'i', 'me', 'his', 'her']);
+    const tokenize = (s: string) => new Set(
+      s.toLowerCase().replace(/[^a-z0-9\u4e00-\u9fff]/g, ' ').split(/\s+/).filter(w => w.length > 1 && !stopWords.has(w))
+    );
+    const setA = tokenize(a);
+    const setB = tokenize(b);
+    if (setA.size === 0 && setB.size === 0) return 1;
+    let intersection = 0;
+    for (const w of setA) if (setB.has(w)) intersection++;
+    const union = setA.size + setB.size - intersection;
+    return union === 0 ? 0 : intersection / union;
+  }
 
   /** Cosine similarity between two equal-length float arrays. */
   private cosineSimilarity(a: number[], b: number[]): number {
@@ -123,51 +139,63 @@ export class MemoryService {
     return denom === 0 ? 0 : dot / denom;
   }
 
+  /** Returns true if the content is a duplicate of an existing fact. */
+  private isDuplicateByJaccard(content: string): boolean {
+    const existing = this.db.prepare('SELECT content FROM facts').all() as Array<{ content: string }>;
+    for (const row of existing) {
+      const sim = this.jaccardSimilarity(content, row.content);
+      if (sim >= MemoryService.DEDUP_JACCARD_THRESHOLD) {
+        console.error(`♻️ [MemoryService] Duplicate skipped: "${content}" ≈ "${row.content}" (jaccard=${sim.toFixed(2)})`);
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /** Returns true if the content is a duplicate via embedding cosine similarity. Falls back to jaccard on error. */
+  private async isDuplicateByEmbedding(content: string): Promise<boolean> {
+    try {
+      const newVec = await this.embedContentFn!(content);
+      const existing = this.db.prepare(
+        'SELECT content, embedding FROM facts WHERE embedding IS NOT NULL'
+      ).all() as Array<{ content: string; embedding: Buffer }>;
+
+      for (const row of existing) {
+        const existingVec = Array.from(new Float32Array(row.embedding.buffer));
+        const sim = this.cosineSimilarity(newVec, existingVec);
+        if (sim >= MemoryService.DEDUP_COSINE_THRESHOLD) {
+          console.error(`♻️ [MemoryService] Duplicate skipped: "${content}" ≈ "${row.content}" (cosine=${sim.toFixed(3)})`);
+          return true;
+        }
+      }
+      return false;
+    } catch (_e) {
+      // Embedding unavailable — fall back to jaccard
+      return this.isDuplicateByJaccard(content);
+    }
+  }
+
   public async saveFact(category: string, content: string, importance: number = 5) {
     try {
       // Exact-string dedup (fast path)
       const exists = this.db.prepare('SELECT id FROM facts WHERE content = ?').get(content);
       if (exists) return;
 
-      // Semantic dedup via embedding + in-memory cosine similarity
-      if (this.embedContentFn || this.client) {
-        try {
-          let newVec: number[];
-          if (this.embedContentFn) {
-            newVec = await this.embedContentFn(content);
-          } else {
-            const result = await this.client.models.embedContent({
-              model: this.jarvisConfig.models.embedding,
-              content: { role: 'user', parts: [{ text: content }] },
-            });
-            const embeddings = result.embeddings || [result.embedding];
-            newVec = embeddings[0].values;
-          }
-
-          // Compare against all existing fact embeddings stored in the facts table
-          const existingFacts = this.db.prepare(
-            'SELECT id, content, embedding FROM facts WHERE embedding IS NOT NULL'
-          ).all() as Array<{ id: number; content: string; embedding: Buffer }>;
-
-          for (const row of existingFacts) {
-            const existingVec = Array.from(new Float32Array(row.embedding.buffer));
-            const sim = this.cosineSimilarity(newVec, existingVec);
-            if (sim >= MemoryService.DEDUP_SIMILARITY_THRESHOLD) {
-              console.error(`♻️ [MemoryService] Semantic duplicate skipped: "${content}" ≈ "${row.content}" (sim=${sim.toFixed(3)})`);
-              return;
-            }
-          }
-
-          // Insert fact with embedding
-          this.db.prepare(
-            'INSERT INTO facts (category, content, importance, timestamp, embedding) VALUES (?, ?, ?, ?, ?)'
-          ).run(category, content, importance, Date.now(), Buffer.from(new Float32Array(newVec).buffer));
-        } catch (_embedErr) {
-          // Embedding unavailable — fall back to exact-only dedup
+      // Strategy-based semantic dedup
+      const strategy = this.jarvisConfig.memory.dedupStrategy ?? 'jaccard';
+      if (strategy === 'embedding' && this.embedContentFn) {
+        if (await this.isDuplicateByEmbedding(content)) return;
+        // Insert with embedding for future comparisons
+        const newVec = await this.embedContentFn(content).catch(() => null);
+        if (newVec) {
+          this.db.prepare('INSERT INTO facts (category, content, importance, timestamp, embedding) VALUES (?, ?, ?, ?, ?)')
+            .run(category, content, importance, Date.now(), Buffer.from(new Float32Array(newVec).buffer));
+        } else {
           this.db.prepare('INSERT INTO facts (category, content, importance, timestamp) VALUES (?, ?, ?, ?)')
             .run(category, content, importance, Date.now());
         }
       } else {
+        if (this.isDuplicateByJaccard(content)) return;
         this.db.prepare('INSERT INTO facts (category, content, importance, timestamp) VALUES (?, ?, ?, ?)')
           .run(category, content, importance, Date.now());
       }

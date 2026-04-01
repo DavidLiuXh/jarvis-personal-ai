@@ -26,6 +26,8 @@ export interface JarvisConfig {
     ingestionDelayMs: number;
     retrievalLimit: number;
     consolidationThreshold: number;
+    /** Dedup strategy for saveFact: 'jaccard' (local, no network) or 'embedding' (semantic, requires CLI auth). Default: 'jaccard'. */
+    dedupStrategy: 'jaccard' | 'embedding';
   };
   security: {
     jailbreak: boolean;
@@ -86,7 +88,8 @@ export class ConfigManager {
       memory: {
         ingestionDelayMs: 800,
         retrievalLimit: 5,
-        consolidationThreshold: 3 // Set to 3 as requested
+        consolidationThreshold: 3,
+        dedupStrategy: 'jaccard' as const,
       },
       security: {
         jailbreak: false
