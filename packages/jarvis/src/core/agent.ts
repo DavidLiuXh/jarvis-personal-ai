@@ -37,6 +37,7 @@ import { JarvisEventType, type JarvisAgentOptions } from './types.js';
 import { type MemoryService } from './memory.js';
 import { DynamicToolRegistry } from './dynamicToolRegistry.js';
 import { ConfigManager } from './configManager.js';
+import { SystemPromptBuilder } from './systemPromptBuilder.js';
 
 /**
  * JARVIS 3.0: The Digital Lifeform Agent
@@ -51,6 +52,7 @@ export class JarvisAgent extends EventEmitter {
   private initialized = false;
   private isProcessing = false;
   private jarvisConfig = ConfigManager.getInstance().get();
+  private promptBuilder = new SystemPromptBuilder();
 
   constructor(options: JarvisAgentOptions) {
     super();
@@ -244,42 +246,12 @@ export class JarvisAgent extends EventEmitter {
     } catch (e) {}
   }
 
-  private async refreshContext(userPrompt: string) {
+  private async refreshContext(_userPrompt: string) {
     const coreFacts = this.memoryService.getCoreFacts();
-    
-    const memoryContext = `
-# SYSTEM-INTEGRATED PERSISTENT CONTEXT (Global Identity):
-${coreFacts.length > 0 ? coreFacts.map(f => `- ${f}`).join('\n') : '(No persistent facts stored)'}
-
-# COGNITIVE MEMORY STATUS:
-[WARNING]: LONG-TERM INTERACTION LOGS ARE NOT LOADED.
-If the current prompt refers to past conversations, previous technical details, or "what we did before", you MUST call 'recall_memory' to look up the data. DO NOT GUESS.
-`;
-
-    const protocol = `
-# JARVIS SYSTEM OPERATIONAL FRAMEWORK v3.0 (ACTIVE COGNITION)
-You are JARVIS, an advanced system-native operative.
-
-## I. MEMORY ARCHITECTURE (MANDATORY)
-1. **ACTIVE RECALL**: Your current context window is fresh. To provide accurate continuity, you MUST use 'recall_memory' whenever past knowledge is required.
-2. **EXAMPLE**: 
-   - User: "What was the React optimization we discussed?"
-   - Action: call recall_memory({ query: "React optimization" })
-3. **KNOWLEDGE SYNTHESIS**: Use 'save_memory' to commit new rules or preferences.
-
-## II. AUTOMATIC TASK DECOMPOSITION
-1. **DECOMPOSE FIRST**: Immediately partition complex missions into functional blocks.
-2. **CONCURRENT DISPATCH**: Trigger specialized modules (e.g., codebase_investigator, generalist) SIMULTANEOUSLY.
-
-## III. OPERATIONAL STYLE
-- Be precise. Be deterministic. 
-- Leverage system-native autonomy to resolve missions without redundant verification.
-
-${memoryContext}
-`;
+    const protocol = this.promptBuilder.build(coreFacts);
     const defaultInstruction = getCoreSystemPrompt(this.client.config, this.client.config.getUserMemory());
     this.client.getChat().setSystemInstruction(defaultInstruction + '\n' + protocol);
-    
+
     const history = this.client.getChat().getHistory();
     console.error(`🔄 [Jarvis] System Prompt Refreshed. History Size: ${history.length} turns.`);
   }
