@@ -23,6 +23,7 @@ export class MemoryService {
   private config: any;
   private lastConsolidatedCount = 0;
   private generateTextFn: ((prompt: string) => Promise<string>) | null = null;
+  private embedContentFn: ((text: string) => Promise<number[]>) | null = null;
 
   constructor(sourceRoot: string, dbPath?: string) {
     const memoryDir = dbPath ?? path.join(os.homedir(), '.gemini-jarvis', 'memory');
@@ -86,6 +87,11 @@ export class MemoryService {
     this.generateTextFn = fn;
   }
 
+  /** Inject a CLI-auth embedContent function for semantic dedup. */
+  public setEmbedContent(fn: (text: string) => Promise<number[]>) {
+    this.embedContentFn = fn;
+  }
+
   public startWithApiKey(apiKey: string) {
     if (this.client) return;
     try {
@@ -124,14 +130,19 @@ export class MemoryService {
       if (exists) return;
 
       // Semantic dedup via embedding + in-memory cosine similarity
-      if (this.client) {
+      if (this.embedContentFn || this.client) {
         try {
-          const result = await this.client.models.embedContent({
-            model: this.jarvisConfig.models.embedding,
-            content: { role: 'user', parts: [{ text: content }] },
-          });
-          const embeddings = result.embeddings || [result.embedding];
-          const newVec: number[] = embeddings[0].values;
+          let newVec: number[];
+          if (this.embedContentFn) {
+            newVec = await this.embedContentFn(content);
+          } else {
+            const result = await this.client.models.embedContent({
+              model: this.jarvisConfig.models.embedding,
+              content: { role: 'user', parts: [{ text: content }] },
+            });
+            const embeddings = result.embeddings || [result.embedding];
+            newVec = embeddings[0].values;
+          }
 
           // Compare against all existing fact embeddings stored in the facts table
           const existingFacts = this.db.prepare(
@@ -276,19 +287,24 @@ ${factsText}
   }
 
   private async ingestMemory(sessionId: string, userPrompt: string, assistantText: string) {
-    if (!this.client) return;
+    if (!this.embedContentFn && !this.client) return;
     try {
       const text = `User: ${userPrompt}\nAssistant: ${assistantText}`;
-      const result = await this.client.models.embedContent({
-        model: this.jarvisConfig.models.embedding,
-        content: { role: 'user', parts: [{ text }] }
-      });
-      
+      let vecValues: number[];
+      if (this.embedContentFn) {
+        vecValues = await this.embedContentFn(text);
+      } else {
+        const result = await this.client.models.embedContent({
+          model: this.jarvisConfig.models.embedding,
+          content: { role: 'user', parts: [{ text }] }
+        });
+        const embeddings = result.embeddings || [result.embedding];
+        vecValues = embeddings[0].values;
+      }
       const info = this.db.prepare('INSERT INTO memories (sessionId, text, timestamp) VALUES (?, ?, ?)').run(sessionId, text, Date.now());
       try {
-        const embeddings = result.embeddings || [result.embedding];
-        this.db.prepare('INSERT INTO vec_memories (id, embedding) VALUES (?, ?)').run(info.lastInsertRowid, new Float32Array(embeddings[0].values));
-      } catch (vecErr) {}
+        this.db.prepare('INSERT INTO vec_memories (id, embedding) VALUES (?, ?)').run(info.lastInsertRowid, new Float32Array(vecValues));
+      } catch (_vecErr) {}
     } catch (e) {}
   }
 
