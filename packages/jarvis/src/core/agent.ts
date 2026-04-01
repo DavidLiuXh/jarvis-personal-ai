@@ -15,7 +15,6 @@ import {
   GeminiEventType,
   Scheduler,
   ROOT_SCHEDULER_ID,
-  recordToolCallInteractions,
   ApprovalMode,
   getCoreSystemPrompt,
   promptIdContext,
@@ -37,6 +36,7 @@ import { DynamicToolRegistry } from './dynamicToolRegistry.js';
 import { ConfigManager } from './configManager.js';
 import { SystemPromptBuilder } from './systemPromptBuilder.js';
 import { BackgroundDistiller } from './backgroundDistiller.js';
+import { ToolRouter } from './toolRouter.js';
 
 /**
  * JARVIS 3.0: The Digital Lifeform Agent
@@ -53,6 +53,7 @@ export class JarvisAgent extends EventEmitter {
   private jarvisConfig = ConfigManager.getInstance().get();
   private promptBuilder = new SystemPromptBuilder();
   private distiller!: BackgroundDistiller;
+  private toolRouter!: ToolRouter;
 
   constructor(options: JarvisAgentOptions) {
     super();
@@ -215,6 +216,13 @@ export class JarvisAgent extends EventEmitter {
       schedulerId: ROOT_SCHEDULER_ID,
     });
 
+    this.toolRouter = new ToolRouter(
+      this.memoryService,
+      this.dynamicRegistry,
+      this.scheduler,
+      this.client,
+    );
+
     this.initialized = true;
     debugLogger.debug(`[JarvisAgent] Lifeform Ready.`);
   }
@@ -316,80 +324,11 @@ export class JarvisAgent extends EventEmitter {
               }
 
               if (toolCallRequests.length > 0) {
-                const toolResponseParts: Part[] = [];
-                const standardRequests: any[] = [];
-                
-                // 🛡️ JARVIS NATIVE TOOLS HIJACKING
-                const jarvisDirectPromises = toolCallRequests
-                  .filter(req => req.name.startsWith('run_evolved_skill_') || req.name === 'save_memory' || req.name === 'recall_memory')
-                  .map(async (req) => {
-                    try {
-                      let output = '';
-                      if (req.name.startsWith('run_evolved_skill_')) {
-                        output = await this.dynamicRegistry.runSkill(req.name, req.args);
-                      } 
-                      else if (req.name === 'save_memory') {
-                        const fact = req.args.fact;
-                        await this.memoryService.saveFact('preference', fact, 10);
-                        output = `Integrated into structured core: ${fact}`;
-                        console.error(`🛡️ [Jarvis] Memory Redirected: ${fact}`);
-                      }
-                      else if (req.name === 'recall_memory') {
-                        const query = req.args.query;
-                        const limit = req.args.limit || 5;
-                        console.error(`🧠 [Jarvis] Active Recall initiated for: "${query}"`);
-                        const memories = await this.memoryService.search(query, limit);
-                        
-                        let responseText = '';
-                        if (memories.length > 0) {
-                          responseText = `LONG-TERM MEMORIES FOUND:\n${memories.map(m => `- ${m}`).join('\n')}\n\nINSTRUCTION: Now synthesize this history into your final answer.`;
-                        } else {
-                          responseText = `NO SPECIFIC MEMORIES FOUND for "${query}". Proceed with current knowledge.`;
-                        }
-                        output = responseText;
-                      }
-
-                      this.emit(JarvisEventType.TOOL_CALL_RESPONSE, { name: req.name, status: 'success', output, callId: req.callId });
-                      
-                      // 🛠️ COMPATIBILITY CHECK: Ensure robust functionResponse structure
-                      let responsePayload: any = { result: output };
-                      if (this.client.config.api?.apiVersion === 'v1') {
-                        responsePayload = output;
-                      }
-
-                      return { functionResponse: { name: req.name, response: responsePayload } } as Part;
-                    } catch (e: any) {
-                      return { functionResponse: { name: req.name, response: { error: e.message } } } as Part;
-                    }
-                  });
-
-                for (const req of toolCallRequests) {
-                  if (!req.name.startsWith('run_evolved_skill_') && req.name !== 'save_memory' && req.name !== 'recall_memory') {
-                    standardRequests.push(req);
-                  }
-                }
-
-                const [directResults, completedToolCalls] = await Promise.all([
-                  Promise.all(jarvisDirectPromises),
-                  standardRequests.length > 0 
-                    ? this.scheduler.schedule(standardRequests, abortController.signal)
-                    : Promise.resolve([])
-                ]);
-
-                toolResponseParts.push(...directResults);
-
-                if (completedToolCalls.length > 0) {
-                  for (const completed of completedToolCalls) {
-                    if (completed.response.responseParts) toolResponseParts.push(...completed.response.responseParts);
-                    this.emit(JarvisEventType.TOOL_CALL_RESPONSE, { name: completed.request.name, status: completed.status, output: completed.response.resultDisplay, callId: completed.request.callId });
-                  }
-                  try {
-                    const currentModel = this.client.getCurrentSequenceModel() || this.client.getChat().getModel();
-                    this.client.getChat().recordCompletedToolCalls(currentModel, completedToolCalls);
-                    await recordToolCallInteractions(this.client.config, completedToolCalls);
-                  } catch (e) {}
-                }
-                currentQueryParts = toolResponseParts;
+                currentQueryParts = await this.toolRouter.route(
+                  toolCallRequests,
+                  abortController.signal,
+                  (resp) => this.emit(JarvisEventType.TOOL_CALL_RESPONSE, resp),
+                );
               } else {
                 success = true;
               }
