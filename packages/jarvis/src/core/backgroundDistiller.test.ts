@@ -76,12 +76,21 @@ describe('BackgroundDistiller', () => {
     expect(fakeSaveFact).not.toHaveBeenCalled();
   });
 
-  it('does not throw when generateText rejects', async () => {
-    const generateText = vi.fn().mockRejectedValue(new Error('API error'));
+  it('does not throw when generateText rejects, and logs the error', async () => {
+    const apiError = Object.assign(new Error('models/gemini-1.5-flash is not found'), { status: 404 });
+    const generateText = vi.fn().mockRejectedValue(apiError);
     const fakeSaveFact = vi.fn();
     const distiller = new BackgroundDistiller(generateText, fakeSaveFact);
 
+    const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
     await expect(distiller.distill('hi', 'hi')).resolves.not.toThrow();
     expect(fakeSaveFact).not.toHaveBeenCalled();
+    expect(consoleSpy).toHaveBeenCalledWith(
+      expect.stringContaining('[BackgroundDistiller] distill failed:'),
+      apiError,
+    );
+
+    consoleSpy.mockRestore();
   });
 });
