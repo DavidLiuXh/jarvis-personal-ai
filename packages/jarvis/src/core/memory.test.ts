@@ -228,20 +228,41 @@ describe('MemoryService.saveFact semantic dedup', () => {
     return { service, tmpDir };
   }
 
-  it('skips saving a fact when a textually similar fact already exists', async () => {
+  it('skips saving a fact when a textually similar Latin fact already exists', async () => {
     const { service } = await createDedupeService();
 
     await service.saveFact('behavior', 'user runs 3 times a week', 8);
 
     const db = (service as unknown as Record<string, unknown>).db as any;
-    const countAfterFirst = (db.prepare('SELECT count(*) as c FROM facts').get() as any).c;
-    expect(countAfterFirst).toBe(1);
+    expect((db.prepare('SELECT count(*) as c FROM facts').get() as any).c).toBe(1);
 
-    // Textually similar (same key words: runs, times, week) — should be skipped
     await service.saveFact('behavior', 'runs at least 3 times per week', 8);
 
-    const countAfterSecond = (db.prepare('SELECT count(*) as c FROM facts').get() as any).c;
-    expect(countAfterSecond).toBe(1);
+    expect((db.prepare('SELECT count(*) as c FROM facts').get() as any).c).toBe(1);
+  });
+
+  it('skips saving a fact when a textually similar CJK fact already exists', async () => {
+    const { service } = await createDedupeService();
+
+    await service.saveFact('behavior', '每周跑步三次', 8);
+
+    const db = (service as unknown as Record<string, unknown>).db as any;
+    expect((db.prepare('SELECT count(*) as c FROM facts').get() as any).c).toBe(1);
+
+    // Similar CJK content — should be skipped via lower CJK threshold
+    await service.saveFact('behavior', '每周至少跑步3次', 8);
+
+    expect((db.prepare('SELECT count(*) as c FROM facts').get() as any).c).toBe(1);
+  });
+
+  it('does not falsely deduplicate unrelated CJK facts', async () => {
+    const { service } = await createDedupeService();
+
+    await service.saveFact('behavior', '我对历史很感兴趣', 8);
+    await service.saveFact('behavior', '我每周跑步三次', 8);
+
+    const db = (service as unknown as Record<string, unknown>).db as any;
+    expect((db.prepare('SELECT count(*) as c FROM facts').get() as any).c).toBe(2);
   });
 
   it('saves a fact when it is semantically different from existing facts', async () => {
