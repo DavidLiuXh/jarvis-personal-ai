@@ -5,216 +5,69 @@
  */
 
 import { EventEmitter } from 'node:events';
-import path from 'node:path';
-import fs from 'node:fs';
-import os from 'node:os';
 import {
   GeminiClient,
   debugLogger,
-  AuthType,
   GeminiEventType,
   Scheduler,
-  ROOT_SCHEDULER_ID,
-  ApprovalMode,
   getCoreSystemPrompt,
   promptIdContext,
   type Part,
-  type Content,
-  type ConversationRecord,
 } from '../../../core/src/index.js';
-
-// @ts-expect-error - Relative import
-import { loadCliConfig } from '../../../cli/src/config/config.js';
-// @ts-expect-error - Relative import
-import { loadSettings } from '../../../cli/src/config/settings.js';
-// @ts-expect-error - Relative import
-import { SESSION_FILE_PREFIX } from '../../../core/src/services/chatRecordingService.js';
 
 import { JarvisEventType, type JarvisAgentOptions } from './types.js';
 import { type MemoryService } from './memory.js';
 import { DynamicToolRegistry } from './dynamicToolRegistry.js';
-import { ConfigManager } from './configManager.js';
 import { SystemPromptBuilder } from './systemPromptBuilder.js';
 import { BackgroundDistiller } from './backgroundDistiller.js';
 import { ToolRouter } from './toolRouter.js';
+import { AgentInitializer } from './agentInitializer.js';
 
 /**
  * JARVIS 3.0: The Digital Lifeform Agent
+ *
+ * Coordinator: delegates initialization, tool routing, and background
+ * distillation to focused collaborators.
  */
 export class JarvisAgent extends EventEmitter {
   private client!: GeminiClient;
   private scheduler!: Scheduler;
   private sessionId: string;
-  private sourceRoot: string;
   private memoryService: MemoryService;
   private dynamicRegistry: DynamicToolRegistry;
   private initialized = false;
   private isProcessing = false;
-  private jarvisConfig = ConfigManager.getInstance().get();
   private promptBuilder = new SystemPromptBuilder();
   private distiller!: BackgroundDistiller;
   private toolRouter!: ToolRouter;
+  private agentInitializer: AgentInitializer;
 
   constructor(options: JarvisAgentOptions) {
     super();
     this.sessionId = options.sessionId;
-    this.sourceRoot = options.cwd;
     this.memoryService = options.memoryService;
     this.dynamicRegistry = new DynamicToolRegistry(options.cwd);
+    this.agentInitializer = new AgentInitializer(
+      options.sessionId,
+      options.cwd,
+      options.memoryService,
+      this.dynamicRegistry,
+    );
   }
 
   public async initialize() {
     if (this.initialized) return;
 
-    debugLogger.debug(`[JarvisAgent] Booting Lifeform: ${this.sessionId}`);
-    const settings = loadSettings(this.sourceRoot);
-
-    // I. PERMISSION UNLOCK
-    settings.merged.general.approvalMode = ApprovalMode.NEVER;
-    if (settings.merged.tools) {
-      settings.merged.tools.googleWebSearch = { enabled: true };
-      settings.merged.tools.codebaseInvestigator = { enabled: true };
-      settings.merged.tools.generalist = { enabled: true };
-      settings.merged.tools.saveMemory = { enabled: true };
-    }
-    
-    if (!settings.merged.context) {
-      settings.merged.context = {};
-    }
-    settings.merged.context.includeDirectoryTree = false;
-    if (!settings.merged.context.trustedFolders) {
-      settings.merged.context.trustedFolders = [];
-    }
-    settings.merged.context.trustedFolders.push(os.homedir());
-
-    if (!settings.merged.model) {
-      settings.merged.model = {};
-    }
-    if (this.jarvisConfig.models.chat !== 'auto') {
-      settings.merged.model.primaryModel = this.jarvisConfig.models.chat;
-    }
-    settings.merged.model.embeddingModel = this.jarvisConfig.models.embedding;
-
-    // II. CORE INITIALIZATION
-    const jarvisStorageRoot = path.join(os.homedir(), '.gemini-jarvis', 'storage');
-    if (!fs.existsSync(jarvisStorageRoot)) {
-      fs.mkdirSync(jarvisStorageRoot, { recursive: true });
-    }
-
-    const config = await loadCliConfig(
-      settings.merged,
-      this.sessionId,
-      { _: [], yolo: true, interactive: true },
-      { 
-        cwd: this.sourceRoot,
-        projectTmpDir: jarvisStorageRoot
-      },
+    const { client, scheduler } = await this.agentInitializer.initialize(
+      (msg) => this.emit(JarvisEventType.SUBAGENT_ACTIVITY, msg),
     );
-
-    if (config.storage) {
-      // @ts-ignore
-      config.storage.targetDir = path.join(os.homedir(), '.gemini-jarvis', 'runtime');
-      // @ts-ignore
-      config.storage.getProjectTempDir = () => jarvisStorageRoot;
-    }
-
-    const authType = settings.merged.security.auth.selectedType || AuthType.LOGIN_WITH_GOOGLE;
-    await config.refreshAuth(authType);
-    await config.initialize();
-
-    // III. CONCURRENT RESOLUTION & TOOL HIJACKING
-    const registry = config.getToolRegistry();
-    
-    // 🧠 DEFINE RECALL_MEMORY TOOL
-    const recallMemoryTool = {
-      name: 'recall_memory',
-      description: 'MANDATORY for retrieving any past interaction, technical decision, or user preference not in the current view.',
-      parameters: {
-        type: 'object',
-        properties: {
-          query: { type: 'string', description: 'Specific keywords to search in long-term memory.' },
-          limit: { type: 'number', description: 'Number of results (1-10).' }
-        },
-        required: ['query']
-      },
-      parallelizable: true
-    };
-
-    // @ts-ignore
-    if (typeof registry.addDiscoveredTool === 'function') {
-      // @ts-ignore
-      registry.addDiscoveredTool(recallMemoryTool);
-    }
-
-    const coreParallelTools = [
-      'run_shell_command', 
-      'write_file', 
-      'google_web_search',
-      'generalist',
-      'codebase_investigator',
-      'save_memory',
-      'recall_memory'
-    ];
-    for (const toolName of coreParallelTools) {
-      const tool = (registry as any).getTool?.(toolName);
-      if (tool) {
-        tool.parallelizable = true;
-      }
-    }
-
-    this.client = new GeminiClient(config);
-    await this.client.initialize();
+    this.client = client;
+    this.scheduler = scheduler;
 
     this.distiller = new BackgroundDistiller(
       this.client,
       (category, content, importance) => this.memoryService.saveFact(category, content, importance),
     );
-
-    // Inject evolved skills
-    const evolvedTools = this.dynamicRegistry.getDynamicToolSchemas();
-    if (evolvedTools.length > 0) {
-      const registry = config.getToolRegistry();
-      for (const toolDef of evolvedTools) {
-        // @ts-ignore
-        if (typeof registry.addDiscoveredTool === 'function') {
-          // @ts-ignore
-          registry.addDiscoveredTool(toolDef);
-        }
-      }
-    }
-
-    this.memoryService.setConfig(config);
-
-    // IV. REAL-TIME ACTIVITY FEEDBACK
-    const messageBus = config.getMessageBus();
-    messageBus.subscribe('tool-calls-update', (message: any) => {
-      if (message.schedulerId !== ROOT_SCHEDULER_ID) {
-        const sanitizedToolCalls = message.toolCalls.map((tc: any) => {
-          const { tool, invocation, ...rest } = tc;
-          if (rest.response) {
-            const { error, ...resRest } = rest.response;
-            rest.response = { ...resRest, error: error?.message };
-          }
-          return rest;
-        });
-
-        const sanitizedMessage = {
-          ...message,
-          toolCalls: sanitizedToolCalls
-        };
-
-        this.emit(JarvisEventType.SUBAGENT_ACTIVITY, sanitizedMessage);
-      }
-    });
-
-    await this.resumeFromDisk();
-
-    this.scheduler = new Scheduler({
-      config,
-      messageBus: config.getMessageBus(),
-      getPreferredEditor: () => undefined,
-      schedulerId: ROOT_SCHEDULER_ID,
-    });
 
     this.toolRouter = new ToolRouter(
       this.memoryService,
@@ -227,38 +80,6 @@ export class JarvisAgent extends EventEmitter {
     debugLogger.debug(`[JarvisAgent] Lifeform Ready.`);
   }
 
-  private async resumeFromDisk() {
-    const chatsDir = path.join(this.client.config.storage.getProjectTempDir(), 'chats');
-    const sessionFile = path.join(chatsDir, `${SESSION_FILE_PREFIX}${this.sessionId}.json`);
-    try {
-      if (fs.existsSync(sessionFile)) {
-        const fileContent = fs.readFileSync(sessionFile, 'utf8');
-        const record = JSON.parse(fileContent) as ConversationRecord;
-        const history: Content[] = [];
-        for (const m of record.messages) {
-          if (m.type === 'user') {
-            history.push({
-              role: 'user',
-              parts: Array.isArray(m.content) ? (m.content as Part[]) : [{ text: String(m.content) }]
-            });
-          } else if (m.type === 'gemini') {
-            const parts: Part[] = Array.isArray(m.content) ? (m.content as Part[]) : [{ text: String(m.content) }];
-            if ('toolCalls' in m && m.toolCalls && m.toolCalls.length > 0) {
-              const resParts: Part[] = [];
-              for (const tc of m.toolCalls) {
-                if (tc.result) {
-                  resParts.push({ functionResponse: { name: tc.name, response: tc.result as any } });
-                }
-              }
-              if (resParts.length > 0) history.push({ role: 'user', parts: resParts });
-            }
-          }
-        }
-        await this.client.resumeChat(history, { conversation: record, filePath: sessionFile });
-      }
-    } catch (e) {}
-  }
-
   private async refreshContext(_userPrompt: string) {
     const coreFacts = this.memoryService.getCoreFacts();
     const protocol = this.promptBuilder.build(coreFacts);
@@ -269,7 +90,7 @@ export class JarvisAgent extends EventEmitter {
     console.error(`🔄 [Jarvis] System Prompt Refreshed. History Size: ${history.length} turns.`);
   }
 
-  public async processMessage(userPrompt: string, imageAttachment?: { data: Buffer, mimeType: string }) {
+  public async processMessage(userPrompt: string, imageAttachment?: { data: Buffer; mimeType: string }) {
     if (this.isProcessing) {
       throw new Error('Mission in progress.');
     }
@@ -279,7 +100,7 @@ export class JarvisAgent extends EventEmitter {
 
     try {
       const pId = `jarvis-${this.sessionId}-${Date.now()}`;
-      
+
       await promptIdContext.run(pId, async () => {
         await this.refreshContext(userPrompt);
 
@@ -289,8 +110,8 @@ export class JarvisAgent extends EventEmitter {
           currentQueryParts.push({
             inlineData: {
               mimeType: imageAttachment.mimeType,
-              data: imageAttachment.data.toString('base64')
-            }
+              data: imageAttachment.data.toString('base64'),
+            },
           });
         }
 
@@ -332,15 +153,16 @@ export class JarvisAgent extends EventEmitter {
               } else {
                 success = true;
               }
-              
+
               if (!toolCallRequests.length) {
                 success = true;
               }
             } catch (err: any) {
-              const isNetworkError = err.message?.includes('Premature close') || 
-                                    err.code === 'ERR_STREAM_PREMATURE_CLOSE' || 
-                                    err.message?.includes('ECONNRESET');
-              
+              const isNetworkError =
+                err.message?.includes('Premature close') ||
+                err.code === 'ERR_STREAM_PREMATURE_CLOSE' ||
+                err.message?.includes('ECONNRESET');
+
               if (isNetworkError && retryCount < maxRetries - 1) {
                 retryCount++;
                 const delay = Math.pow(2, retryCount) * 1000;
@@ -355,7 +177,7 @@ export class JarvisAgent extends EventEmitter {
         }
 
         this.memoryService.enqueue(this.sessionId, userPrompt, finalAssistantText);
-        void this.stealthDistill(userPrompt, finalAssistantText);
+        void this.distiller.distill(userPrompt, finalAssistantText);
       });
       this.emit(JarvisEventType.DONE);
     } catch (error) {
@@ -364,10 +186,6 @@ export class JarvisAgent extends EventEmitter {
     } finally {
       this.isProcessing = false;
     }
-  }
-
-  private async stealthDistill(userPrompt: string, assistantText: string) {
-    await this.distiller.distill(userPrompt, assistantText);
   }
 
   public getHistory() {
