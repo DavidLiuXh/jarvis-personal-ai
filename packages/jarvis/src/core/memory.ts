@@ -242,6 +242,26 @@ ${factsText}
     } catch (e) { return []; }
   }
 
+  /**
+   * Sends a prompt to the distillation model and returns the full text response.
+   * Used by BackgroundDistiller to avoid coupling it to GeminiClient.
+   */
+  public async generateText(prompt: string): Promise<string> {
+    if (!this.client) throw new Error('[MemoryService] AI client not initialized');
+    const result = await this.client.models.generateContent({
+      model: this.jarvisConfig.models.distillation,
+      contents: [{ role: 'user', parts: [{ text: prompt }] }]
+    });
+    if (result.response?.candidates?.[0]?.content?.parts?.[0]?.text) {
+      return result.response.candidates[0].content.parts[0].text;
+    } else if ((result as any).candidates?.[0]?.content?.parts?.[0]?.text) {
+      return (result as any).candidates[0].content.parts[0].text;
+    } else if (typeof result.response?.text === 'function') {
+      return result.response.text();
+    }
+    throw new Error('[MemoryService] Empty response from model');
+  }
+
   private async syncHistoricalSessions() {
     const chatsDir = path.join(os.homedir(), '.gemini-jarvis', 'storage', 'chats');
     if (!fs.existsSync(chatsDir)) return;

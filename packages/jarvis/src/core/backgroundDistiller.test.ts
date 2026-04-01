@@ -5,27 +5,15 @@
  */
 
 import { describe, it, expect, vi } from 'vitest';
-
-vi.mock('../../../core/src/index.js', () => ({
-  GeminiChat: vi.fn(),
-  GeminiEventType: { Content: 'Content' },
-  debugLogger: { debug: vi.fn(), error: vi.fn() },
-}));
-
 import { BackgroundDistiller } from './backgroundDistiller.js';
 
 describe('BackgroundDistiller', () => {
   it('calls saveFact for each fact found in LLM response', async () => {
-    const fakeStream = (async function* () {
-      yield { type: 'Content', value: '{"found": true, "facts": [{"category": "identity", "content": "user prefers dark mode"}]}' };
-    })();
-
-    const fakeClient = {
-      sendMessageStream: vi.fn().mockReturnValue(fakeStream),
-    };
-
+    const generateText = vi.fn().mockResolvedValue(
+      '{"found": true, "facts": [{"category": "identity", "content": "user prefers dark mode"}]}'
+    );
     const fakeSaveFact = vi.fn().mockResolvedValue(undefined);
-    const distiller = new BackgroundDistiller(fakeClient as any, fakeSaveFact);
+    const distiller = new BackgroundDistiller(generateText, fakeSaveFact);
 
     await distiller.distill('what theme do you prefer?', 'I prefer dark mode');
 
@@ -34,16 +22,9 @@ describe('BackgroundDistiller', () => {
   });
 
   it('calls no saveFact when LLM reports found: false', async () => {
-    const fakeStream = (async function* () {
-      yield { type: 'Content', value: '{"found": false}' };
-    })();
-
-    const fakeClient = {
-      sendMessageStream: vi.fn().mockReturnValue(fakeStream),
-    };
-
+    const generateText = vi.fn().mockResolvedValue('{"found": false}');
     const fakeSaveFact = vi.fn().mockResolvedValue(undefined);
-    const distiller = new BackgroundDistiller(fakeClient as any, fakeSaveFact);
+    const distiller = new BackgroundDistiller(generateText, fakeSaveFact);
 
     await distiller.distill('hello', 'hello back');
 
@@ -51,30 +32,23 @@ describe('BackgroundDistiller', () => {
   });
 
   it('distill prompt includes preference and behavior categories', async () => {
-    const fakeStream = (async function* () {
-      yield { type: 'Content', value: '{"found": false}' };
-    })();
-
-    const sendMessageStream = vi.fn().mockReturnValue(fakeStream);
-    const fakeClient = { sendMessageStream };
+    const generateText = vi.fn().mockResolvedValue('{"found": false}');
     const fakeSaveFact = vi.fn();
-    const distiller = new BackgroundDistiller(fakeClient as any, fakeSaveFact);
+    const distiller = new BackgroundDistiller(generateText, fakeSaveFact);
 
     await distiller.distill('show me data', 'here is a table');
 
-    const calledPrompt = sendMessageStream.mock.calls[0][0][0].text as string;
+    const calledPrompt = generateText.mock.calls[0][0] as string;
     expect(calledPrompt).toContain('preference');
     expect(calledPrompt).toContain('behavior');
   });
 
   it('saves preference facts with correct category', async () => {
-    const fakeStream = (async function* () {
-      yield { type: 'Content', value: '{"found": true, "facts": [{"category": "preference", "content": "user prefers table format for data"}]}' };
-    })();
-
-    const fakeClient = { sendMessageStream: vi.fn().mockReturnValue(fakeStream) };
+    const generateText = vi.fn().mockResolvedValue(
+      '{"found": true, "facts": [{"category": "preference", "content": "user prefers table format for data"}]}'
+    );
     const fakeSaveFact = vi.fn().mockResolvedValue(undefined);
-    const distiller = new BackgroundDistiller(fakeClient as any, fakeSaveFact);
+    const distiller = new BackgroundDistiller(generateText, fakeSaveFact);
 
     await distiller.distill('show me the data', 'here is a table...');
 
@@ -82,13 +56,11 @@ describe('BackgroundDistiller', () => {
   });
 
   it('saves behavior facts with correct category', async () => {
-    const fakeStream = (async function* () {
-      yield { type: 'Content', value: '{"found": true, "facts": [{"category": "behavior", "content": "user always asks for background before details"}]}' };
-    })();
-
-    const fakeClient = { sendMessageStream: vi.fn().mockReturnValue(fakeStream) };
+    const generateText = vi.fn().mockResolvedValue(
+      '{"found": true, "facts": [{"category": "behavior", "content": "user always asks for background before details"}]}'
+    );
     const fakeSaveFact = vi.fn().mockResolvedValue(undefined);
-    const distiller = new BackgroundDistiller(fakeClient as any, fakeSaveFact);
+    const distiller = new BackgroundDistiller(generateText, fakeSaveFact);
 
     await distiller.distill('what is X?', 'X is...');
 
@@ -96,16 +68,18 @@ describe('BackgroundDistiller', () => {
   });
 
   it('does not throw when LLM returns malformed JSON', async () => {
-    const fakeStream = (async function* () {
-      yield { type: 'Content', value: 'not json at all' };
-    })();
-
-    const fakeClient = {
-      sendMessageStream: vi.fn().mockReturnValue(fakeStream),
-    };
-
+    const generateText = vi.fn().mockResolvedValue('not json at all');
     const fakeSaveFact = vi.fn();
-    const distiller = new BackgroundDistiller(fakeClient as any, fakeSaveFact);
+    const distiller = new BackgroundDistiller(generateText, fakeSaveFact);
+
+    await expect(distiller.distill('hi', 'hi')).resolves.not.toThrow();
+    expect(fakeSaveFact).not.toHaveBeenCalled();
+  });
+
+  it('does not throw when generateText rejects', async () => {
+    const generateText = vi.fn().mockRejectedValue(new Error('API error'));
+    const fakeSaveFact = vi.fn();
+    const distiller = new BackgroundDistiller(generateText, fakeSaveFact);
 
     await expect(distiller.distill('hi', 'hi')).resolves.not.toThrow();
     expect(fakeSaveFact).not.toHaveBeenCalled();

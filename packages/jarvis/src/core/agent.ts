@@ -65,7 +65,7 @@ export class JarvisAgent extends EventEmitter {
     this.scheduler = scheduler;
 
     this.distiller = new BackgroundDistiller(
-      this.client,
+      (prompt) => this.memoryService.generateText(prompt),
       (category, content, importance) => this.memoryService.saveFact(category, content, importance),
     );
 
