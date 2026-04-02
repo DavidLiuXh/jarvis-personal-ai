@@ -98,4 +98,29 @@ describe('BackgroundDistiller', () => {
 
     consoleSpy.mockRestore();
   });
+
+  it('prompt instructs to extract only from user input, not from assistant output', async () => {
+    const generateText = vi.fn().mockResolvedValue('{"found": false}');
+    const fakeSaveFact = vi.fn();
+    const distiller = new BackgroundDistiller(generateText, fakeSaveFact);
+
+    await distiller.distill('what are my hobbies?', 'Your hobbies are: history, running, cooking.');
+
+    const calledPrompt = generateText.mock.calls[0][0] as string;
+    // Must explicitly restrict extraction to user input only
+    expect(calledPrompt.toLowerCase()).toContain('user input');
+    expect(calledPrompt).toContain('NOT from');
+  });
+
+  it('prompt includes warning about assistant enumerating user info', async () => {
+    const generateText = vi.fn().mockResolvedValue('{"found": false}');
+    const fakeSaveFact = vi.fn();
+    const distiller = new BackgroundDistiller(generateText, fakeSaveFact);
+
+    await distiller.distill('what are my hobbies?', 'Your hobbies are: history, running, cooking.');
+
+    const calledPrompt = generateText.mock.calls[0][0] as string;
+    // Must warn against extracting from assistant's enumeration/summary
+    expect(calledPrompt).toContain('assistant');
+  });
 });
