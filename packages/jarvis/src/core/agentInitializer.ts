@@ -257,12 +257,17 @@ export class AgentInitializer {
       let summary = existingState?.summary ?? '';
       if (newMessages.length > 0 && generateText) {
         console.error(`🧠 [Jarvis] Updating session summary (${newOrUpdatedFiles.length} new/updated session files, ${newMessages.length} messages)...`);
-        summary = await buildIncrementalSummary(newMessages, summary || null, generateText);
-        // Record current mtime for ALL files (including unchanged ones)
-        const processedFileMtimes: Record<string, number> = {};
-        for (const f of allFiles) processedFileMtimes[f.name] = f.mtime;
-        saveSummaryState(memoryDir, { summary, processedFileMtimes, updatedAt: Date.now() });
-        console.error(`✅ [Jarvis] Session summary updated.`);
+        try {
+          summary = await buildIncrementalSummary(newMessages, summary || null, generateText, { maxRetries: 3, retryDelayMs: 2000 });
+          // Record current mtime for ALL files (including unchanged ones)
+          const processedFileMtimes: Record<string, number> = {};
+          for (const f of allFiles) processedFileMtimes[f.name] = f.mtime;
+          saveSummaryState(memoryDir, { summary, processedFileMtimes, updatedAt: Date.now() });
+          console.error(`✅ [Jarvis] Session summary updated.`);
+        } catch (e: any) {
+          console.error(`⚠️ [Jarvis] Summary update failed, using existing summary: ${e.message}`);
+          // summary stays as existingState?.summary — history injection continues below
+        }
       } else if (newMessages.length > 0 && !generateText) {
         debugLogger.debug('[AgentInitializer] generateText unavailable, skipping summary update.');
       } else {
