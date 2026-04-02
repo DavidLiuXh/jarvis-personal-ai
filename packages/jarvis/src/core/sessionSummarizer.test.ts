@@ -319,3 +319,31 @@ describe('buildStructuredContext prompt quality', () => {
     expect(prompt).toContain('format');
   });
 });
+
+describe('buildStructuredContext degradation', () => {
+  it('returns existing context when LLM fails all retries', async () => {
+    const existing: StructuredContext = {
+      entities: [{ type: 'person', name: 'David', attrs: { profession: 'engineer' } }],
+      behaviors: [{ content: 'user runs 3 times a week', confidence: 'high' }],
+      decisions: [], preferences: [], projects: [],
+    };
+    const generateText = vi.fn().mockRejectedValue(new Error('network error'));
+
+    const result = await buildStructuredContext(fakeMessages, existing, generateText, { maxRetries: 2, retryDelayMs: 0 });
+
+    // Must return existing context, not empty
+    expect(result.entities).toHaveLength(1);
+    expect(result.entities[0].name).toBe('David');
+    expect(result.behaviors).toHaveLength(1);
+  });
+
+  it('returns empty context (not throws) when no existing and LLM fails', async () => {
+    const generateText = vi.fn().mockRejectedValue(new Error('network error'));
+
+    const result = await buildStructuredContext(fakeMessages, null, generateText, { maxRetries: 2, retryDelayMs: 0 });
+
+    // Must not throw, must return empty (not null/undefined)
+    expect(result).toBeDefined();
+    expect(result.entities).toEqual([]);
+  });
+});

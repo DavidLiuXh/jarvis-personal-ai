@@ -260,23 +260,37 @@ export class AgentInitializer {
       // 5. Update structured context + summary incrementally
       let summary = existingState?.summary ?? '';
       let structuredContext: StructuredContext = existingState?.structuredContext ?? { ...EMPTY_STRUCTURED_CONTEXT };
+      let contextUpdated = false;
 
       if (newMessages.length > 0 && generateText) {
         console.error(`🧠 [Jarvis] Updating session context (${newOrUpdatedFiles.length} new/updated files, ${newMessages.length} messages)...`);
         try {
-          // Build structured context from new messages, merge with existing
+          // Pass existing structuredContext so LLM can merge incrementally
           const incomingCtx = await buildStructuredContext(
-            newMessages, null, generateText, { maxRetries: 3, retryDelayMs: 2000 }
+            newMessages, structuredContext, generateText, { maxRetries: 3, retryDelayMs: 2000 }
           );
-          structuredContext = mergeStructuredContext(structuredContext, incomingCtx);
+          const merged = mergeStructuredContext(structuredContext, incomingCtx);
 
           // Also update plain-text summary as fallback
-          summary = await buildIncrementalSummary(newMessages, summary || null, generateText, { maxRetries: 3, retryDelayMs: 2000 });
+          const newSummary = await buildIncrementalSummary(
+            newMessages, summary || null, generateText, { maxRetries: 3, retryDelayMs: 2000 }
+          );
 
-          const processedFileMtimes: Record<string, number> = {};
-          for (const f of allFiles) processedFileMtimes[f.name] = f.mtime;
-          saveSummaryState(memoryDir, { summary, structuredContext, processedFileMtimes, updatedAt: Date.now() });
-          console.error(`✅ [Jarvis] Session context updated (${structuredContext.entities.length} entities, ${structuredContext.behaviors.length} behaviors, ${structuredContext.decisions.length} decisions).`);
+          // Only persist if we got meaningful content
+          const hasContent = merged.entities.length > 0 || merged.behaviors.length > 0 ||
+            merged.decisions.length > 0 || newSummary.trim().length > 0;
+
+          if (hasContent) {
+            structuredContext = merged;
+            summary = newSummary;
+            const processedFileMtimes: Record<string, number> = {};
+            for (const f of allFiles) processedFileMtimes[f.name] = f.mtime;
+            saveSummaryState(memoryDir, { summary, structuredContext, processedFileMtimes, updatedAt: Date.now() });
+            contextUpdated = true;
+            console.error(`✅ [Jarvis] Session context updated (${structuredContext.entities.length} entities, ${structuredContext.behaviors.length} behaviors, ${structuredContext.decisions.length} decisions).`);
+          } else {
+            console.error(`⚠️ [Jarvis] Context extraction returned empty result — not persisting. Will retry next startup.`);
+          }
         } catch (e: any) {
           console.error(`⚠️ [Jarvis] Context update failed, using existing: ${e.message}`);
         }
@@ -284,6 +298,12 @@ export class AgentInitializer {
         debugLogger.debug('[AgentInitializer] generateText unavailable, skipping context update.');
       } else {
         debugLogger.debug('[AgentInitializer] No new session content, using existing context.');
+      }
+
+      // If we have no structured context AND no summary (first run failure), log a warning
+      const hasAnyContext = structuredContext.entities.length > 0 || structuredContext.behaviors.length > 0 || summary.trim().length > 0;
+      if (!hasAnyContext && !contextUpdated) {
+        console.error(`⚠️ [Jarvis] No context available for injection — starting fresh. History will be limited to recent ${recentTurns} turns.`);
       }
 
       // 6. Take the most recent N raw messages across ALL files for the recent turns
