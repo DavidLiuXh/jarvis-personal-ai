@@ -14,6 +14,7 @@ import {
   Scheduler,
   ROOT_SCHEDULER_ID,
   ApprovalMode,
+  LlmRole,
   type ConversationRecord,
 } from '../../../core/src/index.js';
 
@@ -27,6 +28,13 @@ import { SESSION_FILE_PREFIX } from '../../../core/src/services/chatRecordingSer
 import { type MemoryService } from './memory.js';
 import { ConfigManager } from './configManager.js';
 import { buildHistoryFromMessages } from './resumeFromDisk.js';
+import {
+  loadSummaryState,
+  saveSummaryState,
+  buildIncrementalSummary,
+  buildHistoryWithSummary,
+  type SessionMessage,
+} from './sessionSummarizer.js';
 
 type DynamicRegistryHandle = {
   getDynamicToolSchemas: () => unknown[];
@@ -181,7 +189,18 @@ export class AgentInitializer {
       }
     });
 
-    await this.resumeFromDisk(client);
+    // Build generateText using CLI-auth ContentGenerator (same pattern as agent.ts)
+    const generateText = async (prompt: string): Promise<string> => {
+      const generator = client.config.getContentGenerator();
+      const response = await generator.generateContent(
+        { model: this.jarvisConfig.models.distillation, contents: [{ role: 'user', parts: [{ text: prompt }] }] },
+        `summarize-${Date.now()}`,
+        LlmRole.UTILITY_SUMMARIZER,
+      );
+      return (response as any).candidates?.[0]?.content?.parts?.[0]?.text ?? '';
+    };
+
+    await this.resumeFromDisk(client, generateText);
 
     const scheduler = new Scheduler({
       config,
@@ -194,34 +213,102 @@ export class AgentInitializer {
     return { client, scheduler };
   }
 
-  private async resumeFromDisk(client: GeminiClient): Promise<void> {
+  private async resumeFromDisk(
+    client: GeminiClient,
+    generateText?: (prompt: string) => Promise<string>,
+  ): Promise<void> {
     if (!this.jarvisConfig.session?.resumeOnStart) {
       debugLogger.debug('[AgentInitializer] resumeOnStart=false, skipping history restore.');
       return;
     }
 
     const chatsDir = path.join(client.config.storage.getProjectTempDir(), 'chats');
-    const sessionFile = path.join(chatsDir, `${SESSION_FILE_PREFIX}${this.sessionId}.json`);
+    const memoryDir = path.join(os.homedir(), '.gemini-jarvis', 'memory');
+    const recentTurns = this.jarvisConfig.session?.recentTurnsOnResume ?? 20;
+
     try {
-      if (fs.existsSync(sessionFile)) {
-        const fileContent = fs.readFileSync(sessionFile, 'utf8');
-        const record = JSON.parse(fileContent) as ConversationRecord;
-        const history = buildHistoryFromMessages(record.messages as any[]);
-        await client.resumeChat(history, { conversation: record, filePath: sessionFile });
+      if (!fs.existsSync(chatsDir)) return;
 
-        const msgs = record.messages as any[];
-        const userTurns = msgs.filter((m: any) => m.type === 'user').length;
-        const modelTurns = msgs.filter((m: any) => m.type === 'gemini').length;
-        const toolCalls = msgs.reduce((n: number, m: any) => n + (m.toolCalls?.length ?? 0), 0);
-        const timestamps = msgs.map((m: any) => m.timestamp).filter(Boolean);
-        const earliest = timestamps.length ? new Date(Math.min(...timestamps)).toLocaleString() : 'unknown';
-        const latest = timestamps.length ? new Date(Math.max(...timestamps)).toLocaleString() : 'unknown';
+      // 1. Collect all session files sorted by mtime (oldest first)
+      const allFiles = fs.readdirSync(chatsDir)
+        .filter(f => f.endsWith('.json'))
+        .map(f => ({ name: f, mtime: fs.statSync(path.join(chatsDir, f)).mtimeMs }))
+        .sort((a, b) => a.mtime - b.mtime);
 
-        console.error(
-          `📂 [Jarvis] Session restored: ${userTurns} user turns, ${modelTurns} model turns, ` +
-          `${toolCalls} tool calls | ${earliest} → ${latest} | history length: ${history.length}`
-        );
+      if (allFiles.length === 0) return;
+
+      // 2. Load existing summary state
+      const existingState = loadSummaryState(memoryDir);
+      const processedSet = new Set(existingState?.processedFiles ?? []);
+
+      // 3. Find new (unprocessed) files
+      const newFiles = allFiles.filter(f => !processedSet.has(f.name));
+
+      // 4. Collect all messages from new files
+      const newMessages: SessionMessage[] = [];
+      const newFileNames: string[] = [];
+      for (const file of newFiles) {
+        try {
+          const raw = JSON.parse(fs.readFileSync(path.join(chatsDir, file.name), 'utf8'));
+          const msgs: SessionMessage[] = raw.messages ?? [];
+          newMessages.push(...msgs);
+          newFileNames.push(file.name);
+        } catch (_e) {}
       }
-    } catch (_e) {}
+
+      // 5. Update summary incrementally if there are new messages and generateText is available
+      let summary = existingState?.summary ?? '';
+      if (newMessages.length > 0 && generateText) {
+        console.error(`🧠 [Jarvis] Updating session summary (${newFileNames.length} new session files, ${newMessages.length} messages)...`);
+        summary = await buildIncrementalSummary(newMessages, summary || null, generateText);
+        saveSummaryState(memoryDir, {
+          summary,
+          processedFiles: [...processedSet, ...newFileNames],
+          updatedAt: Date.now(),
+        });
+        console.error(`✅ [Jarvis] Session summary updated.`);
+      } else if (newMessages.length > 0 && !generateText) {
+        // generateText not yet available at init time — skip summary update, use existing
+        debugLogger.debug('[AgentInitializer] generateText unavailable, skipping summary update.');
+      }
+
+      // 6. Take the most recent N raw messages across ALL files for the recent turns
+      const allMessages: SessionMessage[] = [];
+      for (const file of allFiles) {
+        try {
+          const raw = JSON.parse(fs.readFileSync(path.join(chatsDir, file.name), 'utf8'));
+          allMessages.push(...(raw.messages ?? []));
+        } catch (_e) {}
+      }
+      const recentMessages = allMessages.slice(-recentTurns);
+
+      // 7. Build history: summary prefix + recent raw turns
+      const history = buildHistoryWithSummary(summary, recentMessages);
+
+      // 8. Use the latest session file as the active recording target
+      const latestFile = allFiles[allFiles.length - 1];
+      const latestRecord = JSON.parse(
+        fs.readFileSync(path.join(chatsDir, latestFile.name), 'utf8')
+      ) as ConversationRecord;
+
+      await client.resumeChat(history, { conversation: latestRecord, filePath: path.join(chatsDir, latestFile.name) });
+
+      // 9. Stats log
+      const totalMsgs = allMessages.length;
+      const userTurns = allMessages.filter(m => m.type === 'user').length;
+      const modelTurns = allMessages.filter(m => m.type === 'gemini').length;
+      const toolCalls = allMessages.reduce((n, m) => n + (m.toolCalls?.length ?? 0), 0);
+      const timestamps = allMessages.map(m => m.timestamp).filter(Boolean) as number[];
+      const earliest = timestamps.length ? new Date(Math.min(...timestamps)).toLocaleString() : 'unknown';
+      const latest = timestamps.length ? new Date(Math.max(...timestamps)).toLocaleString() : 'unknown';
+
+      console.error(
+        `📂 [Jarvis] Session restored: ${allFiles.length} session files, ${totalMsgs} total messages ` +
+        `(${userTurns} user / ${modelTurns} model / ${toolCalls} tool calls) | ` +
+        `${earliest} → ${latest} | injected: summary + ${recentMessages.length} recent turns`
+      );
+    } catch (e: any) {
+      console.error(`⚠️ [AgentInitializer] resumeFromDisk failed: ${e.message}`);
+    }
   }
 }
