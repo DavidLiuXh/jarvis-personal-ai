@@ -32,13 +32,9 @@ import {
   loadSummaryState,
   saveSummaryState,
   buildIncrementalSummary,
-  buildStructuredContext,
-  mergeStructuredContext,
   buildHistoryWithSummary,
   getNewOrUpdatedFiles,
   type SessionMessage,
-  type StructuredContext,
-  EMPTY_STRUCTURED_CONTEXT,
 } from './sessionSummarizer.js';
 
 type DynamicRegistryHandle = {
@@ -259,51 +255,33 @@ export class AgentInitializer {
 
       // 5. Update structured context + summary incrementally
       let summary = existingState?.summary ?? '';
-      let structuredContext: StructuredContext = existingState?.structuredContext ?? { ...EMPTY_STRUCTURED_CONTEXT };
-      let contextUpdated = false;
 
       if (newMessages.length > 0 && generateText) {
-        console.error(`🧠 [Jarvis] Updating session context (${newOrUpdatedFiles.length} new/updated files, ${newMessages.length} messages)...`);
+        console.error(`🧠 [Jarvis] Compressing session history (${newOrUpdatedFiles.length} new/updated files, ${newMessages.length} messages)...`);
         try {
-          // Pass existing structuredContext so LLM can merge incrementally
-          const incomingCtx = await buildStructuredContext(
-            newMessages, structuredContext, generateText, { maxRetries: 3, retryDelayMs: 2000 }
-          );
-          const merged = mergeStructuredContext(structuredContext, incomingCtx);
-
-          // Also update plain-text summary as fallback
           const newSummary = await buildIncrementalSummary(
             newMessages, summary || null, generateText, { maxRetries: 3, retryDelayMs: 2000 }
           );
-
-          // Only persist if we got meaningful content
-          const hasContent = merged.entities.length > 0 || merged.behaviors.length > 0 ||
-            merged.decisions.length > 0 || newSummary.trim().length > 0;
-
-          if (hasContent) {
-            structuredContext = merged;
+          if (newSummary.trim().length > 0) {
             summary = newSummary;
             const processedFileMtimes: Record<string, number> = {};
             for (const f of allFiles) processedFileMtimes[f.name] = f.mtime;
-            saveSummaryState(memoryDir, { summary, structuredContext, processedFileMtimes, updatedAt: Date.now() });
-            contextUpdated = true;
-            console.error(`✅ [Jarvis] Session context updated (${structuredContext.entities.length} entities, ${structuredContext.behaviors.length} behaviors, ${structuredContext.decisions.length} decisions).`);
+            saveSummaryState(memoryDir, { summary, processedFileMtimes, updatedAt: Date.now() });
+            console.error(`✅ [Jarvis] Session history compressed (${summary.length} chars).`);
           } else {
-            console.error(`⚠️ [Jarvis] Context extraction returned empty result — not persisting. Will retry next startup.`);
+            console.error(`⚠️ [Jarvis] Compression returned empty — not persisting. Will retry next startup.`);
           }
         } catch (e: any) {
-          console.error(`⚠️ [Jarvis] Context update failed, using existing: ${e.message}`);
+          console.error(`⚠️ [Jarvis] History compression failed, using existing: ${e.message}`);
         }
       } else if (newMessages.length > 0 && !generateText) {
-        debugLogger.debug('[AgentInitializer] generateText unavailable, skipping context update.');
+        debugLogger.debug('[AgentInitializer] generateText unavailable, skipping history compression.');
       } else {
-        debugLogger.debug('[AgentInitializer] No new session content, using existing context.');
+        debugLogger.debug('[AgentInitializer] No new session content, using existing summary.');
       }
 
-      // If we have no structured context AND no summary (first run failure), log a warning
-      const hasAnyContext = structuredContext.entities.length > 0 || structuredContext.behaviors.length > 0 || summary.trim().length > 0;
-      if (!hasAnyContext && !contextUpdated) {
-        console.error(`⚠️ [Jarvis] No context available for injection — starting fresh. History will be limited to recent ${recentTurns} turns.`);
+      if (!summary.trim()) {
+        console.error(`⚠️ [Jarvis] No compressed history available — context limited to recent ${recentTurns} turns.`);
       }
 
       // 6. Take the most recent N raw messages across ALL files for the recent turns
@@ -316,8 +294,8 @@ export class AgentInitializer {
       }
       const recentMessages = allMessages.slice(-recentTurns);
 
-      // 7. Build history: structured context prefix + recent raw turns
-      const history = buildHistoryWithSummary(summary, recentMessages, structuredContext);
+      // 7. Build history: compressed history prefix + recent raw turns
+      const history = buildHistoryWithSummary(summary, recentMessages);
 
       // 8. Use the latest session file as the active recording target
       const latestFile = allFiles[allFiles.length - 1];
