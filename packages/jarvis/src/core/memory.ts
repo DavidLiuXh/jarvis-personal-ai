@@ -407,12 +407,12 @@ ${factsText}
     } catch (e) { return []; }
   }
 
-  private static readonly ALWAYS_INJECT_CATEGORIES = new Set(['preference', 'behavior']);
+  private static readonly ALWAYS_INJECT_CATEGORIES = new Set(['preference']);
 
   /**
    * Returns facts relevant to the given query.
-   * preference/behavior facts are always included regardless of relevance.
-   * identity/specification facts are ranked by relevance (jaccard or embedding) and capped at factRelevanceLimit.
+   * Only preference facts are always included (response style instructions needed every turn).
+   * All other facts (identity, behavior, specification) are ranked by relevance and capped at factRelevanceLimit.
    */
   public async searchFacts(query: string, limit?: number): Promise<Array<{ category: string; content: string }>> {
     try {

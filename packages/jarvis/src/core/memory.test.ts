@@ -372,7 +372,7 @@ describe('MemoryService.searchFacts', () => {
     expect(results.some(f => f.content.includes('TypeScript'))).toBe(true);
   });
 
-  it('always includes preference and behavior facts regardless of relevance', async () => {
+  it('always includes preference facts regardless of relevance, behavior is ranked like others', async () => {
     const { service } = await createServiceWithFacts([
       { category: 'identity', content: 'user is a software engineer', importance: 8 },
       { category: 'preference', content: 'prefers concise answers', importance: 10 },
@@ -380,12 +380,15 @@ describe('MemoryService.searchFacts', () => {
       { category: 'specification', content: 'project uses TypeScript', importance: 9 },
     ]);
 
-    // Query is about cooking — unrelated to all facts
+    // Query is about cooking — unrelated to all facts, limit=1
     const results = await service.searchFacts('cooking recipes', 1);
 
-    // preference and behavior must always be included
+    // preference must always be included (style instructions needed every turn)
     expect(results.some(f => f.category === 'preference')).toBe(true);
-    expect(results.some(f => f.category === 'behavior')).toBe(true);
+    // behavior is NOT guaranteed — it competes with identity/specification for the limit
+    // With limit=1, only the top-1 non-preference fact is included
+    const nonPrefFacts = results.filter(f => f.category !== 'preference');
+    expect(nonPrefFacts.length).toBeLessThanOrEqual(1);
   });
 
   it('embedding: uses embedContentFn to rank facts by cosine similarity', async () => {
@@ -425,9 +428,9 @@ describe('MemoryService.searchFacts', () => {
 
     const results = await service.searchFacts('TypeScript setup', 1);
 
-    // TypeScript fact should be top result; preference/behavior always included
+    // TypeScript fact should be top result; preference always included
     expect(results.some(f => f.content.includes('TypeScript'))).toBe(true);
     expect(results.some(f => f.category === 'preference')).toBe(true);
-    expect(results.some(f => f.category === 'behavior')).toBe(true);
+    // behavior competes with others under the limit, not guaranteed
   });
 });
