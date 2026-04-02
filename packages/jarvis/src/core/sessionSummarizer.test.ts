@@ -155,3 +155,33 @@ describe('getNewOrUpdatedFiles', () => {
     expect(result).toHaveLength(0);
   });
 });
+
+describe('buildIncrementalSummary retry', () => {
+  it('retries on transient network error and succeeds on 2nd attempt', async () => {
+    const generateText = vi.fn()
+      .mockRejectedValueOnce(Object.assign(new Error('socket hang up'), { code: 'ECONNRESET' }))
+      .mockResolvedValueOnce('Summary after retry.');
+
+    const result = await buildIncrementalSummary(fakeMessages, null, generateText, { maxRetries: 3, retryDelayMs: 0 });
+
+    expect(generateText).toHaveBeenCalledTimes(2);
+    expect(result).toBe('Summary after retry.');
+  });
+
+  it('returns existing summary when all retries fail', async () => {
+    const generateText = vi.fn().mockRejectedValue(new Error('socket hang up'));
+
+    const result = await buildIncrementalSummary(fakeMessages, 'Old summary.', generateText, { maxRetries: 2, retryDelayMs: 0 });
+
+    expect(generateText).toHaveBeenCalledTimes(2);
+    expect(result).toBe('Old summary.'); // fallback to existing
+  });
+
+  it('returns empty string when all retries fail and no existing summary', async () => {
+    const generateText = vi.fn().mockRejectedValue(new Error('socket hang up'));
+
+    const result = await buildIncrementalSummary(fakeMessages, null, generateText, { maxRetries: 2, retryDelayMs: 0 });
+
+    expect(result).toBe('');
+  });
+});

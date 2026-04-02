@@ -74,17 +74,26 @@ export function saveSummaryState(memoryDir: string, state: SummaryState): void {
 // Summarization
 // ---------------------------------------------------------------------------
 
+export type SummaryOptions = {
+  /** Max number of LLM call attempts. Default: 3. */
+  maxRetries?: number;
+  /** Delay between retries in ms. Default: 1000. */
+  retryDelayMs?: number;
+};
+
 /**
  * Generates or updates the conversation summary.
  *
  * - If newMessages is empty, returns the existing summary unchanged (no LLM call).
  * - If existingSummary is null, summarizes newMessages from scratch.
  * - Otherwise, merges existingSummary + newMessages into an updated summary.
+ * - Retries on transient network errors; falls back to existingSummary on all failures.
  */
 export async function buildIncrementalSummary(
   newMessages: SessionMessage[],
   existingSummary: string | null,
   generateText: (prompt: string) => Promise<string>,
+  options: SummaryOptions = {},
 ): Promise<string> {
   if (newMessages.length === 0) {
     return existingSummary ?? '';
@@ -126,7 +135,23 @@ Task: Write a concise summary of this conversation.
 Summary:
 `.trim();
 
-  return generateText(prompt);
+  const maxRetries = options.maxRetries ?? 3;
+  const retryDelayMs = options.retryDelayMs ?? 1000;
+
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      return await generateText(prompt);
+    } catch (e: any) {
+      const isLast = attempt === maxRetries;
+      if (isLast) {
+        console.error(`⚠️ [SessionSummarizer] Summary generation failed after ${maxRetries} attempts: ${e.message}. Using existing summary.`);
+        return existingSummary ?? '';
+      }
+      console.error(`⚠️ [SessionSummarizer] Attempt ${attempt} failed: ${e.message}. Retrying in ${retryDelayMs}ms...`);
+      await new Promise(r => setTimeout(r, retryDelayMs));
+    }
+  }
+  return existingSummary ?? '';
 }
 
 // ---------------------------------------------------------------------------
