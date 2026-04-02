@@ -14,8 +14,6 @@ import {
   Scheduler,
   ROOT_SCHEDULER_ID,
   ApprovalMode,
-  type Part,
-  type Content,
   type ConversationRecord,
 } from '../../../core/src/index.js';
 
@@ -28,6 +26,7 @@ import { SESSION_FILE_PREFIX } from '../../../core/src/services/chatRecordingSer
 
 import { type MemoryService } from './memory.js';
 import { ConfigManager } from './configManager.js';
+import { buildHistoryFromMessages } from './resumeFromDisk.js';
 
 type DynamicRegistryHandle = {
   getDynamicToolSchemas: () => unknown[];
@@ -196,32 +195,20 @@ export class AgentInitializer {
   }
 
   private async resumeFromDisk(client: GeminiClient): Promise<void> {
+    if (!this.jarvisConfig.session?.resumeOnStart) {
+      debugLogger.debug('[AgentInitializer] resumeOnStart=false, skipping history restore.');
+      return;
+    }
+
     const chatsDir = path.join(client.config.storage.getProjectTempDir(), 'chats');
     const sessionFile = path.join(chatsDir, `${SESSION_FILE_PREFIX}${this.sessionId}.json`);
     try {
       if (fs.existsSync(sessionFile)) {
         const fileContent = fs.readFileSync(sessionFile, 'utf8');
         const record = JSON.parse(fileContent) as ConversationRecord;
-        const history: Content[] = [];
-        for (const m of record.messages) {
-          if (m.type === 'user') {
-            history.push({
-              role: 'user',
-              parts: Array.isArray(m.content) ? (m.content as Part[]) : [{ text: String(m.content) }],
-            });
-          } else if (m.type === 'gemini') {
-            if ('toolCalls' in m && m.toolCalls && m.toolCalls.length > 0) {
-              const resParts: Part[] = [];
-              for (const tc of m.toolCalls) {
-                if (tc.result) {
-                  resParts.push({ functionResponse: { name: tc.name, response: tc.result as any } });
-                }
-              }
-              if (resParts.length > 0) history.push({ role: 'user', parts: resParts });
-            }
-          }
-        }
+        const history = buildHistoryFromMessages(record.messages as any[]);
         await client.resumeChat(history, { conversation: record, filePath: sessionFile });
+        debugLogger.debug(`[AgentInitializer] Restored ${history.length} history turns from disk.`);
       }
     } catch (_e) {}
   }
