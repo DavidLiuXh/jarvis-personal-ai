@@ -14,8 +14,12 @@ import {
   loadSummaryState,
   saveSummaryState,
   getNewOrUpdatedFiles,
+  buildStructuredContext,
+  mergeStructuredContext,
+  renderStructuredContext,
   type SummaryState,
   type SessionMessage,
+  type StructuredContext,
 } from './sessionSummarizer.js';
 
 // --- helpers ---
@@ -96,7 +100,7 @@ describe('buildHistoryWithSummary', () => {
     expect((history[0].parts[0] as any).text).toContain('[CONVERSATION SUMMARY]');
     expect((history[0].parts[0] as any).text).toContain('User likes cycling.');
     expect(history[1].role).toBe('model');
-    expect((history[1].parts[0] as any).text).toContain('summary noted');
+    expect((history[1].parts[0] as any).text).toContain('context noted');
   });
 
   it('appends recent message turns after the summary', () => {
@@ -183,5 +187,100 @@ describe('buildIncrementalSummary retry', () => {
     const result = await buildIncrementalSummary(fakeMessages, null, generateText, { maxRetries: 2, retryDelayMs: 0 });
 
     expect(result).toBe('');
+  });
+});
+
+describe('buildStructuredContext', () => {
+  it('extracts structured JSON from conversation via LLM', async () => {
+    const ctx: StructuredContext = {
+      entities: [{ type: 'person', name: 'David', attrs: { profession: 'software engineer' } }],
+      behaviors: [{ content: 'runs 3 times a week', confidence: 'high' }],
+      decisions: [],
+      preferences: [{ content: 'prefers concise answers' }],
+      projects: [],
+    };
+    const generateText = vi.fn().mockResolvedValue(JSON.stringify(ctx));
+
+    const result = await buildStructuredContext(fakeMessages, null, generateText);
+
+    expect(generateText).toHaveBeenCalledOnce();
+    expect(result.entities).toHaveLength(1);
+    expect(result.entities[0].name).toBe('David');
+    expect(result.behaviors[0].content).toBe('runs 3 times a week');
+  });
+
+  it('returns existing context unchanged when no new messages', async () => {
+    const existing: StructuredContext = {
+      entities: [{ type: 'person', name: 'David', attrs: {} }],
+      behaviors: [], decisions: [], preferences: [], projects: [],
+    };
+    const generateText = vi.fn();
+
+    const result = await buildStructuredContext([], existing, generateText);
+
+    expect(generateText).not.toHaveBeenCalled();
+    expect(result).toEqual(existing);
+  });
+
+  it('falls back to empty context when LLM returns malformed JSON', async () => {
+    const generateText = vi.fn().mockResolvedValue('not valid json');
+
+    const result = await buildStructuredContext(fakeMessages, null, generateText);
+
+    expect(result.entities).toEqual([]);
+  });
+});
+
+describe('mergeStructuredContext', () => {
+  it('merges new entities into existing context without duplicates', () => {
+    const existing: StructuredContext = {
+      entities: [{ type: 'person', name: 'David', attrs: { profession: 'engineer' } }],
+      behaviors: [{ content: 'runs 3 times a week', confidence: 'high' }],
+      decisions: [], preferences: [], projects: [],
+    };
+    const incoming: StructuredContext = {
+      entities: [{ type: 'person', name: 'David', attrs: { hobby: 'cycling' } }],
+      behaviors: [{ content: 'reads books regularly', confidence: 'medium' }],
+      decisions: [{ topic: 'investment', content: 'core-satellite strategy', date: '2026-03' }],
+      preferences: [], projects: [],
+    };
+
+    const merged = mergeStructuredContext(existing, incoming);
+
+    // David should be merged, not duplicated
+    expect(merged.entities.filter(e => e.name === 'David')).toHaveLength(1);
+    // New behavior added
+    expect(merged.behaviors.some(b => b.content.includes('reads books'))).toBe(true);
+    // Decision added
+    expect(merged.decisions).toHaveLength(1);
+  });
+});
+
+describe('renderStructuredContext', () => {
+  it('renders structured context as compact text block', () => {
+    const ctx: StructuredContext = {
+      entities: [{ type: 'person', name: 'David', attrs: { profession: 'software engineer' } }],
+      behaviors: [{ content: 'runs 3 times a week', confidence: 'high' }],
+      decisions: [{ topic: 'investment', content: 'core-satellite strategy', date: '2026-03' }],
+      preferences: [{ content: 'prefers concise answers in Chinese' }],
+      projects: [{ name: 'Jarvis', status: 'active', key_rules: ['do not modify gemini-cli source'] }],
+    };
+
+    const text = renderStructuredContext(ctx);
+
+    expect(text).toContain('David');
+    expect(text).toContain('software engineer');
+    expect(text).toContain('runs 3 times a week');
+    expect(text).toContain('core-satellite strategy');
+    expect(text).toContain('prefers concise answers in Chinese');
+    expect(text).toContain('Jarvis');
+    expect(text).toContain('do not modify gemini-cli source');
+  });
+
+  it('returns empty string for empty context', () => {
+    const ctx: StructuredContext = {
+      entities: [], behaviors: [], decisions: [], preferences: [], projects: [],
+    };
+    expect(renderStructuredContext(ctx)).toBe('');
   });
 });

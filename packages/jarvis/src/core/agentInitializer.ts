@@ -32,9 +32,13 @@ import {
   loadSummaryState,
   saveSummaryState,
   buildIncrementalSummary,
+  buildStructuredContext,
+  mergeStructuredContext,
   buildHistoryWithSummary,
   getNewOrUpdatedFiles,
   type SessionMessage,
+  type StructuredContext,
+  EMPTY_STRUCTURED_CONTEXT,
 } from './sessionSummarizer.js';
 
 type DynamicRegistryHandle = {
@@ -253,25 +257,33 @@ export class AgentInitializer {
         } catch (_e) {}
       }
 
-      // 5. Update summary incrementally if there are new/updated messages
+      // 5. Update structured context + summary incrementally
       let summary = existingState?.summary ?? '';
+      let structuredContext: StructuredContext = existingState?.structuredContext ?? { ...EMPTY_STRUCTURED_CONTEXT };
+
       if (newMessages.length > 0 && generateText) {
-        console.error(`🧠 [Jarvis] Updating session summary (${newOrUpdatedFiles.length} new/updated session files, ${newMessages.length} messages)...`);
+        console.error(`🧠 [Jarvis] Updating session context (${newOrUpdatedFiles.length} new/updated files, ${newMessages.length} messages)...`);
         try {
+          // Build structured context from new messages, merge with existing
+          const incomingCtx = await buildStructuredContext(
+            newMessages, null, generateText, { maxRetries: 3, retryDelayMs: 2000 }
+          );
+          structuredContext = mergeStructuredContext(structuredContext, incomingCtx);
+
+          // Also update plain-text summary as fallback
           summary = await buildIncrementalSummary(newMessages, summary || null, generateText, { maxRetries: 3, retryDelayMs: 2000 });
-          // Record current mtime for ALL files (including unchanged ones)
+
           const processedFileMtimes: Record<string, number> = {};
           for (const f of allFiles) processedFileMtimes[f.name] = f.mtime;
-          saveSummaryState(memoryDir, { summary, processedFileMtimes, updatedAt: Date.now() });
-          console.error(`✅ [Jarvis] Session summary updated.`);
+          saveSummaryState(memoryDir, { summary, structuredContext, processedFileMtimes, updatedAt: Date.now() });
+          console.error(`✅ [Jarvis] Session context updated (${structuredContext.entities.length} entities, ${structuredContext.behaviors.length} behaviors, ${structuredContext.decisions.length} decisions).`);
         } catch (e: any) {
-          console.error(`⚠️ [Jarvis] Summary update failed, using existing summary: ${e.message}`);
-          // summary stays as existingState?.summary — history injection continues below
+          console.error(`⚠️ [Jarvis] Context update failed, using existing: ${e.message}`);
         }
       } else if (newMessages.length > 0 && !generateText) {
-        debugLogger.debug('[AgentInitializer] generateText unavailable, skipping summary update.');
+        debugLogger.debug('[AgentInitializer] generateText unavailable, skipping context update.');
       } else {
-        debugLogger.debug('[AgentInitializer] No new session content, using existing summary.');
+        debugLogger.debug('[AgentInitializer] No new session content, using existing context.');
       }
 
       // 6. Take the most recent N raw messages across ALL files for the recent turns
@@ -284,8 +296,8 @@ export class AgentInitializer {
       }
       const recentMessages = allMessages.slice(-recentTurns);
 
-      // 7. Build history: summary prefix + recent raw turns
-      const history = buildHistoryWithSummary(summary, recentMessages);
+      // 7. Build history: structured context prefix + recent raw turns
+      const history = buildHistoryWithSummary(summary, recentMessages, structuredContext);
 
       // 8. Use the latest session file as the active recording target
       const latestFile = allFiles[allFiles.length - 1];

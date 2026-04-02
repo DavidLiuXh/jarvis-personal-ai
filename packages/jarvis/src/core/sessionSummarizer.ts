@@ -20,9 +20,54 @@ export type SessionMessage = {
   toolCalls?: Array<{ name: string; result: unknown }>;
 };
 
+// ---------------------------------------------------------------------------
+// Structured context types
+// ---------------------------------------------------------------------------
+
+export type StructuredEntity = {
+  type: string;       // 'person' | 'system' | 'tool' | etc.
+  name: string;
+  attrs: Record<string, unknown>;
+};
+
+export type StructuredBehavior = {
+  content: string;
+  confidence: 'high' | 'medium' | 'low';
+};
+
+export type StructuredDecision = {
+  topic: string;
+  content: string;
+  date?: string;
+};
+
+export type StructuredPreference = {
+  content: string;
+};
+
+export type StructuredProject = {
+  name: string;
+  status: string;
+  key_rules: string[];
+};
+
+export type StructuredContext = {
+  entities: StructuredEntity[];
+  behaviors: StructuredBehavior[];
+  decisions: StructuredDecision[];
+  preferences: StructuredPreference[];
+  projects: StructuredProject[];
+};
+
+export const EMPTY_STRUCTURED_CONTEXT: StructuredContext = {
+  entities: [], behaviors: [], decisions: [], preferences: [], projects: [],
+};
+
 export type SummaryState = {
-  /** The latest consolidated summary text. */
+  /** Natural language summary (fallback). */
   summary: string;
+  /** Structured JSON context (preferred). */
+  structuredContext?: StructuredContext;
   /**
    * Map of filename → mtime (ms) at the time it was last processed.
    * A file is re-processed if its current mtime is newer than the recorded value.
@@ -155,31 +200,231 @@ Summary:
 }
 
 // ---------------------------------------------------------------------------
+// Structured context
+// ---------------------------------------------------------------------------
+
+const STRUCTURED_CONTEXT_PROMPT = (conversation: string, existing: string) => `
+You are extracting structured knowledge from a conversation for an AI assistant called Jarvis.
+
+${existing ? `Existing knowledge (already extracted):\n${existing}\n\n` : ''}New conversation to process:
+${conversation}
+
+Extract ALL persistent facts into this exact JSON structure. Merge with existing knowledge where applicable.
+Output ONLY valid JSON, no markdown, no explanation:
+
+{
+  "entities": [
+    { "type": "person|system|tool", "name": "...", "attrs": { "key": "value" } }
+  ],
+  "behaviors": [
+    { "content": "user does X", "confidence": "high|medium|low" }
+  ],
+  "decisions": [
+    { "topic": "...", "content": "...", "date": "YYYY-MM (optional)" }
+  ],
+  "preferences": [
+    { "content": "user prefers X for Jarvis responses" }
+  ],
+  "projects": [
+    { "name": "...", "status": "active|paused|done", "key_rules": ["..."] }
+  ]
+}
+
+Rules:
+- entities: people, systems, tools with stable attributes
+- behaviors: user habits, hobbies, lifestyle (NOT response preferences)
+- decisions: important choices made in conversations
+- preferences: ONLY how user wants Jarvis to respond (format, language, tone)
+- projects: ongoing work with rules/constraints
+- Merge duplicates: same entity/behavior → update attrs, do not duplicate
+`.trim();
+
+/**
+ * Builds or updates a StructuredContext from new messages.
+ * Falls back to existing context (or empty) on parse failure.
+ */
+export async function buildStructuredContext(
+  newMessages: SessionMessage[],
+  existing: StructuredContext | null,
+  generateText: (prompt: string) => Promise<string>,
+  options: SummaryOptions = {},
+): Promise<StructuredContext> {
+  if (newMessages.length === 0) {
+    return existing ?? { ...EMPTY_STRUCTURED_CONTEXT };
+  }
+
+  const conversation = messagesToText(newMessages);
+  const existingJson = existing ? JSON.stringify(existing, null, 2) : '';
+  const prompt = STRUCTURED_CONTEXT_PROMPT(conversation, existingJson);
+
+  const maxRetries = options.maxRetries ?? 3;
+  const retryDelayMs = options.retryDelayMs ?? 1000;
+
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      const raw = await generateText(prompt);
+      // Extract JSON from response (may have surrounding text)
+      const match = raw.match(/\{[\s\S]*\}/);
+      if (!match) throw new Error('No JSON object found in response');
+      const parsed = JSON.parse(match[0]) as StructuredContext;
+      // Validate required fields
+      if (!Array.isArray(parsed.entities)) throw new Error('Invalid structure: missing entities');
+      return {
+        entities: parsed.entities ?? [],
+        behaviors: parsed.behaviors ?? [],
+        decisions: parsed.decisions ?? [],
+        preferences: parsed.preferences ?? [],
+        projects: parsed.projects ?? [],
+      };
+    } catch (e: any) {
+      const isLast = attempt === maxRetries;
+      if (isLast) {
+        console.error(`⚠️ [SessionSummarizer] Structured context generation failed: ${e.message}. Using existing.`);
+        return existing ?? { ...EMPTY_STRUCTURED_CONTEXT };
+      }
+      await new Promise(r => setTimeout(r, retryDelayMs));
+    }
+  }
+  return existing ?? { ...EMPTY_STRUCTURED_CONTEXT };
+}
+
+/**
+ * Merges incoming StructuredContext into existing, deduplicating by name/content.
+ */
+export function mergeStructuredContext(
+  existing: StructuredContext,
+  incoming: StructuredContext,
+): StructuredContext {
+  // Merge entities: same name → merge attrs
+  const entityMap = new Map<string, StructuredEntity>();
+  for (const e of [...existing.entities, ...incoming.entities]) {
+    const key = `${e.type}:${e.name.toLowerCase()}`;
+    if (entityMap.has(key)) {
+      entityMap.get(key)!.attrs = { ...entityMap.get(key)!.attrs, ...e.attrs };
+    } else {
+      entityMap.set(key, { ...e, attrs: { ...e.attrs } });
+    }
+  }
+
+  // Merge behaviors: deduplicate by content similarity (exact match for now)
+  const behaviorSet = new Set(existing.behaviors.map(b => b.content.toLowerCase()));
+  const behaviors = [...existing.behaviors];
+  for (const b of incoming.behaviors) {
+    if (!behaviorSet.has(b.content.toLowerCase())) {
+      behaviors.push(b);
+      behaviorSet.add(b.content.toLowerCase());
+    }
+  }
+
+  // Merge decisions: deduplicate by topic+content
+  const decisionSet = new Set(existing.decisions.map(d => `${d.topic}:${d.content}`));
+  const decisions = [...existing.decisions];
+  for (const d of incoming.decisions) {
+    if (!decisionSet.has(`${d.topic}:${d.content}`)) {
+      decisions.push(d);
+    }
+  }
+
+  // Merge preferences: deduplicate by content
+  const prefSet = new Set(existing.preferences.map(p => p.content.toLowerCase()));
+  const preferences = [...existing.preferences];
+  for (const p of incoming.preferences) {
+    if (!prefSet.has(p.content.toLowerCase())) {
+      preferences.push(p);
+    }
+  }
+
+  // Merge projects: same name → update
+  const projectMap = new Map(existing.projects.map(p => [p.name.toLowerCase(), { ...p }]));
+  for (const p of incoming.projects) {
+    const key = p.name.toLowerCase();
+    if (projectMap.has(key)) {
+      const existing = projectMap.get(key)!;
+      existing.status = p.status;
+      existing.key_rules = [...new Set([...existing.key_rules, ...p.key_rules])];
+    } else {
+      projectMap.set(key, { ...p });
+    }
+  }
+
+  return {
+    entities: [...entityMap.values()],
+    behaviors,
+    decisions,
+    preferences,
+    projects: [...projectMap.values()],
+  };
+}
+
+/**
+ * Renders StructuredContext as a compact text block for LLM injection.
+ * Returns empty string if context is empty.
+ */
+export function renderStructuredContext(ctx: StructuredContext): string {
+  const lines: string[] = [];
+
+  if (ctx.entities.length > 0) {
+    for (const e of ctx.entities) {
+      const attrs = Object.entries(e.attrs).map(([k, v]) => `${k}: ${v}`).join(', ');
+      lines.push(`${e.type === 'person' ? '👤' : '🔧'} ${e.name}${attrs ? ` (${attrs})` : ''}`);
+    }
+  }
+
+  if (ctx.behaviors.length > 0) {
+    lines.push('Behaviors: ' + ctx.behaviors.map(b => b.content).join('; '));
+  }
+
+  if (ctx.preferences.length > 0) {
+    lines.push('Preferences: ' + ctx.preferences.map(p => p.content).join('; '));
+  }
+
+  if (ctx.decisions.length > 0) {
+    for (const d of ctx.decisions) {
+      lines.push(`Decision [${d.topic}${d.date ? ', ' + d.date : ''}]: ${d.content}`);
+    }
+  }
+
+  if (ctx.projects.length > 0) {
+    for (const p of ctx.projects) {
+      const rules = p.key_rules.length > 0 ? ` — rules: ${p.key_rules.join(', ')}` : '';
+      lines.push(`Project: ${p.name} (${p.status})${rules}`);
+    }
+  }
+
+  return lines.join('\n');
+}
+
+// ---------------------------------------------------------------------------
 // History construction
 // ---------------------------------------------------------------------------
 
 /**
- * Builds a Content[] history that starts with a summary prefix (if non-empty)
- * followed by the recent raw message turns.
+ * Builds a Content[] history that starts with a context prefix followed by
+ * the recent raw message turns.
  *
- * The summary is injected as a user→model exchange so the LLM treats it as
+ * Prefers structuredContext (rendered as compact text) over plain summary.
+ * The context is injected as a user→model exchange so the LLM treats it as
  * established context rather than a new instruction.
  */
 export function buildHistoryWithSummary(
   summary: string,
   recentMessages: SessionMessage[],
+  structuredContext?: StructuredContext,
 ): Content[] {
   const history: Content[] = [];
 
-  if (summary.trim()) {
-    // Inject summary as a user prompt + model acknowledgement pair
+  const rendered = structuredContext ? renderStructuredContext(structuredContext) : '';
+  const contextText = rendered.trim() || summary.trim();
+
+  if (contextText) {
+    const label = rendered.trim() ? '[STRUCTURED CONTEXT]' : '[CONVERSATION SUMMARY]';
     history.push({
       role: 'user',
-      parts: [{ text: `[CONVERSATION SUMMARY]\n${summary}` }],
+      parts: [{ text: `${label}\n${contextText}` }],
     });
     history.push({
       role: 'model',
-      parts: [{ text: 'Understood — summary noted. I have the full context of our previous conversations.' }],
+      parts: [{ text: 'Understood — context noted. I have the full picture of our previous conversations.' }],
     });
   }
 
