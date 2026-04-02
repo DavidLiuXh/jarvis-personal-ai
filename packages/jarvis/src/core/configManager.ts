@@ -51,6 +51,8 @@ export interface JarvisConfig {
     globalSessionId: string;
     /** Whether to restore previous conversation history on startup. Default: true. */
     resumeOnStart: boolean;
+    /** Number of recent raw message turns to include after the summary. Default: 20. */
+    recentTurnsOnResume: number;
   };
 }
 
@@ -116,6 +118,7 @@ export class ConfigManager {
         useGlobalSession: false,
         globalSessionId: 'jarvis-global-master',
         resumeOnStart: true,
+        recentTurnsOnResume: 20,
       }
     };
 
