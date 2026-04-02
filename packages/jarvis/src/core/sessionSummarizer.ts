@@ -148,36 +148,36 @@ export async function buildIncrementalSummary(
 
   const prompt = existingSummary
     ? `
-You are summarizing a conversation history for an AI assistant called Jarvis.
+You are compressing conversation history for an AI assistant called Jarvis.
 
-Existing summary (already processed):
+Existing compressed history:
 ${existingSummary}
 
 New conversation to incorporate:
 ${newConversation}
 
-Task: Update the summary by merging the new conversation into the existing one.
-- Keep all important facts about the user (name, profession, skills, interests, habits, preferences)
-- Keep important technical decisions and project context
-- Remove redundant or trivial information
-- Write in third-person, concise English
-- Maximum 500 words
+Task: Update the compressed history by merging the new conversation.
+Compress into structured Markdown grouped by topic or theme.
+For each topic, preserve: what was discussed, decisions made, outcomes reached.
+Keep causal relationships — why things happened, not just what happened.
+Remove filler, greetings, and trivial exchanges.
+Maximum 600 words total.
 
-Updated summary:
+Updated compressed history (Markdown):
 `.trim()
     : `
-You are summarizing a conversation history for an AI assistant called Jarvis.
+You are compressing conversation history for an AI assistant called Jarvis.
 
 Conversation:
 ${newConversation}
 
-Task: Write a concise summary of this conversation.
-- Extract important facts about the user (name, profession, skills, interests, habits, preferences)
-- Extract important technical decisions and project context
-- Write in third-person, concise English
-- Maximum 500 words
+Task: Compress this conversation into structured Markdown grouped by topic or theme.
+For each topic, preserve: what was discussed, decisions made, outcomes reached.
+Keep causal relationships — why things happened, not just what happened.
+Remove filler, greetings, and trivial exchanges.
+Maximum 600 words.
 
-Summary:
+Compressed history (Markdown):
 `.trim();
 
   const maxRetries = options.maxRetries ?? 3;
@@ -408,29 +408,23 @@ export function renderStructuredContext(ctx: StructuredContext): string {
  * Builds a Content[] history that starts with a context prefix followed by
  * the recent raw message turns.
  *
- * Prefers structuredContext (rendered as compact text) over plain summary.
- * The context is injected as a user→model exchange so the LLM treats it as
- * established context rather than a new instruction.
+ * The compressed history is injected as a user→model exchange so the LLM
+ * treats it as established context rather than a new instruction.
  */
 export function buildHistoryWithSummary(
   summary: string,
   recentMessages: SessionMessage[],
-  structuredContext?: StructuredContext,
 ): Content[] {
   const history: Content[] = [];
 
-  const rendered = structuredContext ? renderStructuredContext(structuredContext) : '';
-  const contextText = rendered.trim() || summary.trim();
-
-  if (contextText) {
-    const label = rendered.trim() ? '[STRUCTURED CONTEXT]' : '[CONVERSATION SUMMARY]';
+  if (summary.trim()) {
     history.push({
       role: 'user',
-      parts: [{ text: `${label}\n${contextText}` }],
+      parts: [{ text: `[CONVERSATION HISTORY SUMMARY]\n${summary}` }],
     });
     history.push({
       role: 'model',
-      parts: [{ text: 'Understood — context noted. I have the full picture of our previous conversations.' }],
+      parts: [{ text: 'Understood — I have the compressed history of our previous conversations.' }],
     });
   }
 

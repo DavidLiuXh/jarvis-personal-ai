@@ -85,6 +85,25 @@ describe('buildIncrementalSummary', () => {
     expect(generateText).not.toHaveBeenCalled();
     expect(result).toBe('Existing summary.');
   });
+
+  it('prompt asks for structured compression by topic/time, not fact extraction', async () => {
+    const generateText = vi.fn().mockResolvedValue('## Topic\n- item');
+    await buildIncrementalSummary(fakeMessages, null, generateText);
+    const prompt = generateText.mock.calls[0][0] as string;
+    // Must ask for compression/structure, not extraction
+    expect(prompt.toLowerCase()).toMatch(/compress|structur/);
+    // Must ask for topic or time grouping
+    expect(prompt.toLowerCase()).toMatch(/topic|theme/);
+    // Must NOT ask to "extract facts" (old approach)
+    expect(prompt.toLowerCase()).not.toContain('extract facts');
+  });
+
+  it('prompt preserves causal relationships and decisions, not just isolated facts', async () => {
+    const generateText = vi.fn().mockResolvedValue('## Topic\n- item');
+    await buildIncrementalSummary(fakeMessages, null, generateText);
+    const prompt = generateText.mock.calls[0][0] as string;
+    expect(prompt.toLowerCase()).toMatch(/decision|outcome|result/);
+  });
 });
 
 describe('buildHistoryWithSummary', () => {
@@ -97,10 +116,10 @@ describe('buildHistoryWithSummary', () => {
     const history = buildHistoryWithSummary(summary, recent);
 
     expect(history[0].role).toBe('user');
-    expect((history[0].parts[0] as any).text).toContain('[CONVERSATION SUMMARY]');
+    expect((history[0].parts[0] as any).text).toContain('[CONVERSATION HISTORY SUMMARY]');
     expect((history[0].parts[0] as any).text).toContain('User likes cycling.');
     expect(history[1].role).toBe('model');
-    expect((history[1].parts[0] as any).text).toContain('context noted');
+    expect((history[1].parts[0] as any).text).toContain('compressed history');
   });
 
   it('appends recent message turns after the summary', () => {
