@@ -49,6 +49,8 @@ export interface JarvisConfig {
   session: {
     useGlobalSession: boolean;
     globalSessionId: string;
+    /** Whether to restore previous conversation history on startup. Default: true. */
+    resumeOnStart: boolean;
   };
 }
 
@@ -112,7 +114,8 @@ export class ConfigManager {
       },
       session: {
         useGlobalSession: false,
-        globalSessionId: 'jarvis-global-master'
+        globalSessionId: 'jarvis-global-master',
+        resumeOnStart: true,
       }
     };
 
