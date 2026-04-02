@@ -82,4 +82,28 @@ describe('buildHistoryFromMessages', () => {
     expect(history[3].role).toBe('user'); // next user message
     expect(history[4].role).toBe('model');
   });
+
+  it('wraps array toolCall result into a plain object for Gemini API compatibility', () => {
+    // tc.result can be an array (responseParts) from older session formats
+    const arrayResult = [
+      { functionResponse: { id: 'x', name: 'activate_skill', response: { output: 'skill output' } } },
+    ];
+    const history = buildHistoryFromMessages([
+      { type: 'user', content: [{ text: 'Run skill' }] },
+      {
+        type: 'gemini',
+        content: '',
+        toolCalls: [{ name: 'activate_skill', result: arrayResult }],
+      },
+    ]);
+
+    const funcRespTurn = history.find(
+      h => h.role === 'user' && (h.parts[0] as any)?.functionResponse,
+    );
+    expect(funcRespTurn).toBeDefined();
+    const response = (funcRespTurn!.parts[0] as any).functionResponse.response;
+    // Must be a plain object, not an array
+    expect(Array.isArray(response)).toBe(false);
+    expect(typeof response).toBe('object');
+  });
 });

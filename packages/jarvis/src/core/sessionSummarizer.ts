@@ -16,7 +16,7 @@ import { buildHistoryFromMessages } from './resumeFromDisk.js';
 export type SessionMessage = {
   type: string;
   content: unknown;
-  timestamp?: number;
+  timestamp?: number | string;
   toolCalls?: Array<{ name: string; result: unknown }>;
 };
 

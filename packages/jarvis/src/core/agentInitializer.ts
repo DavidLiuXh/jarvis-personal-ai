@@ -298,7 +298,12 @@ export class AgentInitializer {
       const userTurns = allMessages.filter(m => m.type === 'user').length;
       const modelTurns = allMessages.filter(m => m.type === 'gemini').length;
       const toolCalls = allMessages.reduce((n, m) => n + (m.toolCalls?.length ?? 0), 0);
-      const timestamps = allMessages.map(m => m.timestamp).filter(Boolean) as number[];
+      // timestamp may be ISO string or number — normalise to ms
+      const timestamps = allMessages
+        .map(m => m.timestamp)
+        .filter(Boolean)
+        .map(t => typeof t === 'string' ? new Date(t as string).getTime() : Number(t))
+        .filter(t => !isNaN(t));
       const earliest = timestamps.length ? new Date(Math.min(...timestamps)).toLocaleString() : 'unknown';
       const latest = timestamps.length ? new Date(Math.max(...timestamps)).toLocaleString() : 'unknown';
 

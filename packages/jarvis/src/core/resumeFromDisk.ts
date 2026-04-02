@@ -42,12 +42,17 @@ export function buildHistoryFromMessages(messages: MessageRecord[]): Content[] {
       }
 
       // 2. Tool call results (sent back as user/functionResponse)
+      // tc.result may be an array (responseParts) or a plain object.
+      // Gemini API requires response to be a plain object — wrap arrays.
       if (m.toolCalls && m.toolCalls.length > 0) {
         const resParts: Part[] = [];
         for (const tc of m.toolCalls) {
-          if (tc.result) {
+          if (tc.result !== undefined && tc.result !== null) {
+            const response = Array.isArray(tc.result)
+              ? { output: tc.result.map((p: any) => p?.functionResponse?.response?.output ?? '').join('\n') }
+              : tc.result as any;
             resParts.push({
-              functionResponse: { name: tc.name, response: tc.result as any },
+              functionResponse: { name: tc.name, response },
             });
           }
         }
