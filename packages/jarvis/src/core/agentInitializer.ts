@@ -208,7 +208,19 @@ export class AgentInitializer {
         const record = JSON.parse(fileContent) as ConversationRecord;
         const history = buildHistoryFromMessages(record.messages as any[]);
         await client.resumeChat(history, { conversation: record, filePath: sessionFile });
-        debugLogger.debug(`[AgentInitializer] Restored ${history.length} history turns from disk.`);
+
+        const msgs = record.messages as any[];
+        const userTurns = msgs.filter((m: any) => m.type === 'user').length;
+        const modelTurns = msgs.filter((m: any) => m.type === 'gemini').length;
+        const toolCalls = msgs.reduce((n: number, m: any) => n + (m.toolCalls?.length ?? 0), 0);
+        const timestamps = msgs.map((m: any) => m.timestamp).filter(Boolean);
+        const earliest = timestamps.length ? new Date(Math.min(...timestamps)).toLocaleString() : 'unknown';
+        const latest = timestamps.length ? new Date(Math.max(...timestamps)).toLocaleString() : 'unknown';
+
+        console.error(
+          `📂 [Jarvis] Session restored: ${userTurns} user turns, ${modelTurns} model turns, ` +
+          `${toolCalls} tool calls | ${earliest} → ${latest} | history length: ${history.length}`
+        );
       }
     } catch (_e) {}
   }
