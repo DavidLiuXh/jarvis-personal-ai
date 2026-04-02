@@ -37,14 +37,16 @@ Source rule (CRITICAL):
 - Only extract what the user explicitly stated or revealed about themselves
 
 Category definitions (mutually exclusive):
-- identity: Static facts about who the user IS — name, job title, profession, skills, nationality (e.g. "user is a software engineer named David", "user is good at cooking")
-- behavior: User's habits, lifestyle, routines, or recurring patterns (e.g. "runs 3 times a week", "always asks for background before details")
+- identity: ONLY static facts about who the user IS — name, job title, profession, skills (e.g. "user is a software engineer named David", "user is good at cooking")
+- behavior: User's habits, hobbies, interests, lifestyle, routines, or recurring patterns (e.g. "runs 3 times a week", "likes cycling", "interested in history", "always asks for background before details")
 - preference: ONLY about how the user wants Jarvis to FORMAT or STYLE responses — output format, tone, language, length. NOT about the user's personal traits or interests. (e.g. "prefers table format for data", "wants concise answers in Chinese")
 - specification: Technical decisions, project constraints, or system rules (e.g. "project uses TypeScript", "do not modify gemini-cli source")
 
 Rules:
-- Each fact belongs to exactly ONE category. If unsure between identity/behavior, use behavior.
-- "preference" means response style only. User skills, hobbies, interests → identity or behavior, NOT preference.
+- Each fact belongs to exactly ONE category.
+- Hobbies, interests, and things the user "likes" → behavior, NOT identity.
+- identity = name/job/skill only. If unsure between identity/behavior, use behavior.
+- "preference" means response style only. User hobbies/interests → behavior, NOT preference.
 - Do not repeat the same information under different categories.
 - Only extract facts that are genuinely new and worth remembering long-term.
 
