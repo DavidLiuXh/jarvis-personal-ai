@@ -217,8 +217,11 @@ STRICT RULES per field:
   Required attrs for the user: name, profession, skills (list what is known, leave empty array if unknown).
   Example: { "type": "person", "name": "David", "attrs": { "name": "David Liu", "profession": "software engineer", "skills": ["TypeScript", "system design"] } }
 
-"behaviors": User's real-world habits, hobbies, lifestyle, recurring patterns.
-  Write as "user [verb]..." statements. Be specific. Do not add vague entries like "user works".
+"behaviors": ONLY recurring, habitual actions the user does regularly — NOT one-time events or single-conversation topics.
+  Must include frequency or regularity (e.g. "weekly", "regularly", "every day", "at least N times").
+  Write as "user [verb]..." statements. Be specific.
+  BAD (reject these): "user researches topics", "user works on projects", "user discussed X" (one-time)
+  GOOD: "user runs at least 3 times a week", "user reads books regularly", "user cycles on weekends"
   Example: { "content": "user runs at least 3 times a week", "confidence": "high" }
 
 "decisions": Important choices, strategies, or rules the user has committed to.
