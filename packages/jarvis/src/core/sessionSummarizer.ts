@@ -204,39 +204,42 @@ Summary:
 // ---------------------------------------------------------------------------
 
 const STRUCTURED_CONTEXT_PROMPT = (conversation: string, existing: string) => `
-You are extracting structured knowledge from a conversation for an AI assistant called Jarvis.
+You are extracting structured knowledge about the USER from a conversation with Jarvis (an AI assistant).
 
-${existing ? `Existing knowledge (already extracted):\n${existing}\n\n` : ''}New conversation to process:
+${existing ? `Current knowledge (merge/update this, do not duplicate):\n${existing}\n\n` : ''}New conversation to process:
 ${conversation}
 
-Extract ALL persistent facts into this exact JSON structure. Merge with existing knowledge where applicable.
-Output ONLY valid JSON, no markdown, no explanation:
+Output ONLY valid JSON with this exact structure. No markdown, no explanation, no extra keys.
 
-{
-  "entities": [
-    { "type": "person|system|tool", "name": "...", "attrs": { "key": "value" } }
-  ],
-  "behaviors": [
-    { "content": "user does X", "confidence": "high|medium|low" }
-  ],
-  "decisions": [
-    { "topic": "...", "content": "...", "date": "YYYY-MM (optional)" }
-  ],
-  "preferences": [
-    { "content": "user prefers X for Jarvis responses" }
-  ],
-  "projects": [
-    { "name": "...", "status": "active|paused|done", "key_rules": ["..."] }
-  ]
-}
+STRICT RULES per field:
 
-Rules:
-- entities: people, systems, tools with stable attributes
-- behaviors: user habits, hobbies, lifestyle (NOT response preferences)
-- decisions: important choices made in conversations
-- preferences: ONLY how user wants Jarvis to respond (format, language, tone)
-- projects: ongoing work with rules/constraints
-- Merge duplicates: same entity/behavior → update attrs, do not duplicate
+"entities": ONLY the user themselves as a person. Do not add tools, companies, AI systems, competitors, or concepts.
+  Required attrs for the user: name, profession, skills (list what is known, leave empty array if unknown).
+  Example: { "type": "person", "name": "David", "attrs": { "name": "David Liu", "profession": "software engineer", "skills": ["TypeScript", "system design"] } }
+
+"behaviors": User's real-world habits, hobbies, lifestyle, recurring patterns.
+  Write as "user [verb]..." statements. Be specific. Do not add vague entries like "user works".
+  Example: { "content": "user runs at least 3 times a week", "confidence": "high" }
+
+"decisions": Important choices, strategies, or rules the user has committed to.
+  Include investment strategies, architectural decisions, project rules.
+  Example: { "topic": "investment", "content": "core-satellite strategy: 70% index funds + 30% individual stocks", "date": "2026-03" }
+
+"preferences": ONLY how the user wants Jarvis to format or style responses.
+  Response style, language, output format, tone. NOT personal interests or hobbies.
+  Example: { "content": "prefers concise answers in Chinese with tables for data" }
+
+"projects": Only projects the user actively owns or works on. Not upstream dependencies or tools.
+  key_rules: constraints that Jarvis must follow for this project.
+  Example: { "name": "jarvis-personal-ai", "status": "active", "key_rules": ["do not modify gemini-cli source code"] }
+
+Merge rules:
+- Same person entity → update attrs (do not create duplicate person entries)
+- Same behavior content → keep higher confidence, do not duplicate
+- Same decision topic+content → keep, do not duplicate
+- Omit fields with no data (empty arrays are fine)
+
+JSON output:
 `.trim();
 
 /**

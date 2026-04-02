@@ -284,3 +284,38 @@ describe('renderStructuredContext', () => {
     expect(renderStructuredContext(ctx)).toBe('');
   });
 });
+
+describe('buildStructuredContext prompt quality', () => {
+  it('prompt restricts entities to user and Jarvis only', async () => {
+    const generateText = vi.fn().mockResolvedValue('{"entities":[],"behaviors":[],"decisions":[],"preferences":[],"projects":[]}');
+    await buildStructuredContext(fakeMessages, null, generateText);
+    const prompt = generateText.mock.calls[0][0] as string;
+    // Must restrict entities to person (user) only — not tools/systems/companies
+    expect(prompt).toContain('ONLY the user');
+    expect(prompt.toLowerCase()).toContain('do not add');
+  });
+
+  it('prompt requires user person entity to have attrs like profession and skills', async () => {
+    const generateText = vi.fn().mockResolvedValue('{"entities":[],"behaviors":[],"decisions":[],"preferences":[],"projects":[]}');
+    await buildStructuredContext(fakeMessages, null, generateText);
+    const prompt = generateText.mock.calls[0][0] as string;
+    expect(prompt).toContain('profession');
+    expect(prompt).toContain('skills');
+  });
+
+  it('prompt requires decisions to capture important choices like strategies and rules', async () => {
+    const generateText = vi.fn().mockResolvedValue('{"entities":[],"behaviors":[],"decisions":[],"preferences":[],"projects":[]}');
+    await buildStructuredContext(fakeMessages, null, generateText);
+    const prompt = generateText.mock.calls[0][0] as string;
+    expect(prompt).toContain('strateg');
+    expect(prompt).toContain('rule');
+  });
+
+  it('prompt restricts preferences to Jarvis response style only', async () => {
+    const generateText = vi.fn().mockResolvedValue('{"entities":[],"behaviors":[],"decisions":[],"preferences":[],"projects":[]}');
+    await buildStructuredContext(fakeMessages, null, generateText);
+    const prompt = generateText.mock.calls[0][0] as string;
+    expect(prompt.toLowerCase()).toContain('style');
+    expect(prompt).toContain('format');
+  });
+});
