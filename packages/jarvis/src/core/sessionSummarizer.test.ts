@@ -13,6 +13,7 @@ import {
   buildHistoryWithSummary,
   loadSummaryState,
   saveSummaryState,
+  getNewOrUpdatedFiles,
   type SummaryState,
   type SessionMessage,
 } from './sessionSummarizer.js';
@@ -42,7 +43,7 @@ describe('loadSummaryState / saveSummaryState', () => {
     const dir = tmpDir();
     const state: SummaryState = {
       summary: 'User is David, likes cycling.',
-      processedFiles: ['session-a.json', 'session-b.json'],
+      processedFileMtimes: { 'session-a.json': 1000, 'session-b.json': 2000 },
       updatedAt: 12345,
     };
     saveSummaryState(dir, state);
@@ -112,5 +113,45 @@ describe('buildHistoryWithSummary', () => {
     // No summary prefix
     expect(history[0].role).toBe('user');
     expect((history[0].parts[0] as any).text).not.toContain('[CONVERSATION SUMMARY]');
+  });
+});
+
+describe('getNewOrUpdatedFiles', () => {
+  it('returns all files when no prior state exists', () => {
+    const files = [
+      { name: 'session-a.json', mtime: 1000 },
+      { name: 'session-b.json', mtime: 2000 },
+    ];
+    const result = getNewOrUpdatedFiles(files, null);
+    expect(result.map(f => f.name)).toEqual(['session-a.json', 'session-b.json']);
+  });
+
+  it('returns only files with mtime newer than recorded mtime', () => {
+    const files = [
+      { name: 'session-a.json', mtime: 1000 },
+      { name: 'session-b.json', mtime: 3000 }, // updated since last summary
+      { name: 'session-c.json', mtime: 5000 }, // new file
+    ];
+    const state: SummaryState = {
+      summary: 'old summary',
+      processedFileMtimes: { 'session-a.json': 1000, 'session-b.json': 2000 },
+      updatedAt: 4000,
+    };
+    const result = getNewOrUpdatedFiles(files, state);
+    expect(result.map(f => f.name)).toEqual(['session-b.json', 'session-c.json']);
+  });
+
+  it('returns empty array when all files are unchanged', () => {
+    const files = [
+      { name: 'session-a.json', mtime: 1000 },
+      { name: 'session-b.json', mtime: 2000 },
+    ];
+    const state: SummaryState = {
+      summary: 'summary',
+      processedFileMtimes: { 'session-a.json': 1000, 'session-b.json': 2000 },
+      updatedAt: 3000,
+    };
+    const result = getNewOrUpdatedFiles(files, state);
+    expect(result).toHaveLength(0);
   });
 });

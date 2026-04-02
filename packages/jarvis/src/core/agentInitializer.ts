@@ -33,6 +33,7 @@ import {
   saveSummaryState,
   buildIncrementalSummary,
   buildHistoryWithSummary,
+  getNewOrUpdatedFiles,
   type SessionMessage,
 } from './sessionSummarizer.js';
 
@@ -239,37 +240,33 @@ export class AgentInitializer {
 
       // 2. Load existing summary state
       const existingState = loadSummaryState(memoryDir);
-      const processedSet = new Set(existingState?.processedFiles ?? []);
 
-      // 3. Find new (unprocessed) files
-      const newFiles = allFiles.filter(f => !processedSet.has(f.name));
+      // 3. Find new or updated files using mtime comparison
+      const newOrUpdatedFiles = getNewOrUpdatedFiles(allFiles, existingState);
 
-      // 4. Collect all messages from new files
+      // 4. Collect messages from new/updated files
       const newMessages: SessionMessage[] = [];
-      const newFileNames: string[] = [];
-      for (const file of newFiles) {
+      for (const file of newOrUpdatedFiles) {
         try {
           const raw = JSON.parse(fs.readFileSync(path.join(chatsDir, file.name), 'utf8'));
-          const msgs: SessionMessage[] = raw.messages ?? [];
-          newMessages.push(...msgs);
-          newFileNames.push(file.name);
+          newMessages.push(...(raw.messages ?? []));
         } catch (_e) {}
       }
 
-      // 5. Update summary incrementally if there are new messages and generateText is available
+      // 5. Update summary incrementally if there are new/updated messages
       let summary = existingState?.summary ?? '';
       if (newMessages.length > 0 && generateText) {
-        console.error(`🧠 [Jarvis] Updating session summary (${newFileNames.length} new session files, ${newMessages.length} messages)...`);
+        console.error(`🧠 [Jarvis] Updating session summary (${newOrUpdatedFiles.length} new/updated session files, ${newMessages.length} messages)...`);
         summary = await buildIncrementalSummary(newMessages, summary || null, generateText);
-        saveSummaryState(memoryDir, {
-          summary,
-          processedFiles: [...processedSet, ...newFileNames],
-          updatedAt: Date.now(),
-        });
+        // Record current mtime for ALL files (including unchanged ones)
+        const processedFileMtimes: Record<string, number> = {};
+        for (const f of allFiles) processedFileMtimes[f.name] = f.mtime;
+        saveSummaryState(memoryDir, { summary, processedFileMtimes, updatedAt: Date.now() });
         console.error(`✅ [Jarvis] Session summary updated.`);
       } else if (newMessages.length > 0 && !generateText) {
-        // generateText not yet available at init time — skip summary update, use existing
         debugLogger.debug('[AgentInitializer] generateText unavailable, skipping summary update.');
+      } else {
+        debugLogger.debug('[AgentInitializer] No new session content, using existing summary.');
       }
 
       // 6. Take the most recent N raw messages across ALL files for the recent turns
