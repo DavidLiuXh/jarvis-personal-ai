@@ -28,7 +28,13 @@ export class BackgroundDistiller {
   async distill(userPrompt: string, assistantText: string): Promise<void> {
     try {
       const frozenPrompt = `
-Extract persistent facts from this interaction. Use exactly one category per fact — do NOT write the same fact under multiple categories.
+Extract persistent facts from the USER INPUT ONLY. Do NOT extract facts from the assistant output.
+
+Source rule (CRITICAL):
+- Extract ONLY from: "User input" below
+- NOT from: the assistant's response, even if the assistant enumerates or summarizes user information
+- If the user asks "what are my hobbies?" and the assistant lists them, extract NOTHING — the user stated no new facts
+- Only extract what the user explicitly stated or revealed about themselves
 
 Category definitions (mutually exclusive):
 - identity: Static facts about who the user IS — name, job title, profession, skills, nationality (e.g. "user is a software engineer named David", "user is good at cooking")
@@ -45,9 +51,8 @@ Rules:
 Respond ONLY with JSON: {"found": true, "facts": [{"category": "identity|behavior|preference|specification", "content": "..."}]}
 If zero new data worth persisting, respond: {"found": false}
 
-Interaction:
-Input: ${userPrompt}
-Output: ${assistantText}
+User input: ${userPrompt}
+Assistant output (context only, do NOT extract from this): ${assistantText}
 `;
 
       const fullText = await this.generateText(frozenPrompt);
