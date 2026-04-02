@@ -324,3 +324,110 @@ describe('MemoryService.saveFact semantic dedup', () => {
     expect(count).toBe(1); // still deduped via jaccard fallback
   });
 });
+
+describe('MemoryService.searchFacts', () => {
+  afterEach(() => {
+    vi.resetModules();
+    vi.clearAllMocks();
+  });
+
+  async function createServiceWithFacts(facts: Array<{ category: string; content: string; importance: number }>) {
+    vi.doMock('./configManager.js', () => ({
+      ConfigManager: {
+        getInstance: vi.fn().mockReturnValue({
+          get: vi.fn().mockReturnValue({
+            api: { key: 'test-key', proxy: null },
+            models: { embedding: 'test-model', embeddingDimension: 4, distillation: 'test-model' },
+            memory: { ingestionDelayMs: 0, retrievalLimit: 5, consolidationThreshold: 100, dedupStrategy: 'jaccard', factRelevanceStrategy: 'jaccard', factRelevanceLimit: 3 },
+          }),
+        }),
+      },
+    }));
+    const { MemoryService } = await import('./memory.js');
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'jarvis-search-'));
+    const service = new (MemoryService as new (root: string, dbPath?: string) => InstanceType<typeof MemoryService>)('', tmpDir);
+    // Insert facts directly into DB
+    const db = (service as unknown as Record<string, unknown>).db as any;
+    for (const f of facts) {
+      db.prepare('INSERT INTO facts (category, content, importance, timestamp) VALUES (?, ?, ?, ?)').run(f.category, f.content, f.importance, Date.now());
+    }
+    return { service };
+  }
+
+  it('jaccard: returns facts ranked by relevance to query, up to limit', async () => {
+    const { service } = await createServiceWithFacts([
+      { category: 'identity', content: 'user is a software engineer', importance: 8 },
+      { category: 'identity', content: 'user likes history', importance: 7 },
+      { category: 'behavior', content: 'user runs 3 times a week', importance: 6 },
+      { category: 'specification', content: 'project uses TypeScript', importance: 9 },
+      { category: 'specification', content: 'do not modify gemini-cli source', importance: 9 },
+    ]);
+
+    const results = await service.searchFacts('TypeScript project setup', 2);
+
+    // 'project uses TypeScript' should rank highest for this query
+    // limit=2 applies to identity/specification candidates only (preference/behavior always included)
+    const nonStyleFacts = results.filter(f => f.category !== 'preference' && f.category !== 'behavior');
+    expect(nonStyleFacts.length).toBeLessThanOrEqual(2);
+    expect(results.some(f => f.content.includes('TypeScript'))).toBe(true);
+  });
+
+  it('always includes preference and behavior facts regardless of relevance', async () => {
+    const { service } = await createServiceWithFacts([
+      { category: 'identity', content: 'user is a software engineer', importance: 8 },
+      { category: 'preference', content: 'prefers concise answers', importance: 10 },
+      { category: 'behavior', content: 'user runs 3 times a week', importance: 6 },
+      { category: 'specification', content: 'project uses TypeScript', importance: 9 },
+    ]);
+
+    // Query is about cooking — unrelated to all facts
+    const results = await service.searchFacts('cooking recipes', 1);
+
+    // preference and behavior must always be included
+    expect(results.some(f => f.category === 'preference')).toBe(true);
+    expect(results.some(f => f.category === 'behavior')).toBe(true);
+  });
+
+  it('embedding: uses embedContentFn to rank facts by cosine similarity', async () => {
+    vi.doMock('./configManager.js', () => ({
+      ConfigManager: {
+        getInstance: vi.fn().mockReturnValue({
+          get: vi.fn().mockReturnValue({
+            api: { key: 'test-key', proxy: null },
+            models: { embedding: 'test-model', embeddingDimension: 4, distillation: 'test-model' },
+            memory: { ingestionDelayMs: 0, retrievalLimit: 5, consolidationThreshold: 100, dedupStrategy: 'jaccard', factRelevanceStrategy: 'embedding', factRelevanceLimit: 2 },
+          }),
+        }),
+      },
+    }));
+    const { MemoryService } = await import('./memory.js');
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'jarvis-embed-search-'));
+    const service = new (MemoryService as new (root: string, dbPath?: string) => InstanceType<typeof MemoryService>)('', tmpDir);
+
+    const db = (service as unknown as Record<string, unknown>).db as any;
+    // Insert facts with known embeddings
+    const tsVec = new Float32Array([1, 0, 0, 0]);
+    const runVec = new Float32Array([0, 1, 0, 0]);
+    const histVec = new Float32Array([0, 0, 1, 0]);
+    const prefVec = new Float32Array([0, 0, 0, 1]);
+
+    const insertFact = (cat: string, content: string, imp: number, vec: Float32Array) => {
+      const info = db.prepare('INSERT INTO facts (category, content, importance, timestamp, embedding) VALUES (?, ?, ?, ?, ?)').run(cat, content, imp, Date.now(), Buffer.from(vec.buffer));
+      return info.lastInsertRowid;
+    };
+    insertFact('specification', 'project uses TypeScript', 9, tsVec);
+    insertFact('behavior', 'user runs 3 times a week', 6, runVec);
+    insertFact('identity', 'user likes history', 7, histVec);
+    insertFact('preference', 'prefers concise answers', 10, prefVec);
+
+    // Query vector close to TypeScript vector
+    service.setEmbedContent(async (_text: string) => [1, 0, 0, 0]);
+
+    const results = await service.searchFacts('TypeScript setup', 1);
+
+    // TypeScript fact should be top result; preference/behavior always included
+    expect(results.some(f => f.content.includes('TypeScript'))).toBe(true);
+    expect(results.some(f => f.category === 'preference')).toBe(true);
+    expect(results.some(f => f.category === 'behavior')).toBe(true);
+  });
+});

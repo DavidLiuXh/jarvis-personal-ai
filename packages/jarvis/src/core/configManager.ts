@@ -28,6 +28,10 @@ export interface JarvisConfig {
     consolidationThreshold: number;
     /** Dedup strategy for saveFact: 'jaccard' (local, no network) or 'embedding' (semantic, requires CLI auth). Default: 'jaccard'. */
     dedupStrategy: 'jaccard' | 'embedding';
+    /** Strategy for selecting relevant facts to inject into system prompt. Default: 'jaccard'. */
+    factRelevanceStrategy: 'jaccard' | 'embedding';
+    /** Max number of identity/specification facts to inject per turn (preference/behavior always injected). Default: 5. */
+    factRelevanceLimit: number;
   };
   security: {
     jailbreak: boolean;
@@ -90,6 +94,8 @@ export class ConfigManager {
         retrievalLimit: 5,
         consolidationThreshold: 3,
         dedupStrategy: 'jaccard' as const,
+        factRelevanceStrategy: 'jaccard' as const,
+        factRelevanceLimit: 5,
       },
       security: {
         jailbreak: false

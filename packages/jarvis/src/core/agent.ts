@@ -104,14 +104,14 @@ export class JarvisAgent extends EventEmitter {
     debugLogger.debug(`[JarvisAgent] Lifeform Ready.`);
   }
 
-  private async refreshContext(_userPrompt: string) {
-    const facts = this.memoryService.getStructuredFacts() as FactRecord[];
+  private async refreshContext(userPrompt: string) {
+    const facts = await this.memoryService.searchFacts(userPrompt) as FactRecord[];
     const protocol = this.promptBuilder.buildFromFacts(facts);
     const defaultInstruction = getCoreSystemPrompt(this.client.config, this.client.config.getUserMemory());
     this.client.getChat().setSystemInstruction(defaultInstruction + '\n' + protocol);
 
     const history = this.client.getChat().getHistory();
-    console.error(`🔄 [Jarvis] System Prompt Refreshed. History Size: ${history.length} turns.`);
+    console.error(`🔄 [Jarvis] System Prompt Refreshed. History Size: ${history.length} turns. Facts injected: ${facts.length}.`);
   }
 
   public async processMessage(userPrompt: string, imageAttachment?: { data: Buffer; mimeType: string }) {

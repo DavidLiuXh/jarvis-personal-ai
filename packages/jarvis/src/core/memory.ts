@@ -407,6 +407,59 @@ ${factsText}
     } catch (e) { return []; }
   }
 
+  private static readonly ALWAYS_INJECT_CATEGORIES = new Set(['preference', 'behavior']);
+
+  /**
+   * Returns facts relevant to the given query.
+   * preference/behavior facts are always included regardless of relevance.
+   * identity/specification facts are ranked by relevance (jaccard or embedding) and capped at factRelevanceLimit.
+   */
+  public async searchFacts(query: string, limit?: number): Promise<Array<{ category: string; content: string }>> {
+    try {
+      const allFacts = this.db.prepare('SELECT category, content, importance, embedding FROM facts ORDER BY importance DESC').all() as Array<{ category: string; content: string; importance: number; embedding: Buffer | null }>;
+
+      const alwaysFacts = allFacts.filter(f => MemoryService.ALWAYS_INJECT_CATEGORIES.has(f.category));
+      const candidateFacts = allFacts.filter(f => !MemoryService.ALWAYS_INJECT_CATEGORIES.has(f.category));
+
+      const cap = limit ?? this.jarvisConfig.memory.factRelevanceLimit ?? 5;
+      const strategy = this.jarvisConfig.memory.factRelevanceStrategy ?? 'jaccard';
+
+      let ranked: Array<{ category: string; content: string }>;
+
+      if (strategy === 'embedding' && this.embedContentFn) {
+        try {
+          const queryVec = await this.embedContentFn(query);
+          ranked = candidateFacts
+            .map(f => {
+              if (!f.embedding) return { ...f, score: 0 };
+              const vec = Array.from(new Float32Array(f.embedding.buffer));
+              return { ...f, score: this.cosineSimilarity(queryVec, vec) };
+            })
+            .sort((a, b) => (b as any).score - (a as any).score)
+            .slice(0, cap)
+            .map(({ category, content }) => ({ category, content }));
+        } catch (_e) {
+          // fallback to jaccard
+          ranked = this.rankByJaccard(query, candidateFacts, cap);
+        }
+      } else {
+        ranked = this.rankByJaccard(query, candidateFacts, cap);
+      }
+
+      return [...alwaysFacts.map(({ category, content }) => ({ category, content })), ...ranked];
+    } catch (e) {
+      return this.getStructuredFacts();
+    }
+  }
+
+  private rankByJaccard(query: string, facts: Array<{ category: string; content: string }>, limit: number): Array<{ category: string; content: string }> {
+    return facts
+      .map(f => ({ ...f, score: this.jaccardSimilarity(query, f.content) }))
+      .sort((a, b) => b.score - a.score)
+      .slice(0, limit)
+      .map(({ category, content }) => ({ category, content }));
+  }
+
   /**
    * Sends a prompt to the distillation model and returns the full text response.
    * Used by BackgroundDistiller to avoid coupling it to GeminiClient.
