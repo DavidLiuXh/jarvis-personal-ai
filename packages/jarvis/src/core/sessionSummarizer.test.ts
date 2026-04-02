@@ -347,3 +347,28 @@ describe('buildStructuredContext degradation', () => {
     expect(result.entities).toEqual([]);
   });
 });
+
+describe('structured context prompt quality — behaviors and projects', () => {
+  it('prompt requires behaviors to be recurring/habitual, not one-time events', async () => {
+    const generateText = vi.fn().mockResolvedValue('{"entities":[],"behaviors":[],"decisions":[],"preferences":[],"projects":[]}');
+    await buildStructuredContext(fakeMessages, null, generateText);
+    const prompt = generateText.mock.calls[0][0] as string;
+    expect(prompt.toLowerCase()).toContain('recurring');
+    expect(prompt.toLowerCase()).toContain('one-time');
+  });
+
+  it('prompt requires behaviors to include frequency or regularity', async () => {
+    const generateText = vi.fn().mockResolvedValue('{"entities":[],"behaviors":[],"decisions":[],"preferences":[],"projects":[]}');
+    await buildStructuredContext(fakeMessages, null, generateText);
+    const prompt = generateText.mock.calls[0][0] as string;
+    expect(prompt.toLowerCase()).toContain('frequenc');
+  });
+
+  it('prompt excludes upstream dependencies from projects', async () => {
+    const generateText = vi.fn().mockResolvedValue('{"entities":[],"behaviors":[],"decisions":[],"preferences":[],"projects":[]}');
+    await buildStructuredContext(fakeMessages, null, generateText);
+    const prompt = generateText.mock.calls[0][0] as string;
+    expect(prompt.toLowerCase()).toContain('upstream');
+    expect(prompt.toLowerCase()).toContain('dependenc');
+  });
+});
