@@ -23,11 +23,31 @@ export type SessionMessage = {
 export type SummaryState = {
   /** The latest consolidated summary text. */
   summary: string;
-  /** Filenames that have already been incorporated into the summary. */
-  processedFiles: string[];
+  /**
+   * Map of filename → mtime (ms) at the time it was last processed.
+   * A file is re-processed if its current mtime is newer than the recorded value.
+   */
+  processedFileMtimes: Record<string, number>;
   /** Unix timestamp (ms) when the summary was last updated. */
   updatedAt: number;
+  /** @deprecated use processedFileMtimes instead */
+  processedFiles?: string[];
 };
+
+/**
+ * Returns files that are new or have been modified since they were last processed.
+ */
+export function getNewOrUpdatedFiles(
+  files: Array<{ name: string; mtime: number }>,
+  state: SummaryState | null,
+): Array<{ name: string; mtime: number }> {
+  if (!state) return files;
+  const recorded = state.processedFileMtimes ?? {};
+  return files.filter(f => {
+    const lastMtime = recorded[f.name];
+    return lastMtime === undefined || f.mtime > lastMtime;
+  });
+}
 
 // ---------------------------------------------------------------------------
 // Persistence
