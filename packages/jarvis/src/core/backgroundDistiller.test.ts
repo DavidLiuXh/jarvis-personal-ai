@@ -123,4 +123,22 @@ describe('BackgroundDistiller', () => {
     // Must warn against extracting from assistant's enumeration/summary
     expect(calledPrompt).toContain('assistant');
   });
+
+  it('prompt classifies hobbies and interests as behavior, not identity', async () => {
+    const generateText = vi.fn().mockResolvedValue('{"found": false}');
+    const fakeSaveFact = vi.fn();
+    const distiller = new BackgroundDistiller(generateText, fakeSaveFact);
+
+    await distiller.distill('I like cycling', 'Great hobby!');
+
+    const calledPrompt = generateText.mock.calls[0][0] as string;
+    // 'hobbies' must appear in the behavior definition line, not identity
+    const lines = calledPrompt.split('\n');
+    const behaviorLine = lines.find(l => l.trim().startsWith('- behavior:')) ?? '';
+    const identityLine = lines.find(l => l.trim().startsWith('- identity:')) ?? '';
+    expect(behaviorLine.toLowerCase()).toContain('hobbies');
+    expect(identityLine.toLowerCase()).not.toContain('hobbies');
+    // explicit rule about hobbies → behavior
+    expect(calledPrompt).toContain('behavior, NOT identity');
+  });
 });
