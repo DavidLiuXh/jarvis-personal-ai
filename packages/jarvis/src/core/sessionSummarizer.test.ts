@@ -104,6 +104,33 @@ describe('buildIncrementalSummary', () => {
     const prompt = generateText.mock.calls[0][0] as string;
     expect(prompt.toLowerCase()).toMatch(/decision|outcome|result/);
   });
+
+  it('merge prompt uses XML tags to separate existing summary from new conversation', async () => {
+    const generateText = vi.fn().mockResolvedValue('Updated.');
+    await buildIncrementalSummary(fakeMessages, 'Old summary.', generateText);
+    const prompt = generateText.mock.calls[0][0] as string;
+    expect(prompt).toContain('<existing_summary>');
+    expect(prompt).toContain('</existing_summary>');
+    expect(prompt).toContain('<new_conversation>');
+    expect(prompt).toContain('</new_conversation>');
+  });
+
+  it('merge prompt instructs to overwrite old facts when new info conflicts', async () => {
+    const generateText = vi.fn().mockResolvedValue('Updated.');
+    await buildIncrementalSummary(fakeMessages, 'Old summary.', generateText);
+    const prompt = generateText.mock.calls[0][0] as string;
+    // Must have time-priority / conflict resolution rule
+    expect(prompt.toLowerCase()).toMatch(/contradict|conflict|overwrite|supersede|newer/);
+  });
+
+  it('merge prompt covers Personal, Technical and Strategic domains', async () => {
+    const generateText = vi.fn().mockResolvedValue('Updated.');
+    await buildIncrementalSummary(fakeMessages, 'Old summary.', generateText);
+    const prompt = generateText.mock.calls[0][0] as string;
+    expect(prompt.toLowerCase()).toContain('personal');
+    expect(prompt.toLowerCase()).toContain('technical');
+    expect(prompt.toLowerCase()).toContain('strategic');
+  });
 });
 
 describe('buildHistoryWithSummary', () => {

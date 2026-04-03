@@ -148,34 +148,61 @@ export async function buildIncrementalSummary(
 
   const prompt = existingSummary
     ? `
-You are compressing conversation history for an AI assistant called Jarvis.
+<system_role>
+You are the Memory Engine for Jarvis, an advanced personal AI assistant.
+Your goal is to maintain a coherent, evolving compressed history of the user's conversations.
+</system_role>
 
-Existing compressed history:
+<existing_summary>
 ${existingSummary}
+</existing_summary>
 
-New conversation to incorporate:
+<new_conversation>
 ${newConversation}
+</new_conversation>
 
-Task: Update the compressed history by merging the new conversation.
-Compress into structured Markdown grouped by topic or theme.
-For each topic, preserve: what was discussed, decisions made, outcomes reached.
-Keep causal relationships — why things happened, not just what happened.
-Remove filler, greetings, and trivial exchanges.
-Maximum 600 words total.
+<task>
+Update the compressed history by integrating the new conversation. Follow these rules:
+
+1. **Time Priority (CRITICAL)**: If new information contradicts or supersedes the existing summary, overwrite the older facts with the newer ones. Never keep conflicting information.
+
+2. **Key Domains**: Ensure updates are captured across:
+   - Personal (habits, preferences, hobbies, lifestyle changes)
+   - Technical (active projects, stack decisions, architectural choices, project rules)
+   - Strategic (decisions, investment philosophies, long-term plans, outcomes)
+
+3. **Synthesis**: Do not just append. Re-write sections to maintain a coherent, third-person Markdown narrative grouped by topic or theme.
+
+4. **Causal Relationships**: Preserve why things happened, not just what happened. Include decisions, outcomes, and the reasoning behind them.
+
+5. **Constraint**: Maximum 600 words. Concise and professional English. Remove filler and trivial exchanges.
+</task>
 
 Updated compressed history (Markdown):
 `.trim()
     : `
-You are compressing conversation history for an AI assistant called Jarvis.
+<system_role>
+You are the Memory Engine for Jarvis, an advanced personal AI assistant.
+Your goal is to create a compressed history of the user's conversations.
+</system_role>
 
-Conversation:
+<new_conversation>
 ${newConversation}
+</new_conversation>
 
-Task: Compress this conversation into structured Markdown grouped by topic or theme.
+<task>
+Compress this conversation into structured Markdown grouped by topic or theme.
+
+Cover these key domains where applicable:
+- Personal (habits, preferences, hobbies, lifestyle)
+- Technical (projects, stack decisions, architectural choices, project rules)
+- Strategic (decisions, investment philosophies, long-term plans, outcomes)
+
 For each topic, preserve: what was discussed, decisions made, outcomes reached.
 Keep causal relationships — why things happened, not just what happened.
 Remove filler, greetings, and trivial exchanges.
 Maximum 600 words.
+</task>
 
 Compressed history (Markdown):
 `.trim();
