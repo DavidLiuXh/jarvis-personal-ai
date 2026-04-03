@@ -70,7 +70,9 @@ vi.mock('./configManager.js', () => ({
   ConfigManager: {
     getInstance: vi.fn().mockReturnValue({
       get: vi.fn().mockReturnValue({
-        models: { chat: 'auto', embedding: 'text-embedding-004' },
+        api: { key: '', proxy: '' },
+        models: { chat: 'auto', embedding: 'text-embedding-004', distillation: 'gemini-2.5-flash' },
+        session: { resumeOnStart: false },
       }),
     }),
   },
