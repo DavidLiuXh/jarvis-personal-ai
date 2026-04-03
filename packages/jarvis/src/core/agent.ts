@@ -155,6 +155,7 @@ export class JarvisAgent extends EventEmitter {
         }
 
         let finalAssistantText = '';
+        const allToolsCalled = new Set<string>();
 
         while (true) {
           let retryCount = 0;
@@ -184,6 +185,7 @@ export class JarvisAgent extends EventEmitter {
               }
 
               if (toolCallRequests.length > 0) {
+                for (const req of toolCallRequests) allToolsCalled.add(req.name);
                 currentQueryParts = await this.toolRouter.route(
                   toolCallRequests,
                   abortController.signal,
@@ -215,8 +217,14 @@ export class JarvisAgent extends EventEmitter {
           if (success) break;
         }
 
-        this.memoryService.enqueue(this.sessionId, userPrompt, finalAssistantText);
-        void this.distiller.distill(userPrompt, finalAssistantText);
+        // Skip memory ops when the turn only involved task management tools —
+        // task state is already persisted in tasks.json, no need to distill facts.
+        const onlyTaskTools = allToolsCalled.size > 0 &&
+          [...allToolsCalled].every(name => name.startsWith('task_'));
+        if (!onlyTaskTools) {
+          this.memoryService.enqueue(this.sessionId, userPrompt, finalAssistantText);
+          void this.distiller.distill(userPrompt, finalAssistantText);
+        }
       });
       this.emit(JarvisEventType.DONE);
     } catch (error) {
