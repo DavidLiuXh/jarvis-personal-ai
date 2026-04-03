@@ -113,7 +113,13 @@ export class AgentInitializer {
       config.storage.getProjectTempDir = () => jarvisStorageRoot;
     }
 
-    const authType = settings.merged.security.auth.selectedType || AuthType.LOGIN_WITH_GOOGLE;
+    const forceApiKey = this.jarvisConfig.api.forceApiKey && this.jarvisConfig.api.key;
+    if (forceApiKey) {
+      process.env.GEMINI_API_KEY = this.jarvisConfig.api.key;
+    }
+    const authType = forceApiKey
+      ? AuthType.USE_GEMINI
+      : (settings.merged.security.auth.selectedType || AuthType.LOGIN_WITH_GOOGLE);
     await config.refreshAuth(authType);
     await config.initialize();
 
