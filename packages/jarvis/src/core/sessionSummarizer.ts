@@ -7,7 +7,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import type { Content } from '../../../core/src/index.js';
-import { buildHistoryFromMessages } from './resumeFromDisk.js';
+import { buildHistoryFromMessages, mergeConsecutiveRoles } from './resumeFromDisk.js';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -459,7 +459,7 @@ export function buildHistoryWithSummary(
   const recentHistory = buildHistoryFromMessages(recentMessages);
   history.push(...recentHistory);
 
-  return history;
+  return mergeConsecutiveRoles(history);
 }
 
 // ---------------------------------------------------------------------------

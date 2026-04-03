@@ -16,18 +16,15 @@ type MessageRecord = {
  * Converts a persisted ConversationRecord messages array into a Content[]
  * history suitable for GeminiChat.resumeChat().
  *
- * For each gemini message:
- * - Pushes a { role: 'model', parts: [...] } turn containing:
- *   - Any text content
- *   - Any toolCalls (functionCall parts)
- * - If those toolCalls have results → push a { role: 'user', parts: [functionResponse, ...] } turn
+ * This implementation strictly enforces role alternation (user -> model -> user)
+ * by merging consecutive turns with the same role.
  */
 export function buildHistoryFromMessages(messages: MessageRecord[]): Content[] {
-  const history: Content[] = [];
+  const rawTurns: Content[] = [];
 
   for (const m of messages) {
     if (m.type === 'user') {
-      history.push({
+      rawTurns.push({
         role: 'user',
         parts: Array.isArray(m.content)
           ? (m.content as Part[])
@@ -47,7 +44,7 @@ export function buildHistoryFromMessages(messages: MessageRecord[]): Content[] {
         (tc) => tc.result !== undefined && tc.result !== null,
       );
 
-      // 3. Pushes toolCalls (functionCall) only if they have results
+      // 3. Collect functionCall parts
       if (toolCallsWithResults.length > 0) {
         for (const tc of toolCallsWithResults) {
           modelParts.push({
@@ -60,10 +57,10 @@ export function buildHistoryFromMessages(messages: MessageRecord[]): Content[] {
       }
 
       if (modelParts.length > 0) {
-        history.push({ role: 'model', parts: modelParts });
+        rawTurns.push({ role: 'model', parts: modelParts });
       }
 
-      // 4. Tool call results (functionResponse)
+      // 4. Collect functionResponse parts (sent as 'user' role)
       if (toolCallsWithResults.length > 0) {
         const resParts: Part[] = [];
         for (const tc of toolCallsWithResults) {
@@ -79,11 +76,35 @@ export function buildHistoryFromMessages(messages: MessageRecord[]): Content[] {
           });
         }
         if (resParts.length > 0) {
-          history.push({ role: 'user', parts: resParts });
+          rawTurns.push({ role: 'user', parts: resParts });
         }
       }
     }
   }
 
-  return history;
+  return mergeConsecutiveRoles(rawTurns);
+}
+
+/**
+ * Merges consecutive Content nodes with the same role into a single node
+ * with combined parts. This is required by the Gemini API.
+ */
+export function mergeConsecutiveRoles(history: Content[]): Content[] {
+  if (history.length === 0) return [];
+
+  const merged: Content[] = [];
+  let current: Content = { ...history[0], parts: [...history[0].parts] };
+
+  for (let i = 1; i < history.length; i++) {
+    const next = history[i];
+    if (next.role === current.role) {
+      current.parts.push(...next.parts);
+    } else {
+      merged.push(current);
+      current = { ...next, parts: [...next.parts] };
+    }
+  }
+  merged.push(current);
+
+  return merged;
 }
