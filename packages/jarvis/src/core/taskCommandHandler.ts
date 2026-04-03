@@ -92,6 +92,34 @@ export class TaskCommandHandler {
     }
   }
 
+  /**
+   * Called by ToolRouter when the LLM invokes a task_* tool.
+   * action: 'list' | 'add' | 'enable' | 'disable' | 'delete' | 'run'
+   * args: tool call arguments from the LLM
+   */
+  public async handleTool(action: string, args: Record<string, unknown>): Promise<string> {
+    switch (action) {
+      case 'list': return this.list();
+      case 'add': {
+        const cron = args.cron as string;
+        const prompt = args.prompt as string;
+        const channel = args.channel as string | undefined;
+        const chatId = args.chat_id as string | undefined;
+        const flags = [
+          channel ? `--channel ${channel}` : '',
+          chatId ? `--chat ${chatId}` : '',
+        ].filter(Boolean).join(' ');
+        return this.add(`"${cron}" "${prompt}" ${flags}`.trim());
+      }
+      case 'enable': return this.setEnabled(args.id as string, true);
+      case 'disable': return this.setEnabled(args.id as string, false);
+      case 'toggle': return this.setEnabled(args.id as string, args.enabled as boolean);
+      case 'delete': return this.delete(args.id as string);
+      case 'run': return this.run(args.id as string);
+      default: return `Unknown task action: ${action}`;
+    }
+  }
+
   // ---------------------------------------------------------------------------
 
   private list(): string {

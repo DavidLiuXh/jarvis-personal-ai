@@ -134,4 +134,58 @@ describe('ToolRouter', () => {
       callId: 'call-read_file',
     });
   });
+
+  it('routes task_list to taskCommandHandler.handleTool', async () => {
+    const saveFact = vi.fn();
+    const search = vi.fn();
+    const runSkill = vi.fn();
+    const schedule = vi.fn().mockResolvedValue([]);
+    const getModel = vi.fn().mockReturnValue('gemini-pro');
+    const getChat = vi.fn().mockReturnValue({ getModel, recordCompletedToolCalls: vi.fn() });
+    const getCurrentSequenceModel = vi.fn().mockReturnValue(null);
+    const config = { api: { apiVersion: 'v1alpha' } };
+    const handleTool = vi.fn().mockResolvedValue('📋 Tasks: none');
+
+    const router = new ToolRouter(
+      { saveFact, search },
+      { runSkill },
+      { schedule },
+      { getChat, getCurrentSequenceModel, config } as any,
+      { handleTool } as any,
+    );
+
+    const onToolResponse = vi.fn();
+    const req = makeReq('task_list', {});
+    const parts = await router.route([req], new AbortController().signal, onToolResponse);
+
+    expect(handleTool).toHaveBeenCalledWith('list', {});
+    expect(parts).toHaveLength(1);
+    expect((parts[0] as any).functionResponse.name).toBe('task_list');
+  });
+
+  it('routes task_add to taskCommandHandler.handleTool with args', async () => {
+    const saveFact = vi.fn();
+    const search = vi.fn();
+    const runSkill = vi.fn();
+    const schedule = vi.fn().mockResolvedValue([]);
+    const getModel = vi.fn().mockReturnValue('gemini-pro');
+    const getChat = vi.fn().mockReturnValue({ getModel, recordCompletedToolCalls: vi.fn() });
+    const getCurrentSequenceModel = vi.fn().mockReturnValue(null);
+    const config = { api: { apiVersion: 'v1alpha' } };
+    const handleTool = vi.fn().mockResolvedValue('✅ Task added');
+
+    const router = new ToolRouter(
+      { saveFact, search },
+      { runSkill },
+      { schedule },
+      { getChat, getCurrentSequenceModel, config } as any,
+      { handleTool } as any,
+    );
+
+    const onToolResponse = vi.fn();
+    const req = makeReq('task_add', { cron: '0 8 * * *', prompt: 'Morning brief' });
+    await router.route([req], new AbortController().signal, onToolResponse);
+
+    expect(handleTool).toHaveBeenCalledWith('add', { cron: '0 8 * * *', prompt: 'Morning brief' });
+  });
 });

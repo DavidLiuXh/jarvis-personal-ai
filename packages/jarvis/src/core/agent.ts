@@ -100,6 +100,7 @@ export class JarvisAgent extends EventEmitter {
       this.dynamicRegistry,
       this.scheduler,
       this.client,
+      this.taskCommandHandler,
     );
 
     this.initialized = true;

@@ -140,10 +140,73 @@ export class AgentInitializer {
       parallelizable: true,
     };
 
+    const taskTools = [
+      {
+        name: 'task_list',
+        description: 'List all scheduled tasks with their status (enabled/disabled), cron expression, and target channel.',
+        parameters: { type: 'object', properties: {}, required: [] },
+        parallelizable: false,
+      },
+      {
+        name: 'task_add',
+        description: 'Add a new scheduled task. Use standard cron syntax for the schedule.',
+        parameters: {
+          type: 'object',
+          properties: {
+            cron: { type: 'string', description: 'Cron expression, e.g. "0 8 * * *" for daily at 8am.' },
+            prompt: { type: 'string', description: 'The prompt Jarvis will execute when the task fires.' },
+            channel: { type: 'string', description: 'Output channel: feishu, wechat, or websocket. Optional.' },
+            chat_id: { type: 'string', description: 'Target chat/user ID for the channel. Optional.' },
+          },
+          required: ['cron', 'prompt'],
+        },
+        parallelizable: false,
+      },
+      {
+        name: 'task_toggle',
+        description: 'Enable or disable a scheduled task by ID.',
+        parameters: {
+          type: 'object',
+          properties: {
+            id: { type: 'string', description: 'Task ID from task_list.' },
+            enabled: { type: 'boolean', description: 'true to enable, false to disable.' },
+          },
+          required: ['id', 'enabled'],
+        },
+        parallelizable: false,
+      },
+      {
+        name: 'task_delete',
+        description: 'Permanently delete a scheduled task by ID.',
+        parameters: {
+          type: 'object',
+          properties: {
+            id: { type: 'string', description: 'Task ID from task_list.' },
+          },
+          required: ['id'],
+        },
+        parallelizable: false,
+      },
+      {
+        name: 'task_run',
+        description: 'Immediately trigger a scheduled task once, without waiting for its cron schedule.',
+        parameters: {
+          type: 'object',
+          properties: {
+            id: { type: 'string', description: 'Task ID from task_list.' },
+          },
+          required: ['id'],
+        },
+        parallelizable: false,
+      },
+    ];
+
     // @ts-ignore
     if (typeof registry.addDiscoveredTool === 'function') {
       // @ts-ignore
       registry.addDiscoveredTool(recallMemoryTool);
+      // @ts-ignore
+      for (const tool of taskTools) registry.addDiscoveredTool(tool);
     }
 
     const coreParallelTools = [

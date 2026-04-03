@@ -50,8 +50,14 @@ type ClientHandle = {
 const JARVIS_NATIVE_TOOLS = new Set(['save_memory', 'recall_memory']);
 
 function isNativeTool(name: string): boolean {
-  return name.startsWith('run_evolved_skill_') || JARVIS_NATIVE_TOOLS.has(name);
+  return name.startsWith('run_evolved_skill_') ||
+    name.startsWith('task_') ||
+    JARVIS_NATIVE_TOOLS.has(name);
 }
+
+type TaskCommandHandlerHandle = {
+  handleTool: (action: string, args: Record<string, unknown>) => Promise<string>;
+};
 
 /**
  * Routes tool call requests to either Jarvis-native handlers or the Gemini
@@ -63,6 +69,7 @@ export class ToolRouter {
     private dynamicRegistry: DynamicRegistryHandle,
     private scheduler: SchedulerHandle,
     private client: ClientHandle,
+    private taskCommandHandler?: TaskCommandHandlerHandle,
   ) {}
 
   async route(
@@ -122,6 +129,14 @@ export class ToolRouter {
         output = memories.length > 0
           ? `LONG-TERM MEMORIES FOUND:\n${memories.map(m => `- ${m}`).join('\n')}\n\nINSTRUCTION: Now synthesize this history into your final answer.`
           : `NO SPECIFIC MEMORIES FOUND for "${query}". Proceed with current knowledge.`;
+      } else if (req.name.startsWith('task_')) {
+        const action = req.name.slice('task_'.length);
+        if (this.taskCommandHandler) {
+          console.error(`📅 [Jarvis] Task tool invoked: ${req.name}`);
+          output = await this.taskCommandHandler.handleTool(action, req.args);
+        } else {
+          output = '❌ Task management not available (TaskCommandHandler not initialized).';
+        }
       }
 
       onToolResponse({ name: req.name, status: 'success', output, callId: req.callId });
