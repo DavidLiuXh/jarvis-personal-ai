@@ -42,10 +42,10 @@ function readTasks(tmpDir: string): TasksConfig {
 }
 
 describe('TaskCommandHandler', () => {
-  describe('/task list', () => {
+  describe('!task list', () => {
     it('shows empty message when no tasks exist', async () => {
       const { handler } = makeHandler();
-      const result = await handler.handle('/task list');
+      const result = await handler.handle('!task list');
       expect(result).toContain('No tasks');
     });
 
@@ -56,7 +56,7 @@ describe('TaskCommandHandler', () => {
           { id: 'task2', cron: '0 22 * * *', prompt: 'Evening report', enabled: false },
         ],
       });
-      const result = await handler.handle('/task list');
+      const result = await handler.handle('!task list');
       expect(result).toContain('task1');
       expect(result).toContain('task2');
       expect(result).toContain('✅');  // enabled
@@ -64,10 +64,10 @@ describe('TaskCommandHandler', () => {
     });
   });
 
-  describe('/task add', () => {
+  describe('!task add', () => {
     it('adds a new task and reloads scheduler', async () => {
       const { handler, tmpDir, reload } = makeHandler();
-      const result = await handler.handle('/task add "0 8 * * *" "Morning brief"');
+      const result = await handler.handle('!task add "0 8 * * *" "Morning brief"');
       expect(result).toContain('added');
       expect(reload).toHaveBeenCalledOnce();
       const saved = readTasks(tmpDir);
@@ -79,7 +79,7 @@ describe('TaskCommandHandler', () => {
 
     it('supports optional --channel and --chat flags', async () => {
       const { handler, tmpDir } = makeHandler();
-      await handler.handle('/task add "0 8 * * *" "Brief" --channel wechat --chat user123');
+      await handler.handle('!task add "0 8 * * *" "Brief" --channel wechat --chat user123');
       const saved = readTasks(tmpDir);
       expect(saved.tasks[0].channel).toBe('wechat');
       expect(saved.tasks[0].chatId).toBe('user123');
@@ -87,17 +87,17 @@ describe('TaskCommandHandler', () => {
 
     it('returns error for invalid cron expression', async () => {
       const { handler } = makeHandler();
-      const result = await handler.handle('/task add "not-a-cron" "Brief"');
+      const result = await handler.handle('!task add "not-a-cron" "Brief"');
       expect(result.toLowerCase()).toContain('invalid');
     });
   });
 
-  describe('/task enable / disable', () => {
+  describe('!task enable / disable', () => {
     it('enables a disabled task', async () => {
       const { handler, tmpDir, reload } = makeHandler({
         tasks: [{ id: 'task1', cron: '0 8 * * *', prompt: 'Brief', enabled: false }],
       });
-      const result = await handler.handle('/task enable task1');
+      const result = await handler.handle('!task enable task1');
       expect(result).toContain('enabled');
       expect(reload).toHaveBeenCalledOnce();
       expect(readTasks(tmpDir).tasks[0].enabled).toBe(true);
@@ -107,7 +107,7 @@ describe('TaskCommandHandler', () => {
       const { handler, tmpDir, reload } = makeHandler({
         tasks: [{ id: 'task1', cron: '0 8 * * *', prompt: 'Brief', enabled: true }],
       });
-      const result = await handler.handle('/task disable task1');
+      const result = await handler.handle('!task disable task1');
       expect(result).toContain('disabled');
       expect(reload).toHaveBeenCalledOnce();
       expect(readTasks(tmpDir).tasks[0].enabled).toBe(false);
@@ -115,29 +115,29 @@ describe('TaskCommandHandler', () => {
 
     it('returns error for unknown task id', async () => {
       const { handler } = makeHandler();
-      const result = await handler.handle('/task enable nonexistent');
+      const result = await handler.handle('!task enable nonexistent');
       expect(result.toLowerCase()).toContain('not found');
     });
   });
 
-  describe('/task delete', () => {
+  describe('!task delete', () => {
     it('deletes a task and reloads', async () => {
       const { handler, tmpDir, reload } = makeHandler({
         tasks: [{ id: 'task1', cron: '0 8 * * *', prompt: 'Brief', enabled: true }],
       });
-      const result = await handler.handle('/task delete task1');
+      const result = await handler.handle('!task delete task1');
       expect(result).toContain('deleted');
       expect(reload).toHaveBeenCalledOnce();
       expect(readTasks(tmpDir).tasks).toHaveLength(0);
     });
   });
 
-  describe('/task run', () => {
+  describe('!task run', () => {
     it('triggers a task immediately via runNow callback', async () => {
       const { handler, runNow } = makeHandler({
         tasks: [{ id: 'task1', cron: '0 8 * * *', prompt: 'Brief', enabled: true }],
       });
-      const result = await handler.handle('/task run task1');
+      const result = await handler.handle('!task run task1');
       expect(result).toContain('triggered');
       expect(runNow).toHaveBeenCalledWith(
         expect.objectContaining({ id: 'task1' }),
@@ -148,7 +148,7 @@ describe('TaskCommandHandler', () => {
   describe('unknown commands', () => {
     it('returns help text for unknown subcommand', async () => {
       const { handler } = makeHandler();
-      const result = await handler.handle('/task unknown');
+      const result = await handler.handle('!task unknown');
       expect(result.toLowerCase()).toContain('usage');
     });
   });
