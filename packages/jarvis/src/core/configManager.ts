@@ -12,6 +12,8 @@ export interface JarvisConfig {
   api: {
     key: string;
     proxy?: string;
+    /** Force API Key auth (generativelanguage.googleapis.com) instead of Google Login. Requires api.key to be set. */
+    forceApiKey?: boolean;
   };
   models: {
     chat: string;
