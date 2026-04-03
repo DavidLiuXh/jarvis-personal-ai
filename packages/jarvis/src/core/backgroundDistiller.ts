@@ -39,7 +39,9 @@ Source rule (CRITICAL):
 Category definitions (mutually exclusive):
 - identity: ONLY static facts about who the user IS — name, job title, profession, skills (e.g. "user is a software engineer named David", "user is good at cooking")
 - behavior: User's habits, hobbies, interests, lifestyle, routines, or recurring patterns (e.g. "runs 3 times a week", "likes cycling", "interested in history", "always asks for background before details")
-- preference: ONLY about how the user wants Jarvis to FORMAT or STYLE responses — output format, tone, language, length. NOT about the user's personal traits or interests. (e.g. "prefers table format for data", "wants concise answers in Chinese")
+- preference: ONLY persistent, long-term response style preferences about FORMAT or STYLE — output format, tone, language, length. NOT personal traits, hobbies, or one-time/temporary instructions.
+  Signs of persistence: "always", "every time", "from now on", "以后", "每次"
+  Signs of one-time (IGNORE these): "this time", "just now", "for this response", "这次", "just say", test commands like "return exactly X"
 - specification: Technical decisions, project constraints, or system rules (e.g. "project uses TypeScript", "do not modify gemini-cli source")
 
 Rules:

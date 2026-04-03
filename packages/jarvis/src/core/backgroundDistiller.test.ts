@@ -46,6 +46,9 @@ describe('BackgroundDistiller', () => {
     expect(calledPrompt).toContain('exactly ONE category');
     // preference must be restricted to response style, not user traits
     expect(calledPrompt).toContain('FORMAT or STYLE');
+    // preference must only capture persistent preferences, not one-time instructions
+    expect(calledPrompt.toLowerCase()).toMatch(/persistent|long.term/);
+    expect(calledPrompt.toLowerCase()).toMatch(/one.time|temporary|test/);
   });
 
   it('saves preference facts with correct category', async () => {
