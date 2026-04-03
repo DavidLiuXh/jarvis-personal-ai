@@ -64,6 +64,7 @@ import { WechatChannel } from './core/channels/wechat.js';
 import { TaskScheduler } from './core/taskScheduler.js';
 import { ChannelRegistry } from './core/channelRegistry.js';
 import { ProactiveTaskRunner } from './core/proactiveTaskRunner.js';
+import { TaskCommandHandler } from './core/taskCommandHandler.js';
 
 const JARVIS_HOME = path.join(os.homedir(), '.gemini-jarvis');
 
@@ -159,6 +160,16 @@ class JarvisServer {
       void this.taskRunner.run(task, this.channelRegistry);
     });
     this.taskScheduler.start();
+
+    // Inject /task command handler into the global agent
+    const taskCommandHandler = new TaskCommandHandler(
+      JARVIS_HOME,
+      () => this.taskScheduler.reload(),
+      (task) => this.taskRunner.run(task, this.channelRegistry),
+    );
+    void this.manager.getAgent(jarvisConfig.session?.globalSessionId ?? 'jarvis-global').then(agent => {
+      agent.setTaskCommandHandler(taskCommandHandler);
+    });
   }
 
   private async initializeMemorySync() {
