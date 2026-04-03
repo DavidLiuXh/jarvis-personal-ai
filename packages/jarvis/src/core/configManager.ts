@@ -56,6 +56,10 @@ export interface JarvisConfig {
     /** Number of recent raw message turns to include after the summary. Default: 20. */
     recentTurnsOnResume: number;
   };
+  tasks?: {
+    /** Default channel for proactive task output. */
+    defaultChannel?: string;
+  };
 }
 
 const JARVIS_HOME = path.join(os.homedir(), '.gemini-jarvis');

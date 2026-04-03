@@ -61,6 +61,11 @@ import { JarvisManager } from './core/manager.js';
 import { JarvisEventType, type JarvisIncomingMessage } from './core/types.js';
 import { FeishuChannel } from './core/channels/feishu.js';
 import { WechatChannel } from './core/channels/wechat.js';
+import { TaskScheduler } from './core/taskScheduler.js';
+import { ChannelRegistry } from './core/channelRegistry.js';
+import { ProactiveTaskRunner } from './core/proactiveTaskRunner.js';
+
+const JARVIS_HOME = path.join(os.homedir(), '.gemini-jarvis');
 
 // @ts-expect-error - Relative import
 import { loadCliConfig } from '../../cli/src/config/config.js';
@@ -78,6 +83,11 @@ class JarvisServer {
   private app: express.Application;
   private server: Server;
   private manager: JarvisManager;
+  private taskScheduler!: TaskScheduler;
+  private channelRegistry!: ChannelRegistry;
+  private taskRunner!: ProactiveTaskRunner;
+  private feishuChannel?: FeishuChannel;
+  private wechatChannel?: WechatChannel;
 
   constructor() {
     this.app = express();
@@ -90,18 +100,18 @@ class JarvisServer {
 
     if (jarvisConfig.feishu.enabled) {
       console.error(`🔌 [Jarvis] Activating Feishu Swarm Link for AppID: ${jarvisConfig.feishu.appId}`);
-      const feishu = new FeishuChannel(
+      this.feishuChannel = new FeishuChannel(
         jarvisConfig.feishu.appId,
         jarvisConfig.feishu.appSecret,
         this.manager
       );
-      void feishu.start();
+      void this.feishuChannel.start();
     }
 
     if (jarvisConfig.wechat.enabled) {
       console.error('🔌 [Jarvis] Activating Official WeChat Channel...');
-      const wechat = new WechatChannel(this.manager);
-      void wechat.start();
+      this.wechatChannel = new WechatChannel(this.manager);
+      void this.wechatChannel.start();
     }
 
     const apiKey = jarvisConfig.api.key || process.env.GOOGLE_API_KEY || process.env.GEMINI_API_KEY;
@@ -110,6 +120,45 @@ class JarvisServer {
     } else {
       void this.initializeMemorySync();
     }
+
+    // --- Proactive Task System ---
+    this.channelRegistry = new ChannelRegistry(jarvisConfig.tasks?.defaultChannel ?? 'feishu');
+    this.taskRunner = new ProactiveTaskRunner((sessionId) => this.manager.getAgent(sessionId));
+    this.taskScheduler = new TaskScheduler(JARVIS_HOME);
+
+    // Register feishu adapter
+    if (this.feishuChannel) {
+      const feishu = this.feishuChannel;
+      this.channelRegistry.register('feishu', {
+        push: (chatId, text) => feishu.sendProactive(chatId, text),
+      });
+    }
+
+    // Register wechat adapter
+    if (this.wechatChannel) {
+      const wechat = this.wechatChannel;
+      this.channelRegistry.register('wechat', {
+        push: (userId, text) => wechat.sendProactive(userId, text),
+      });
+    }
+
+    // WebSocket broadcast adapter (always registered)
+    this.channelRegistry.register('websocket', {
+      push: async (_chatId: string, text: string) => {
+        this.wss.clients.forEach(client => {
+          if ((client as WebSocket).readyState === 1) {
+            client.send(JSON.stringify({ type: 'proactive', payload: text }));
+          }
+        });
+      },
+    });
+
+    // Wire scheduler → runner → registry
+    this.taskScheduler.onTrigger((task) => {
+      console.error(`⏰ [Jarvis] Proactive task "${task.id}" triggered → ${task.channel}:${task.chatId}`);
+      void this.taskRunner.run(task, this.channelRegistry);
+    });
+    this.taskScheduler.start();
   }
 
   private async initializeMemorySync() {

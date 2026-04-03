@@ -31,6 +31,18 @@ export class FeishuChannel {
     this.manager = manager;
   }
 
+  /** Proactively send a plain-text message to a chat without waiting for user input. */
+  public async sendProactive(chatId: string, text: string): Promise<void> {
+    await this.client.im.message.create({
+      params: { receive_id_type: 'chat_id' },
+      data: {
+        receive_id: chatId,
+        msg_type: 'text',
+        content: JSON.stringify({ text }),
+      },
+    });
+  }
+
   public async start() {
     console.error('\n📡 [Feishu] Swarm Link Booting (Industrial Resilience Mode)...');
     
