@@ -9,7 +9,7 @@ import type { Content, Part } from '../../../core/src/index.js';
 type MessageRecord = {
   type: string;
   content: unknown;
-  toolCalls?: Array<{ name: string; result: unknown }>;
+  toolCalls?: Array<{ id?: string; name: string; args: any; result: unknown }>;
 };
 
 /**
@@ -17,11 +17,10 @@ type MessageRecord = {
  * history suitable for GeminiChat.resumeChat().
  *
  * For each gemini message:
- * - If it has text content → push a { role: 'model', parts: [{ text }] } turn
- * - If it has toolCalls with results → push a { role: 'user', parts: [functionResponse, ...] } turn
- *
- * Previously only functionResponse turns were pushed, causing the model's
- * text replies to be lost on resume.
+ * - Pushes a { role: 'model', parts: [...] } turn containing:
+ *   - Any text content
+ *   - Any toolCalls (functionCall parts)
+ * - If those toolCalls have results → push a { role: 'user', parts: [functionResponse, ...] } turn
  */
 export function buildHistoryFromMessages(messages: MessageRecord[]): Content[] {
   const history: Content[] = [];
@@ -35,26 +34,49 @@ export function buildHistoryFromMessages(messages: MessageRecord[]): Content[] {
           : [{ text: String(m.content) }],
       });
     } else if (m.type === 'gemini') {
+      const modelParts: Part[] = [];
+
       // 1. Model text reply
       const text = typeof m.content === 'string' ? m.content : '';
       if (text.trim()) {
-        history.push({ role: 'model', parts: [{ text }] });
+        modelParts.push({ text });
       }
 
-      // 2. Tool call results (sent back as user/functionResponse)
-      // tc.result may be an array (responseParts) or a plain object.
-      // Gemini API requires response to be a plain object — wrap arrays.
-      if (m.toolCalls && m.toolCalls.length > 0) {
+      // 2. Identify tool calls that HAVE results
+      const toolCallsWithResults = (m.toolCalls || []).filter(
+        (tc) => tc.result !== undefined && tc.result !== null,
+      );
+
+      // 3. Pushes toolCalls (functionCall) only if they have results
+      if (toolCallsWithResults.length > 0) {
+        for (const tc of toolCallsWithResults) {
+          modelParts.push({
+            functionCall: {
+              name: tc.name,
+              args: tc.args || {},
+            },
+          });
+        }
+      }
+
+      if (modelParts.length > 0) {
+        history.push({ role: 'model', parts: modelParts });
+      }
+
+      // 4. Tool call results (functionResponse)
+      if (toolCallsWithResults.length > 0) {
         const resParts: Part[] = [];
-        for (const tc of m.toolCalls) {
-          if (tc.result !== undefined && tc.result !== null) {
-            const response = Array.isArray(tc.result)
-              ? { output: tc.result.map((p: any) => p?.functionResponse?.response?.output ?? '').join('\n') }
-              : tc.result as any;
-            resParts.push({
-              functionResponse: { name: tc.name, response },
-            });
-          }
+        for (const tc of toolCallsWithResults) {
+          const response = Array.isArray(tc.result)
+            ? {
+                output: tc.result
+                  .map((p: any) => p?.functionResponse?.response?.output ?? '')
+                  .join('\n'),
+              }
+            : (tc.result as any);
+          resParts.push({
+            functionResponse: { name: tc.name, response },
+          });
         }
         if (resParts.length > 0) {
           history.push({ role: 'user', parts: resParts });
