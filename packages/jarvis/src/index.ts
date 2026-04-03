@@ -56,7 +56,7 @@ import { createServer, type Server } from 'node:http';
 import { v4 as uuidv4 } from 'uuid';
 import { fileURLToPath } from 'node:url';
 
-import { debugLogger, AuthType } from '../../core/src/index.js';
+import { debugLogger, AuthType, ConsecaSafetyChecker } from '../../core/src/index.js';
 import { JarvisManager } from './core/manager.js';
 import { JarvisEventType, type JarvisIncomingMessage } from './core/types.js';
 import { FeishuChannel } from './core/channels/feishu.js';
@@ -98,6 +98,22 @@ class JarvisServer {
 
     this.setupRoutes();
     this.setupWebSocket();
+  }
+
+  public async init() {
+    // --- PROXY MANAGEMENT ---
+    if (jarvisConfig.api.proxy) {
+      console.error(`🌐 [Jarvis] Configuring Global Proxy: ${jarvisConfig.api.proxy}`);
+      const proxyAgent = new ProxyAgent(jarvisConfig.api.proxy);
+      setGlobalDispatcher(proxyAgent);
+    } else {
+      console.error('🌐 [Jarvis] No proxy configured. Ensuring direct connection...');
+      // Explicitly clear environment variables to prevent undici from picking them up
+      delete process.env.http_proxy;
+      delete process.env.HTTP_PROXY;
+      delete process.env.https_proxy;
+      delete process.env.HTTPS_PROXY;
+    }
 
     if (jarvisConfig.feishu.enabled) {
       console.error(`🔌 [Jarvis] Activating Feishu Swarm Link for AppID: ${jarvisConfig.feishu.appId}`);
@@ -115,11 +131,12 @@ class JarvisServer {
       void this.wechatChannel.start();
     }
 
+    // Always run sync to initialize global singletons (Conseca, etc.)
+    await this.initializeMemorySync();
+
     const apiKey = jarvisConfig.api.key || process.env.GOOGLE_API_KEY || process.env.GEMINI_API_KEY;
     if (apiKey) {
       this.manager.getMemoryService().startWithApiKey(apiKey);
-    } else {
-      void this.initializeMemorySync();
     }
 
     // --- Proactive Task System ---
@@ -183,6 +200,7 @@ class JarvisServer {
       );
       await config.refreshAuth(settings.merged.security.auth.selectedType || AuthType.LOGIN_WITH_GOOGLE);
       await config.initialize();
+      ConsecaSafetyChecker.getInstance().setConfig(config);
       this.manager.getMemoryService().setConfig(config);
     } catch (err) {
       debugLogger.error('[JarvisServer] Startup sync failed:', err);
@@ -351,7 +369,9 @@ class JarvisServer {
 }
 
 const server = new JarvisServer();
-server.start();
+void server.init().then(() => {
+  server.start();
+});
 
 let isShuttingDown = false;
 const shutdown = async () => {
