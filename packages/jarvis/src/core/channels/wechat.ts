@@ -56,6 +56,32 @@ export class WechatChannel {
     fs.writeFileSync(SESSION_FILE, JSON.stringify(session, null, 2));
   }
 
+  /** Proactively send a plain-text message to a user without waiting for user input. */
+  public async sendProactive(userId: string, text: string): Promise<void> {
+    if (!this.session) {
+      console.error('❌ [Wechat] Cannot send proactive message: not logged in');
+      return;
+    }
+    try {
+      await fetch(new URL('ilink/bot/sendmessage', this.session.baseUrl).toString(), {
+        method: 'POST',
+        headers: this.buildHeaders(),
+        body: JSON.stringify({
+          base_info: { channel_version: '1.0.2' },
+          msg: {
+            to_user_id: userId,
+            client_id: `jarvis-proactive-${Date.now()}`,
+            message_type: 2,
+            message_state: 2,
+            item_list: [{ type: 1, text_item: { text } }],
+          },
+        }),
+      });
+    } catch (e: any) {
+      console.error(`❌ [Wechat] Failed to send proactive message: ${e.message}`);
+    }
+  }
+
   public async start() {
     if (this.isRunning) return;
     this.isRunning = true;
