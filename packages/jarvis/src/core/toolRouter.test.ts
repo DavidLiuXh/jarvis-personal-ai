@@ -188,4 +188,51 @@ describe('ToolRouter', () => {
 
     expect(handleTool).toHaveBeenCalledWith('add', { cron: '0 8 * * *', prompt: 'Morning brief' });
   });
+
+  it('intercepts ask_user and returns auto-selected option with user-facing message', async () => {
+    const saveFact = vi.fn();
+    const search = vi.fn();
+    const runSkill = vi.fn();
+    const schedule = vi.fn().mockResolvedValue([]);
+    const getModel = vi.fn().mockReturnValue('gemini-pro');
+    const getChat = vi.fn().mockReturnValue({ getModel, recordCompletedToolCalls: vi.fn() });
+    const getCurrentSequenceModel = vi.fn().mockReturnValue(null);
+    const config = { api: { apiVersion: 'v1alpha' } };
+
+    const router = new ToolRouter(
+      { saveFact, search },
+      { runSkill },
+      { schedule },
+      { getChat, getCurrentSequenceModel, config } as any,
+    );
+
+    const questions = [{
+      question: 'Where should I create worktrees?',
+      header: 'Worktree Location',
+      options: [
+        { label: '.worktrees/', description: 'Project-local, hidden (recommended)' },
+        { label: '~/.config/superpowers/worktrees/', description: 'Global location' },
+      ],
+    }];
+
+    const onToolResponse = vi.fn();
+    const req = {
+      name: 'ask_user',
+      args: { questions },
+      callId: 'call-ask_user',
+    };
+    const parts = await router.route([req], new AbortController().signal, onToolResponse);
+
+    // Must be handled as native (not sent to scheduler)
+    expect(schedule).not.toHaveBeenCalled();
+    expect(parts).toHaveLength(1);
+
+    // Response must contain the question, all options, and instruction to inform user
+    const response = JSON.stringify((parts[0] as any).functionResponse.response);
+    expect(response).toContain('Where should I create worktrees?');
+    expect(response).toContain('.worktrees/');
+    expect(response).toContain('~/.config/superpowers/worktrees/');
+    expect(response.toLowerCase()).toMatch(/recommended|auto.selected|default/);
+    expect(response.toLowerCase()).toMatch(/inform|tell.*user|let.*user know/);
+  });
 });
