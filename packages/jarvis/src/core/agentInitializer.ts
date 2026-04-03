@@ -113,16 +113,7 @@ export class AgentInitializer {
       config.storage.getProjectTempDir = () => jarvisStorageRoot;
     }
 
-    // Prefer API Key auth when configured — uses generativelanguage.googleapis.com
-    // which benefits from AI Studio billing tier quotas and is more stable than
-    // the Google Login path (cloudcode-pa.googleapis.com).
-    const apiKey = this.jarvisConfig.api.key || process.env.GOOGLE_API_KEY || process.env.GEMINI_API_KEY;
-    const authType = apiKey
-      ? AuthType.USE_GEMINI
-      : (settings.merged.security.auth.selectedType || AuthType.LOGIN_WITH_GOOGLE);
-    if (apiKey) {
-      process.env.GEMINI_API_KEY = apiKey;
-    }
+    const authType = settings.merged.security.auth.selectedType || AuthType.LOGIN_WITH_GOOGLE;
     await config.refreshAuth(authType);
     await config.initialize();
 
