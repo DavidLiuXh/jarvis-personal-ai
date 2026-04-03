@@ -118,4 +118,12 @@ export class TaskScheduler {
     this.jobs = [];
     console.error(`🛑 [TaskScheduler] All tasks stopped.`);
   }
+
+  /** Reload tasks.json and re-register all cron jobs. */
+  public reload(): void {
+    this.stop();
+    this.config = this.loadConfig();
+    this.start();
+    console.error(`🔄 [TaskScheduler] Reloaded.`);
+  }
 }

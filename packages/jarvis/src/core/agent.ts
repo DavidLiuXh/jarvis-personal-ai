@@ -23,6 +23,7 @@ import { SystemPromptBuilder, type FactRecord } from './systemPromptBuilder.js';
 import { BackgroundDistiller } from './backgroundDistiller.js';
 import { ToolRouter } from './toolRouter.js';
 import { AgentInitializer } from './agentInitializer.js';
+import { type TaskCommandHandler } from './taskCommandHandler.js';
 
 /**
  * JARVIS 3.0: The Digital Lifeform Agent
@@ -42,6 +43,7 @@ export class JarvisAgent extends EventEmitter {
   private distiller!: BackgroundDistiller;
   private toolRouter!: ToolRouter;
   private agentInitializer: AgentInitializer;
+  private taskCommandHandler?: TaskCommandHandler;
 
   constructor(options: JarvisAgentOptions) {
     super();
@@ -114,7 +116,20 @@ export class JarvisAgent extends EventEmitter {
     console.error(`🔄 [Jarvis] System Prompt Refreshed. History Size: ${history.length} turns. Facts injected: ${facts.length}.`);
   }
 
+  public setTaskCommandHandler(handler: TaskCommandHandler): void {
+    this.taskCommandHandler = handler;
+  }
+
   public async processMessage(userPrompt: string, imageAttachment?: { data: Buffer; mimeType: string }) {
+    // Intercept /task commands before sending to LLM
+    if (userPrompt.trimStart().startsWith('/task') && this.taskCommandHandler) {
+      await this.initialize();
+      const result = await this.taskCommandHandler.handle(userPrompt);
+      this.emit(JarvisEventType.CONTENT, { type: JarvisEventType.CONTENT, value: result });
+      this.emit(JarvisEventType.DONE);
+      return;
+    }
+
     if (this.isProcessing) {
       throw new Error('Mission in progress.');
     }
