@@ -47,12 +47,52 @@ type ClientHandle = {
   config: { api?: { apiVersion?: string } };
 };
 
-const JARVIS_NATIVE_TOOLS = new Set(['save_memory', 'recall_memory']);
+const JARVIS_NATIVE_TOOLS = new Set(['save_memory', 'recall_memory', 'ask_user']);
 
 function isNativeTool(name: string): boolean {
   return name.startsWith('run_evolved_skill_') ||
     name.startsWith('task_') ||
     JARVIS_NATIVE_TOOLS.has(name);
+}
+
+type AskUserQuestion = {
+  question: string;
+  header?: string;
+  options?: Array<{ label: string; description?: string }>;
+};
+
+/**
+ * Converts an ask_user tool call into a structured prompt that lets the LLM
+ * auto-select the recommended option and inform the user of all choices.
+ */
+function buildAskUserResponse(questions: AskUserQuestion[]): string {
+  const parts: string[] = [
+    'SYSTEM: ask_user tool is not available in server mode. Auto-selecting recommended options.',
+    '',
+  ];
+
+  for (const q of questions) {
+    parts.push(`Question: ${q.question}`);
+    if (q.options && q.options.length > 0) {
+      parts.push('Options:');
+      q.options.forEach((opt, i) => {
+        const isRecommended = opt.description?.toLowerCase().includes('recommended');
+        const marker = isRecommended ? ' ← AUTO-SELECTED (recommended default)' : '';
+        parts.push(`  ${i + 1}. ${opt.label}${opt.description ? ` — ${opt.description}` : ''}${marker}`);
+      });
+    }
+    parts.push('');
+  }
+
+  parts.push(
+    'Instructions for your response:',
+    '1. Proceed with the AUTO-SELECTED option(s) above.',
+    '2. Inform the user of all available options and which one was auto-selected.',
+    '3. Tell the user they can change the selection by replying naturally',
+    '   (e.g. "use option 2" or "use the global location").',
+  );
+
+  return parts.join('\n');
 }
 
 type TaskCommandHandlerHandle = {
@@ -137,6 +177,10 @@ export class ToolRouter {
         } else {
           output = '❌ Task management not available (TaskCommandHandler not initialized).';
         }
+      } else if (req.name === 'ask_user') {
+        const questions = (req.args.questions ?? []) as AskUserQuestion[];
+        console.error(`❓ [Jarvis] ask_user intercepted — auto-selecting recommended options.`);
+        output = buildAskUserResponse(questions);
       }
 
       onToolResponse({ name: req.name, status: 'success', output, callId: req.callId });
