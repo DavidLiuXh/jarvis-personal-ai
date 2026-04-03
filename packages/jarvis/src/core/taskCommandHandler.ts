@@ -13,18 +13,18 @@ const TASKS_FILENAME = 'tasks.json';
 
 const HELP = `
 📅 Task commands:
-  /task list                              — List all tasks
-  /task add "<cron>" "<prompt>"           — Add a new task (enabled by default)
+  !task list                              — List all tasks
+  !task add "<cron>" "<prompt>"           — Add a new task (enabled by default)
        [--channel feishu|wechat|websocket]
        [--chat <chatId>]
-  /task enable <id>                       — Enable a task
-  /task disable <id>                      — Disable a task
-  /task delete <id>                       — Delete a task
-  /task run <id>                          — Trigger a task immediately
+  !task enable <id>                       — Enable a task
+  !task disable <id>                      — Disable a task
+  !task delete <id>                       — Delete a task
+  !task run <id>                          — Trigger a task immediately
 
 Usage example:
-  /task add "0 8 * * *" "Generate morning news brief"
-  /task add "0 22 * * 1-5" "Analyze US stock market" --channel feishu --chat oc_xxx
+  !task add "0 8 * * *" "Generate morning news brief"
+  !task add "0 22 * * 1-5" "Analyze US stock market" --channel feishu --chat oc_xxx
 `.trim();
 
 function generateId(prompt: string): string {
@@ -65,7 +65,7 @@ function parseArgs(input: string): { positional: string[]; flags: Record<string,
 }
 
 /**
- * Handles /task commands: parses input, mutates tasks.json, calls reload.
+ * Handles !task commands: parses input, mutates tasks.json, calls reload.
  */
 export class TaskCommandHandler {
   constructor(
@@ -76,9 +76,9 @@ export class TaskCommandHandler {
 
   public async handle(input: string): Promise<string> {
     const trimmed = input.trim();
-    if (!trimmed.startsWith('/task')) return '';
+    if (!trimmed.startsWith('!task')) return '';
 
-    const body = trimmed.slice('/task'.length).trim();
+    const body = trimmed.slice('!task'.length).trim();
     const [subcommand, ...rest] = body.split(/\s+/);
 
     switch (subcommand?.toLowerCase()) {
@@ -142,11 +142,11 @@ export class TaskCommandHandler {
   }
 
   private setEnabled(id: string, enabled: boolean): string {
-    if (!id) return `Missing task id.\nUsage: /task ${enabled ? 'enable' : 'disable'} <id>`;
+    if (!id) return `Missing task id.\nUsage: !task ${enabled ? 'enable' : 'disable'} <id>`;
 
     const config = this.readConfig();
     const task = config?.tasks.find(t => t.id === id);
-    if (!task) return `❌ Task "${id}" not found. Use /task list to see available tasks.`;
+    if (!task) return `❌ Task "${id}" not found. Use !task list to see available tasks.`;
 
     task.enabled = enabled;
     this.writeConfig(config!);
@@ -156,11 +156,11 @@ export class TaskCommandHandler {
   }
 
   private delete(id: string): string {
-    if (!id) return `Missing task id.\nUsage: /task delete <id>`;
+    if (!id) return `Missing task id.\nUsage: !task delete <id>`;
 
     const config = this.readConfig();
     const idx = config?.tasks.findIndex(t => t.id === id) ?? -1;
-    if (idx === -1) return `❌ Task "${id}" not found. Use /task list to see available tasks.`;
+    if (idx === -1) return `❌ Task "${id}" not found. Use !task list to see available tasks.`;
 
     config!.tasks.splice(idx, 1);
     this.writeConfig(config!);
@@ -170,11 +170,11 @@ export class TaskCommandHandler {
   }
 
   private async run(id: string): Promise<string> {
-    if (!id) return `Missing task id.\nUsage: /task run <id>`;
+    if (!id) return `Missing task id.\nUsage: !task run <id>`;
 
     const config = this.readConfig();
     const task = config?.tasks.find(t => t.id === id);
-    if (!task) return `❌ Task "${id}" not found. Use /task list to see available tasks.`;
+    if (!task) return `❌ Task "${id}" not found. Use !task list to see available tasks.`;
 
     const triggered: TriggeredTask = {
       ...task,

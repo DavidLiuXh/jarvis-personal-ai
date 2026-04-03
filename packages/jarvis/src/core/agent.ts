@@ -121,8 +121,8 @@ export class JarvisAgent extends EventEmitter {
   }
 
   public async processMessage(userPrompt: string, imageAttachment?: { data: Buffer; mimeType: string }) {
-    // Intercept /task commands — no LLM, no memory operations needed
-    if (userPrompt.trimStart().startsWith('/task') && this.taskCommandHandler) {
+    // Intercept !task commands — no LLM, no memory operations needed
+    if (userPrompt.trimStart().startsWith('!task') && this.taskCommandHandler) {
       const result = await this.taskCommandHandler.handle(userPrompt);
       this.emit(JarvisEventType.CONTENT, { type: JarvisEventType.CONTENT, value: result });
       this.emit(JarvisEventType.DONE);
