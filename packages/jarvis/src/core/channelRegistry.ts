@@ -11,14 +11,22 @@ export type ChannelAdapter = {
 
 /**
  * Registry of communication channels available for proactive task output.
- * Each channel is identified by a string key (e.g. 'feishu', 'wechat', 'websocket').
  */
 export class ChannelRegistry {
+  private static instance: ChannelRegistry;
   private channels = new Map<string, ChannelAdapter>();
 
-  constructor(private defaultChannel?: string) {}
+  private constructor(private defaultChannel?: string) {}
+
+  public static getInstance(defaultChannel?: string): ChannelRegistry {
+    if (!ChannelRegistry.instance) {
+      ChannelRegistry.instance = new ChannelRegistry(defaultChannel);
+    }
+    return ChannelRegistry.instance;
+  }
 
   public register(name: string, adapter: ChannelAdapter): void {
+    console.error(`🔌 [ChannelRegistry] Registering channel: ${name}`);
     this.channels.set(name, adapter);
   }
 

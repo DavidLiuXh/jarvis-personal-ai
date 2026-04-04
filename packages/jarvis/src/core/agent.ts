@@ -5,6 +5,9 @@
  */
 
 import { EventEmitter } from 'node:events';
+import path from 'node:path';
+import fs from 'node:fs';
+import os from 'node:os';
 import {
   GeminiClient,
   debugLogger,
@@ -24,6 +27,10 @@ import { BackgroundDistiller } from './backgroundDistiller.js';
 import { ToolRouter } from './toolRouter.js';
 import { AgentInitializer } from './agentInitializer.js';
 import { type TaskCommandHandler } from './taskCommandHandler.js';
+import {
+  loadSummaryState,
+  renderStructuredContext,
+} from './sessionSummarizer.js';
 
 /**
  * JARVIS 3.0: The Digital Lifeform Agent
@@ -101,6 +108,7 @@ export class JarvisAgent extends EventEmitter {
       this.scheduler,
       this.client,
       this.taskCommandHandler,
+      (args) => this.emit('deliver_result', args), // CONNECT TO TASK RUNNER
     );
 
     this.initialized = true;
@@ -108,8 +116,15 @@ export class JarvisAgent extends EventEmitter {
   }
 
   private async refreshContext(userPrompt: string) {
+    const isProactive = this.sessionId.startsWith('cron-') || this.sessionId === 'jarvis-proactive';
     const facts = await this.memoryService.searchFacts(userPrompt) as FactRecord[];
-    const protocol = this.promptBuilder.buildFromFacts(facts);
+
+    const memoryDir = path.join(os.homedir(), '.gemini-jarvis', 'memory');
+    const state = loadSummaryState(memoryDir);
+    const summary = state?.summary || '';
+    const structuredText = state?.structuredContext ? renderStructuredContext(state.structuredContext) : '';
+
+    const protocol = this.promptBuilder.buildFromFacts(facts, summary, structuredText, isProactive);
     const defaultInstruction = getCoreSystemPrompt(this.client.config, this.client.config.getUserMemory());
     this.client.getChat().setSystemInstruction(defaultInstruction + '\n' + protocol);
 
@@ -119,10 +134,12 @@ export class JarvisAgent extends EventEmitter {
 
   public setTaskCommandHandler(handler: TaskCommandHandler): void {
     this.taskCommandHandler = handler;
+    if (this.toolRouter) {
+      (this.toolRouter as any).taskCommandHandler = handler;
+    }
   }
 
   public async processMessage(userPrompt: string, imageAttachment?: { data: Buffer; mimeType: string }) {
-    // Intercept !task commands — no LLM, no memory operations needed
     if (userPrompt.trimStart().startsWith('!task') && this.taskCommandHandler) {
       const result = await this.taskCommandHandler.handle(userPrompt);
       this.emit(JarvisEventType.CONTENT, { type: JarvisEventType.CONTENT, value: result });
@@ -217,8 +234,6 @@ export class JarvisAgent extends EventEmitter {
           if (success) break;
         }
 
-        // Skip memory ops when the turn only involved task management tools —
-        // task state is already persisted in tasks.json, no need to distill facts.
         const onlyTaskTools = allToolsCalled.size > 0 &&
           [...allToolsCalled].every(name => name.startsWith('task_'));
         if (!onlyTaskTools) {
