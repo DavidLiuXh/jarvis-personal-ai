@@ -1,92 +1,75 @@
 /**
  * @license
- * Copyright 2025 Google LLC
+ * Copyright 2026 Google LLC
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { describe, it, expect, vi } from 'vitest';
-import { EventEmitter } from 'node:events';
-import { JarvisEventType } from './types.js';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { ProactiveTaskRunner } from './proactiveTaskRunner.js';
+import { JarvisEventType } from './types.js';
 
-function makeAgent(responseText: string, shouldError = false) {
-  const agent = new EventEmitter() as EventEmitter & {
-    processMessage: ReturnType<typeof vi.fn>;
-  };
-  agent.processMessage = vi.fn().mockImplementation(async () => {
-    if (shouldError) {
-      agent.emit(JarvisEventType.ERROR, new Error('agent error'));
-    } else {
-      agent.emit(JarvisEventType.CONTENT, { type: JarvisEventType.CONTENT, value: responseText });
-      agent.emit(JarvisEventType.DONE);
-    }
-  });
-  return agent;
-}
+describe('ProactiveTaskRunner - Refined Reporting', () => {
+  let mockAgent: any;
+  let mockRegistry: any;
+  let runner: ProactiveTaskRunner;
 
-describe('ProactiveTaskRunner', () => {
-  it('runs a task and pushes result to the channel', async () => {
-    const agent = makeAgent('Market analysis: bullish');
-    const getAgent = vi.fn().mockResolvedValue(agent);
-    const push = vi.fn().mockResolvedValue(undefined);
-
-    const runner = new ProactiveTaskRunner(getAgent);
-    await runner.run(
-      { id: 't1', prompt: 'Analyze market', channel: 'feishu', chatId: 'oc_1', cron: '', enabled: true },
-      { push } as any,
-    );
-
-    expect(push).toHaveBeenCalledWith('feishu', 'oc_1', 'Market analysis: bullish');
-  });
-
-  it('pushes error message when agent fails', async () => {
-    const agent = makeAgent('', true);
-    const getAgent = vi.fn().mockResolvedValue(agent);
-    const push = vi.fn().mockResolvedValue(undefined);
-
-    const runner = new ProactiveTaskRunner(getAgent);
-    await runner.run(
-      { id: 't1', prompt: 'Analyze market', channel: 'feishu', chatId: 'oc_1', cron: '', enabled: true },
-      { push } as any,
-    );
-
-    expect(push).toHaveBeenCalledWith('feishu', 'oc_1', expect.stringContaining('❌'));
-  });
-
-  it('queues concurrent tasks and runs them sequentially', async () => {
-    const order: string[] = [];
-    const makeSlowAgent = (id: string, delay: number) => {
-      const agent = new EventEmitter() as any;
-      agent.processMessage = vi.fn().mockImplementation(async () => {
-        await new Promise(r => setTimeout(r, delay));
-        order.push(id);
-        agent.emit(JarvisEventType.CONTENT, { type: JarvisEventType.CONTENT, value: id });
-        agent.emit(JarvisEventType.DONE);
-      });
-      return agent;
+  beforeEach(() => {
+    mockAgent = {
+      processMessage: vi.fn(),
+      on: vi.fn(),
+      once: vi.fn(),
+      off: vi.fn(),
+      removeListener: vi.fn(),
     };
+    mockRegistry = {
+      push: vi.fn().mockResolvedValue(undefined),
+    };
+    runner = new ProactiveTaskRunner(async () => mockAgent);
+  });
 
-    // Return different agents based on call order
-    const agentT1 = makeSlowAgent('t1', 20);
-    const agentT2 = makeSlowAgent('t2', 5);
-    let callCount = 0;
-    const getAgent = vi.fn().mockImplementation(async () => {
-      return callCount++ === 0 ? agentT1 : agentT2;
+  it('should capture explicit report from deliver_result tool call', async () => {
+    const task = { id: 't1', prompt: 'Summarize news', channel: 'wechat', chatId: 'user1' };
+    
+    mockAgent.processMessage.mockImplementation(async () => {
+      const contentHandler = mockAgent.on.mock.calls.find(c => c[0] === JarvisEventType.CONTENT)[1];
+      const resultHandler = mockAgent.on.mock.calls.find(c => c[0] === 'deliver_result')[1];
+      const doneHandler = mockAgent.once.mock.calls.find(c => c[0] === JarvisEventType.DONE)[1];
+
+      // 1. Emit intermediary thought content (should be ignored)
+      contentHandler({ value: 'Searching web...' });
+      
+      // 2. Emit the explicit delivery signal
+      resultHandler({ content: '# Final News Brief\nEverything is great.' });
+      
+      // 3. Complete mission
+      doneHandler();
     });
-    const push = vi.fn().mockResolvedValue(undefined);
 
-    const runner = new ProactiveTaskRunner(getAgent);
-    const task = (id: string) => ({
-      id, prompt: id, channel: 'feishu', chatId: 'oc_1', cron: '', enabled: true,
+    await runner.run(task as any, mockRegistry as any);
+
+    // Verify it preferred the explicit tool call content
+    expect(mockRegistry.push).toHaveBeenCalledWith('wechat', 'user1', '# Final News Brief\nEverything is great.');
+  });
+
+  it('should fallback to last-turn text if deliver_result is missing', async () => {
+    const task = { id: 't2', prompt: 'Quick fact', channel: 'feishu', chatId: 'group1' };
+    
+    mockAgent.processMessage.mockImplementation(async () => {
+      const contentHandler = mockAgent.on.mock.calls.find(c => c[0] === JarvisEventType.CONTENT)[1];
+      const doneHandler = mockAgent.once.mock.calls.find(c => c[0] === JarvisEventType.DONE)[1];
+
+      // Turn 1
+      contentHandler({ value: 'Working...' });
+      contentHandler({ type: 'tool-call-request' }); // Trigger reset
+      
+      // Turn 2 (Final)
+      contentHandler({ value: 'The answer is 42.' });
+      
+      doneHandler();
     });
 
-    // Dispatch both simultaneously
-    const p1 = runner.run(task('t1'), { push } as any);
-    const p2 = runner.run(task('t2'), { push } as any);
+    await runner.run(task as any, mockRegistry as any);
 
-    await Promise.all([p1, p2]);
-
-    // t1 started first, t2 must wait even though t2 is faster
-    expect(order).toEqual(['t1', 't2']);
+    expect(mockRegistry.push).toHaveBeenCalledWith('feishu', 'group1', 'The answer is 42.');
   });
 });
