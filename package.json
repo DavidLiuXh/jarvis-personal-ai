@@ -137,7 +137,6 @@
     "@larksuiteoapi/node-sdk": "^1.60.0",
     "ink": "npm:@jrichman/ink@6.4.11",
     "latest-version": "^9.0.0",
-    "node-cron": "^4.2.1",
     "node-fetch-native": "^1.6.7",
     "proper-lockfile": "^4.1.2",
     "punycode": "^2.3.1",

@@ -9,7 +9,6 @@ import { JarvisManager } from '../manager.js';
 import { JarvisEventType } from '../types.js';
 import { debugLogger } from '../../../../core/src/index.js';
 import { ConfigManager } from '../configManager.js';
-import { ChannelRegistry } from '../channelRegistry.js';
 
 export class FeishuChannel {
   private client: lark.Client;
@@ -77,12 +76,6 @@ export class FeishuChannel {
     try {
       await this.wsClient.start({ eventDispatcher });
       console.error('🚀 [Feishu] WebSocket Link Online. Swarm ready.');
-      
-      // 🛠️ REGISTER TO GLOBAL BUS
-      ChannelRegistry.getInstance().register('feishu', {
-        push: async (chatId, text) => this.sendProactive(chatId, text)
-      });
-
       this.startHeartbeat();
     } catch (err: any) {
       console.error(`❌ [Feishu] WebSocket critical failure: ${err.message}`);

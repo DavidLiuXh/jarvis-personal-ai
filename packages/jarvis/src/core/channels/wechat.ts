@@ -13,7 +13,6 @@ import { JarvisManager } from '../manager.js';
 import { JarvisEventType } from '../types.js';
 import { debugLogger } from '../../../../core/src/index.js';
 import { ConfigManager } from '../configManager.js';
-import { ChannelRegistry } from '../channelRegistry.js';
 
 const SESSION_FILE = path.join(os.homedir(), '.gemini-jarvis', 'wechat_session.json');
 
@@ -94,12 +93,6 @@ export class WechatChannel {
 
     if (this.session) {
       console.error('🚀 [Wechat] Swarm Link Online. Monitoring WeChat messages...');
-      
-      // 🛠️ REGISTER TO GLOBAL BUS
-      ChannelRegistry.getInstance().register('wechat', {
-        push: async (userId, text) => this.sendProactive(userId, text)
-      });
-
       void this.monitorLoop();
     }
   }

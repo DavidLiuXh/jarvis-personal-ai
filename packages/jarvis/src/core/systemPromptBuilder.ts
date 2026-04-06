@@ -9,95 +9,117 @@ export type FactRecord = {
   content: string;
 };
 
+// Keywords in identity facts that indicate a technical/professional background
+const TECHNICAL_IDENTITY_KEYWORDS = [
+  'engineer', 'engineering', 'coding', 'developer', 'programmer', 'software',
+  'architect', 'devops', 'data scientist', 'researcher', 'technical',
+];
+
 /**
- * Builds the Jarvis Absolute Protocol based on distilled facts and compressed history.
+ * Derives a default style hint from identity facts.
+ * Returns a string if a relevant skill/profession is found, null otherwise.
  */
-export class SystemPromptBuilder {
-  public build(facts: string[]): string {
-    const records: FactRecord[] = facts.map(f => {
-      const match = f.match(/\[(.*?)\] (.*)/);
-      return match ? { category: match[1], content: match[2] } : { category: 'general', content: f };
-    });
-    return this.buildFromFacts(records, '', '');
+function deriveStyleFromIdentity(identityFacts: FactRecord[]): string | null {
+  const combined = identityFacts.map(f => f.content.toLowerCase()).join(' ');
+  const isTechnical = TECHNICAL_IDENTITY_KEYWORDS.some(kw => combined.includes(kw));
+
+  if (isTechnical) {
+    return 'User is a technical professional (engineer/developer) — use technical language, assume coding knowledge, skip basic explanations unless asked.';
   }
 
-  public buildFromFacts(
-    facts: FactRecord[], 
-    summary: string = '', 
-    structuredContext: string = '', 
-    isProactive: boolean = false
-  ): string {
-    const memoryContext = facts
-      .filter(f => f.category !== 'preference')
-      .map(f => `- [${f.category}] ${f.content}`)
-      .join('\n') || '(No persistent facts stored)';
+  return null;
+}
 
-    // STYLE INSTRUCTIONS
-    const preferences = facts.filter(f => f.category === 'preference');
-    const identities = facts.filter(f => f.category === 'identity');
-    
-    const hasTechnicalIdentity = identities.some(i => 
-      /engineer|developer|coder|technical|professional|expert|adept/i.test(i.content)
-    );
+/**
+ * Builds the Jarvis system prompt by combining the operational framework
+ * with the current persistent memory facts.
+ */
+export class SystemPromptBuilder {
+  /** Legacy: accepts pre-formatted "[category] content" strings. */
+  build(coreFacts: string[]): string {
+    const memoryContext = `
+# SYSTEM-INTEGRATED PERSISTENT CONTEXT (Global Identity):
+${coreFacts.length > 0 ? coreFacts.map(f => `- ${f}`).join('\n') : '(No persistent facts stored)'}
 
+# COGNITIVE MEMORY STATUS:
+[WARNING]: LONG-TERM INTERACTION LOGS ARE NOT LOADED.
+If the current prompt refers to past conversations, previous technical details, or "what we did before", you MUST call 'recall_memory' to look up the data. DO NOT GUESS.
+`;
+
+    return this.framework(memoryContext);
+  }
+
+  /** Preferred: accepts structured FactRecord[], renders adaptive style instructions. */
+  buildFromFacts(facts: FactRecord[]): string {
+    const identityFacts = facts.filter(f => f.category === 'identity');
+    const preferenceFacts = facts.filter(f => f.category === 'preference');
+    const behaviorFacts = facts.filter(f => f.category === 'behavior');
+    // behavior goes to PERSISTENT CONTEXT (lifestyle info), not STYLE INSTRUCTIONS
+    const contextFacts = facts.filter(f => f.category !== 'preference');
+
+    // Derive default style from identity (inferred, lower priority)
+    const derivedStyle = deriveStyleFromIdentity(identityFacts);
+
+    // Only preference facts are explicit style instructions (behavior = lifestyle, not response style)
+    const explicitStyleFacts = preferenceFacts;
+
+    // Build style section only when there's something to say
     let styleSection = '';
-    if (preferences.length > 0 || hasTechnicalIdentity) {
-      const styleLines: string[] = [];
-      if (preferences.length > 0) {
-        preferences.forEach(p => styleLines.push(`- USER PREFERENCE: ${p.content}`));
-      } else if (hasTechnicalIdentity) {
-        styleLines.push('- INFERRED STYLE (from user profile): Professional, technical, and precise.');
+    if (derivedStyle || explicitStyleFacts.length > 0) {
+      const lines: string[] = [];
+
+      if (derivedStyle) {
+        lines.push(`## Default style (inferred from user profile):`);
+        lines.push(`- ${derivedStyle}`);
       }
-      styleSection = `\n# STYLE INSTRUCTIONS:\n${styleLines.join('\n')}\n`;
+
+      if (explicitStyleFacts.length > 0) {
+        if (derivedStyle) {
+          lines.push('');
+          lines.push(`## User preferences (explicit — override defaults when they conflict):`);
+        }
+        explicitStyleFacts.forEach(f => lines.push(`- ${f.content}`));
+      }
+
+      styleSection = `
+# STYLE INSTRUCTIONS (MANDATORY — apply to every response):
+${lines.join('\n')}
+`;
     }
 
-    // PROACTIVE SECTION
-    const proactiveSection = isProactive ? `
-## MISSION CRITICAL (PROACTIVE MODE)
-- You are running in BACKGROUND/PROACTIVE mode.
-- Do NOT output your final conclusion in the normal text flow.
-- You MUST call 'deliver_result' tool at the end of your mission to send the final report.
-` : '';
+    const memoryContext = `
+# PERSISTENT CONTEXT (Global Identity):
+${contextFacts.length > 0 ? contextFacts.map(f => `- [${f.category}] ${f.content}`).join('\n') : '(No persistent facts stored)'}
 
-    // 🛠️ RESTORE COMPRESSED HISTORY INJECTION
-    const historySection = summary.trim() ? `
-# COMPRESSED CONVERSATION HISTORY:
-${summary}
-` : '';
+# COGNITIVE MEMORY STATUS:
+[WARNING]: LONG-TERM INTERACTION LOGS ARE NOT LOADED.
+If the current prompt refers to past conversations, previous technical details, or "what we did before", you MUST call 'recall_memory' to look up the data. DO NOT GUESS.
+`;
 
-    const contextSection = structuredContext.trim() ? `
-# EXTRACTED USER CONTEXT:
-${structuredContext}
-` : '';
+    return this.framework(memoryContext + styleSection);
+  }
 
+  private framework(memoryContext: string): string {
     return `
 # JARVIS SYSTEM OPERATIONAL FRAMEWORK v3.0 (ACTIVE COGNITION)
 You are JARVIS, an advanced system-native operative.
 
 ## I. MEMORY ARCHITECTURE (MANDATORY)
-1. **ACTIVE RECALL**: Your current context window is a rolling snapshot. For continuity, you MUST use 'recall_memory' to fetch specific past details not in the view below.
-2. **KNOWLEDGE SYNTHESIS**: Use 'save_memory' to commit new core rules.
+1. **ACTIVE RECALL**: Your current context window is fresh. To provide accurate continuity, you MUST use 'recall_memory' whenever past knowledge is required.
+2. **EXAMPLE**:
+   - User: "What was the React optimization we discussed?"
+   - Action: call recall_memory({ query: "React optimization" })
+3. **KNOWLEDGE SYNTHESIS**: Use 'save_memory' to commit new rules or preferences.
 
-${proactiveSection}
-${styleSection}
-${historySection}
-${contextSection}
+## II. AUTOMATIC TASK DECOMPOSITION
+1. **DECOMPOSE FIRST**: Immediately partition complex missions into functional blocks.
+2. **CONCURRENT DISPATCH**: Trigger specialized modules (e.g., codebase_investigator, generalist) SIMULTANEOUSLY.
 
-## II. AUTOMATED HABITS (TASK SCHEDULING)
-1. **SELF-SCHEDULING**: Use 'manage_cron_task' to manage !task habits.
+## III. OPERATIONAL STYLE
+- Be precise. Be deterministic.
+- Leverage system-native autonomy to resolve missions without redundant verification.
 
-## III. AUTOMATIC TASK DECOMPOSITION
-1. **DECOMPOSE FIRST**: Partition complex missions into functional blocks.
-2. **CONCURRENT DISPATCH**: Trigger specialized modules SIMULTANEOUSLY.
-
-## IV. OPERATIONAL STYLE
-- Be precise. Be deterministic. 
-
-# SYSTEM-INTEGRATED PERSISTENT CONTEXT:
 ${memoryContext}
-
-# COGNITIVE MEMORY STATUS:
-[WARNING]: RAW INTERACTION LOGS ARE NOT LOADED. CALL 'recall_memory' IF NEEDED.
 `;
   }
 }

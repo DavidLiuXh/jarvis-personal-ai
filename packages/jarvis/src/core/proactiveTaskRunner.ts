@@ -19,7 +19,7 @@ type GetAgentFn = (sessionId: string) => Promise<AgentLike>;
 
 /**
  * Runs proactive tasks by driving the agent without user input.
- * Implements the "Mission Accomplished" reporting system with fallback.
+ * Tasks are queued — only one runs at a time to avoid agent concurrency issues.
  */
 export class ProactiveTaskRunner {
   private queue: Array<() => Promise<void>> = [];
@@ -48,47 +48,31 @@ export class ProactiveTaskRunner {
   }
 
   private async execute(task: TriggeredTask, registry: ChannelRegistry): Promise<void> {
-    console.error(`🤖 [ProactiveTaskRunner] Executing mission: "${task.id}"...`);
+    console.error(`🤖 [ProactiveTaskRunner] Executing task "${task.id}"...`);
     try {
-      const sessionId = `cron-${task.id}`;
+      // Use global session so the agent has full memory context
+      const { ConfigManager } = await import('./configManager.js');
+      const config = ConfigManager.getInstance().get();
+      const sessionId = config.session?.globalSessionId ?? 'jarvis-global';
+
       const agent = await this.getAgent(sessionId);
-      
-      let finalReport: string | null = null;
-      let lastTurnText = '';
+      let accumulatedText = '';
 
       await new Promise<void>((resolve, reject) => {
-        // 1. Listen for the explicit delivery tool call
-        const resultHandler = (args: any) => {
-          console.error(`🎯 [ProactiveTaskRunner] Explicit report captured via deliver_result.`);
-          finalReport = args.content;
-        };
-
-        // 2. Track incremental text for fallback (last-turn logic)
         const contentHandler = (event: any) => {
           if (typeof event.value === 'string') {
-            lastTurnText += event.value;
-          } else if (event.type === 'tool-call-request') {
-            // Reset on new tool calls to isolate the last turn
-            lastTurnText = '';
+            accumulatedText += event.value;
           }
         };
-
         const doneHandler = () => {
-          cleanup();
+          agent.removeListener(JarvisEventType.CONTENT, contentHandler);
           resolve();
         };
-
         const errorHandler = (err: Error) => {
-          cleanup();
+          agent.removeListener(JarvisEventType.CONTENT, contentHandler);
           reject(err);
         };
 
-        const cleanup = () => {
-          agent.removeListener('deliver_result', resultHandler);
-          agent.removeListener(JarvisEventType.CONTENT, contentHandler);
-        };
-
-        agent.on('deliver_result', resultHandler);
         agent.on(JarvisEventType.CONTENT, contentHandler);
         agent.once(JarvisEventType.DONE, doneHandler);
         agent.once(JarvisEventType.ERROR, errorHandler);
@@ -96,20 +80,12 @@ export class ProactiveTaskRunner {
         agent.processMessage(task.prompt).catch(reject);
       });
 
-      // 🏆 REPORT SELECTION LOGIC
-      // Priority 1: Explicit tool call
-      // Priority 2: Last turn text (Fallback)
-      const reportToPush = finalReport || lastTurnText;
-
-      if (reportToPush && reportToPush.trim()) {
-        console.error(`📤 [ProactiveTaskRunner] Pushing final report to ${task.channel}:${task.chatId}`);
-        await registry.push(task.channel, task.chatId, reportToPush);
-      } else {
-        console.error(`⚠️ [ProactiveTaskRunner] Mission complete but no content was generated.`);
+      if (accumulatedText.trim()) {
+        await registry.push(task.channel, task.chatId, accumulatedText);
+        console.error(`✅ [ProactiveTaskRunner] Task "${task.id}" completed, result pushed to ${task.channel}.`);
       }
-
     } catch (e: any) {
-      const errorMsg = `❌ [Jarvis] Mission Failure [${task.id}]: ${e.message}`;
+      const errorMsg = `❌ [Jarvis] Task "${task.id}" failed: ${e.message}`;
       console.error(errorMsg);
       try {
         await registry.push(task.channel, task.chatId, errorMsg);

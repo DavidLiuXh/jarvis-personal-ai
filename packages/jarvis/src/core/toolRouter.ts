@@ -47,7 +47,7 @@ type ClientHandle = {
   config: { api?: { apiVersion?: string } };
 };
 
-const JARVIS_NATIVE_TOOLS = new Set(['save_memory', 'recall_memory', 'ask_user', 'deliver_result']);
+const JARVIS_NATIVE_TOOLS = new Set(['save_memory', 'recall_memory', 'ask_user']);
 
 function isNativeTool(name: string): boolean {
   return name.startsWith('run_evolved_skill_') ||
@@ -61,6 +61,10 @@ type AskUserQuestion = {
   options?: Array<{ label: string; description?: string }>;
 };
 
+/**
+ * Converts an ask_user tool call into a structured prompt that lets the LLM
+ * auto-select the recommended option and inform the user of all choices.
+ */
 function buildAskUserResponse(questions: AskUserQuestion[]): string {
   const parts: string[] = [
     'SYSTEM: ask_user tool is not available in server mode. Auto-selecting recommended options.',
@@ -106,7 +110,6 @@ export class ToolRouter {
     private scheduler: SchedulerHandle,
     private client: ClientHandle,
     private taskCommandHandler?: TaskCommandHandlerHandle,
-    private onDeliverResult?: (args: any) => void, // 🛠️ CALLBACK FOR PROACTIVE REPORTING
   ) {}
 
   async route(
@@ -169,19 +172,15 @@ export class ToolRouter {
       } else if (req.name.startsWith('task_')) {
         const action = req.name.slice('task_'.length);
         if (this.taskCommandHandler) {
+          console.error(`📅 [Jarvis] Task tool invoked: ${req.name}`);
           output = await this.taskCommandHandler.handleTool(action, req.args);
         } else {
-          output = '❌ Task management not available.';
+          output = '❌ Task management not available (TaskCommandHandler not initialized).';
         }
       } else if (req.name === 'ask_user') {
         const questions = (req.args.questions ?? []) as AskUserQuestion[];
+        console.error(`❓ [Jarvis] ask_user intercepted — auto-selecting recommended options.`);
         output = buildAskUserResponse(questions);
-      } else if (req.name === 'deliver_result') {
-        // 🛠️ HIJACK: Proactive Mission Accomplished!
-        if (this.onDeliverResult) {
-          this.onDeliverResult(req.args);
-        }
-        output = "Mission Accomplished. Final report captured.";
       }
 
       onToolResponse({ name: req.name, status: 'success', output, callId: req.callId });

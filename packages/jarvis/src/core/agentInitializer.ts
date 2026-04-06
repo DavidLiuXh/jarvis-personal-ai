@@ -197,19 +197,7 @@ export class AgentInitializer {
           },
           required: ['id'],
         },
-        parallelizable: true,
-      },
-      {
-        name: 'deliver_result',
-        description: 'MANDATORY for background/proactive tasks. Call this ONLY when the mission is complete to deliver the final report.',
-        parameters: {
-          type: 'object',
-          properties: {
-            content: { type: 'string', description: 'The final summarized report in Markdown.' },
-          },
-          required: ['content'],
-        },
-        parallelizable: true,
+        parallelizable: false,
       },
     ];
 
@@ -229,12 +217,6 @@ export class AgentInitializer {
       'codebase_investigator',
       'save_memory',
       'recall_memory',
-      'task_list',
-      'task_add',
-      'task_toggle',
-      'task_delete',
-      'task_run',
-      'deliver_result',
     ];
     for (const toolName of coreParallelTools) {
       const tool = (registry as any).getTool?.(toolName);
