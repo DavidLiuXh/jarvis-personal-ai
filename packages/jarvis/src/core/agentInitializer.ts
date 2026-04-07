@@ -149,12 +149,12 @@ export class AgentInitializer {
       },
       {
         name: 'task_add',
-        description: 'Add a new task to Jarvis\'s internal scheduler (NOT system crontab). Supports natural language for schedule (e.g. "每天早上8点", "weekdays at 9am", "every 2 hours").',
+        description: 'IMMEDIATELY call this when the user says things like "每天X点做Y", "每周X做Y", "定时查询/汇总/分析", "schedule", "remind me", "automatically do X at Y time". Do NOT write code or scripts — just create a scheduled task with task_add. The prompt parameter is what Jarvis will say/do when the task fires.',
         parameters: {
           type: 'object',
           properties: {
-            cron: { type: 'string', description: 'Schedule: cron expression OR natural language like "每天早上8点", "weekdays at 9am".' },
-            prompt: { type: 'string', description: 'The prompt Jarvis will execute when the task fires.' },
+            cron: { type: 'string', description: 'Schedule: cron expression OR natural language like "每天晚上8点", "weekdays at 9am", "每周一早上10点".' },
+            prompt: { type: 'string', description: 'The instruction Jarvis will execute when the task fires. E.g. "查询GitHub Trending并汇总今日热门项目".' },
             channel: { type: 'string', description: 'Output channel: feishu, wechat, or websocket. Optional.' },
             chat_id: { type: 'string', description: 'Target chat/user ID for the channel. Optional.' },
           },
