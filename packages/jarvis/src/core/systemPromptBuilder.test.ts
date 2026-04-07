@@ -28,13 +28,18 @@ describe('SystemPromptBuilder', () => {
     expect(prompt).toContain('CODE_MODIFICATION_PROTOCOL');
   });
 
-  it('always includes TASK_MANAGEMENT protocol forbidding shell commands for tasks', () => {
+  it('always includes TASK_MANAGEMENT protocol with trigger patterns and BAD/GOOD examples', () => {
     const builder = new SystemPromptBuilder();
     const prompt = builder.build([]);
     expect(prompt).toContain('TASK_MANAGEMENT');
-    expect(prompt).toContain('task_list');
+    expect(prompt).toContain('task_add');
     expect(prompt).toContain('FORBIDDEN');
     expect(prompt).toContain('crontab');
+    // Must include natural language trigger patterns
+    expect(prompt).toContain('每天');
+    // Must include BAD/GOOD examples
+    expect(prompt).toContain('BAD');
+    expect(prompt).toContain('GOOD');
   });
 
   it('always includes recall_memory instruction', () => {
