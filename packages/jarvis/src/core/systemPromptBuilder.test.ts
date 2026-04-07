@@ -33,7 +33,8 @@ describe('SystemPromptBuilder', () => {
     const prompt = builder.build([]);
     expect(prompt).toContain('TASK_MANAGEMENT');
     expect(prompt).toContain('task_list');
-    expect(prompt.toLowerCase()).toContain('never use run_shell_command');
+    expect(prompt).toContain('FORBIDDEN');
+    expect(prompt).toContain('crontab');
   });
 
   it('always includes recall_memory instruction', () => {
