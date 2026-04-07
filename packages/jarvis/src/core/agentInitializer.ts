@@ -193,7 +193,7 @@ export class AgentInitializer {
       },
       {
         name: 'task_delete',
-        description: 'Permanently delete a scheduled task by ID.',
+        description: 'Permanently delete a task from Jarvis\'s internal scheduler by ID. Use task_list first to get the task ID.',
         parameters: {
           type: 'object',
           properties: {
