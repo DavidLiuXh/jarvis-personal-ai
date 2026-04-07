@@ -89,4 +89,32 @@ describe('ProactiveTaskRunner', () => {
     // t1 started first, t2 must wait even though t2 is faster
     expect(order).toEqual(['t1', 't2']);
   });
+
+  it('skips push when task has no channel or chatId', async () => {
+    const agent = makeAgent('Result without push');
+    const getAgent = vi.fn().mockResolvedValue(agent);
+    const push = vi.fn().mockResolvedValue(undefined);
+
+    const runner = new ProactiveTaskRunner(getAgent);
+    // Task with no channel/chatId
+    const task = { id: 't1', prompt: 'query something', cron: '', enabled: true };
+    await runner.run(task as any, { push } as any);
+
+    // push should NOT be called — no channel configured
+    expect(push).not.toHaveBeenCalled();
+    // but agent.processMessage should still run
+    expect(agent.processMessage).toHaveBeenCalledWith('query something');
+  });
+
+  it('pushes when task has channel and chatId', async () => {
+    const agent = makeAgent('Result with push');
+    const getAgent = vi.fn().mockResolvedValue(agent);
+    const push = vi.fn().mockResolvedValue(undefined);
+
+    const runner = new ProactiveTaskRunner(getAgent);
+    const task = { id: 't1', prompt: 'analyze market', channel: 'feishu', chatId: 'oc_1', cron: '', enabled: true };
+    await runner.run(task as any, { push } as any);
+
+    expect(push).toHaveBeenCalledWith('feishu', 'oc_1', 'Result with push');
+  });
 });
