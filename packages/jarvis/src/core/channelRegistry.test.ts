@@ -48,4 +48,26 @@ describe('ChannelRegistry', () => {
     expect(registry.isRegistered('feishu')).toBe(true);
     expect(registry.isRegistered('wechat')).toBe(false);
   });
+
+  it('pushSafe returns false and logs warning when channel not registered', async () => {
+    const registry = new ChannelRegistry();
+    const result = await registry.pushSafe('feishu', 'oc_test', 'msg');
+    expect(result).toBe(false);
+  });
+
+  it('pushSafe returns false and logs warning when adapter throws', async () => {
+    const push = vi.fn().mockRejectedValue(new Error('API error'));
+    const registry = new ChannelRegistry();
+    registry.register('feishu', { push });
+    const result = await registry.pushSafe('feishu', 'oc_test', 'msg');
+    expect(result).toBe(false);
+  });
+
+  it('pushSafe returns true on success', async () => {
+    const push = vi.fn().mockResolvedValue(undefined);
+    const registry = new ChannelRegistry();
+    registry.register('feishu', { push });
+    const result = await registry.pushSafe('feishu', 'oc_test', 'msg');
+    expect(result).toBe(true);
+  });
 });

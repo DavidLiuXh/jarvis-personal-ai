@@ -59,26 +59,24 @@ export class WechatChannel {
   /** Proactively send a plain-text message to a user without waiting for user input. */
   public async sendProactive(userId: string, text: string): Promise<void> {
     if (!this.session) {
-      console.error('❌ [Wechat] Cannot send proactive message: not logged in');
-      return;
+      throw new Error('[Wechat] Cannot send proactive message: not logged in');
     }
-    try {
-      await fetch(new URL('ilink/bot/sendmessage', this.session.baseUrl).toString(), {
-        method: 'POST',
-        headers: this.buildHeaders(),
-        body: JSON.stringify({
-          base_info: { channel_version: '1.0.2' },
-          msg: {
-            to_user_id: userId,
-            client_id: `jarvis-proactive-${Date.now()}`,
-            message_type: 2,
-            message_state: 2,
-            item_list: [{ type: 1, text_item: { text } }],
-          },
-        }),
-      });
-    } catch (e: any) {
-      console.error(`❌ [Wechat] Failed to send proactive message: ${e.message}`);
+    const res = await fetch(new URL('ilink/bot/sendmessage', this.session.baseUrl).toString(), {
+      method: 'POST',
+      headers: this.buildHeaders(),
+      body: JSON.stringify({
+        base_info: { channel_version: '1.0.2' },
+        msg: {
+          to_user_id: userId,
+          client_id: `jarvis-proactive-${Date.now()}`,
+          message_type: 2,
+          message_state: 2,
+          item_list: [{ type: 1, text_item: { text } }],
+        },
+      }),
+    });
+    if (!res.ok) {
+      throw new Error(`[Wechat] sendProactive failed: HTTP ${res.status}`);
     }
   }
 

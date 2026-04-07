@@ -24,33 +24,37 @@ function makeAgent(responseText: string, shouldError = false) {
   return agent;
 }
 
+function makeRegistry(pushSafeResult = true) {
+  return { pushSafe: vi.fn().mockResolvedValue(pushSafeResult) } as any;
+}
+
 describe('ProactiveTaskRunner', () => {
-  it('runs a task and pushes result to the channel', async () => {
+  it('runs a task and pushes result to the channel via pushSafe', async () => {
     const agent = makeAgent('Market analysis: bullish');
     const getAgent = vi.fn().mockResolvedValue(agent);
-    const push = vi.fn().mockResolvedValue(undefined);
+    const registry = makeRegistry();
 
     const runner = new ProactiveTaskRunner(getAgent);
     await runner.run(
       { id: 't1', prompt: 'Analyze market', channel: 'feishu', chatId: 'oc_1', cron: '', enabled: true },
-      { push } as any,
+      registry,
     );
 
-    expect(push).toHaveBeenCalledWith('feishu', 'oc_1', 'Market analysis: bullish');
+    expect(registry.pushSafe).toHaveBeenCalledWith('feishu', 'oc_1', 'Market analysis: bullish');
   });
 
   it('pushes error message when agent fails', async () => {
     const agent = makeAgent('', true);
     const getAgent = vi.fn().mockResolvedValue(agent);
-    const push = vi.fn().mockResolvedValue(undefined);
+    const registry = makeRegistry();
 
     const runner = new ProactiveTaskRunner(getAgent);
     await runner.run(
       { id: 't1', prompt: 'Analyze market', channel: 'feishu', chatId: 'oc_1', cron: '', enabled: true },
-      { push } as any,
+      registry,
     );
 
-    expect(push).toHaveBeenCalledWith('feishu', 'oc_1', expect.stringContaining('❌'));
+    expect(registry.pushSafe).toHaveBeenCalledWith('feishu', 'oc_1', expect.stringContaining('❌'));
   });
 
   it('queues concurrent tasks and runs them sequentially', async () => {
@@ -66,55 +70,60 @@ describe('ProactiveTaskRunner', () => {
       return agent;
     };
 
-    // Return different agents based on call order
     const agentT1 = makeSlowAgent('t1', 20);
     const agentT2 = makeSlowAgent('t2', 5);
     let callCount = 0;
     const getAgent = vi.fn().mockImplementation(async () => {
       return callCount++ === 0 ? agentT1 : agentT2;
     });
-    const push = vi.fn().mockResolvedValue(undefined);
 
     const runner = new ProactiveTaskRunner(getAgent);
     const task = (id: string) => ({
       id, prompt: id, channel: 'feishu', chatId: 'oc_1', cron: '', enabled: true,
     });
 
-    // Dispatch both simultaneously
-    const p1 = runner.run(task('t1'), { push } as any);
-    const p2 = runner.run(task('t2'), { push } as any);
+    const p1 = runner.run(task('t1'), makeRegistry());
+    const p2 = runner.run(task('t2'), makeRegistry());
 
     await Promise.all([p1, p2]);
 
-    // t1 started first, t2 must wait even though t2 is faster
     expect(order).toEqual(['t1', 't2']);
   });
 
   it('skips push when task has no channel or chatId', async () => {
     const agent = makeAgent('Result without push');
     const getAgent = vi.fn().mockResolvedValue(agent);
-    const push = vi.fn().mockResolvedValue(undefined);
+    const registry = makeRegistry();
 
     const runner = new ProactiveTaskRunner(getAgent);
-    // Task with no channel/chatId
     const task = { id: 't1', prompt: 'query something', cron: '', enabled: true };
-    await runner.run(task as any, { push } as any);
+    await runner.run(task as any, registry);
 
-    // push should NOT be called — no channel configured
-    expect(push).not.toHaveBeenCalled();
-    // but agent.processMessage should still run
+    expect(registry.pushSafe).not.toHaveBeenCalled();
     expect(agent.processMessage).toHaveBeenCalledWith('query something');
   });
 
   it('pushes when task has channel and chatId', async () => {
     const agent = makeAgent('Result with push');
     const getAgent = vi.fn().mockResolvedValue(agent);
-    const push = vi.fn().mockResolvedValue(undefined);
+    const registry = makeRegistry();
 
     const runner = new ProactiveTaskRunner(getAgent);
     const task = { id: 't1', prompt: 'analyze market', channel: 'feishu', chatId: 'oc_1', cron: '', enabled: true };
-    await runner.run(task as any, { push } as any);
+    await runner.run(task as any, registry);
 
-    expect(push).toHaveBeenCalledWith('feishu', 'oc_1', 'Result with push');
+    expect(registry.pushSafe).toHaveBeenCalledWith('feishu', 'oc_1', 'Result with push');
+  });
+
+  it('does not throw when pushSafe returns false (push failed)', async () => {
+    const agent = makeAgent('Result');
+    const getAgent = vi.fn().mockResolvedValue(agent);
+    const registry = makeRegistry(false); // pushSafe returns false
+
+    const runner = new ProactiveTaskRunner(getAgent);
+    await expect(runner.run(
+      { id: 't1', prompt: 'test', channel: 'feishu', chatId: 'oc_1', cron: '', enabled: true },
+      registry,
+    )).resolves.not.toThrow();
   });
 });

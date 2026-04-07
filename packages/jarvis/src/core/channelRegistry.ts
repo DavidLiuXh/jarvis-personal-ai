@@ -40,4 +40,23 @@ export class ChannelRegistry {
     }
     await this.push(this.defaultChannel, chatId, text);
   }
+
+  /**
+   * Safe push: returns true on success, false on any failure (channel not registered,
+   * adapter throws, etc.). Never throws. Logs a warning on failure.
+   */
+  public async pushSafe(channel: string, chatId: string, text: string): Promise<boolean> {
+    try {
+      const adapter = this.channels.get(channel);
+      if (!adapter) {
+        console.error(`⚠️ [ChannelRegistry] Channel "${channel}" not registered — push skipped.`);
+        return false;
+      }
+      await adapter.push(chatId, text);
+      return true;
+    } catch (e: any) {
+      console.error(`⚠️ [ChannelRegistry] Push to "${channel}" failed: ${e.message}`);
+      return false;
+    }
+  }
 }
