@@ -149,16 +149,32 @@ export class AgentInitializer {
       },
       {
         name: 'task_add',
-        description: 'Add a new scheduled task. Use standard cron syntax for the schedule.',
+        description: 'Add a new scheduled task. Supports natural language for cron (e.g. "每天早上8点", "weekdays at 9am", "every 2 hours").',
         parameters: {
           type: 'object',
           properties: {
-            cron: { type: 'string', description: 'Cron expression, e.g. "0 8 * * *" for daily at 8am.' },
+            cron: { type: 'string', description: 'Schedule: cron expression OR natural language like "每天早上8点", "weekdays at 9am".' },
             prompt: { type: 'string', description: 'The prompt Jarvis will execute when the task fires.' },
             channel: { type: 'string', description: 'Output channel: feishu, wechat, or websocket. Optional.' },
             chat_id: { type: 'string', description: 'Target chat/user ID for the channel. Optional.' },
           },
           required: ['cron', 'prompt'],
+        },
+        parallelizable: false,
+      },
+      {
+        name: 'task_update',
+        description: 'Update an existing scheduled task. Supports natural language for cron (e.g. "每天早上8点", "weekdays at 9am").',
+        parameters: {
+          type: 'object',
+          properties: {
+            id: { type: 'string', description: 'Task ID from task_list.' },
+            cron: { type: 'string', description: 'New schedule: cron expression or natural language like "每天早上8点".' },
+            prompt: { type: 'string', description: 'New prompt for the task.' },
+            channel: { type: 'string', description: 'New output channel.' },
+            chat_id: { type: 'string', description: 'New target chat/user ID.' },
+          },
+          required: ['id'],
         },
         parallelizable: false,
       },

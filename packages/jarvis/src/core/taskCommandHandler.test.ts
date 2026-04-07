@@ -153,3 +153,63 @@ describe('TaskCommandHandler', () => {
     });
   });
 });
+
+describe('TaskCommandHandler — task_update and natural language cron', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it('!task update: updates cron of existing task', async () => {
+    const { handler, tmpDir, reload } = makeHandler({
+      tasks: [{ id: 'task1', cron: '0 8 * * *', prompt: 'Morning brief', enabled: true }],
+    });
+    const result = await handler.handle('!task update task1 --cron "0 9 * * *"');
+    expect(result).toContain('updated');
+    expect(reload).toHaveBeenCalledOnce();
+    expect(readTasks(tmpDir).tasks[0].cron).toBe('0 9 * * *');
+  });
+
+  it('!task update: updates prompt', async () => {
+    const { handler, tmpDir } = makeHandler({
+      tasks: [{ id: 'task1', cron: '0 8 * * *', prompt: 'Old', enabled: true }],
+    });
+    await handler.handle('!task update task1 --prompt "New prompt"');
+    expect(readTasks(tmpDir).tasks[0].prompt).toBe('New prompt');
+  });
+
+  it('!task update: updates channel and chatId', async () => {
+    const { handler, tmpDir } = makeHandler({
+      tasks: [{ id: 'task1', cron: '0 8 * * *', prompt: 'Brief', enabled: true }],
+    });
+    await handler.handle('!task update task1 --channel wechat --chat user123');
+    const saved = readTasks(tmpDir).tasks[0];
+    expect(saved.channel).toBe('wechat');
+    expect(saved.chatId).toBe('user123');
+  });
+
+  it('!task update: returns error for unknown task id', async () => {
+    const { handler } = makeHandler();
+    const result = await handler.handle('!task update nonexistent --cron "0 9 * * *"');
+    expect(result.toLowerCase()).toContain('not found');
+  });
+
+  it('!task update: returns error for invalid cron', async () => {
+    const { handler } = makeHandler({
+      tasks: [{ id: 'task1', cron: '0 8 * * *', prompt: 'Brief', enabled: true }],
+    });
+    const result = await handler.handle('!task update task1 --cron "not-a-cron"');
+    expect(result.toLowerCase()).toContain('invalid');
+  });
+
+  it('!task add: accepts natural language time', async () => {
+    const { handler, tmpDir } = makeHandler();
+    await handler.handle('!task add "每天早上8点" "Morning brief"');
+    expect(readTasks(tmpDir).tasks[0].cron).toBe('0 8 * * *');
+  });
+
+  it('!task update: accepts natural language time', async () => {
+    const { handler, tmpDir } = makeHandler({
+      tasks: [{ id: 'task1', cron: '0 8 * * *', prompt: 'Brief', enabled: true }],
+    });
+    await handler.handle('!task update task1 --cron "每天下午3点"');
+    expect(readTasks(tmpDir).tasks[0].cron).toBe('0 15 * * *');
+  });
+});
