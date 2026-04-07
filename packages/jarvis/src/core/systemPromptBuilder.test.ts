@@ -28,6 +28,14 @@ describe('SystemPromptBuilder', () => {
     expect(prompt).toContain('CODE_MODIFICATION_PROTOCOL');
   });
 
+  it('always includes TASK_MANAGEMENT protocol forbidding shell commands for tasks', () => {
+    const builder = new SystemPromptBuilder();
+    const prompt = builder.build([]);
+    expect(prompt).toContain('TASK_MANAGEMENT');
+    expect(prompt).toContain('task_list');
+    expect(prompt.toLowerCase()).toContain('never use run_shell_command');
+  });
+
   it('always includes recall_memory instruction', () => {
     const builder = new SystemPromptBuilder();
     const prompt = builder.build([]);
