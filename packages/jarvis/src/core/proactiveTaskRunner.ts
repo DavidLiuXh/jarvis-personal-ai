@@ -81,14 +81,20 @@ export class ProactiveTaskRunner {
       });
 
       if (accumulatedText.trim()) {
-        await registry.push(task.channel, task.chatId, accumulatedText);
-        console.error(`✅ [ProactiveTaskRunner] Task "${task.id}" completed, result pushed to ${task.channel}.`);
+        if (task.channel && task.chatId) {
+          await registry.push(task.channel, task.chatId, accumulatedText);
+          console.error(`✅ [ProactiveTaskRunner] Task "${task.id}" completed, result pushed to ${task.channel}:${task.chatId}.`);
+        } else {
+          console.error(`✅ [ProactiveTaskRunner] Task "${task.id}" completed (no push configured).`);
+        }
       }
     } catch (e: any) {
       const errorMsg = `❌ [Jarvis] Task "${task.id}" failed: ${e.message}`;
       console.error(errorMsg);
       try {
-        await registry.push(task.channel, task.chatId, errorMsg);
+        if (task.channel && task.chatId) {
+          await registry.push(task.channel, task.chatId, errorMsg);
+        }
       } catch (_pushErr) {}
     }
   }
