@@ -143,13 +143,13 @@ export class AgentInitializer {
     const taskTools = [
       {
         name: 'task_list',
-        description: 'List all scheduled tasks with their status (enabled/disabled), cron expression, and target channel.',
+        description: 'ALWAYS use this tool when the user asks about scheduled tasks, cron jobs, or automated tasks in Jarvis. This lists Jarvis\'s own internal task scheduler (NOT system crontab). Do NOT use run_shell_command or crontab -l for this purpose.',
         parameters: { type: 'object', properties: {}, required: [] },
         parallelizable: false,
       },
       {
         name: 'task_add',
-        description: 'Add a new scheduled task. Supports natural language for cron (e.g. "每天早上8点", "weekdays at 9am", "every 2 hours").',
+        description: 'Add a new task to Jarvis\'s internal scheduler (NOT system crontab). Supports natural language for schedule (e.g. "每天早上8点", "weekdays at 9am", "every 2 hours").',
         parameters: {
           type: 'object',
           properties: {
@@ -164,7 +164,7 @@ export class AgentInitializer {
       },
       {
         name: 'task_update',
-        description: 'Update an existing scheduled task. Supports natural language for cron (e.g. "每天早上8点", "weekdays at 9am").',
+        description: 'Update an existing task in Jarvis\'s internal scheduler. Supports natural language for schedule (e.g. "每天早上8点", "weekdays at 9am").',
         parameters: {
           type: 'object',
           properties: {
@@ -180,7 +180,7 @@ export class AgentInitializer {
       },
       {
         name: 'task_toggle',
-        description: 'Enable or disable a scheduled task by ID.',
+        description: 'Enable or disable a task in Jarvis\'s internal scheduler by ID.',
         parameters: {
           type: 'object',
           properties: {
@@ -205,7 +205,7 @@ export class AgentInitializer {
       },
       {
         name: 'task_run',
-        description: 'Immediately trigger a scheduled task once, without waiting for its cron schedule.',
+        description: 'Immediately trigger a Jarvis internal scheduled task once, without waiting for its cron schedule.',
         parameters: {
           type: 'object',
           properties: {
