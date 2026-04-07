@@ -24,6 +24,8 @@ import { BackgroundDistiller } from './backgroundDistiller.js';
 import { ToolRouter } from './toolRouter.js';
 import { AgentInitializer } from './agentInitializer.js';
 import { type TaskCommandHandler } from './taskCommandHandler.js';
+import { isFetchError, cleanOrphanedUserTurn } from './agentNetworkUtils.js';
+import { ConfigManager } from './configManager.js';
 
 /**
  * JARVIS 3.0: The Digital Lifeform Agent
@@ -40,6 +42,7 @@ export class JarvisAgent extends EventEmitter {
   private initialized = false;
   private isProcessing = false;
   private promptBuilder = new SystemPromptBuilder();
+  private jarvisConfig = ConfigManager.getInstance().get();
   private distiller!: BackgroundDistiller;
   private toolRouter!: ToolRouter;
   private agentInitializer: AgentInitializer;
@@ -157,9 +160,12 @@ export class JarvisAgent extends EventEmitter {
         let finalAssistantText = '';
         const allToolsCalled = new Set<string>();
 
+        const networkConfig = this.jarvisConfig.network;
+        const maxRetries = networkConfig?.maxRetries ?? 3;
+        const cleanOnFailure = networkConfig?.cleanOrphanedTurnOnFailure ?? true;
+
         while (true) {
           let retryCount = 0;
-          const maxRetries = 3;
           let success = false;
 
           while (retryCount < maxRetries && !success) {
@@ -199,17 +205,23 @@ export class JarvisAgent extends EventEmitter {
                 success = true;
               }
             } catch (err: any) {
-              const isNetworkError =
-                err.message?.includes('Premature close') ||
-                err.code === 'ERR_STREAM_PREMATURE_CLOSE' ||
-                err.message?.includes('ECONNRESET');
-
-              if (isNetworkError && retryCount < maxRetries - 1) {
+              if (isFetchError(err) && retryCount < maxRetries - 1) {
                 retryCount++;
                 const delay = Math.pow(2, retryCount) * 1000;
-                console.error(`⚠️ [JarvisAgent] Network glitch detected. Retrying in ${delay}ms...`);
+                console.error(`⚠️ [JarvisAgent] Network error (${err.message}). Retrying in ${delay}ms... (attempt ${retryCount}/${maxRetries - 1})`);
                 await new Promise(resolve => setTimeout(resolve, delay));
               } else {
+                // All retries exhausted — clean orphaned user turn if configured
+                if (cleanOnFailure) {
+                  try {
+                    const chat = this.client.getChat();
+                    const cleaned = cleanOrphanedUserTurn(chat.getHistory());
+                    if (cleaned.length < chat.getHistory().length) {
+                      chat.setHistory(cleaned);
+                      console.error(`🧹 [JarvisAgent] Cleaned orphaned user turn from history.`);
+                    }
+                  } catch (_cleanErr) {}
+                }
                 throw err;
               }
             }

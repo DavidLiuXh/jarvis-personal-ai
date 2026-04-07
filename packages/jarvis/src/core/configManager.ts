@@ -21,6 +21,12 @@ export interface JarvisConfig {
     embeddingDimension: number;
     distillation: string;
   };
+  network: {
+    /** Max retry attempts for network errors (fetch failed, ECONNRESET, etc.). Default: 3. */
+    maxRetries: number;
+    /** Remove orphaned user turn from history after all retries fail. Default: true. */
+    cleanOrphanedTurnOnFailure: boolean;
+  };
   server: {
     port: number;
   };
@@ -96,6 +102,10 @@ export class ConfigManager {
         embeddingDimension: 3072,
         distillation: 'gemini-2.5-flash'
       },
+      network: {
+        maxRetries: 3,
+        cleanOrphanedTurnOnFailure: true,
+      },
       server: {
         port: Number(process.env.JARVIS_PORT) || 3000
       },
@@ -136,6 +146,7 @@ export class ConfigManager {
           ...saved,
           api: { ...defaults.api, ...saved.api },
           models: { ...defaults.models, ...saved.models },
+          network: { ...defaults.network, ...saved.network },
           server: { ...defaults.server, ...saved.server },
           memory: { ...defaults.memory, ...saved.memory },
           security: { ...defaults.security, ...saved.security },
