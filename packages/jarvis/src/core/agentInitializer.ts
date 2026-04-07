@@ -154,7 +154,7 @@ export class AgentInitializer {
           type: 'object',
           properties: {
             cron: { type: 'string', description: 'Schedule: cron expression OR natural language like "每天晚上8点", "weekdays at 9am", "每周一早上10点".' },
-            prompt: { type: 'string', description: 'The instruction Jarvis will execute when the task fires. E.g. "查询GitHub Trending并汇总今日热门项目".' },
+            prompt: { type: 'string', description: 'The instruction Jarvis will execute when the task fires. Jarvis can use google_web_search and other tools at runtime — no code needed. E.g. "使用google_web_search查询GitHub Trending今日热门项目并汇总" or "搜索今日美股行情并分析".' },
             channel: { type: 'string', description: 'Output channel: feishu, wechat, or websocket. Optional.' },
             chat_id: { type: 'string', description: 'Target chat/user ID for the channel. Optional.' },
           },
