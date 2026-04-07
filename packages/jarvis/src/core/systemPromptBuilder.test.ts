@@ -8,112 +8,142 @@ import { describe, it, expect } from 'vitest';
 import { SystemPromptBuilder, type FactRecord } from './systemPromptBuilder.js';
 
 describe('SystemPromptBuilder', () => {
-  it('includes core facts in the prompt when facts exist', () => {
-    const builder = new SystemPromptBuilder();
-    const prompt = builder.build(['[identity] name is Jarvis', '[spec] runs on macOS']);
+  // --- framework structure ---
 
-    expect(prompt).toContain('[identity] name is Jarvis');
-    expect(prompt).toContain('[spec] runs on macOS');
-  });
-
-  it('shows empty state message when no facts exist', () => {
+  it('always includes the JARVIS OPERATIONAL FRAMEWORK v4.0 header', () => {
     const builder = new SystemPromptBuilder();
     const prompt = builder.build([]);
-
-    expect(prompt).toContain('No persistent facts stored');
+    expect(prompt).toContain('JARVIS OPERATIONAL FRAMEWORK v4.0');
   });
 
-  it('always includes the recall_memory instruction', () => {
+  it('always includes TOOL_USE_ATOMICITY protocol', () => {
     const builder = new SystemPromptBuilder();
     const prompt = builder.build([]);
+    expect(prompt).toContain('TOOL_USE_ATOMICITY');
+  });
 
+  it('always includes CODE_MODIFICATION_PROTOCOL', () => {
+    const builder = new SystemPromptBuilder();
+    const prompt = builder.build([]);
+    expect(prompt).toContain('CODE_MODIFICATION_PROTOCOL');
+  });
+
+  it('always includes recall_memory instruction', () => {
+    const builder = new SystemPromptBuilder();
+    const prompt = builder.build([]);
     expect(prompt).toContain('recall_memory');
   });
 
-  it('always includes the JARVIS SYSTEM OPERATIONAL FRAMEWORK header', () => {
-    const builder = new SystemPromptBuilder();
-    const prompt = builder.build([]);
+  // --- persistent context ---
 
-    expect(prompt).toContain('JARVIS SYSTEM OPERATIONAL FRAMEWORK');
-  });
-
-  it('renders preference facts in Style Instructions, behavior facts in Persistent Context', () => {
+  it('renders facts inside <persistent_context> XML tags', () => {
     const builder = new SystemPromptBuilder();
     const facts: FactRecord[] = [
       { category: 'identity', content: 'user is a software engineer' },
-      { category: 'preference', content: 'prefers table format for data' },
+    ];
+    const prompt = builder.buildFromFacts(facts);
+    expect(prompt).toContain('<persistent_context>');
+    expect(prompt).toContain('</persistent_context>');
+    expect(prompt).toContain('user is a software engineer');
+  });
+
+  it('renders facts with [CATEGORY] uppercase labels', () => {
+    const builder = new SystemPromptBuilder();
+    const facts: FactRecord[] = [
+      { category: 'identity', content: 'user is David' },
       { category: 'behavior', content: 'user runs 3 times a week' },
       { category: 'specification', content: 'project uses TypeScript' },
     ];
     const prompt = builder.buildFromFacts(facts);
+    expect(prompt).toContain('[IDENTITY]');
+    expect(prompt).toContain('[BEHAVIOR]');
+    expect(prompt).toContain('[SPECIFICATION]');
+  });
 
-    expect(prompt).toContain('STYLE INSTRUCTIONS');
+  it('shows empty state message when no facts exist', () => {
+    const builder = new SystemPromptBuilder();
+    const prompt = builder.buildFromFacts([]);
+    expect(prompt).toContain('No persistent facts');
+  });
+
+  // --- style constraints ---
+
+  it('renders style inside <style_constraints> XML tags', () => {
+    const builder = new SystemPromptBuilder();
+    const facts: FactRecord[] = [
+      { category: 'preference', content: 'prefers table format for data' },
+    ];
+    const prompt = builder.buildFromFacts(facts);
+    expect(prompt).toContain('<style_constraints>');
+    expect(prompt).toContain('</style_constraints>');
     expect(prompt).toContain('prefers table format for data');
-    // behavior goes to PERSISTENT CONTEXT, not STYLE INSTRUCTIONS
-    expect(prompt).toContain('PERSISTENT CONTEXT');
+  });
+
+  it('marks derived style as [DEFAULT] and preference as [USER_PREFERENCE]', () => {
+    const builder = new SystemPromptBuilder();
+    const facts: FactRecord[] = [
+      { category: 'identity', content: 'user is adept at engineering and coding' },
+      { category: 'preference', content: 'please explain in plain language' },
+    ];
+    const prompt = builder.buildFromFacts(facts);
+    expect(prompt).toContain('[DEFAULT]');
+    expect(prompt).toContain('[USER_PREFERENCE]');
+    expect(prompt).toContain('please explain in plain language');
+  });
+
+  it('derives [DEFAULT] style from technical identity when no preference exists', () => {
+    const builder = new SystemPromptBuilder();
+    const facts: FactRecord[] = [
+      { category: 'identity', content: 'user is adept at engineering and coding' },
+    ];
+    const prompt = builder.buildFromFacts(facts);
+    expect(prompt).toContain('[DEFAULT]');
+    expect(prompt.toLowerCase()).toMatch(/technical|engineer|coding/);
+  });
+
+  it('does not render style_constraints when no preference and no technical identity', () => {
+    const builder = new SystemPromptBuilder();
+    const facts: FactRecord[] = [
+      { category: 'identity', content: "user's name is David" },
+    ];
+    const prompt = builder.buildFromFacts(facts);
+    expect(prompt).not.toContain('<style_constraints>');
+  });
+
+  it('behavior facts go to persistent_context, not style_constraints', () => {
+    const builder = new SystemPromptBuilder();
+    const facts: FactRecord[] = [
+      { category: 'behavior', content: 'user runs 3 times a week' },
+    ];
+    const prompt = builder.buildFromFacts(facts);
+    expect(prompt).toContain('<persistent_context>');
     expect(prompt).toContain('user runs 3 times a week');
+    expect(prompt).not.toContain('<style_constraints>');
   });
 
-  it('does not render Style Instructions section when no preference, behavior, or technical identity exists', () => {
-    const builder = new SystemPromptBuilder();
-    const facts: FactRecord[] = [
-      { category: 'identity', content: "user's name is David" },
-      { category: 'specification', content: 'project uses TypeScript' },
-    ];
-    const prompt = builder.buildFromFacts(facts);
+  // --- memory_status ---
 
-    expect(prompt).not.toContain('STYLE INSTRUCTIONS');
+  it('renders memory_status with HALLUCINATE warning', () => {
+    const builder = new SystemPromptBuilder();
+    const prompt = builder.buildFromFacts([]);
+    expect(prompt).toContain('<memory_status>');
+    expect(prompt.toUpperCase()).toContain('HALLUCINATE');
   });
 
-  it('identity and specification facts still appear in persistent context section', () => {
-    const builder = new SystemPromptBuilder();
-    const facts: FactRecord[] = [
-      { category: 'identity', content: 'user is a software engineer' },
-      { category: 'preference', content: 'prefers concise answers' },
-    ];
-    const prompt = builder.buildFromFacts(facts);
+  // --- legacy build() ---
 
-    expect(prompt).toContain('user is a software engineer');
-    expect(prompt).toContain('PERSISTENT CONTEXT');
+  it('build() with string array still produces a valid prompt with framework', () => {
+    const builder = new SystemPromptBuilder();
+    const prompt = builder.build(['[identity] name is Jarvis', '[spec] runs on macOS']);
+    expect(prompt).toContain('JARVIS OPERATIONAL FRAMEWORK v4.0');
+    expect(prompt).toContain('[identity] name is Jarvis');
+    expect(prompt).toContain('[spec] runs on macOS');
   });
 
-  it('derives default style from identity facts when no preference exists', () => {
+  it('build() with empty array still includes framework and empty state', () => {
     const builder = new SystemPromptBuilder();
-    const facts: FactRecord[] = [
-      { category: 'identity', content: 'user is adept at engineering and coding' },
-    ];
-    const prompt = builder.buildFromFacts(facts);
-
-    expect(prompt).toContain('STYLE INSTRUCTIONS');
-    // Must include derived style hint based on engineering identity
-    expect(prompt.toLowerCase()).toMatch(/technical|engineer|coding|professional/);
-    // Must label it as default/inferred
-    expect(prompt.toLowerCase()).toMatch(/default|inferred|profile/);
-  });
-
-  it('preference overrides identity-derived default style', () => {
-    const builder = new SystemPromptBuilder();
-    const facts: FactRecord[] = [
-      { category: 'identity', content: 'user is adept at engineering and coding' },
-      { category: 'preference', content: 'please explain in plain language, avoid jargon' },
-    ];
-    const prompt = builder.buildFromFacts(facts);
-
-    // Both sections must be present
-    expect(prompt).toContain('STYLE INSTRUCTIONS');
-    expect(prompt).toContain('plain language');
-    // Preference must be marked as higher priority / override
-    expect(prompt.toLowerCase()).toMatch(/override|explicit|preference|priority/);
-  });
-
-  it('does not derive style when identity has no skill/profession info', () => {
-    const builder = new SystemPromptBuilder();
-    const facts: FactRecord[] = [
-      { category: 'identity', content: "user's name is David" },
-    ];
-    const prompt = builder.buildFromFacts(facts);
-
-    // Name alone should not trigger style derivation
-    expect(prompt).not.toContain('STYLE INSTRUCTIONS');
+    const prompt = builder.build([]);
+    expect(prompt).toContain('JARVIS OPERATIONAL FRAMEWORK v4.0');
+    expect(prompt).toContain('No persistent facts');
   });
 });

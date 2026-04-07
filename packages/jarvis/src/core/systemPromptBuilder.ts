@@ -22,104 +22,116 @@ const TECHNICAL_IDENTITY_KEYWORDS = [
 function deriveStyleFromIdentity(identityFacts: FactRecord[]): string | null {
   const combined = identityFacts.map(f => f.content.toLowerCase()).join(' ');
   const isTechnical = TECHNICAL_IDENTITY_KEYWORDS.some(kw => combined.includes(kw));
-
   if (isTechnical) {
     return 'User is a technical professional (engineer/developer) — use technical language, assume coding knowledge, skip basic explanations unless asked.';
   }
-
   return null;
 }
 
 /**
- * Builds the Jarvis system prompt by combining the operational framework
- * with the current persistent memory facts.
+ * Builds the Jarvis system prompt (v4.0) with XML-structured context sections
+ * and explicit operational protocols.
  */
 export class SystemPromptBuilder {
-  /** Legacy: accepts pre-formatted "[category] content" strings. */
-  build(coreFacts: string[]): string {
-    const memoryContext = `
-# SYSTEM-INTEGRATED PERSISTENT CONTEXT (Global Identity):
-${coreFacts.length > 0 ? coreFacts.map(f => `- ${f}`).join('\n') : '(No persistent facts stored)'}
-
-# COGNITIVE MEMORY STATUS:
-[WARNING]: LONG-TERM INTERACTION LOGS ARE NOT LOADED.
-If the current prompt refers to past conversations, previous technical details, or "what we did before", you MUST call 'recall_memory' to look up the data. DO NOT GUESS.
-`;
-
-    return this.framework(memoryContext);
-  }
-
   /** Preferred: accepts structured FactRecord[], renders adaptive style instructions. */
   buildFromFacts(facts: FactRecord[]): string {
     const identityFacts = facts.filter(f => f.category === 'identity');
     const preferenceFacts = facts.filter(f => f.category === 'preference');
-    const behaviorFacts = facts.filter(f => f.category === 'behavior');
-    // behavior goes to PERSISTENT CONTEXT (lifestyle info), not STYLE INSTRUCTIONS
+    // behavior, identity, specification all go to persistent_context
     const contextFacts = facts.filter(f => f.category !== 'preference');
 
-    // Derive default style from identity (inferred, lower priority)
     const derivedStyle = deriveStyleFromIdentity(identityFacts);
 
-    // Only preference facts are explicit style instructions (behavior = lifestyle, not response style)
-    const explicitStyleFacts = preferenceFacts;
-
-    // Build style section only when there's something to say
+    // Style constraints section (XML-tagged for Gemini attention)
     let styleSection = '';
-    if (derivedStyle || explicitStyleFacts.length > 0) {
+    if (derivedStyle || preferenceFacts.length > 0) {
       const lines: string[] = [];
-
       if (derivedStyle) {
-        lines.push(`## Default style (inferred from user profile):`);
-        lines.push(`- ${derivedStyle}`);
+        lines.push(`- [DEFAULT]: ${derivedStyle}`);
       }
-
-      if (explicitStyleFacts.length > 0) {
-        if (derivedStyle) {
-          lines.push('');
-          lines.push(`## User preferences (explicit — override defaults when they conflict):`);
-        }
-        explicitStyleFacts.forEach(f => lines.push(`- ${f.content}`));
+      if (preferenceFacts.length > 0) {
+        if (derivedStyle) lines.push('  // [USER_PREFERENCE] overrides [DEFAULT] when they conflict:');
+        preferenceFacts.forEach(f => lines.push(`- [USER_PREFERENCE]: ${f.content}`));
       }
-
       styleSection = `
-# STYLE INSTRUCTIONS (MANDATORY — apply to every response):
+<style_constraints>
 ${lines.join('\n')}
-`;
+</style_constraints>`;
     }
 
-    const memoryContext = `
-# PERSISTENT CONTEXT (Global Identity):
-${contextFacts.length > 0 ? contextFacts.map(f => `- [${f.category}] ${f.content}`).join('\n') : '(No persistent facts stored)'}
+    // Persistent context section (XML-tagged)
+    const contextLines = contextFacts.length > 0
+      ? contextFacts.map(f => `- [${f.category.toUpperCase()}]: ${f.content}`).join('\n')
+      : '(No persistent facts)';
 
-# COGNITIVE MEMORY STATUS:
-[WARNING]: LONG-TERM INTERACTION LOGS ARE NOT LOADED.
-If the current prompt refers to past conversations, previous technical details, or "what we did before", you MUST call 'recall_memory' to look up the data. DO NOT GUESS.
-`;
+    const memoryContext = `
+<persistent_context>
+${contextLines}
+</persistent_context>
+
+<memory_status>
+[STRICT]: LONG-TERM LOGS NOT LOADED.
+If the user refers to past conversations, decisions, or "what we did before", use 'recall_memory'. DO NOT HALLUCINATE PAST EVENTS.
+</memory_status>`;
 
     return this.framework(memoryContext + styleSection);
   }
 
+  /** Legacy: accepts pre-formatted "[category] content" strings. */
+  build(coreFacts: string[]): string {
+    const contextLines = coreFacts.length > 0
+      ? coreFacts.map(f => `- ${f}`).join('\n')
+      : '(No persistent facts)';
+
+    const memoryContext = `
+<persistent_context>
+${contextLines}
+</persistent_context>
+
+<memory_status>
+[STRICT]: LONG-TERM LOGS NOT LOADED.
+If the user refers to past conversations, decisions, or "what we did before", use 'recall_memory'. DO NOT HALLUCINATE PAST EVENTS.
+</memory_status>`;
+
+    return this.framework(memoryContext);
+  }
+
   private framework(memoryContext: string): string {
     return `
-# JARVIS SYSTEM OPERATIONAL FRAMEWORK v3.0 (ACTIVE COGNITION)
-You are JARVIS, an advanced system-native operative.
+# JARVIS OPERATIONAL FRAMEWORK v4.0
 
-## I. MEMORY ARCHITECTURE (MANDATORY)
-1. **ACTIVE RECALL**: Your current context window is fresh. To provide accurate continuity, you MUST use 'recall_memory' whenever past knowledge is required.
-2. **EXAMPLE**:
-   - User: "What was the React optimization we discussed?"
-   - Action: call recall_memory({ query: "React optimization" })
-3. **KNOWLEDGE SYNTHESIS**: Use 'save_memory' to commit new rules or preferences.
+## I. CORE PROTOCOLS (MANDATORY)
 
-## II. AUTOMATIC TASK DECOMPOSITION
-1. **DECOMPOSE FIRST**: Immediately partition complex missions into functional blocks.
-2. **CONCURRENT DISPATCH**: Trigger specialized modules (e.g., codebase_investigator, generalist) SIMULTANEOUSLY.
+1. **TOOL_USE_ATOMICITY (Anti-400 Error)**:
+   - When you generate a tool call, DO NOT include any text or thoughts in the same turn.
+   - Sequence MUST be: [Tool Call] → [Tool Response] → [Your Final Summary].
+   - Zero-Interruption Rule: Never insert text between a tool call and its response.
 
-## III. OPERATIONAL STYLE
-- Be precise. Be deterministic.
-- Leverage system-native autonomy to resolve missions without redundant verification.
+2. **CODE_MODIFICATION_PROTOCOL (Anti-Logic-Loss)**:
+   - NEVER rewrite an entire file if it exceeds 50 lines.
+   - ALWAYS use targeted edits (search/replace blocks) to preserve existing logic.
+   - Ensure all imports, error handling, and existing comments remain untouched unless explicitly targeted.
 
+3. **TASK_DECOMPOSITION**:
+   - For complex queries, decompose into functional blocks before executing.
+   - Trigger specialized modules (codebase_investigator, generalist) concurrently when applicable.
+
+4. **ACTIVE_RECALL (MANDATORY)**:
+   - Your context window is fresh on each session.
+   - When the user refers to past interactions, ALWAYS call 'recall_memory' first. DO NOT GUESS.
+
+## II. EXECUTION CONTEXT
 ${memoryContext}
-`;
+
+## III. ROLE & TONE
+- You are JARVIS: deterministic, precise, and system-native.
+- Skip conversational fillers. Use high-density information.
+- Adapt style as per the style constraints section above if present.
+
+## IV. RESPONSE FORMATTING
+- Use Markdown for structure.
+- For financial/data analysis, use tables for comparison.
+- For code, specify language and file path.
+`.trim();
   }
 }
