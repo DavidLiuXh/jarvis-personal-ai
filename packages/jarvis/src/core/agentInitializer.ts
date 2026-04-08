@@ -86,7 +86,10 @@ export class AgentInitializer {
       settings.merged.model = {};
     }
     if (this.jarvisConfig.models.chat !== 'auto') {
-      settings.merged.model.primaryModel = this.jarvisConfig.models.chat;
+      // settings.model.name is the field that loadCliConfig reads to set config.model
+      // (via argv.model || process.env.GEMINI_MODEL || settings.model?.name)
+      // primaryModel was incorrect — it is only used for quota tracking, not routing
+      settings.merged.model.name = this.jarvisConfig.models.chat;
     }
     settings.merged.model.embeddingModel = this.jarvisConfig.models.embedding;
 
