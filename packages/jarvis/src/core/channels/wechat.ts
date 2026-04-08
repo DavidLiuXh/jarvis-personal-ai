@@ -9,10 +9,19 @@ import path from 'node:path';
 import os from 'node:os';
 import crypto from 'node:crypto';
 import qrcode from 'qrcode-terminal';
+import { fetch as undiciFetch, Agent } from 'undici';
 import { JarvisManager } from '../manager.js';
 import { JarvisEventType } from '../types.js';
 import { debugLogger } from '../../../../core/src/index.js';
 import { ConfigManager } from '../configManager.js';
+
+// Dispatcher that skips TLS verification — used only for WeChat's self-signed cert
+const wechatDispatcher = new Agent({ connect: { rejectUnauthorized: false } });
+
+/** fetch wrapper that bypasses TLS verification for WeChat's self-signed certificate */
+function wfetch(url: string, init?: Parameters<typeof undiciFetch>[1]): ReturnType<typeof undiciFetch> {
+  return undiciFetch(url, { ...init, dispatcher: wechatDispatcher } as any);
+}
 
 const SESSION_FILE = path.join(os.homedir(), '.gemini-jarvis', 'wechat_session.json');
 
@@ -73,7 +82,7 @@ export class WechatChannel {
     if (!this.session) {
       throw new Error('[Wechat] Cannot send proactive message: not logged in');
     }
-    const res = await fetch(new URL('ilink/bot/sendmessage', this.getBaseUrl()).toString(), {
+    const res = await wfetch(new URL('ilink/bot/sendmessage', this.getBaseUrl()).toString(), {
       method: 'POST',
       headers: this.buildHeaders(),
       body: JSON.stringify({
@@ -115,7 +124,7 @@ export class WechatChannel {
     let loginSuccessful = false;
     while (!loginSuccessful) {
       try {
-        const qrResp = await fetch(`${baseUrl}ilink/bot/get_bot_qrcode?bot_type=3`);
+        const qrResp = await wfetch(`${baseUrl}ilink/bot/get_bot_qrcode?bot_type=3`);
         const qrData = await qrResp.json();
         
         console.error('\n' + '='.repeat(40));
@@ -132,7 +141,7 @@ export class WechatChannel {
         console.error('-'.repeat(40) + '\n');
         let qrExpired = false;
         while (!qrExpired && !loginSuccessful) {
-          const statusResp = await fetch(`${baseUrl}ilink/bot/get_qrcode_status?qrcode=${qrData.qrcode}`);
+          const statusResp = await wfetch(`${baseUrl}ilink/bot/get_qrcode_status?qrcode=${qrData.qrcode}`);
           const statusData = await statusResp.json();
 
           if (statusData.status === 'confirmed') {
@@ -167,7 +176,7 @@ export class WechatChannel {
         const url = new URL('ilink/bot/getupdates', this.getBaseUrl());
         const headers = this.buildHeaders();
         
-        const response = await fetch(url.toString(), {
+        const response = await wfetch(url.toString(), {
           method: 'POST',
           headers,
           body: JSON.stringify({
@@ -235,7 +244,7 @@ export class WechatChannel {
     const reply = async (text: string, isFinish: boolean = false) => {
       if (!text.trim()) return;
       try {
-        await fetch(new URL('ilink/bot/sendmessage', this.getBaseUrl()).toString(), {
+        await wfetch(new URL('ilink/bot/sendmessage', this.getBaseUrl()).toString(), {
           method: 'POST',
           headers: this.buildHeaders(),
           body: JSON.stringify({
