@@ -70,4 +70,25 @@ describe('ChannelRegistry', () => {
     const result = await registry.pushSafe('feishu', 'oc_test', 'msg');
     expect(result).toBe(true);
   });
+
+  it('uses adapter defaultChatId when chatId is empty', async () => {
+    const push = vi.fn().mockResolvedValue(undefined);
+    const registry = new ChannelRegistry();
+    registry.register('wechat', { push, defaultChatId: 'user-from-session' });
+
+    await registry.pushSafe('wechat', '', 'Hello');
+
+    expect(push).toHaveBeenCalledWith('user-from-session', 'Hello');
+  });
+
+  it('pushSafe returns false when chatId is empty and no defaultChatId', async () => {
+    const push = vi.fn().mockResolvedValue(undefined);
+    const registry = new ChannelRegistry();
+    registry.register('wechat', { push });
+
+    const result = await registry.pushSafe('wechat', '', 'Hello');
+
+    expect(result).toBe(false);
+    expect(push).not.toHaveBeenCalled();
+  });
 });

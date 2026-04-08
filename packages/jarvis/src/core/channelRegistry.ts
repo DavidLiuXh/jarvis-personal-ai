@@ -7,6 +7,12 @@
 export type ChannelAdapter = {
   /** Push a message to the given chatId/userId on this channel. */
   push: (chatId: string, text: string) => Promise<void>;
+  /**
+   * Default chatId/userId to use when the task does not specify one.
+   * For WeChat: the logged-in user's ID from session.
+   * For Feishu: the configured defaultChatId.
+   */
+  defaultChatId?: string;
 };
 
 /**
@@ -42,8 +48,9 @@ export class ChannelRegistry {
   }
 
   /**
-   * Safe push: returns true on success, false on any failure (channel not registered,
-   * adapter throws, etc.). Never throws. Logs a warning on failure.
+   * Safe push: returns true on success, false on any failure.
+   * When chatId is empty, falls back to adapter.defaultChatId if available.
+   * Never throws. Logs a warning on failure.
    */
   public async pushSafe(channel: string, chatId: string, text: string): Promise<boolean> {
     try {
@@ -52,7 +59,12 @@ export class ChannelRegistry {
         console.error(`⚠️ [ChannelRegistry] Channel "${channel}" not registered — push skipped.`);
         return false;
       }
-      await adapter.push(chatId, text);
+      const resolvedChatId = chatId || adapter.defaultChatId || '';
+      if (!resolvedChatId) {
+        console.error(`⚠️ [ChannelRegistry] No chatId for channel "${channel}" — push skipped.`);
+        return false;
+      }
+      await adapter.push(resolvedChatId, text);
       return true;
     } catch (e: any) {
       console.error(`⚠️ [ChannelRegistry] Push to "${channel}" failed: ${e.message}`);
