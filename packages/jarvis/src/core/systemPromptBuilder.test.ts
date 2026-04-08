@@ -28,6 +28,14 @@ describe('SystemPromptBuilder', () => {
     expect(prompt).toContain('CODE_MODIFICATION_PROTOCOL');
   });
 
+  it('always includes PUSH_TO_CHANNEL protocol', () => {
+    const builder = new SystemPromptBuilder();
+    const prompt = builder.build([]);
+    expect(prompt).toContain('PUSH_TO_CHANNEL');
+    expect(prompt).toContain('push_to_channel');
+    expect(prompt).toContain('发到微信');
+  });
+
   it('always includes TASK_MANAGEMENT protocol with function-call vs shell distinction', () => {
     const builder = new SystemPromptBuilder();
     const prompt = builder.build([]);
@@ -37,7 +45,6 @@ describe('SystemPromptBuilder', () => {
     expect(prompt).toContain('每天');
     expect(prompt).toContain('BAD');
     expect(prompt).toContain('GOOD');
-    // Must explicitly forbid run_shell_command("task_list")
     expect(prompt).toContain('run_shell_command("task_list")');
     expect(prompt).toContain('FUNCTION CALL TOOLS');
   });

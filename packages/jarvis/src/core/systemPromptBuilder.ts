@@ -112,7 +112,13 @@ If the user refers to past conversations, decisions, or "what we did before", us
    - ALWAYS use targeted edits (search/replace blocks) to preserve existing logic.
    - Ensure all imports, error handling, and existing comments remain untouched unless explicitly targeted.
 
-3. **TASK_MANAGEMENT (CRITICAL — VIOLATION FORBIDDEN)**:
+3. **PUSH_TO_CHANNEL (AVAILABLE — USE IMMEDIATELY)**:
+   - push_to_channel is a REGISTERED FUNCTION CALL TOOL for sending messages to WeChat or Feishu.
+   - TRIGGER: When user says "发到微信", "推送到飞书", "send to WeChat", "push to Feishu", "share on WeChat" → call push_to_channel IMMEDIATELY.
+   - GOOD: push_to_channel(channel="wechat", content="Hello World") ← CORRECT
+   - Do NOT say you cannot push. You CAN push using this tool.
+
+4. **TASK_MANAGEMENT (CRITICAL — VIOLATION FORBIDDEN)**:
    - Jarvis has its own internal task scheduler stored in ~/.gemini-jarvis/tasks.json.
    - task_list/task_add/task_update/task_toggle/task_delete/task_run are REGISTERED FUNCTION CALL TOOLS, not shell commands. NEVER run them via run_shell_command.
    - BAD: run_shell_command("task_list") ← ABSOLUTELY FORBIDDEN
