@@ -81,10 +81,11 @@ export class ProactiveTaskRunner {
       });
 
       if (accumulatedText.trim()) {
-        if (task.channel && task.chatId) {
-          const pushed = await registry.pushSafe(task.channel, task.chatId, accumulatedText);
+        if (task.channel) {
+          // chatId may be empty — pushSafe will fall back to adapter.defaultChatId
+          const pushed = await registry.pushSafe(task.channel, task.chatId ?? '', accumulatedText);
           if (pushed) {
-            console.error(`✅ [ProactiveTaskRunner] Task "${task.id}" completed, result pushed to ${task.channel}:${task.chatId}.`);
+            console.error(`✅ [ProactiveTaskRunner] Task "${task.id}" completed, result pushed to ${task.channel}.`);
           } else {
             console.error(`⚠️ [ProactiveTaskRunner] Task "${task.id}" completed but push to ${task.channel} failed.`);
           }
@@ -95,8 +96,8 @@ export class ProactiveTaskRunner {
     } catch (e: any) {
       const errorMsg = `❌ [Jarvis] Task "${task.id}" failed: ${e.message}`;
       console.error(errorMsg);
-      if (task.channel && task.chatId) {
-        await registry.pushSafe(task.channel, task.chatId, errorMsg);
+      if (task.channel) {
+        await registry.pushSafe(task.channel, task.chatId ?? '', errorMsg);
       }
     }
   }
