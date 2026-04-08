@@ -159,7 +159,7 @@ export class AgentInitializer {
             cron: { type: 'string', description: 'Schedule: cron expression OR natural language like "每天晚上8点", "weekdays at 9am", "每周一早上10点".' },
             prompt: { type: 'string', description: 'The instruction Jarvis will execute when the task fires. Jarvis can use google_web_search and other tools at runtime — no code needed. E.g. "使用google_web_search查询GitHub Trending今日热门项目并汇总" or "搜索今日美股行情并分析".' },
             channel: { type: 'string', description: 'Output channel: feishu or wechat. ONLY set when user explicitly mentions pushing/sending/notifying to a channel (e.g. "发到飞书", "推送到微信"). Leave unset if user does not mention push.' },
-            chat_id: { type: 'string', description: 'Target chat/user ID. ONLY set when channel is set and user specifies a target. Leave unset otherwise.' },
+            chat_id: { type: 'string', description: 'Target chat/user ID. Optional — if omitted, the channel uses its default target (WeChat: logged-in user; Feishu: defaultChatId from config). Only set when user specifies a different target.' },
           },
           required: ['cron', 'prompt'],
         },

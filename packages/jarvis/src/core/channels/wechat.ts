@@ -65,6 +65,11 @@ export class WechatChannel {
     fs.writeFileSync(SESSION_FILE, JSON.stringify(session, null, 2));
   }
 
+  /** Returns the logged-in user's ID for use as default push target. */
+  public getDefaultUserId(): string {
+    return this.session?.userId ?? '';
+  }
+
   /**
    * Returns the effective base URL: config.wechat.apiBaseUrl takes precedence
    * over session.baseUrl so that IP/domain changes in config are picked up

@@ -132,6 +132,7 @@ class JarvisServer {
       const feishu = this.feishuChannel;
       this.channelRegistry.register('feishu', {
         push: (chatId, text) => feishu.sendProactive(chatId, text),
+        defaultChatId: jarvisConfig.tasks?.defaultChatId || '',
       });
     }
 
@@ -140,6 +141,7 @@ class JarvisServer {
       const wechat = this.wechatChannel;
       this.channelRegistry.register('wechat', {
         push: (userId, text) => wechat.sendProactive(userId, text),
+        get defaultChatId() { return wechat.getDefaultUserId(); },
       });
     }
 
