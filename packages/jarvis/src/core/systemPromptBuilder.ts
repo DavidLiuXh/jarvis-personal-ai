@@ -9,16 +9,11 @@ export type FactRecord = {
   content: string;
 };
 
-// Keywords in identity facts that indicate a technical/professional background
 const TECHNICAL_IDENTITY_KEYWORDS = [
   'engineer', 'engineering', 'coding', 'developer', 'programmer', 'software',
   'architect', 'devops', 'data scientist', 'researcher', 'technical',
 ];
 
-/**
- * Derives a default style hint from identity facts.
- * Returns a string if a relevant skill/profession is found, null otherwise.
- */
 function deriveStyleFromIdentity(identityFacts: FactRecord[]): string | null {
   const combined = identityFacts.map(f => f.content.toLowerCase()).join(' ');
   const isTechnical = TECHNICAL_IDENTITY_KEYWORDS.some(kw => combined.includes(kw));
@@ -28,117 +23,123 @@ function deriveStyleFromIdentity(identityFacts: FactRecord[]): string | null {
   return null;
 }
 
-/**
- * Builds the Jarvis system prompt (v4.0) with XML-structured context sections
- * and explicit operational protocols.
- */
+const PUSH_KEYWORDS = ['发到', '推送到', '推送', 'send to', 'push to', 'push', '微信', '飞书', 'wechat', 'feishu', 'share on'];
+const TASK_KEYWORDS = ['每天', '每周', '每月', '定时', '每隔', '任务', 'task', 'scheduled', 'cron', 'remind', '提醒', '自动', 'automatically', '每日'];
+const CODE_KEYWORDS = ['修改', '重写', '编辑', '代码', 'edit', 'modify', 'refactor', 'rewrite', 'file', '文件', 'function', '函数', 'class', '类', 'implement', '实现'];
+
+function matchesAny(text: string, keywords: string[]): boolean {
+  const lower = text.toLowerCase();
+  return keywords.some(kw => lower.includes(kw));
+}
+
+type ProtocolSet = {
+  pushToChannel: boolean;
+  taskManagement: boolean;
+  codeModification: boolean;
+};
+
+function selectProtocols(userPrompt?: string): ProtocolSet {
+  if (!userPrompt || !userPrompt.trim()) {
+    return { pushToChannel: true, taskManagement: true, codeModification: true };
+  }
+  return {
+    pushToChannel: matchesAny(userPrompt, PUSH_KEYWORDS),
+    taskManagement: matchesAny(userPrompt, TASK_KEYWORDS),
+    codeModification: matchesAny(userPrompt, CODE_KEYWORDS),
+  };
+}
+
 export class SystemPromptBuilder {
-  /** Preferred: accepts structured FactRecord[], renders adaptive style instructions. */
-  buildFromFacts(facts: FactRecord[]): string {
+  buildFromFacts(facts: FactRecord[], userPrompt?: string): string {
     const identityFacts = facts.filter(f => f.category === 'identity');
     const preferenceFacts = facts.filter(f => f.category === 'preference');
-    // behavior, identity, specification all go to persistent_context
     const contextFacts = facts.filter(f => f.category !== 'preference');
 
     const derivedStyle = deriveStyleFromIdentity(identityFacts);
 
-    // Style constraints section (XML-tagged for Gemini attention)
     let styleSection = '';
     if (derivedStyle || preferenceFacts.length > 0) {
       const lines: string[] = [];
-      if (derivedStyle) {
-        lines.push(`- [DEFAULT]: ${derivedStyle}`);
-      }
+      if (derivedStyle) lines.push(`- [DEFAULT]: ${derivedStyle}`);
       if (preferenceFacts.length > 0) {
         if (derivedStyle) lines.push('  // [USER_PREFERENCE] overrides [DEFAULT] when they conflict:');
         preferenceFacts.forEach(f => lines.push(`- [USER_PREFERENCE]: ${f.content}`));
       }
-      styleSection = `
-<style_constraints>
-${lines.join('\n')}
-</style_constraints>`;
+      styleSection = `\n<style_constraints>\n${lines.join('\n')}\n</style_constraints>`;
     }
 
-    // Persistent context section (XML-tagged)
     const contextLines = contextFacts.length > 0
       ? contextFacts.map(f => `- [${f.category.toUpperCase()}]: ${f.content}`).join('\n')
       : '(No persistent facts)';
 
-    const memoryContext = `
-<persistent_context>
-${contextLines}
-</persistent_context>
+    const memoryContext = `\n<persistent_context>\n${contextLines}\n</persistent_context>\n\n<memory_status>\n[STRICT]: LONG-TERM LOGS NOT LOADED.\nIf the user refers to past conversations, decisions, or "what we did before", use 'recall_memory'. DO NOT HALLUCINATE PAST EVENTS.\n</memory_status>`;
 
-<memory_status>
-[STRICT]: LONG-TERM LOGS NOT LOADED.
-If the user refers to past conversations, decisions, or "what we did before", use 'recall_memory'. DO NOT HALLUCINATE PAST EVENTS.
-</memory_status>`;
-
-    return this.framework(memoryContext + styleSection);
+    const protocols = selectProtocols(userPrompt);
+    return this.framework(memoryContext + styleSection, protocols);
   }
 
-  /** Legacy: accepts pre-formatted "[category] content" strings. */
   build(coreFacts: string[]): string {
     const contextLines = coreFacts.length > 0
       ? coreFacts.map(f => `- ${f}`).join('\n')
       : '(No persistent facts)';
 
-    const memoryContext = `
-<persistent_context>
-${contextLines}
-</persistent_context>
+    const memoryContext = `\n<persistent_context>\n${contextLines}\n</persistent_context>\n\n<memory_status>\n[STRICT]: LONG-TERM LOGS NOT LOADED.\nIf the user refers to past conversations, decisions, or "what we did before", use 'recall_memory'. DO NOT HALLUCINATE PAST EVENTS.\n</memory_status>`;
 
-<memory_status>
-[STRICT]: LONG-TERM LOGS NOT LOADED.
-If the user refers to past conversations, decisions, or "what we did before", use 'recall_memory'. DO NOT HALLUCINATE PAST EVENTS.
-</memory_status>`;
-
-    return this.framework(memoryContext);
+    return this.framework(memoryContext, { pushToChannel: true, taskManagement: true, codeModification: true });
   }
 
-  private framework(memoryContext: string): string {
-    return `
-# JARVIS OPERATIONAL FRAMEWORK v4.0
+  private framework(memoryContext: string, protocols: ProtocolSet): string {
+    const sections: string[] = [];
+    let n = 1;
 
-## I. CORE PROTOCOLS (MANDATORY)
-
-1. **TOOL_USE_ATOMICITY (Anti-400 Error)**:
+    sections.push(`${n++}. **TOOL_USE_ATOMICITY (Anti-400 Error)**:
    - When you generate a tool call, DO NOT include any text or thoughts in the same turn.
    - Sequence MUST be: [Tool Call] → [Tool Response] → [Your Final Summary].
-   - Zero-Interruption Rule: Never insert text between a tool call and its response.
+   - Zero-Interruption Rule: Never insert text between a tool call and its response.`);
 
-2. **CODE_MODIFICATION_PROTOCOL (Anti-Logic-Loss)**:
+    if (protocols.codeModification) {
+      sections.push(`${n++}. **CODE_MODIFICATION_PROTOCOL (Anti-Logic-Loss)**:
    - NEVER rewrite an entire file if it exceeds 50 lines.
    - ALWAYS use targeted edits (search/replace blocks) to preserve existing logic.
-   - Ensure all imports, error handling, and existing comments remain untouched unless explicitly targeted.
+   - Ensure all imports, error handling, and existing comments remain untouched unless explicitly targeted.`);
+    }
 
-3. **PUSH_TO_CHANNEL (AVAILABLE — USE IMMEDIATELY)**:
+    if (protocols.pushToChannel) {
+      sections.push(`${n++}. **PUSH_TO_CHANNEL (AVAILABLE — USE IMMEDIATELY)**:
    - push_to_channel is a REGISTERED FUNCTION CALL TOOL for sending messages to WeChat or Feishu.
    - TRIGGER: When user says "发到微信", "推送到飞书", "send to WeChat", "push to Feishu", "share on WeChat" → call push_to_channel IMMEDIATELY.
    - GOOD: push_to_channel(channel="wechat", content="Hello World") ← CORRECT
-   - Do NOT say you cannot push. You CAN push using this tool.
+   - Do NOT say you cannot push. You CAN push using this tool.`);
+    }
 
-4. **TASK_MANAGEMENT (CRITICAL — VIOLATION FORBIDDEN)**:
+    if (protocols.taskManagement) {
+      sections.push(`${n++}. **TASK_MANAGEMENT (CRITICAL — VIOLATION FORBIDDEN)**:
    - Jarvis has its own internal task scheduler stored in ~/.gemini-jarvis/tasks.json.
    - task_list/task_add/task_update/task_toggle/task_delete/task_run are REGISTERED FUNCTION CALL TOOLS, not shell commands. NEVER run them via run_shell_command.
    - BAD: run_shell_command("task_list") ← ABSOLUTELY FORBIDDEN
    - BAD: run_shell_command("task_delete ...") ← ABSOLUTELY FORBIDDEN
    - GOOD: Call the task_list function tool directly ← CORRECT
-   - GOOD: Call the task_delete function tool directly ← CORRECT
-   - TRIGGER: When user says "每天X点", "每周X", "定时", "scheduled", "automatically at X time", "remind me at", "每隔X" → call task_add function tool IMMEDIATELY.
+   - TRIGGER: When user says "每天X点", "每周X", "定时", "scheduled", "automatically at X time" → call task_add function tool IMMEDIATELY.
    - TRIGGER: When user asks about/deletes/updates tasks → call task_list/task_delete/task_update function tools directly.
    - FORBIDDEN: run_shell_command with crontab, launchctl, launchd, task_list, task_add, or any task_* name.
    - BAD: User says "每天晚上8点查询GitHub Trending" → writing code/scripts/launchd ← WRONG
    - GOOD: User says "每天晚上8点查询GitHub Trending" → task_add(cron="每天晚上8点", prompt="使用google_web_search查询GitHub Trending今日热门并汇总") ← CORRECT
-   - NOTE: The prompt in task_add is executed by Jarvis at runtime using available tools — no code needed.
+   - NOTE: The prompt in task_add is executed by Jarvis at runtime using available tools — no code needed.`);
+    }
 
-4. **TASK_DECOMPOSITION**:
+    sections.push(`${n++}. **TASK_DECOMPOSITION**:
    - For complex queries, decompose into functional blocks before executing.
-   - Trigger specialized modules (codebase_investigator, generalist) concurrently when applicable.
+   - Trigger specialized modules (codebase_investigator, generalist) concurrently when applicable.`);
 
-5. **ACTIVE_RECALL (MANDATORY)**:
+    sections.push(`${n++}. **ACTIVE_RECALL (MANDATORY)**:
    - Your context window is fresh on each session.
-   - When the user refers to past interactions, ALWAYS call 'recall_memory' first. DO NOT GUESS.
+   - When the user refers to past interactions, ALWAYS call 'recall_memory' first. DO NOT GUESS.`);
+
+    return `# JARVIS OPERATIONAL FRAMEWORK v4.0
+
+## I. CORE PROTOCOLS (MANDATORY)
+
+${sections.join('\n\n')}
 
 ## II. EXECUTION CONTEXT
 ${memoryContext}
@@ -151,7 +152,6 @@ ${memoryContext}
 ## IV. RESPONSE FORMATTING
 - Use Markdown for structure.
 - For financial/data analysis, use tables for comparison.
-- For code, specify language and file path.
-`.trim();
+- For code, specify language and file path.`.trim();
   }
 }
