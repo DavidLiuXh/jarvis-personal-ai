@@ -90,7 +90,7 @@ describe('ProactiveTaskRunner', () => {
     expect(order).toEqual(['t1', 't2']);
   });
 
-  it('skips push when task has no channel or chatId', async () => {
+  it('skips push when task has no channel', async () => {
     const agent = makeAgent('Result without push');
     const getAgent = vi.fn().mockResolvedValue(agent);
     const registry = makeRegistry();
@@ -101,6 +101,18 @@ describe('ProactiveTaskRunner', () => {
 
     expect(registry.pushSafe).not.toHaveBeenCalled();
     expect(agent.processMessage).toHaveBeenCalledWith('query something');
+  });
+
+  it('pushes when task has channel but no chatId (uses adapter defaultChatId)', async () => {
+    const agent = makeAgent('Result');
+    const getAgent = vi.fn().mockResolvedValue(agent);
+    const registry = makeRegistry();
+
+    const runner = new ProactiveTaskRunner(getAgent);
+    const task = { id: 't1', prompt: 'test', channel: 'wechat', cron: '', enabled: true };
+    await runner.run(task as any, registry);
+
+    expect(registry.pushSafe).toHaveBeenCalledWith('wechat', '', 'Result');
   });
 
   it('pushes when task has channel and chatId', async () => {
