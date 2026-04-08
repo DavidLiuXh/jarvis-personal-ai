@@ -168,3 +168,62 @@ describe('SystemPromptBuilder', () => {
     expect(prompt).toContain('No persistent facts');
   });
 });
+
+describe('SystemPromptBuilder protocol numbering', () => {
+  it('protocol numbers are unique — no duplicate numbering', () => {
+    const builder = new SystemPromptBuilder();
+    const prompt = builder.buildFromFacts([], '');
+    // Extract all "N. **PROTOCOL_NAME**" patterns
+    const numbered = [...prompt.matchAll(/^(\d+)\.\s+\*\*/gm)].map(m => m[1]);
+    const unique = new Set(numbered);
+    expect(numbered.length).toBe(unique.size);
+  });
+});
+
+describe('SystemPromptBuilder on-demand protocol injection', () => {
+  it('injects PUSH_TO_CHANNEL only when prompt mentions push/微信/飞书', () => {
+    const builder = new SystemPromptBuilder();
+
+    const withPush = builder.buildFromFacts([], '发到微信');
+    expect(withPush).toContain('PUSH_TO_CHANNEL');
+
+    const withoutPush = builder.buildFromFacts([], '帮我分析代码');
+    expect(withoutPush).not.toContain('PUSH_TO_CHANNEL');
+  });
+
+  it('injects TASK_MANAGEMENT only when prompt mentions scheduling/任务', () => {
+    const builder = new SystemPromptBuilder();
+
+    const withTask = builder.buildFromFacts([], '每天早上8点做X');
+    expect(withTask).toContain('TASK_MANAGEMENT');
+
+    const withoutTask = builder.buildFromFacts([], '帮我分析代码');
+    expect(withoutTask).not.toContain('TASK_MANAGEMENT');
+  });
+
+  it('injects CODE_MODIFICATION_PROTOCOL only when prompt mentions code/file editing', () => {
+    const builder = new SystemPromptBuilder();
+
+    const withCode = builder.buildFromFacts([], '帮我修改这个文件');
+    expect(withCode).toContain('CODE_MODIFICATION_PROTOCOL');
+
+    const withoutCode = builder.buildFromFacts([], '今天天气怎么样');
+    expect(withoutCode).not.toContain('CODE_MODIFICATION_PROTOCOL');
+  });
+
+  it('always injects TOOL_USE_ATOMICITY, TASK_DECOMPOSITION, ACTIVE_RECALL', () => {
+    const builder = new SystemPromptBuilder();
+    const prompt = builder.buildFromFacts([], '随便说点什么');
+    expect(prompt).toContain('TOOL_USE_ATOMICITY');
+    expect(prompt).toContain('TASK_DECOMPOSITION');
+    expect(prompt).toContain('ACTIVE_RECALL');
+  });
+
+  it('buildFromFacts with no userPrompt includes all protocols (safe default)', () => {
+    const builder = new SystemPromptBuilder();
+    const prompt = builder.buildFromFacts([]);
+    expect(prompt).toContain('PUSH_TO_CHANNEL');
+    expect(prompt).toContain('TASK_MANAGEMENT');
+    expect(prompt).toContain('CODE_MODIFICATION_PROTOCOL');
+  });
+});

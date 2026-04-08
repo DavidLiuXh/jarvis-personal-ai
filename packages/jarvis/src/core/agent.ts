@@ -115,7 +115,7 @@ export class JarvisAgent extends EventEmitter {
 
   private async refreshContext(userPrompt: string) {
     const facts = await this.memoryService.searchFacts(userPrompt) as FactRecord[];
-    const protocol = this.promptBuilder.buildFromFacts(facts);
+    const protocol = this.promptBuilder.buildFromFacts(facts, userPrompt);
     const defaultInstruction = getCoreSystemPrompt(this.client.config, this.client.config.getUserMemory());
     this.client.getChat().setSystemInstruction(defaultInstruction + '\n' + protocol);
 
