@@ -56,12 +56,24 @@ export class WechatChannel {
     fs.writeFileSync(SESSION_FILE, JSON.stringify(session, null, 2));
   }
 
+  /**
+   * Returns the effective base URL: config.wechat.apiBaseUrl takes precedence
+   * over session.baseUrl so that IP/domain changes in config are picked up
+   * without requiring a re-login.
+   */
+  private getBaseUrl(): string {
+    const config = ConfigManager.getInstance().get();
+    const configUrl = config.wechat?.apiBaseUrl;
+    const base = (configUrl || this.session?.baseUrl || '').trim();
+    return base.endsWith('/') ? base : base + '/';
+  }
+
   /** Proactively send a plain-text message to a user without waiting for user input. */
   public async sendProactive(userId: string, text: string): Promise<void> {
     if (!this.session) {
       throw new Error('[Wechat] Cannot send proactive message: not logged in');
     }
-    const res = await fetch(new URL('ilink/bot/sendmessage', this.session.baseUrl).toString(), {
+    const res = await fetch(new URL('ilink/bot/sendmessage', this.getBaseUrl()).toString(), {
       method: 'POST',
       headers: this.buildHeaders(),
       body: JSON.stringify({
@@ -152,7 +164,7 @@ export class WechatChannel {
     
     while (this.isRunning && this.session) {
       try {
-        const url = new URL('ilink/bot/getupdates', this.session.baseUrl);
+        const url = new URL('ilink/bot/getupdates', this.getBaseUrl());
         const headers = this.buildHeaders();
         
         const response = await fetch(url.toString(), {
@@ -223,7 +235,7 @@ export class WechatChannel {
     const reply = async (text: string, isFinish: boolean = false) => {
       if (!text.trim()) return;
       try {
-        await fetch(new URL('ilink/bot/sendmessage', this.session!.baseUrl).toString(), {
+        await fetch(new URL('ilink/bot/sendmessage', this.getBaseUrl()).toString(), {
           method: 'POST',
           headers: this.buildHeaders(),
           body: JSON.stringify({
