@@ -26,6 +26,7 @@ import { AgentInitializer } from './agentInitializer.js';
 import { type TaskCommandHandler } from './taskCommandHandler.js';
 import { isFetchError, cleanOrphanedUserTurn } from './agentNetworkUtils.js';
 import { ConfigManager } from './configManager.js';
+import { type ChannelRegistry } from './channelRegistry.js';
 
 /**
  * JARVIS 3.0: The Digital Lifeform Agent
@@ -47,6 +48,7 @@ export class JarvisAgent extends EventEmitter {
   private toolRouter!: ToolRouter;
   private agentInitializer: AgentInitializer;
   private taskCommandHandler?: TaskCommandHandler;
+  private channelRegistry?: ChannelRegistry;
 
   constructor(options: JarvisAgentOptions) {
     super();
@@ -104,6 +106,7 @@ export class JarvisAgent extends EventEmitter {
       this.scheduler,
       this.client,
       this.taskCommandHandler,
+      this.channelRegistry,
     );
 
     this.initialized = true;
@@ -118,6 +121,21 @@ export class JarvisAgent extends EventEmitter {
 
     const history = this.client.getChat().getHistory();
     console.error(`🔄 [Jarvis] System Prompt Refreshed. History Size: ${history.length} turns. Facts injected: ${facts.length}.`);
+  }
+
+  public setChannelRegistry(registry: ChannelRegistry): void {
+    this.channelRegistry = registry;
+    // Re-create toolRouter with the registry if already initialized
+    if (this.toolRouter) {
+      this.toolRouter = new ToolRouter(
+        this.memoryService,
+        this.dynamicRegistry,
+        this.scheduler,
+        this.client,
+        this.taskCommandHandler,
+        this.channelRegistry,
+      );
+    }
   }
 
   public setTaskCommandHandler(handler: TaskCommandHandler): void {

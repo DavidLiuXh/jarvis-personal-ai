@@ -235,4 +235,60 @@ describe('ToolRouter', () => {
     expect(response.toLowerCase()).toMatch(/recommended|auto.selected|default/);
     expect(response.toLowerCase()).toMatch(/inform|tell.*user|let.*user know/);
   });
+
+  it('routes push_to_channel to channelRegistry.pushSafe', async () => {
+    const saveFact = vi.fn();
+    const search = vi.fn();
+    const runSkill = vi.fn();
+    const schedule = vi.fn().mockResolvedValue([]);
+    const getModel = vi.fn().mockReturnValue('gemini-pro');
+    const getChat = vi.fn().mockReturnValue({ getModel, recordCompletedToolCalls: vi.fn() });
+    const getCurrentSequenceModel = vi.fn().mockReturnValue(null);
+    const config = { api: { apiVersion: 'v1alpha' } };
+    const pushSafe = vi.fn().mockResolvedValue(true);
+
+    const router = new ToolRouter(
+      { saveFact, search },
+      { runSkill },
+      { schedule },
+      { getChat, getCurrentSequenceModel, config } as any,
+      undefined,
+      { pushSafe } as any,
+    );
+
+    const onToolResponse = vi.fn();
+    const req = makeReq('push_to_channel', { channel: 'wechat', content: 'Hello from Jarvis' });
+    const parts = await router.route([req], new AbortController().signal, onToolResponse);
+
+    expect(pushSafe).toHaveBeenCalledWith('wechat', '', 'Hello from Jarvis');
+    expect(schedule).not.toHaveBeenCalled();
+    expect(parts).toHaveLength(1);
+  });
+
+  it('push_to_channel passes chat_id when provided', async () => {
+    const saveFact = vi.fn();
+    const search = vi.fn();
+    const runSkill = vi.fn();
+    const schedule = vi.fn().mockResolvedValue([]);
+    const getModel = vi.fn().mockReturnValue('gemini-pro');
+    const getChat = vi.fn().mockReturnValue({ getModel, recordCompletedToolCalls: vi.fn() });
+    const getCurrentSequenceModel = vi.fn().mockReturnValue(null);
+    const config = { api: { apiVersion: 'v1alpha' } };
+    const pushSafe = vi.fn().mockResolvedValue(true);
+
+    const router = new ToolRouter(
+      { saveFact, search },
+      { runSkill },
+      { schedule },
+      { getChat, getCurrentSequenceModel, config } as any,
+      undefined,
+      { pushSafe } as any,
+    );
+
+    const onToolResponse = vi.fn();
+    const req = makeReq('push_to_channel', { channel: 'feishu', content: 'Report', chat_id: 'oc_123' });
+    await router.route([req], new AbortController().signal, onToolResponse);
+
+    expect(pushSafe).toHaveBeenCalledWith('feishu', 'oc_123', 'Report');
+  });
 });

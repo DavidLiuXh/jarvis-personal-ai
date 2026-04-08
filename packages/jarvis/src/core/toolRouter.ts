@@ -47,13 +47,17 @@ type ClientHandle = {
   config: { api?: { apiVersion?: string } };
 };
 
-const JARVIS_NATIVE_TOOLS = new Set(['save_memory', 'recall_memory', 'ask_user']);
+const JARVIS_NATIVE_TOOLS = new Set(['save_memory', 'recall_memory', 'ask_user', 'push_to_channel']);
 
 function isNativeTool(name: string): boolean {
   return name.startsWith('run_evolved_skill_') ||
     name.startsWith('task_') ||
     JARVIS_NATIVE_TOOLS.has(name);
 }
+
+type ChannelRegistryHandle = {
+  pushSafe: (channel: string, chatId: string, text: string) => Promise<boolean>;
+};
 
 type AskUserQuestion = {
   question: string;
@@ -110,6 +114,7 @@ export class ToolRouter {
     private scheduler: SchedulerHandle,
     private client: ClientHandle,
     private taskCommandHandler?: TaskCommandHandlerHandle,
+    private channelRegistry?: ChannelRegistryHandle,
   ) {}
 
   async route(
@@ -181,6 +186,19 @@ export class ToolRouter {
         const questions = (req.args.questions ?? []) as AskUserQuestion[];
         console.error(`❓ [Jarvis] ask_user intercepted — auto-selecting recommended options.`);
         output = buildAskUserResponse(questions);
+      } else if (req.name === 'push_to_channel') {
+        const channel = req.args.channel as string;
+        const content = req.args.content as string;
+        const chatId = (req.args.chat_id as string) || '';
+        if (this.channelRegistry) {
+          console.error(`📤 [Jarvis] Pushing to ${channel}...`);
+          const pushed = await this.channelRegistry.pushSafe(channel, chatId, content);
+          output = pushed
+            ? `✅ Message pushed to ${channel} successfully.`
+            : `❌ Failed to push to ${channel}. Check that the channel is enabled and you are logged in.`;
+        } else {
+          output = '❌ Push not available (ChannelRegistry not initialized).';
+        }
       }
 
       onToolResponse({ name: req.name, status: 'success', output, callId: req.callId });

@@ -220,10 +220,27 @@ export class AgentInitializer {
       },
     ];
 
+    const pushToChannelTool = {
+      name: 'push_to_channel',
+      description: 'Push a message to WeChat or Feishu. Call this when user says "发到微信", "推送到飞书", "send to WeChat", "push to Feishu", or asks to share/send content to a messaging channel.',
+      parameters: {
+        type: 'object',
+        properties: {
+          channel: { type: 'string', description: '"wechat" or "feishu"' },
+          content: { type: 'string', description: 'The message content to push.' },
+          chat_id: { type: 'string', description: 'Optional target chat/user ID. Leave empty to use the default (logged-in user for WeChat, defaultChatId for Feishu).' },
+        },
+        required: ['channel', 'content'],
+      },
+      parallelizable: false,
+    };
+
     // @ts-ignore
     if (typeof registry.addDiscoveredTool === 'function') {
       // @ts-ignore
       registry.addDiscoveredTool(recallMemoryTool);
+      // @ts-ignore
+      registry.addDiscoveredTool(pushToChannelTool);
       // @ts-ignore
       for (const tool of taskTools) registry.addDiscoveredTool(tool);
     }
