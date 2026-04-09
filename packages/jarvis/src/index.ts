@@ -173,7 +173,39 @@ class JarvisServer {
     void this.manager.getAgent(globalSessionId).then(agent => {
       agent.setTaskCommandHandler(taskCommandHandler);
       agent.setChannelRegistry(this.channelRegistry);
+      // Inject available skills so they appear in system prompt
+      void this.loadAvailableSkills().then(skills => {
+        if (skills.length > 0) {
+          agent.setAvailableSkills(skills);
+          console.error(`📚 [Jarvis] ${skills.length} skill(s) loaded: ${skills.map(s => s.name).join(', ')}`);
+        }
+      });
     });
+  }
+
+  private async loadAvailableSkills(): Promise<Array<{ name: string; description: string }>> {
+    const skillDirs = [
+      path.join(os.homedir(), '.gemini', 'skills'),
+      path.join(os.homedir(), '.agents', 'skills'),
+    ];
+    const skills: Array<{ name: string; description: string }> = [];
+    for (const dir of skillDirs) {
+      if (!fs.existsSync(dir)) continue;
+      for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+        if (!entry.isDirectory()) continue;
+        const skillFile = path.join(dir, entry.name, 'SKILL.md');
+        if (!fs.existsSync(skillFile)) continue;
+        try {
+          const content = fs.readFileSync(skillFile, 'utf8');
+          const nameMatch = content.match(/^name:\s*(.+)$/m);
+          const descMatch = content.match(/^description:\s*["']?(.+?)["']?\s*$/m);
+          if (nameMatch && descMatch) {
+            skills.push({ name: nameMatch[1].trim(), description: descMatch[1].trim() });
+          }
+        } catch (_e) {}
+      }
+    }
+    return skills;
   }
 
   private async initializeMemorySync() {

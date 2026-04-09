@@ -9,6 +9,11 @@ export type FactRecord = {
   content: string;
 };
 
+export type SkillInfo = {
+  name: string;
+  description: string;
+};
+
 const TECHNICAL_IDENTITY_KEYWORDS = [
   'engineer', 'engineering', 'coding', 'developer', 'programmer', 'software',
   'architect', 'devops', 'data scientist', 'researcher', 'technical',
@@ -50,7 +55,7 @@ function selectProtocols(userPrompt?: string): ProtocolSet {
 }
 
 export class SystemPromptBuilder {
-  buildFromFacts(facts: FactRecord[], userPrompt?: string): string {
+  buildFromFacts(facts: FactRecord[], userPrompt?: string, skills: SkillInfo[] = []): string {
     const identityFacts = facts.filter(f => f.category === 'identity');
     const preferenceFacts = facts.filter(f => f.category === 'preference');
     const contextFacts = facts.filter(f => f.category !== 'preference');
@@ -75,7 +80,7 @@ export class SystemPromptBuilder {
     const memoryContext = `\n<persistent_context>\n${contextLines}\n</persistent_context>\n\n<memory_status>\n[STRICT]: LONG-TERM LOGS NOT LOADED.\nIf the user refers to past conversations, decisions, or "what we did before", use 'recall_memory'. DO NOT HALLUCINATE PAST EVENTS.\n</memory_status>`;
 
     const protocols = selectProtocols(userPrompt);
-    return this.framework(memoryContext + styleSection, protocols);
+    return this.framework(memoryContext + styleSection, protocols, skills);
   }
 
   build(coreFacts: string[]): string {
@@ -88,7 +93,7 @@ export class SystemPromptBuilder {
     return this.framework(memoryContext, { pushToChannel: true, taskManagement: true, codeModification: true });
   }
 
-  private framework(memoryContext: string, protocols: ProtocolSet): string {
+  private framework(memoryContext: string, protocols: ProtocolSet, skills: SkillInfo[] = []): string {
     const sections: string[] = [];
     let n = 1;
 
@@ -134,6 +139,15 @@ export class SystemPromptBuilder {
     sections.push(`${n++}. **ACTIVE_RECALL (MANDATORY)**:
    - Your context window is fresh on each session.
    - When the user refers to past interactions, ALWAYS call 'recall_memory' first. DO NOT GUESS.`);
+
+    if (skills.length > 0) {
+      sections.push(`${n++}. **SKILL_ACTIVATION (USE WHEN APPLICABLE)**:
+   - The following skills are available via activate_skill tool. Call activate_skill(name) when the user's request matches a skill's description.
+   - After activation, follow the skill's instructions precisely.
+<available_skills>
+${skills.map(s => `- ${s.name}: ${s.description}`).join('\n')}
+</available_skills>`);
+    }
 
     return `# JARVIS OPERATIONAL FRAMEWORK v4.0
 
