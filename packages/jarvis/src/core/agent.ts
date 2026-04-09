@@ -19,7 +19,7 @@ import {
 import { JarvisEventType, type JarvisAgentOptions } from './types.js';
 import { type MemoryService } from './memory.js';
 import { DynamicToolRegistry } from './dynamicToolRegistry.js';
-import { SystemPromptBuilder, type FactRecord } from './systemPromptBuilder.js';
+import { SystemPromptBuilder, type FactRecord, type SkillInfo } from './systemPromptBuilder.js';
 import { BackgroundDistiller } from './backgroundDistiller.js';
 import { ToolRouter } from './toolRouter.js';
 import { AgentInitializer } from './agentInitializer.js';
@@ -49,6 +49,7 @@ export class JarvisAgent extends EventEmitter {
   private agentInitializer: AgentInitializer;
   private taskCommandHandler?: TaskCommandHandler;
   private channelRegistry?: ChannelRegistry;
+  private availableSkills: SkillInfo[] = [];
 
   constructor(options: JarvisAgentOptions) {
     super();
@@ -115,7 +116,7 @@ export class JarvisAgent extends EventEmitter {
 
   private async refreshContext(userPrompt: string) {
     const facts = await this.memoryService.searchFacts(userPrompt) as FactRecord[];
-    const protocol = this.promptBuilder.buildFromFacts(facts, userPrompt);
+    const protocol = this.promptBuilder.buildFromFacts(facts, userPrompt, this.availableSkills);
     const defaultInstruction = getCoreSystemPrompt(this.client.config, this.client.config.getUserMemory());
     this.client.getChat().setSystemInstruction(defaultInstruction + '\n' + protocol);
 
@@ -140,6 +141,10 @@ export class JarvisAgent extends EventEmitter {
 
   public setTaskCommandHandler(handler: TaskCommandHandler): void {
     this.taskCommandHandler = handler;
+  }
+
+  public setAvailableSkills(skills: SkillInfo[]): void {
+    this.availableSkills = skills;
   }
 
   public async processMessage(userPrompt: string, imageAttachment?: { data: Buffer; mimeType: string }) {

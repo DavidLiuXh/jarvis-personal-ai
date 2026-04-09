@@ -227,3 +227,37 @@ describe('SystemPromptBuilder on-demand protocol injection', () => {
     expect(prompt).toContain('CODE_MODIFICATION_PROTOCOL');
   });
 });
+
+describe('SystemPromptBuilder skill awareness', () => {
+  it('includes <available_skills> section when skills are provided', () => {
+    const builder = new SystemPromptBuilder();
+    const skills = [
+      { name: 'test-driven-development', description: 'Use when implementing any feature or bugfix' },
+      { name: 'systematic-debugging', description: 'Use when encountering any bug' },
+    ];
+    const prompt = builder.buildFromFacts([], undefined, skills);
+    expect(prompt).toContain('<available_skills>');
+    expect(prompt).toContain('test-driven-development');
+    expect(prompt).toContain('systematic-debugging');
+    expect(prompt).toContain('activate_skill');
+  });
+
+  it('does not include <available_skills> when no skills provided', () => {
+    const builder = new SystemPromptBuilder();
+    const prompt = builder.buildFromFacts([], undefined, []);
+    expect(prompt).not.toContain('<available_skills>');
+  });
+
+  it('includes SKILL_ACTIVATION protocol when skills are available', () => {
+    const builder = new SystemPromptBuilder();
+    const skills = [{ name: 'brainstorming', description: 'Use before creative work' }];
+    const prompt = builder.buildFromFacts([], undefined, skills);
+    expect(prompt).toContain('SKILL_ACTIVATION');
+  });
+
+  it('does not include SKILL_ACTIVATION when no skills', () => {
+    const builder = new SystemPromptBuilder();
+    const prompt = builder.buildFromFacts([], undefined, []);
+    expect(prompt).not.toContain('SKILL_ACTIVATION');
+  });
+});
