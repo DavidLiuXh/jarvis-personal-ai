@@ -203,7 +203,8 @@ export class JarvisAgent extends EventEmitter {
                   toolCallRequests.push(event.value);
                 } else if (event.type === GeminiEventType.Error) {
                   throw event.value.error;
-                } else {
+                } else if (event.type !== GeminiEventType.ModelInfo) {
+                  // Filter out ModelInfo events — model name should not appear in chat output
                   this.emit(JarvisEventType.CONTENT, event);
                 }
               }
