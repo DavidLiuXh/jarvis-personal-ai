@@ -16,9 +16,11 @@ export type TaskConfig = {
   id: string;
   /** Standard 5-field cron expression, e.g. "0 8 * * *" */
   cron: string;
-  /** Prompt sent to the agent when this task fires */
+  /** Prompt sent to the agent when this task fires (not used for 'reflect' type) */
   prompt: string;
   enabled: boolean;
+  /** Task type: 'agent' (default) runs prompt via LLM; 'reflect' triggers memory reflection */
+  type?: 'agent' | 'reflect';
   /** Override default channel for this task */
   channel?: string;
   /** Override default chatId for this task */

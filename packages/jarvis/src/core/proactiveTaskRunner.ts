@@ -17,6 +17,8 @@ type AgentLike = {
 
 type GetAgentFn = (sessionId: string) => Promise<AgentLike>;
 
+type ReflectFn = () => Promise<void>;
+
 /**
  * Runs proactive tasks by driving the agent without user input.
  * Tasks are queued — only one runs at a time to avoid agent concurrency issues.
@@ -25,7 +27,7 @@ export class ProactiveTaskRunner {
   private queue: Array<() => Promise<void>> = [];
   private running = false;
 
-  constructor(private getAgent: GetAgentFn) {}
+  constructor(private getAgent: GetAgentFn, private reflect?: ReflectFn) {}
 
   public async run(task: TriggeredTask, registry: ChannelRegistry): Promise<void> {
     return new Promise((resolve) => {
@@ -49,6 +51,18 @@ export class ProactiveTaskRunner {
 
   private async execute(task: TriggeredTask, registry: ChannelRegistry): Promise<void> {
     console.error(`🤖 [ProactiveTaskRunner] Executing task "${task.id}"...`);
+
+    // Handle reflect tasks separately — no agent, no push
+    if (task.type === 'reflect') {
+      if (this.reflect) {
+        await this.reflect();
+        console.error(`✅ [ProactiveTaskRunner] Reflection task "${task.id}" completed.`);
+      } else {
+        console.error(`⚠️ [ProactiveTaskRunner] Reflection task "${task.id}" skipped — reflect fn not available.`);
+      }
+      return;
+    }
+
     try {
       // Use global session so the agent has full memory context
       const { ConfigManager } = await import('./configManager.js');
