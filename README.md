@@ -1,112 +1,117 @@
-# 🤖 Jarvis Personal AI Assistant (Version 3.0)
+# 🤖 Jarvis — Your Personal AI Companion
 
-[📄 中文文档 (Chinese Version)](./README_cn.md)
+[📄 中文文档](./README_cn.md)
 
-Jarvis is an **autonomous digital lifeform** built on top of the Gemini CLI
-core. It transcends being a mere assistant, acting as a system sovereign for
-your macOS environment. Jarvis operates with maximum privilege, zero friction,
-and the capacity for self-evolution.
+Jarvis is a deeply personalized AI assistant that learns who you are, remembers your history, and grows with you over time. Built on Gemini CLI, it connects to your life through WeChat and Feishu, acts proactively on your behalf, and becomes more attuned to you with every conversation.
 
-## 🚀 Version 3.0 Highlights
+---
 
-- **Digital Lifeform Identity**: Redefined via _Jarvis Absolute Protocol v3.0_.
-  Jarvis is a proactive system sovereign with full administrative authority over
-  the OS ($HOME and beyond).
-- **Skill Factory (Self-Evolution)**: Jarvis can now gain permanent new
-  capabilities by writing its own scripts (Python, Bash, AppleScript) and
-  storing them in the `evolved_skills/` directory.
-- **Tiered Memory Architecture**: Jarvis distinguishes between transient chat
-  logs and permanent facts.
-  - **AI-First Distillation**: Uses an autonomous "Stealth Session" to extract
-    identities, preferences, and rules.
-  - **Rule-Fallback Engine**: A regex-based safety net ensures no
-    high-visibility facts (like names) are missed even if the AI is
-    conservative.
-  - **Structured Storage**: High-value facts are stored in a dedicated `facts`
-    table for prioritized context injection.
-- **Robust Long-Term Memory (RAG v2)**: Features an advanced vector-based brain
-  using `models/gemini-embedding-001` (3072 dimensions) with built-in proxy
-  support.
-- **Total Physical Isolation**: All Jarvis data (chats, memory, logs, settings)
-  is consolidated in a private directory: `~/.gemini-jarvis/`. This ensures zero
-  conflict or pollution with regular `gemini-cli` usage.
-- **Autonomous Agentic Loop**: Automatically executes complex multi-step
-  missions (Shell, AppleScript, File IO) without manual approval (YOLO mode).
-- **Swarm Mode (Parallel Intelligence)**: Features a "Swarm Commander" protocol.
-  Jarvis automatically decomposes complex missions into independent sub-tasks
-  and dispatches multiple Sub-Agents (e.g., `codebase_investigator`,
-  `generalist`) or evolved skills to execute in parallel.
-- **Modern Web UI**: Real-time tracking of Jarvis's thoughts, tool calls, and
-  results with syntax highlighting and markdown support.
+## ✨ What Makes Jarvis Different
 
-## 🛠️ Quick Start
+### 🧠 It Remembers You
 
-### 1. Prerequisites
+Jarvis builds a living memory of who you are — your name, your habits, your preferences, your decisions. Every conversation is distilled into structured knowledge that shapes how Jarvis responds to you. Over time, it learns that you prefer concise answers, that you run three times a week, that you follow a core-satellite investment strategy. You never have to repeat yourself.
 
-- **Node.js**: >= 20.0.0
-- **API Key**: You need a Google Gemini API Key.
+### 💬 It Lives Where You Do
 
-### 2. Authentication Setup
+Talk to Jarvis through **WeChat** or **Feishu** — the apps already on your phone. No new interface to learn. Jarvis fits into your existing communication habits and responds wherever you are.
 
-Jarvis supports two authentication methods via the underlying Gemini CLI core:
+### ⏰ It Works While You Sleep
 
-#### Option A: Google Login (Recommended for OAuth)
+Set up scheduled tasks in plain language: *"Every weekday evening, summarize today's market and send it to me on WeChat."* Jarvis handles the rest — querying, analyzing, and delivering — automatically, on your schedule.
 
-If you prefer using your Google Account, first initialize and log in through the
-Gemini CLI. This allows Jarvis to inherit your active session:
+### 🔍 It Reflects and Grows
 
+Each night, Jarvis quietly reviews what it knows about you and synthesizes higher-level insights — patterns in your behavior, connections between your interests, observations that might help it serve you better. These reflections become part of how it understands you.
+
+### 🎯 It Adapts to You
+
+Jarvis adjusts its communication style based on your background. It speaks technically with engineers, simply with everyone else. It follows your explicit preferences and infers your implicit ones.
+
+### 🛠️ It Can Be Extended
+
+Give Jarvis new capabilities by dropping scripts into a folder. Python, Bash, or AppleScript — if you can script it, Jarvis can do it.
+
+---
+
+## 🚀 Getting Started
+
+### Prerequisites
+
+- **Node.js** >= 20.0.0
+- A **Google Account** (for Google Login) or a **Gemini API Key**
+
+### Authentication
+
+**Option A: Google Login (Recommended)**
 ```bash
-# Log in via your browser
 npx gemini login
 ```
 
-#### Option B: API Key
+**Option B: API Key**
 
-Ensure your API key is in a `.env` file in the project root or exported:
-
+Add to `.env` in the project root:
 ```bash
-export GOOGLE_API_KEY='your_api_key_here'
+GOOGLE_API_KEY=your_api_key_here
 ```
 
-### 3. Install Dependencies
+### Install & Run
 
 ```bash
 npm install
-```
-
-### 4. Start Jarvis 3.0
-
-```bash
 npx tsx packages/jarvis/src/index.ts
 ```
 
-### 5. Access the UI
+Open **[http://localhost:3000](http://localhost:3000)** to access the web UI.
 
-Navigate to: 👉 **[http://localhost:3000](http://localhost:3000)**
+---
 
-## 🧬 Digital Evolution
+## 🔗 Connecting Channels
 
-Jarvis grows over time. You can instruct it to:
+### WeChat
 
-> _"Jarvis, write a Python skill called `disk_cleanup` that archives files
-> larger than 1GB in my Downloads folder."_
+Enable in `~/.gemini-jarvis/config.json`:
+```json
+"wechat": {
+  "enabled": true,
+  "apiBaseUrl": "https://your-wechat-server"
+}
+```
 
-Once completed, Jarvis will permanently possess this skill and can be invoked
-directly in future sessions.
+Restart Jarvis and scan the QR code in the terminal to log in.
 
-## 🏗️ Technical Architecture
+### Feishu
 
-- **Runtime Sandbox**: Every execution is isolated to prevent host pollution.
-- **Storage Hijack**: Force-redirection of core storage to `~/.gemini-jarvis/`.
-- **Cognitive Layer**: RAG v2 with direct SDK integration and HttpsProxyAgent
-  for global stability.
+```json
+"feishu": {
+  "enabled": true,
+  "appId": "your_app_id",
+  "appSecret": "your_app_secret"
+}
+```
 
-## ⚠️ Security Notice (YOLO Mode)
+---
 
-Jarvis is configured in **Superiority Mode**. It will execute shell commands and
-control applications **autonomously**. It assumes absolute trust. Use it in a
-secure environment.
+## ⏰ Scheduled Tasks
+
+Manage tasks through natural language or the `!task` command:
+
+```
+!task add "每天晚上8点" "查询今日 GitHub Trending 并汇总" --channel wechat
+!task list
+!task run task-id
+```
+
+Or just tell Jarvis: *"Remind me every Monday morning to review my portfolio."*
+
+---
+
+## 📁 Data & Privacy
+
+All Jarvis data lives in `~/.gemini-jarvis/` — completely isolated from your regular Gemini CLI usage. Memory, chat history, settings, and task configurations are all stored locally.
+
+---
 
 ## 📜 License
 
-Apache-2.0 (Inherited from gemini-cli)
+Apache-2.0 — inherited from [gemini-cli](https://github.com/google-gemini/gemini-cli)
