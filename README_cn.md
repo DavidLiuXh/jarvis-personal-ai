@@ -58,9 +58,11 @@ GOOGLE_API_KEY=你的_API_KEY
 ### 安装与启动
 
 ```bash
-npm install
+npm install --ignore-scripts
 npx tsx packages/jarvis/src/index.ts
 ```
+
+> **说明**：使用 `--ignore-scripts` 跳过内置 gemini-cli 包的构建步骤。Jarvis 通过 `tsx` 在运行时直接解析 TypeScript，无需预编译。
 
 打开 **[http://localhost:3000](http://localhost:3000)** 访问 Web 界面。
 

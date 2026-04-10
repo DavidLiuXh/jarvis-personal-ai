@@ -58,9 +58,11 @@ GOOGLE_API_KEY=your_api_key_here
 ### Install & Run
 
 ```bash
-npm install
+npm install --ignore-scripts
 npx tsx packages/jarvis/src/index.ts
 ```
+
+> **Note**: Use `--ignore-scripts` to skip build steps from the bundled gemini-cli packages. Jarvis runs via `tsx` at runtime and does not require pre-compilation.
 
 Open **[http://localhost:3000](http://localhost:3000)** to access the web UI.
 
