@@ -65,6 +65,7 @@ import { TaskScheduler } from './core/taskScheduler.js';
 import { ChannelRegistry } from './core/channelRegistry.js';
 import { ProactiveTaskRunner } from './core/proactiveTaskRunner.js';
 import { TaskCommandHandler } from './core/taskCommandHandler.js';
+import { SkillCommandHandler } from './core/skillCommandHandler.js';
 
 const JARVIS_HOME = path.join(os.homedir(), '.gemini-jarvis');
 
@@ -196,12 +197,36 @@ class JarvisServer {
     void this.manager.getAgent(globalSessionId).then(agent => {
       agent.setTaskCommandHandler(taskCommandHandler);
       agent.setChannelRegistry(this.channelRegistry);
-      // Inject available skills so they appear in system prompt
+
+      // Load skills and set up dynamic reload
       void this.loadAvailableSkills().then(skills => {
+        agent.setAvailableSkills(skills);
         if (skills.length > 0) {
-          agent.setAvailableSkills(skills);
           console.error(`📚 [Jarvis] ${skills.length} skill(s) loaded: ${skills.map(s => s.name).join(', ')}`);
         }
+
+        // Build reloadSkillManager fn using the agent's initialized config
+        const reloadSkillManager = async () => {
+          const agentAny = agent as any;
+          if (!agentAny.client?.config) return;
+          try {
+            await agentAny.client.config.getSkillManager().discoverSkills(
+              agentAny.client.config.storage,
+              agentAny.client.config.getExtensions?.() ?? [],
+              agentAny.client.config.isTrustedFolder?.() ?? true,
+            );
+          } catch (e: any) {
+            console.error(`⚠️ [Jarvis] skillManager reload failed: ${e.message}`);
+          }
+        };
+
+        const skillCommandHandler = new SkillCommandHandler(
+          (newSkills) => agent.setAvailableSkills(newSkills),
+          reloadSkillManager,
+          () => this.loadAvailableSkills(),
+          skills,
+        );
+        agent.setSkillCommandHandler(skillCommandHandler);
       });
     });
   }
