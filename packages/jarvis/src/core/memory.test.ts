@@ -434,3 +434,71 @@ describe('MemoryService.searchFacts', () => {
     // behavior competes with others under the limit, not guaranteed
   });
 });
+
+describe('MemoryService.reflect', () => {
+  afterEach(() => {
+    vi.resetModules();
+    vi.clearAllMocks();
+  });
+
+  async function createReflectService() {
+    vi.doMock('./configManager.js', () => ({
+      ConfigManager: {
+        getInstance: vi.fn().mockReturnValue({
+          get: vi.fn().mockReturnValue({
+            api: { key: 'test-key', proxy: null },
+            models: { embedding: 'test-model', embeddingDimension: 4, distillation: 'test-model' },
+            memory: { ingestionDelayMs: 0, retrievalLimit: 5, consolidationThreshold: 100, dedupStrategy: 'jaccard', factRelevanceStrategy: 'jaccard', factRelevanceLimit: 5 },
+          }),
+        }),
+      },
+    }));
+    const { MemoryService } = await import('./memory.js');
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'jarvis-reflect-'));
+    const service = new (MemoryService as new (root: string, dbPath?: string) => InstanceType<typeof MemoryService>)('', tmpDir);
+    return { service, tmpDir };
+  }
+
+  it('reflect calls generateText with facts and saves insights to facts table', async () => {
+    const { service } = await createReflectService();
+
+    // Seed some facts
+    const db = (service as any).db;
+    db.prepare('INSERT INTO facts (category, content, importance, timestamp) VALUES (?, ?, ?, ?)').run('behavior', 'user runs 3 times a week', 8, Date.now());
+    db.prepare('INSERT INTO facts (category, content, importance, timestamp) VALUES (?, ?, ?, ?)').run('identity', 'user is a software engineer', 9, Date.now());
+
+    const insights = [
+      { category: 'insight', content: 'User combines physical discipline with technical work', importance: 9 },
+    ];
+    const generateText = vi.fn().mockResolvedValue(JSON.stringify(insights));
+
+    await service.reflect(generateText);
+
+    expect(generateText).toHaveBeenCalledOnce();
+    const prompt = generateText.mock.calls[0][0] as string;
+    expect(prompt).toContain('insight');
+    expect(prompt).toContain('runs 3 times');
+
+    // Insight should be saved to facts table
+    const saved = db.prepare("SELECT * FROM facts WHERE category = 'insight'").all() as any[];
+    expect(saved).toHaveLength(1);
+    expect(saved[0].content).toContain('discipline');
+    expect(saved[0].importance).toBe(9);
+  });
+
+  it('reflect does nothing when no facts exist', async () => {
+    const { service } = await createReflectService();
+    const generateText = vi.fn();
+    await service.reflect(generateText);
+    expect(generateText).not.toHaveBeenCalled();
+  });
+
+  it('reflect does not throw when generateText fails', async () => {
+    const { service } = await createReflectService();
+    const db = (service as any).db;
+    db.prepare('INSERT INTO facts (category, content, importance, timestamp) VALUES (?, ?, ?, ?)').run('behavior', 'user runs', 8, Date.now());
+
+    const generateText = vi.fn().mockRejectedValue(new Error('API error'));
+    await expect(service.reflect(generateText)).resolves.not.toThrow();
+  });
+});

@@ -124,7 +124,30 @@ class JarvisServer {
 
     // --- Proactive Task System ---
     this.channelRegistry = new ChannelRegistry(jarvisConfig.tasks?.defaultChannel ?? 'feishu');
-    this.taskRunner = new ProactiveTaskRunner((sessionId) => this.manager.getAgent(sessionId));
+
+    // Build reflect function using CLI-auth generateText (same pattern as agent.ts)
+    const reflectFn = async () => {
+      const agent = await this.manager.getAgent(jarvisConfig.session?.globalSessionId ?? 'jarvis-global');
+      // Access generateText via agent's initialized client
+      const agentAny = agent as any;
+      if (!agentAny.client?.config?.getContentGenerator) {
+        console.error('⚠️ [Jarvis] Reflect: agent not initialized yet, skipping.');
+        return;
+      }
+      const generateText = async (prompt: string): Promise<string> => {
+        const generator = agentAny.client.config.getContentGenerator();
+        const { LlmRole } = await import('../../core/src/index.js');
+        const response = await generator.generateContent(
+          { model: jarvisConfig.models.distillation, contents: [{ role: 'user', parts: [{ text: prompt }] }] },
+          `reflect-${Date.now()}`,
+          LlmRole.UTILITY_SUMMARIZER,
+        );
+        return (response as any).candidates?.[0]?.content?.parts?.[0]?.text ?? '';
+      };
+      await this.manager.getMemoryService().reflect(generateText);
+    };
+
+    this.taskRunner = new ProactiveTaskRunner((sessionId) => this.manager.getAgent(sessionId), reflectFn);
     this.taskScheduler = new TaskScheduler(JARVIS_HOME);
 
     // Register feishu adapter

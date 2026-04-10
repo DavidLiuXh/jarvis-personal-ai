@@ -407,6 +407,65 @@ ${factsText}
     } catch (e) { return []; }
   }
 
+  /**
+   * Reflects on accumulated facts to generate higher-order insights.
+   * Insights are saved to the facts table with category='insight' and high importance.
+   * Does nothing if there are no facts to reflect on.
+   */
+  public async reflect(generateText: (prompt: string) => Promise<string>): Promise<void> {
+    try {
+      const allFacts = this.db.prepare(
+        "SELECT category, content, importance FROM facts WHERE category != 'insight' ORDER BY importance DESC"
+      ).all() as Array<{ category: string; content: string; importance: number }>;
+
+      if (allFacts.length === 0) return;
+
+      const factsText = allFacts
+        .map(f => `[${f.category.toUpperCase()}] ${f.content}`)
+        .join('\n');
+
+      const prompt = `
+You are Jarvis's Cognitive Reflection Module. Analyze the following accumulated knowledge about the user and generate high-value insights.
+
+Current knowledge:
+${factsText}
+
+Task: Generate 2-5 meta-level insights by finding patterns, connections, and implications across these facts.
+Focus on:
+- Patterns that connect multiple facts (e.g., how identity + behavior + decisions relate)
+- Gaps or contradictions worth noting
+- High-level observations that could improve future assistance
+
+Rules:
+- Each insight must synthesize MULTIPLE facts, not just restate one
+- Insights should be actionable or meaningful for future interactions
+- Be specific, not generic
+
+Respond ONLY with a JSON array:
+[{"category": "insight", "content": "...", "importance": 1-10}]
+`.trim();
+
+      const raw = await generateText(prompt);
+      const match = raw.match(/\[[\s\S]*\]/);
+      if (!match) return;
+
+      const insights = JSON.parse(match[0]) as Array<{ category: string; content: string; importance: number }>;
+      for (const insight of insights) {
+        if (insight.category === 'insight' && insight.content) {
+          // Check for duplicates before saving
+          const exists = this.db.prepare('SELECT id FROM facts WHERE content = ?').get(insight.content);
+          if (!exists) {
+            this.db.prepare('INSERT INTO facts (category, content, importance, timestamp) VALUES (?, ?, ?, ?)')
+              .run('insight', insight.content, insight.importance ?? 8, Date.now());
+            console.error(`💡 [MemoryService] Insight saved: ${insight.content.slice(0, 60)}...`);
+          }
+        }
+      }
+    } catch (e: any) {
+      console.error(`⚠️ [MemoryService] Reflection failed: ${e.message}`);
+    }
+  }
+
   private static readonly ALWAYS_INJECT_CATEGORIES = new Set(['preference']);
 
   /**
