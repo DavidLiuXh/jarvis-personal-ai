@@ -26,7 +26,13 @@ git commit --no-verify -m "chore: sync packages/core and packages/cli from upstr
 Upstream version: $UPSTREAM_VERSION
 Source: https://github.com/google-gemini/gemini-cli"
 
+echo "📦 Installing dependencies (--ignore-scripts to skip build steps)..."
+npm install --ignore-scripts
+
 echo "🚀 Pushing to origin..."
 git push
 
 echo "✅ Done! Synced to upstream version: $UPSTREAM_VERSION"
+echo ""
+echo "ℹ️  Note: npm install was run with --ignore-scripts."
+echo "   Jarvis uses tsx at runtime and does not require pre-compilation."
