@@ -24,6 +24,7 @@ import { BackgroundDistiller } from './backgroundDistiller.js';
 import { ToolRouter } from './toolRouter.js';
 import { AgentInitializer } from './agentInitializer.js';
 import { type TaskCommandHandler } from './taskCommandHandler.js';
+import { type SkillCommandHandler } from './skillCommandHandler.js';
 import { isFetchError, cleanOrphanedUserTurn } from './agentNetworkUtils.js';
 import { ConfigManager } from './configManager.js';
 import { type ChannelRegistry } from './channelRegistry.js';
@@ -48,6 +49,7 @@ export class JarvisAgent extends EventEmitter {
   private toolRouter!: ToolRouter;
   private agentInitializer: AgentInitializer;
   private taskCommandHandler?: TaskCommandHandler;
+  private skillCommandHandler?: SkillCommandHandler;
   private channelRegistry?: ChannelRegistry;
   private availableSkills: SkillInfo[] = [];
 
@@ -145,12 +147,25 @@ export class JarvisAgent extends EventEmitter {
 
   public setAvailableSkills(skills: SkillInfo[]): void {
     this.availableSkills = skills;
+    this.skillCommandHandler?.setCurrentSkills(skills);
+  }
+
+  public setSkillCommandHandler(handler: SkillCommandHandler): void {
+    this.skillCommandHandler = handler;
   }
 
   public async processMessage(userPrompt: string, imageAttachment?: { data: Buffer; mimeType: string }) {
     // Intercept !task commands — no LLM, no memory operations needed
     if (userPrompt.trimStart().startsWith('!task') && this.taskCommandHandler) {
       const result = await this.taskCommandHandler.handle(userPrompt);
+      this.emit(JarvisEventType.CONTENT, { type: JarvisEventType.CONTENT, value: result });
+      this.emit(JarvisEventType.DONE);
+      return;
+    }
+
+    // Intercept !skill commands — no LLM, no memory operations needed
+    if (userPrompt.trimStart().startsWith('!skill') && this.skillCommandHandler) {
+      const result = await this.skillCommandHandler.handle(userPrompt);
       this.emit(JarvisEventType.CONTENT, { type: JarvisEventType.CONTENT, value: result });
       this.emit(JarvisEventType.DONE);
       return;
