@@ -466,7 +466,9 @@ Respond ONLY with a JSON array:
     }
   }
 
-  private static readonly ALWAYS_INJECT_CATEGORIES = new Set(['preference']);
+  // preference: response style — always needed every turn
+  // insight: high-order meta-knowledge — always valuable regardless of current topic
+  private static readonly ALWAYS_INJECT_CATEGORIES = new Set(['preference', 'insight']);
 
   /**
    * Returns facts relevant to the given query.
