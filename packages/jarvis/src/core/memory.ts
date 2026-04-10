@@ -408,38 +408,50 @@ ${factsText}
   }
 
   /**
-   * Reflects on accumulated facts to generate higher-order insights.
-   * Insights are saved to the facts table with category='insight' and high importance.
-   * Does nothing if there are no facts to reflect on.
+   * Reflects on accumulated facts to generate/update higher-order insights.
+   *
+   * Strategy (Plan B — consolidation):
+   * - Includes existing insights in the prompt so LLM can merge/update them
+   * - Atomically replaces all old insights with the new set
+   * - Prevents insight accumulation over time
    */
   public async reflect(generateText: (prompt: string) => Promise<string>): Promise<void> {
     try {
-      const allFacts = this.db.prepare(
+      const nonInsightFacts = this.db.prepare(
         "SELECT category, content, importance FROM facts WHERE category != 'insight' ORDER BY importance DESC"
       ).all() as Array<{ category: string; content: string; importance: number }>;
 
-      if (allFacts.length === 0) return;
+      if (nonInsightFacts.length === 0) return;
 
-      const factsText = allFacts
+      const existingInsights = this.db.prepare(
+        "SELECT content, importance FROM facts WHERE category = 'insight' ORDER BY importance DESC"
+      ).all() as Array<{ content: string; importance: number }>;
+
+      const factsText = nonInsightFacts
         .map(f => `[${f.category.toUpperCase()}] ${f.content}`)
         .join('\n');
 
+      const insightsSection = existingInsights.length > 0
+        ? `\nExisting insights (review, update, merge, or replace as needed):\n${existingInsights.map(i => `[INSIGHT] ${i.content}`).join('\n')}\n`
+        : '';
+
       const prompt = `
-You are Jarvis's Cognitive Reflection Module. Analyze the following accumulated knowledge about the user and generate high-value insights.
+You are Jarvis's Cognitive Reflection Module. Analyze the accumulated knowledge and generate an updated set of high-value insights.
 
 Current knowledge:
 ${factsText}
-
-Task: Generate 2-5 meta-level insights by finding patterns, connections, and implications across these facts.
+${insightsSection}
+Task: Generate 2-5 meta-level insights that synthesize patterns across the facts above.
+If existing insights are provided, merge/update/replace them — do NOT just copy them unchanged.
 Focus on:
-- Patterns that connect multiple facts (e.g., how identity + behavior + decisions relate)
+- Patterns connecting multiple facts (identity + behavior + decisions)
 - Gaps or contradictions worth noting
-- High-level observations that could improve future assistance
+- Observations that could improve future assistance
 
 Rules:
 - Each insight must synthesize MULTIPLE facts, not just restate one
-- Insights should be actionable or meaningful for future interactions
-- Be specific, not generic
+- Be specific and actionable, not generic
+- Output replaces ALL existing insights (consolidation, not accumulation)
 
 Respond ONLY with a JSON array:
 [{"category": "insight", "content": "...", "importance": 1-10}]
@@ -449,18 +461,21 @@ Respond ONLY with a JSON array:
       const match = raw.match(/\[[\s\S]*\]/);
       if (!match) return;
 
-      const insights = JSON.parse(match[0]) as Array<{ category: string; content: string; importance: number }>;
-      for (const insight of insights) {
-        if (insight.category === 'insight' && insight.content) {
-          // Check for duplicates before saving
-          const exists = this.db.prepare('SELECT id FROM facts WHERE content = ?').get(insight.content);
-          if (!exists) {
-            this.db.prepare('INSERT INTO facts (category, content, importance, timestamp) VALUES (?, ?, ?, ?)')
-              .run('insight', insight.content, insight.importance ?? 8, Date.now());
-            console.error(`💡 [MemoryService] Insight saved: ${insight.content.slice(0, 60)}...`);
-          }
+      const newInsights = JSON.parse(match[0]) as Array<{ category: string; content: string; importance: number }>;
+      const validInsights = newInsights.filter(i => i.category === 'insight' && i.content);
+      if (validInsights.length === 0) return;
+
+      // Atomically replace all old insights with new ones
+      const replaceInsights = this.db.transaction(() => {
+        this.db.prepare("DELETE FROM facts WHERE category = 'insight'").run();
+        for (const insight of validInsights) {
+          this.db.prepare('INSERT INTO facts (category, content, importance, timestamp) VALUES (?, ?, ?, ?)')
+            .run('insight', insight.content, insight.importance ?? 8, Date.now());
         }
-      }
+      });
+      replaceInsights();
+
+      console.error(`💡 [MemoryService] Reflection complete: ${validInsights.length} insights (replaced ${existingInsights.length} old).`);
     } catch (e: any) {
       console.error(`⚠️ [MemoryService] Reflection failed: ${e.message}`);
     }

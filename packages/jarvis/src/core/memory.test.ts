@@ -501,4 +501,45 @@ describe('MemoryService.reflect', () => {
     const generateText = vi.fn().mockRejectedValue(new Error('API error'));
     await expect(service.reflect(generateText)).resolves.not.toThrow();
   });
+
+  it('reflect includes existing insights in prompt so LLM can merge/update them', async () => {
+    const { service } = await createReflectService();
+    const db = (service as any).db;
+
+    // Seed a fact and an existing insight
+    db.prepare('INSERT INTO facts (category, content, importance, timestamp) VALUES (?, ?, ?, ?)').run('behavior', 'user runs 3 times a week', 8, Date.now());
+    db.prepare('INSERT INTO facts (category, content, importance, timestamp) VALUES (?, ?, ?, ?)').run('insight', 'Old insight about discipline', 9, Date.now());
+
+    const generateText = vi.fn().mockResolvedValue(
+      JSON.stringify([{ category: 'insight', content: 'Updated insight merging old and new', importance: 9 }])
+    );
+
+    await service.reflect(generateText);
+
+    const prompt = generateText.mock.calls[0][0] as string;
+    // Prompt must include existing insights for LLM to merge
+    expect(prompt).toContain('Old insight about discipline');
+  });
+
+  it('reflect replaces all old insights with new ones (no accumulation)', async () => {
+    const { service } = await createReflectService();
+    const db = (service as any).db;
+
+    db.prepare('INSERT INTO facts (category, content, importance, timestamp) VALUES (?, ?, ?, ?)').run('behavior', 'user runs', 8, Date.now());
+    // Two existing insights
+    db.prepare('INSERT INTO facts (category, content, importance, timestamp) VALUES (?, ?, ?, ?)').run('insight', 'Old insight 1', 8, Date.now());
+    db.prepare('INSERT INTO facts (category, content, importance, timestamp) VALUES (?, ?, ?, ?)').run('insight', 'Old insight 2', 7, Date.now());
+
+    const newInsights = [
+      { category: 'insight', content: 'New merged insight', importance: 9 },
+    ];
+    const generateText = vi.fn().mockResolvedValue(JSON.stringify(newInsights));
+
+    await service.reflect(generateText);
+
+    const saved = db.prepare("SELECT content FROM facts WHERE category = 'insight'").all() as any[];
+    // Old insights gone, only new one remains
+    expect(saved).toHaveLength(1);
+    expect(saved[0].content).toBe('New merged insight');
+  });
 });
