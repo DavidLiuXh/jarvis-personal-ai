@@ -14,7 +14,6 @@ import path from 'node:path';
 import type { Config } from '../config/config.js';
 import type { AgentDefinition } from '../agents/types.js';
 import { CodebaseInvestigatorAgent } from '../agents/codebase-investigator.js';
-import { AGENT_TOOL_NAME } from '../tools/tool-names.js';
 import { GEMINI_DIR } from '../utils/paths.js';
 import { debugLogger } from '../utils/debugLogger.js';
 import {
@@ -83,27 +82,18 @@ describe('Core System Prompt (prompts.ts)', () => {
     vi.stubEnv('SANDBOX', undefined);
     vi.stubEnv('GEMINI_SYSTEM_MD', undefined);
     vi.stubEnv('GEMINI_WRITE_SYSTEM_MD', undefined);
-    const mockRegistry = {
-      getAllToolNames: vi
-        .fn()
-        .mockReturnValue(['grep_search', 'glob', 'invoke_agent']),
-      getAllTools: vi.fn().mockReturnValue([]),
-    };
     mockConfig = {
-      getToolRegistry: vi.fn().mockReturnValue(mockRegistry),
+      getToolRegistry: vi.fn().mockReturnValue({
+        getAllToolNames: vi.fn().mockReturnValue(['grep_search', 'glob']),
+        getAllTools: vi.fn().mockReturnValue([]),
+      }),
       getEnableShellOutputEfficiency: vi.fn().mockReturnValue(true),
-      getSandboxEnabled: vi.fn().mockReturnValue(false),
       storage: {
         getProjectTempDir: vi.fn().mockReturnValue('/tmp/project-temp'),
         getPlansDir: vi.fn().mockReturnValue('/tmp/project-temp/plans'),
-        getProjectTempTrackerDir: vi
-          .fn()
-          .mockReturnValue('/mock/.gemini/tmp/session/tracker'),
       },
       isInteractive: vi.fn().mockReturnValue(true),
       isInteractiveShellEnabled: vi.fn().mockReturnValue(true),
-      isTopicUpdateNarrationEnabled: vi.fn().mockReturnValue(false),
-      isMemoryManagerEnabled: vi.fn().mockReturnValue(false),
       isAgentsEnabled: vi.fn().mockReturnValue(false),
       getPreviewFeatures: vi.fn().mockReturnValue(true),
       getModel: vi.fn().mockReturnValue(DEFAULT_GEMINI_MODEL_AUTO),
@@ -117,20 +107,12 @@ describe('Core System Prompt (prompts.ts)', () => {
             description: 'Mock Agent Description',
           },
         ]),
-        getDefinition: vi.fn().mockReturnValue(undefined),
       }),
       getSkillManager: vi.fn().mockReturnValue({
         getSkills: vi.fn().mockReturnValue([]),
       }),
       getApprovalMode: vi.fn().mockReturnValue(ApprovalMode.DEFAULT),
       getApprovedPlanPath: vi.fn().mockReturnValue(undefined),
-      isTrackerEnabled: vi.fn().mockReturnValue(false),
-      get config() {
-        return this;
-      },
-      get toolRegistry() {
-        return mockRegistry;
-      },
     } as unknown as Config;
   });
 
@@ -198,10 +180,7 @@ describe('Core System Prompt (prompts.ts)', () => {
     expect(prompt).not.toContain('activate_skill');
   });
 
-  it('should include sub-agents in XML for preview models when invoke_agent tool is enabled', () => {
-    vi.mocked(mockConfig.toolRegistry.getAllToolNames).mockReturnValue([
-      AGENT_TOOL_NAME,
-    ]);
+  it('should include sub-agents in XML for preview models', () => {
     vi.mocked(mockConfig.getActiveModel).mockReturnValue(PREVIEW_GEMINI_MODEL);
     const agents = [
       {
@@ -227,27 +206,6 @@ describe('Core System Prompt (prompts.ts)', () => {
     expect(prompt).toMatchSnapshot();
   });
 
-  it('should NOT include sub-agents when the invoke_agent tool is disabled', () => {
-    vi.mocked(mockConfig.toolRegistry.getAllToolNames).mockReturnValue([]);
-    vi.mocked(mockConfig.getActiveModel).mockReturnValue(PREVIEW_GEMINI_MODEL);
-    const agents = [
-      {
-        name: 'test-agent',
-        displayName: 'Test Agent',
-        description: 'A test agent description',
-      },
-    ];
-    vi.mocked(mockConfig.getAgentRegistry().getAllDefinitions).mockReturnValue(
-      agents as unknown as AgentDefinition[],
-    );
-    const prompt = getCoreSystemPrompt(mockConfig);
-
-    expect(prompt).not.toContain('# Available Sub-Agents');
-    expect(prompt).not.toContain('<available_subagents>');
-    expect(prompt).not.toContain('<subagent>');
-    expect(prompt).not.toContain('<name>test-agent</name>');
-  });
-
   it('should use legacy system prompt for non-preview model', () => {
     vi.mocked(mockConfig.getActiveModel).mockReturnValue(
       DEFAULT_GEMINI_FLASH_LITE_MODEL,
@@ -262,30 +220,6 @@ describe('Core System Prompt (prompts.ts)', () => {
     expect(prompt).toContain('- **User Hints:**');
     expect(prompt).toContain('# Outside of Sandbox');
     expect(prompt).toContain('# Final Reminder');
-    expect(prompt).toMatchSnapshot();
-  });
-
-  it('should include the TASK MANAGEMENT PROTOCOL in legacy prompt when task tracker is enabled', () => {
-    vi.mocked(mockConfig.getActiveModel).mockReturnValue(
-      DEFAULT_GEMINI_FLASH_LITE_MODEL,
-    );
-    vi.mocked(mockConfig.isTrackerEnabled).mockReturnValue(true);
-    const prompt = getCoreSystemPrompt(mockConfig);
-    expect(prompt).toContain('# TASK MANAGEMENT PROTOCOL');
-    expect(prompt).toContain(
-      '**PLAN MODE INTEGRATION**: If an approved plan exists, you MUST use the `tracker_create_task` tool',
-    );
-    expect(prompt).toMatchSnapshot();
-  });
-
-  it('should include the TASK MANAGEMENT PROTOCOL when task tracker is enabled', () => {
-    vi.mocked(mockConfig.getActiveModel).mockReturnValue(PREVIEW_GEMINI_MODEL);
-    vi.mocked(mockConfig.isTrackerEnabled).mockReturnValue(true);
-    const prompt = getCoreSystemPrompt(mockConfig);
-    expect(prompt).toContain('# TASK MANAGEMENT PROTOCOL');
-    expect(prompt).toContain(
-      '**PLAN MODE INTEGRATION**: If an approved plan exists, you MUST use the `tracker_create_task` tool to decompose it into discrete tasks before writing any code',
-    );
     expect(prompt).toMatchSnapshot();
   });
 
@@ -428,7 +362,7 @@ describe('Core System Prompt (prompts.ts)', () => {
 
   it('should redact grep and glob from the system prompt when they are disabled', () => {
     vi.mocked(mockConfig.getActiveModel).mockReturnValue(PREVIEW_GEMINI_MODEL);
-    vi.mocked(mockConfig.toolRegistry.getAllToolNames).mockReturnValue([]);
+    vi.mocked(mockConfig.getToolRegistry().getAllToolNames).mockReturnValue([]);
     const prompt = getCoreSystemPrompt(mockConfig);
 
     expect(prompt).not.toContain('`grep_search`');
@@ -439,25 +373,21 @@ describe('Core System Prompt (prompts.ts)', () => {
   });
 
   it.each([
-    [true, true],
-    [false, false],
+    [[CodebaseInvestigatorAgent.name, 'grep_search', 'glob'], true],
+    [['grep_search', 'glob'], false],
   ])(
-    'should handle CodebaseInvestigator (enabled=%s)',
-    (enableCodebaseInvestigator, expectCodebaseInvestigator) => {
-      const mockToolRegistry = {
-        getAllToolNames: vi.fn().mockReturnValue(['grep_search', 'glob']),
-      };
+    'should handle CodebaseInvestigator with tools=%s',
+    (toolNames, expectCodebaseInvestigator) => {
       const testConfig = {
-        getToolRegistry: vi.fn().mockReturnValue(mockToolRegistry),
+        getToolRegistry: vi.fn().mockReturnValue({
+          getAllToolNames: vi.fn().mockReturnValue(toolNames),
+        }),
         getEnableShellOutputEfficiency: vi.fn().mockReturnValue(true),
-        getSandboxEnabled: vi.fn().mockReturnValue(false),
         storage: {
           getProjectTempDir: vi.fn().mockReturnValue('/tmp/project-temp'),
         },
         isInteractive: vi.fn().mockReturnValue(false),
         isInteractiveShellEnabled: vi.fn().mockReturnValue(false),
-        isTopicUpdateNarrationEnabled: vi.fn().mockReturnValue(false),
-        isMemoryManagerEnabled: vi.fn().mockReturnValue(false),
         isAgentsEnabled: vi.fn().mockReturnValue(false),
         getModel: vi.fn().mockReturnValue('auto'),
         getActiveModel: vi.fn().mockReturnValue(PREVIEW_GEMINI_MODEL),
@@ -465,26 +395,11 @@ describe('Core System Prompt (prompts.ts)', () => {
         getAgentRegistry: vi.fn().mockReturnValue({
           getDirectoryContext: vi.fn().mockReturnValue('Mock Agent Directory'),
           getAllDefinitions: vi.fn().mockReturnValue([]),
-          getDefinition: vi.fn().mockImplementation((name) => {
-            if (
-              enableCodebaseInvestigator &&
-              name === CodebaseInvestigatorAgent.name
-            )
-              return { name };
-            return undefined;
-          }),
         }),
         getSkillManager: vi.fn().mockReturnValue({
           getSkills: vi.fn().mockReturnValue([]),
         }),
         getApprovedPlanPath: vi.fn().mockReturnValue(undefined),
-        isTrackerEnabled: vi.fn().mockReturnValue(false),
-        get config() {
-          return this;
-        },
-        get toolRegistry() {
-          return mockToolRegistry;
-        },
       } as unknown as Config;
 
       const prompt = getCoreSystemPrompt(testConfig);
@@ -540,7 +455,7 @@ describe('Core System Prompt (prompts.ts)', () => {
         PREVIEW_GEMINI_MODEL,
       );
       vi.mocked(mockConfig.getApprovalMode).mockReturnValue(ApprovalMode.PLAN);
-      vi.mocked(mockConfig.toolRegistry.getAllTools).mockReturnValue(
+      vi.mocked(mockConfig.getToolRegistry().getAllTools).mockReturnValue(
         planModeTools,
       );
     };
@@ -550,13 +465,9 @@ describe('Core System Prompt (prompts.ts)', () => {
       const prompt = getCoreSystemPrompt(mockConfig);
       expect(prompt).toContain('# Active Approval Mode: Plan');
       // Read-only MCP tool should appear with server name
-      expect(prompt).toContain(
-        '`mcp_readonly-server_read_data` (readonly-server)',
-      );
+      expect(prompt).toContain('`read_data` (readonly-server)');
       // Non-read-only MCP tool should not appear (excluded by policy)
-      expect(prompt).not.toContain(
-        '`mcp_nonreadonly-server_write_data` (nonreadonly-server)',
-      );
+      expect(prompt).not.toContain('`write_data` (nonreadonly-server)');
       expect(prompt).toMatchSnapshot();
     });
 
@@ -574,12 +485,8 @@ describe('Core System Prompt (prompts.ts)', () => {
 
       const prompt = getCoreSystemPrompt(mockConfig);
 
-      expect(prompt).toContain(
-        '`mcp_readonly-server_read_data` (readonly-server)',
-      );
-      expect(prompt).not.toContain(
-        '`mcp_nonreadonly-server_write_data` (nonreadonly-server)',
-      );
+      expect(prompt).toContain('`read_data` (readonly-server)');
+      expect(prompt).not.toContain('`write_data` (nonreadonly-server)');
     });
 
     it('should only list available tools in PLAN mode', () => {
@@ -594,7 +501,7 @@ describe('Core System Prompt (prompts.ts)', () => {
         PREVIEW_GEMINI_MODEL,
       );
       vi.mocked(mockConfig.getApprovalMode).mockReturnValue(ApprovalMode.PLAN);
-      vi.mocked(mockConfig.toolRegistry.getAllTools).mockReturnValue(
+      vi.mocked(mockConfig.getToolRegistry().getAllTools).mockReturnValue(
         subsetTools,
       );
 
@@ -692,24 +599,24 @@ describe('Core System Prompt (prompts.ts)', () => {
       expect(prompt).not.toContain('via `&`');
     });
 
-    it("should include 'tab' instructions when interactive shell is enabled", () => {
+    it("should include 'ctrl + f' instructions when interactive shell is enabled", () => {
       vi.mocked(mockConfig.getActiveModel).mockReturnValue(
         PREVIEW_GEMINI_MODEL,
       );
       vi.mocked(mockConfig.isInteractive).mockReturnValue(true);
       vi.mocked(mockConfig.isInteractiveShellEnabled).mockReturnValue(true);
       const prompt = getCoreSystemPrompt(mockConfig);
-      expect(prompt).toContain('tab');
+      expect(prompt).toContain('ctrl + f');
     });
 
-    it("should NOT include 'tab' instructions when interactive shell is disabled", () => {
+    it("should NOT include 'ctrl + f' instructions when interactive shell is disabled", () => {
       vi.mocked(mockConfig.getActiveModel).mockReturnValue(
         PREVIEW_GEMINI_MODEL,
       );
       vi.mocked(mockConfig.isInteractive).mockReturnValue(true);
       vi.mocked(mockConfig.isInteractiveShellEnabled).mockReturnValue(false);
       const prompt = getCoreSystemPrompt(mockConfig);
-      expect(prompt).not.toContain('`tab`');
+      expect(prompt).not.toContain('ctrl + f');
     });
   });
 
@@ -739,7 +646,7 @@ describe('Core System Prompt (prompts.ts)', () => {
 
   it('should include planning phase suggestion when enter_plan_mode tool is enabled', () => {
     vi.mocked(mockConfig.getActiveModel).mockReturnValue(PREVIEW_GEMINI_MODEL);
-    vi.mocked(mockConfig.toolRegistry.getAllToolNames).mockReturnValue([
+    vi.mocked(mockConfig.getToolRegistry().getAllToolNames).mockReturnValue([
       'enter_plan_mode',
     ]);
     const prompt = getCoreSystemPrompt(mockConfig);

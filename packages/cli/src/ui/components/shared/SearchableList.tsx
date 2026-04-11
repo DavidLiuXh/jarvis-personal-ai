@@ -11,8 +11,7 @@ import { useSelectionList } from '../../hooks/useSelectionList.js';
 import { TextInput } from './TextInput.js';
 import type { TextBuffer } from './text-buffer.js';
 import { useKeypress } from '../../hooks/useKeypress.js';
-import { Command } from '../../key/keyMatchers.js';
-import { useKeyMatchers } from '../../hooks/useKeyMatchers.js';
+import { keyMatchers, Command } from '../../keyMatchers.js';
 
 /**
  * Generic interface for items in a searchable list.
@@ -67,8 +66,6 @@ export interface SearchableListProps<T extends GenericListItem> {
   onSearch?: (query: string) => void;
   /** Whether to reset selection to the top when items change (e.g. after search) */
   resetSelectionOnItemsChange?: boolean;
-  /** Whether the list is focused and accepts keyboard input. Defaults to true. */
-  isFocused?: boolean;
 }
 
 /**
@@ -87,9 +84,7 @@ export function SearchableList<T extends GenericListItem>({
   useSearch,
   onSearch,
   resetSelectionOnItemsChange = false,
-  isFocused = true,
 }: SearchableListProps<T>): React.JSX.Element {
-  const keyMatchers = useKeyMatchers();
   const { filteredItems, searchBuffer, maxLabelWidth } = useSearch({
     items,
     onSearch,
@@ -114,7 +109,7 @@ export function SearchableList<T extends GenericListItem>({
   const { activeIndex, setActiveIndex } = useSelectionList({
     items: selectionItems,
     onSelect: handleSelectValue,
-    isFocused,
+    isFocused: true,
     showNumbers: false,
     wrapAround: true,
     priority: true,
@@ -160,7 +155,7 @@ export function SearchableList<T extends GenericListItem>({
       }
       return false;
     },
-    { isActive: isFocused },
+    { isActive: true },
   );
 
   const visibleItems = filteredItems.slice(
@@ -212,7 +207,7 @@ export function SearchableList<T extends GenericListItem>({
           <TextInput
             buffer={searchBuffer}
             placeholder={searchPlaceholder}
-            focus={isFocused}
+            focus={true}
           />
         </Box>
       )}

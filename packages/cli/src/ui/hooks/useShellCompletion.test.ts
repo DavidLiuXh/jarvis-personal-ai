@@ -11,11 +11,8 @@ import {
   resolvePathCompletions,
   scanPathExecutables,
 } from './useShellCompletion.js';
-import {
-  createTmpDir,
-  cleanupTmpDir,
-  type FileSystemStructure,
-} from '@google/gemini-cli-test-utils';
+import type { FileSystemStructure } from '@google/gemini-cli-test-utils';
+import { createTmpDir, cleanupTmpDir } from '@google/gemini-cli-test-utils';
 
 describe('useShellCompletion utilities', () => {
   describe('getTokenAtCursor', () => {

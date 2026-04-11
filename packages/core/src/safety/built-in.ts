@@ -98,7 +98,7 @@ export class AllowedPathChecker implements InProcessChecker {
 
       // Fallback if nothing exists (unlikely if root exists)
       return resolved;
-    } catch {
+    } catch (_error) {
       return null;
     }
   }

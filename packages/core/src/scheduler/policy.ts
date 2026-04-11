@@ -7,7 +7,6 @@
 import { ToolErrorType } from '../tools/tool-error.js';
 import {
   ApprovalMode,
-  MODES_BY_PERMISSIVENESS,
   PolicyDecision,
   type CheckResult,
   type PolicyRule,
@@ -21,15 +20,11 @@ import {
 import {
   ToolConfirmationOutcome,
   type AnyDeclarativeTool,
-  type AnyToolInvocation,
   type PolicyUpdateOptions,
 } from '../tools/tools.js';
-import { buildFilePathArgsPattern } from '../policy/utils.js';
-import { makeRelative } from '../utils/paths.js';
-import { DiscoveredMCPTool, formatMcpToolName } from '../tools/mcp-tool.js';
+import { DiscoveredMCPTool } from '../tools/mcp-tool.js';
 import { EDIT_TOOL_NAMES } from '../tools/tool-names.js';
 import type { ValidatingToolCall } from './types.js';
-import type { AgentLoopContext } from '../config/agent-loop-context.js';
 
 /**
  * Helper to format the policy denial error.
@@ -53,7 +48,6 @@ export function getPolicyDenialError(
 export async function checkPolicy(
   toolCall: ValidatingToolCall,
   config: Config,
-  subagent?: string,
 ): Promise<CheckResult> {
   const serverName =
     toolCall.tool instanceof DiscoveredMCPTool
@@ -68,24 +62,9 @@ export async function checkPolicy(
       { name: toolCall.request.name, args: toolCall.request.args },
       serverName,
       toolAnnotations,
-      subagent,
     );
 
   const { decision } = result;
-
-  // If the tool call was initiated by the client (e.g. via a slash command),
-  // we treat it as implicitly confirmed by the user and bypass the
-  // confirmation prompt if the policy engine's decision is 'ASK_USER'.
-  if (
-    decision === PolicyDecision.ASK_USER &&
-    toolCall.request.isClientInitiated &&
-    !toolCall.request.args?.['additional_permissions']
-  ) {
-    return {
-      decision: PolicyDecision.ALLOW,
-      rule: result.rule,
-    };
-  }
 
   /*
    * Return the full check result including the rule that matched.
@@ -115,46 +94,12 @@ export async function updatePolicy(
   tool: AnyDeclarativeTool,
   outcome: ToolConfirmationOutcome,
   confirmationDetails: SerializableConfirmationDetails | undefined,
-  context: AgentLoopContext,
-  messageBus: MessageBus,
-  toolInvocation?: AnyToolInvocation,
+  deps: { config: Config; messageBus: MessageBus },
 ): Promise<void> {
   // Mode Transitions (AUTO_EDIT)
   if (isAutoEditTransition(tool, outcome)) {
-    context.config.setApprovalMode(ApprovalMode.AUTO_EDIT);
+    deps.config.setApprovalMode(ApprovalMode.AUTO_EDIT);
     return;
-  }
-
-  // Determine persist scope if we are persisting.
-  let persistScope: 'workspace' | 'user' | undefined;
-  let modes: ApprovalMode[] | undefined;
-  const currentMode = context.config.getApprovalMode();
-
-  // If this is an 'Always Allow' selection, we restrict it to the current mode
-  // and more permissive modes.
-  if (
-    outcome === ToolConfirmationOutcome.ProceedAlways ||
-    outcome === ToolConfirmationOutcome.ProceedAlwaysTool ||
-    outcome === ToolConfirmationOutcome.ProceedAlwaysServer ||
-    outcome === ToolConfirmationOutcome.ProceedAlwaysAndSave
-  ) {
-    const modeIndex = MODES_BY_PERMISSIVENESS.indexOf(currentMode);
-    if (modeIndex !== -1) {
-      modes = MODES_BY_PERMISSIVENESS.slice(modeIndex);
-    }
-  }
-
-  if (outcome === ToolConfirmationOutcome.ProceedAlwaysAndSave) {
-    // If folder is trusted and workspace policies are enabled, we prefer workspace scope.
-    if (
-      context.config &&
-      context.config.isTrustedFolder() &&
-      context.config.getWorkspacePoliciesDir() !== undefined
-    ) {
-      persistScope = 'workspace';
-    } else {
-      persistScope = 'user';
-    }
   }
 
   // Specialized Tools (MCP)
@@ -163,9 +108,7 @@ export async function updatePolicy(
       tool,
       outcome,
       confirmationDetails,
-      messageBus,
-      persistScope,
-      modes,
+      deps.messageBus,
     );
     return;
   }
@@ -175,11 +118,7 @@ export async function updatePolicy(
     tool,
     outcome,
     confirmationDetails,
-    messageBus,
-    persistScope,
-    toolInvocation,
-    context.config,
-    modes,
+    deps.messageBus,
   );
 }
 
@@ -209,33 +148,21 @@ async function handleStandardPolicyUpdate(
   outcome: ToolConfirmationOutcome,
   confirmationDetails: SerializableConfirmationDetails | undefined,
   messageBus: MessageBus,
-  persistScope?: 'workspace' | 'user',
-  toolInvocation?: AnyToolInvocation,
-  config?: Config,
-  modes?: ApprovalMode[],
 ): Promise<void> {
   if (
     outcome === ToolConfirmationOutcome.ProceedAlways ||
     outcome === ToolConfirmationOutcome.ProceedAlwaysAndSave
   ) {
-    const options: PolicyUpdateOptions =
-      toolInvocation?.getPolicyUpdateOptions?.(outcome) || {};
+    const options: PolicyUpdateOptions = {};
 
-    if (!options.commandPrefix && confirmationDetails?.type === 'exec') {
+    if (confirmationDetails?.type === 'exec') {
       options.commandPrefix = confirmationDetails.rootCommands;
-    } else if (!options.argsPattern && confirmationDetails?.type === 'edit') {
-      const filePath = config
-        ? makeRelative(confirmationDetails.filePath, config.getTargetDir())
-        : confirmationDetails.filePath;
-      options.argsPattern = buildFilePathArgsPattern(filePath);
     }
 
     await messageBus.publish({
       type: MessageBusType.UPDATE_POLICY,
       toolName: tool.name,
       persist: outcome === ToolConfirmationOutcome.ProceedAlwaysAndSave,
-      persistScope,
-      modes,
       ...options,
     });
   }
@@ -253,8 +180,6 @@ async function handleMcpPolicyUpdate(
     { type: 'mcp' }
   >,
   messageBus: MessageBus,
-  persistScope?: 'workspace' | 'user',
-  modes?: ApprovalMode[],
 ): Promise<void> {
   const isMcpAlways =
     outcome === ToolConfirmationOutcome.ProceedAlways ||
@@ -271,7 +196,7 @@ async function handleMcpPolicyUpdate(
 
   // If "Always allow all tools from this server", use the wildcard pattern
   if (outcome === ToolConfirmationOutcome.ProceedAlwaysServer) {
-    toolName = formatMcpToolName(confirmationDetails.serverName, '*');
+    toolName = `${confirmationDetails.serverName}__*`;
   }
 
   await messageBus.publish({
@@ -279,7 +204,5 @@ async function handleMcpPolicyUpdate(
     toolName,
     mcpName: confirmationDetails.serverName,
     persist,
-    persistScope,
-    modes,
   });
 }

@@ -14,15 +14,14 @@ import type {
   ElementContent,
   RootContent,
 } from 'hast';
-import stripAnsi from 'strip-ansi';
 import { themeManager } from '../themes/theme-manager.js';
 import type { Theme } from '../themes/theme.js';
 import {
   MaxSizedBox,
   MINIMUM_MAX_HEIGHT,
 } from '../components/shared/MaxSizedBox.js';
-import { debugLogger } from '@google/gemini-cli-core';
 import type { LoadedSettings } from '../../config/settings.js';
+import { debugLogger } from '@google/gemini-cli-core';
 
 // Configure theming and parsing utilities.
 const lowlight = createLowlight(common);
@@ -99,17 +98,16 @@ function highlightAndRenderLine(
   theme: Theme,
 ): React.ReactNode {
   try {
-    const strippedLine = stripAnsi(line);
     const getHighlightedLine = () =>
       !language || !lowlight.registered(language)
-        ? lowlight.highlightAuto(strippedLine)
-        : lowlight.highlight(language, strippedLine);
+        ? lowlight.highlightAuto(line)
+        : lowlight.highlight(language, line);
 
     const renderedNode = renderHastNode(getHighlightedLine(), theme, undefined);
 
-    return renderedNode !== null ? renderedNode : strippedLine;
-  } catch {
-    return stripAnsi(line);
+    return renderedNode !== null ? renderedNode : line;
+  } catch (_error) {
+    return line;
   }
 }
 
@@ -117,11 +115,7 @@ export function colorizeLine(
   line: string,
   language: string | null,
   theme?: Theme,
-  disableColor = false,
 ): React.ReactNode {
-  if (disableColor) {
-    return <Text>{line}</Text>;
-  }
   const activeTheme = theme || themeManager.getActiveTheme();
   return highlightAndRenderLine(line, language, activeTheme);
 }
@@ -134,9 +128,6 @@ export interface ColorizeCodeOptions {
   theme?: Theme | null;
   settings: LoadedSettings;
   hideLineNumbers?: boolean;
-  disableColor?: boolean;
-  returnLines?: boolean;
-  paddingX?: number;
 }
 
 /**
@@ -145,12 +136,6 @@ export interface ColorizeCodeOptions {
  * @param options The options for colorizing the code.
  * @returns A React.ReactNode containing Ink <Text> elements for the highlighted code.
  */
-export function colorizeCode(
-  options: ColorizeCodeOptions & { returnLines: true },
-): React.ReactNode[];
-export function colorizeCode(
-  options: ColorizeCodeOptions & { returnLines?: false },
-): React.ReactNode;
 export function colorizeCode({
   code,
   language = null,
@@ -159,42 +144,37 @@ export function colorizeCode({
   theme = null,
   settings,
   hideLineNumbers = false,
-  disableColor = false,
-  returnLines = false,
-  paddingX = 0,
-}: ColorizeCodeOptions): React.ReactNode | React.ReactNode[] {
+}: ColorizeCodeOptions): React.ReactNode {
   const codeToHighlight = code.replace(/\n$/, '');
   const activeTheme = theme || themeManager.getActiveTheme();
   const showLineNumbers = hideLineNumbers
     ? false
     : settings.merged.ui.showLineNumbers;
 
-  // We force MaxSizedBox if availableHeight is provided, even if alternate buffer is enabled,
-  // because this might be rendered in a constrained UI box (like tool confirmation).
-  const useMaxSizedBox =
-    (!settings.merged.ui.useAlternateBuffer || availableHeight !== undefined) &&
-    !returnLines;
-
-  let hiddenLinesCount = 0;
-  let finalLines = codeToHighlight.split(/\r?\n/);
-
   try {
+    // Render the HAST tree using the adapted theme
+    // Apply the theme's default foreground color to the top-level Text element
+    let lines = codeToHighlight.split('\n');
+    const padWidth = String(lines.length).length; // Calculate padding width based on number of lines
+
+    let hiddenLinesCount = 0;
+
     // Optimization to avoid highlighting lines that cannot possibly be displayed.
-    if (availableHeight !== undefined && useMaxSizedBox) {
+    if (availableHeight !== undefined) {
       availableHeight = Math.max(availableHeight, MINIMUM_MAX_HEIGHT);
-      if (finalLines.length > availableHeight) {
-        const sliceIndex = finalLines.length - availableHeight;
+      if (lines.length > availableHeight) {
+        const sliceIndex = lines.length - availableHeight;
         hiddenLinesCount = sliceIndex;
-        finalLines = finalLines.slice(sliceIndex);
+        lines = lines.slice(sliceIndex);
       }
     }
 
-    const padWidth = String(finalLines.length + hiddenLinesCount).length;
-
-    const renderedLines = finalLines.map((line, index) => {
-      const contentToRender = disableColor
-        ? line
-        : highlightAndRenderLine(line, language, activeTheme);
+    const renderedLines = lines.map((line, index) => {
+      const contentToRender = highlightAndRenderLine(
+        line,
+        language,
+        activeTheme,
+      );
 
       return (
         <Box key={index} minHeight={1}>
@@ -206,29 +186,21 @@ export function colorizeCode({
               alignItems="flex-start"
               justifyContent="flex-end"
             >
-              <Text color={disableColor ? undefined : activeTheme.colors.Gray}>
+              <Text color={activeTheme.colors.Gray}>
                 {`${index + 1 + hiddenLinesCount}`}
               </Text>
             </Box>
           )}
-          <Text
-            color={disableColor ? undefined : activeTheme.defaultColor}
-            wrap="wrap"
-          >
+          <Text color={activeTheme.defaultColor} wrap="wrap">
             {contentToRender}
           </Text>
         </Box>
       );
     });
 
-    if (returnLines) {
-      return renderedLines;
-    }
-
-    if (useMaxSizedBox) {
+    if (availableHeight !== undefined) {
       return (
         <MaxSizedBox
-          paddingX={paddingX}
           maxHeight={availableHeight}
           maxWidth={maxWidth}
           additionalHiddenLinesCount={hiddenLinesCount}
@@ -250,8 +222,10 @@ export function colorizeCode({
       error,
     );
     // Fall back to plain text with default color on error
-    const padWidth = String(finalLines.length + hiddenLinesCount).length;
-    const fallbackLines = finalLines.map((line, index) => (
+    // Also display line numbers in fallback
+    const lines = codeToHighlight.split('\n');
+    const padWidth = String(lines.length).length; // Calculate padding width based on number of lines
+    const fallbackLines = lines.map((line, index) => (
       <Box key={index} minHeight={1}>
         {showLineNumbers && (
           <Box
@@ -261,28 +235,18 @@ export function colorizeCode({
             alignItems="flex-start"
             justifyContent="flex-end"
           >
-            <Text color={disableColor ? undefined : activeTheme.defaultColor}>
-              {`${index + 1 + hiddenLinesCount}`}
-            </Text>
+            <Text color={activeTheme.defaultColor}>{`${index + 1}`}</Text>
           </Box>
         )}
-        <Text color={disableColor ? undefined : activeTheme.colors.Gray}>
-          {stripAnsi(line)}
-        </Text>
+        <Text color={activeTheme.colors.Gray}>{line}</Text>
       </Box>
     ));
 
-    if (returnLines) {
-      return fallbackLines;
-    }
-
-    if (useMaxSizedBox) {
+    if (availableHeight !== undefined) {
       return (
         <MaxSizedBox
-          paddingX={paddingX}
           maxHeight={availableHeight}
           maxWidth={maxWidth}
-          additionalHiddenLinesCount={hiddenLinesCount}
           overflowDirection="top"
         >
           {fallbackLines}

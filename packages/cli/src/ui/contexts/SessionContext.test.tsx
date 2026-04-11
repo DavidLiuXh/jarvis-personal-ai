@@ -4,13 +4,12 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { type MutableRefObject, Component, type ReactNode, act } from 'react';
+import { type MutableRefObject, Component, type ReactNode } from 'react';
 import { render } from '../../test-utils/render.js';
-import {
-  SessionStatsProvider,
-  useSessionStats,
-  type SessionMetrics,
-} from './SessionContext.js';
+
+import { act } from 'react';
+import type { SessionMetrics } from './SessionContext.js';
+import { SessionStatsProvider, useSessionStats } from './SessionContext.js';
 import { describe, it, expect, vi } from 'vitest';
 import { uiTelemetryService } from '@google/gemini-cli-core';
 
@@ -54,13 +53,13 @@ const TestHarness = ({
 };
 
 describe('SessionStatsContext', () => {
-  it('should provide the correct initial state', async () => {
+  it('should provide the correct initial state', () => {
     const contextRef: MutableRefObject<
       ReturnType<typeof useSessionStats> | undefined
     > = { current: undefined };
 
-    const { unmount } = await render(
-      <SessionStatsProvider sessionId="test-session-id">
+    const { unmount } = render(
+      <SessionStatsProvider>
         <TestHarness contextRef={contextRef} />
       </SessionStatsProvider>,
     );
@@ -73,13 +72,13 @@ describe('SessionStatsContext', () => {
     unmount();
   });
 
-  it('should update metrics when the uiTelemetryService emits an update', async () => {
+  it('should update metrics when the uiTelemetryService emits an update', () => {
     const contextRef: MutableRefObject<
       ReturnType<typeof useSessionStats> | undefined
     > = { current: undefined };
 
-    const { unmount } = await render(
-      <SessionStatsProvider sessionId="test-session-id">
+    const { unmount } = render(
+      <SessionStatsProvider>
         <TestHarness contextRef={contextRef} />
       </SessionStatsProvider>,
     );
@@ -149,7 +148,7 @@ describe('SessionStatsContext', () => {
     unmount();
   });
 
-  it('should not update metrics if the data is the same', async () => {
+  it('should not update metrics if the data is the same', () => {
     const contextRef: MutableRefObject<
       ReturnType<typeof useSessionStats> | undefined
     > = { current: undefined };
@@ -161,8 +160,8 @@ describe('SessionStatsContext', () => {
       return null;
     };
 
-    const { unmount } = await render(
-      <SessionStatsProvider sessionId="test-session-id">
+    const { unmount } = render(
+      <SessionStatsProvider>
         <CountingTestHarness />
       </SessionStatsProvider>,
     );
@@ -239,40 +238,12 @@ describe('SessionStatsContext', () => {
     unmount();
   });
 
-  it('should update session ID and reset stats when the uiTelemetryService emits a clear event', async () => {
-    const contextRef: MutableRefObject<
-      ReturnType<typeof useSessionStats> | undefined
-    > = { current: undefined };
-
-    const { unmount } = await render(
-      <SessionStatsProvider sessionId="test-session-id">
-        <TestHarness contextRef={contextRef} />
-      </SessionStatsProvider>,
-    );
-
-    const initialStartTime = contextRef.current?.stats.sessionStartTime;
-    const newSessionId = 'new-session-id';
-
-    act(() => {
-      uiTelemetryService.emit('clear', newSessionId);
-    });
-
-    const stats = contextRef.current?.stats;
-    expect(stats?.sessionId).toBe(newSessionId);
-    expect(stats?.promptCount).toBe(0);
-    expect(stats?.sessionStartTime.getTime()).toBeGreaterThanOrEqual(
-      initialStartTime!.getTime(),
-    );
-
-    unmount();
-  });
-
-  it('should throw an error when useSessionStats is used outside of a provider', async () => {
+  it('should throw an error when useSessionStats is used outside of a provider', () => {
     const onError = vi.fn();
     // Suppress console.error from React for this test
     const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 
-    const { unmount } = await render(
+    const { unmount } = render(
       <ErrorBoundary onError={onError}>
         <TestHarness contextRef={{ current: undefined }} />
       </ErrorBoundary>,

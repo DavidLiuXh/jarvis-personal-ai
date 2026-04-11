@@ -43,7 +43,6 @@ export const useHookDisplayState = () => {
         {
           name: payload.hookName,
           eventName: payload.eventName,
-          source: payload.source,
           index: payload.hookIndex,
           total: payload.totalHooks,
         },

@@ -8,10 +8,9 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import ignore from 'ignore';
 import { debugLogger } from './debugLogger.js';
-import { getNormalizedRelativePath } from './ignorePathUtils.js';
 
 export interface IgnoreFileFilter {
-  isIgnored(filePath: string, isDirectory: boolean): boolean;
+  isIgnored(filePath: string): boolean;
   getPatterns(): string[];
   getIgnoreFilePaths(): string[];
   hasPatterns(): boolean;
@@ -60,7 +59,7 @@ export class IgnoreFileParser implements IgnoreFileFilter {
     let content: string;
     try {
       content = fs.readFileSync(patternsFilePath, 'utf-8');
-    } catch {
+    } catch (_error) {
       debugLogger.debug(
         `Ignore file not found: ${patternsFilePath}, continue without it.`,
       );
@@ -75,21 +74,34 @@ export class IgnoreFileParser implements IgnoreFileFilter {
       .filter((p) => p !== '' && !p.startsWith('#'));
   }
 
-  isIgnored(filePath: string, isDirectory: boolean): boolean {
+  isIgnored(filePath: string): boolean {
     if (this.patterns.length === 0) {
       return false;
     }
 
-    const normalizedPath = getNormalizedRelativePath(
-      this.projectRoot,
-      filePath,
-      isDirectory,
-    );
+    if (!filePath || typeof filePath !== 'string') {
+      return false;
+    }
+
     if (
-      normalizedPath === null ||
-      normalizedPath === '' ||
-      normalizedPath === '/'
+      filePath.startsWith('\\') ||
+      filePath === '/' ||
+      filePath.includes('\0')
     ) {
+      return false;
+    }
+
+    const resolved = path.resolve(this.projectRoot, filePath);
+    const relativePath = path.relative(this.projectRoot, resolved);
+
+    if (relativePath === '' || relativePath.startsWith('..')) {
+      return false;
+    }
+
+    // Even in windows, Ignore expects forward slashes.
+    const normalizedPath = relativePath.replace(/\\/g, '/');
+
+    if (normalizedPath.startsWith('/') || normalizedPath === '') {
       return false;
     }
 

@@ -36,15 +36,12 @@ describe('ConsecaSafetyChecker', () => {
     checker = ConsecaSafetyChecker.getInstance();
 
     mockConfig = {
-      get config() {
-        return this;
-      },
       enableConseca: true,
       getToolRegistry: vi.fn().mockReturnValue({
         getFunctionDeclarations: vi.fn().mockReturnValue([]),
       }),
     } as unknown as Config;
-    checker.setContext(mockConfig);
+    checker.setConfig(mockConfig);
     vi.clearAllMocks();
 
     // Default mock implementations
@@ -75,12 +72,9 @@ describe('ConsecaSafetyChecker', () => {
 
   it('should return ALLOW if enableConseca is false', async () => {
     const disabledConfig = {
-      get config() {
-        return this;
-      },
       enableConseca: false,
     } as unknown as Config;
-    checker.setContext(disabledConfig);
+    checker.setConfig(disabledConfig);
 
     const input: SafetyCheckInput = {
       protocolVersion: '1.0.0',

@@ -48,7 +48,6 @@ import {
   shouldAutoUseCredits,
 } from '../billing/billing.js';
 import { logBillingEvent, logInvalidChunk } from '../telemetry/loggers.js';
-import { coreEvents } from '../utils/events.js';
 import { CreditsUsedEvent } from '../telemetry/billingEvents.js';
 import {
   fromCountTokenResponse,
@@ -101,11 +100,6 @@ export class CodeAssistServer implements ContentGenerator {
     const modelIsEligible = isOverageEligibleModel(req.model);
     const shouldEnableCredits = modelIsEligible && autoUse;
 
-    if (shouldEnableCredits && !this.config?.getCreditsNotificationShown()) {
-      this.config?.setCreditsNotificationShown(true);
-      coreEvents.emitFeedback('info', 'Using AI Credits for this request.');
-    }
-
     const enabledCreditTypes = shouldEnableCredits
       ? ([G1_CREDIT_TYPE] as string[])
       : undefined;
@@ -153,7 +147,6 @@ export class CodeAssistServer implements ContentGenerator {
           translatedResponse,
           streamingLatency,
           req.config?.abortSignal,
-          server.sessionId, // Use sessionId as trajectoryId
         );
 
         if (response.consumedCredits) {
@@ -224,7 +217,6 @@ export class CodeAssistServer implements ContentGenerator {
       translatedResponse,
       streamingLatency,
       req.config?.abortSignal,
-      this.sessionId, // Use sessionId as trajectoryId
     );
 
     if (response.remainingCredits) {
@@ -491,7 +483,7 @@ export class CodeAssistServer implements ContentGenerator {
           const chunk = bufferedLines.join('\n');
           try {
             yield JSON.parse(chunk);
-          } catch {
+          } catch (_e) {
             if (server.config) {
               logInvalidChunk(
                 server.config,

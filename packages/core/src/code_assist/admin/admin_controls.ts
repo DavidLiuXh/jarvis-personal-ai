@@ -48,18 +48,8 @@ export function sanitizeAdminSettings(
             }
           }
         }
-        if (mcpConfig.requiredMcpServers) {
-          for (const server of Object.values(mcpConfig.requiredMcpServers)) {
-            if (server.includeTools) {
-              server.includeTools.sort();
-            }
-            if (server.excludeTools) {
-              server.excludeTools.sort();
-            }
-          }
-        }
       }
-    } catch {
+    } catch (_e) {
       // Ignore parsing errors
     }
   }
@@ -87,7 +77,6 @@ export function sanitizeAdminSettings(
     mcpSetting: {
       mcpEnabled: sanitized.mcpSetting?.mcpEnabled ?? false,
       mcpConfig: mcpConfig ?? {},
-      requiredMcpConfig: mcpConfig?.requiredMcpServers,
     },
   };
 }

@@ -204,11 +204,7 @@ describe('HookRunner', () => {
       };
 
       it('should execute command hook successfully', async () => {
-        const mockOutput = {
-          decision: 'allow',
-          reason: 'All good',
-          format: 'json',
-        };
+        const mockOutput = { decision: 'allow', reason: 'All good' };
 
         // Mock successful execution
         mockSpawn.mockStdoutOn.mockImplementation(
@@ -517,11 +513,7 @@ describe('HookRunner', () => {
             const args = vi.mocked(spawn).mock.calls[
               executionOrder.length
             ][1] as string[];
-            let command = args[args.length - 1];
-            // On Windows, the command is wrapped in PowerShell syntax
-            if (command.includes('; if ($LASTEXITCODE -ne 0)')) {
-              command = command.split(';')[0];
-            }
+            const command = args[args.length - 1];
             executionOrder.push(command);
             setImmediate(() => callback(0));
           }
@@ -627,7 +619,6 @@ describe('HookRunner', () => {
         hookSpecificOutput: {
           additionalContext: 'Context from hook 1',
         },
-        format: 'json',
       };
 
       let hookCallCount = 0;
@@ -808,7 +799,6 @@ describe('HookRunner', () => {
       expect(result.success).toBe(true);
       expect(result.exitCode).toBe(0);
       // Should convert plain text to structured output
-      expect(result.outputFormat).toBe('text');
       expect(result.output).toEqual({
         decision: 'allow',
         systemMessage: invalidJson,
@@ -841,7 +831,6 @@ describe('HookRunner', () => {
       );
 
       expect(result.success).toBe(true);
-      expect(result.outputFormat).toBe('text');
       expect(result.output).toEqual({
         decision: 'allow',
         systemMessage: malformedJson,
@@ -875,7 +864,6 @@ describe('HookRunner', () => {
 
       expect(result.success).toBe(false);
       expect(result.exitCode).toBe(1);
-      expect(result.outputFormat).toBe('text');
       expect(result.output).toEqual({
         decision: 'allow',
         systemMessage: `Warning: ${invalidJson}`,
@@ -909,7 +897,6 @@ describe('HookRunner', () => {
 
       expect(result.success).toBe(false);
       expect(result.exitCode).toBe(2);
-      expect(result.outputFormat).toBe('text');
       expect(result.output).toEqual({
         decision: 'deny',
         reason: invalidJson,
@@ -945,11 +932,7 @@ describe('HookRunner', () => {
     });
 
     it('should handle double-encoded JSON string', async () => {
-      const mockOutput = {
-        decision: 'allow',
-        reason: 'All good',
-        format: 'json',
-      };
+      const mockOutput = { decision: 'allow', reason: 'All good' };
       const doubleEncodedJson = JSON.stringify(JSON.stringify(mockOutput));
 
       mockSpawn.mockStdoutOn.mockImplementation(

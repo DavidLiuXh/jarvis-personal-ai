@@ -23,42 +23,10 @@ import {
   SERVICE_DESCRIPTION,
   SERVICE_NAME,
 } from './constants.js';
-
-import { truncateString } from '../utils/textUtils.js';
+import { sessionId } from '../utils/session.js';
 
 const TRACER_NAME = 'gemini-cli';
 const TRACER_VERSION = 'v1';
-
-export function truncateForTelemetry(
-  value: unknown,
-  maxLength: number = 10000,
-): AttributeValue | undefined {
-  if (typeof value === 'string') {
-    return truncateString(
-      value,
-      maxLength,
-      `...[TRUNCATED: original length ${value.length}]`,
-    );
-  }
-  if (typeof value === 'object' && value !== null) {
-    const stringified = safeJsonStringify(value);
-    return truncateString(
-      stringified,
-      maxLength,
-      `...[TRUNCATED: original length ${stringified.length}]`,
-    );
-  }
-  if (typeof value === 'number' || typeof value === 'boolean') {
-    return value;
-  }
-  return undefined;
-}
-
-function isAsyncIterable<T>(value: T): value is T & AsyncIterable<unknown> {
-  return (
-    typeof value === 'object' && value !== null && Symbol.asyncIterator in value
-  );
-}
 
 /**
  * Metadata for a span.
@@ -95,14 +63,15 @@ export interface SpanMetadata {
  * @returns The result of the function.
  */
 export async function runInDevTraceSpan<R>(
-  opts: SpanOptions & {
-    operation: GeminiCliOperation;
-    logPrompts?: boolean;
-    sessionId: string;
-  },
-  fn: ({ metadata }: { metadata: SpanMetadata }) => Promise<R>,
+  opts: SpanOptions & { operation: GeminiCliOperation; noAutoEnd?: boolean },
+  fn: ({
+    metadata,
+  }: {
+    metadata: SpanMetadata;
+    endSpan: () => void;
+  }) => Promise<R>,
 ): Promise<R> {
-  const { operation, logPrompts, sessionId, ...restOfSpanOpts } = opts;
+  const { operation, noAutoEnd, ...restOfSpanOpts } = opts;
 
   const tracer = trace.getTracer(TRACER_NAME, TRACER_VERSION);
   return tracer.startActiveSpan(operation, restOfSpanOpts, async (span) => {
@@ -117,25 +86,20 @@ export async function runInDevTraceSpan<R>(
     };
     const endSpan = () => {
       try {
-        if (logPrompts !== false) {
-          if (meta.input !== undefined) {
-            const truncated = truncateForTelemetry(meta.input);
-            if (truncated !== undefined) {
-              span.setAttribute(GEN_AI_INPUT_MESSAGES, truncated);
-            }
-          }
-          if (meta.output !== undefined) {
-            const truncated = truncateForTelemetry(meta.output);
-            if (truncated !== undefined) {
-              span.setAttribute(GEN_AI_OUTPUT_MESSAGES, truncated);
-            }
-          }
+        if (meta.input !== undefined) {
+          span.setAttribute(
+            GEN_AI_INPUT_MESSAGES,
+            safeJsonStringify(meta.input),
+          );
+        }
+        if (meta.output !== undefined) {
+          span.setAttribute(
+            GEN_AI_OUTPUT_MESSAGES,
+            safeJsonStringify(meta.output),
+          );
         }
         for (const [key, value] of Object.entries(meta.attributes)) {
-          const truncated = truncateForTelemetry(value);
-          if (truncated !== undefined) {
-            span.setAttribute(key, truncated);
-          }
+          span.setAttribute(key, value);
         }
         if (meta.error) {
           span.setStatus({
@@ -159,32 +123,20 @@ export async function runInDevTraceSpan<R>(
         span.end();
       }
     };
-
-    let isStream = false;
     try {
-      const result = await fn({ metadata: meta });
-
-      if (isAsyncIterable(result)) {
-        isStream = true;
-        const streamWrapper = (async function* () {
-          try {
-            yield* result;
-          } catch (e) {
-            meta.error = e;
-            throw e;
-          } finally {
-            endSpan();
-          }
-        })();
-
-        return Object.assign(streamWrapper, result);
-      }
-      return result;
+      return await fn({ metadata: meta, endSpan });
     } catch (e) {
       meta.error = e;
+      if (noAutoEnd) {
+        // For streaming operations, the delegated endSpan call will not be reached
+        // on an exception, so we must end the span here to prevent a leak.
+        endSpan();
+      }
       throw e;
     } finally {
-      if (!isStream) {
+      if (!noAutoEnd) {
+        // For non-streaming operations, this ensures the span is always closed,
+        // and if an error occurred, it will be recorded correctly by endSpan.
         endSpan();
       }
     }

@@ -14,7 +14,6 @@ import {
   shouldShowOverageMenu,
   shouldShowEmptyWalletMenu,
   openBrowserSecurely,
-  shouldLaunchBrowser,
   logBillingEvent,
   OverageMenuShownEvent,
   OverageOptionSelectedEvent,
@@ -111,6 +110,7 @@ async function handleOverageMenu(
     isDialogPending,
     setOverageMenuRequest,
     setModelSwitchedFromQuotaError,
+    historyManager,
   } = args;
 
   logBillingEvent(
@@ -155,28 +155,22 @@ async function handleOverageMenu(
       setModelSwitchedFromQuotaError(false);
       config.setQuotaErrorOccurred(false);
       config.setOverageStrategy('always');
+      historyManager.addItem(
+        {
+          type: MessageType.INFO,
+          text: `Using AI Credits for this request.`,
+        },
+        Date.now(),
+      );
       return 'retry_with_credits';
 
     case 'use_fallback':
       return 'retry_always';
 
-    case 'manage': {
+    case 'manage':
       logCreditPurchaseClick(config, 'manage', usageLimitReachedModel);
-      const manageUrl = await openG1Url(
-        'activity',
-        G1_UTM_CAMPAIGNS.MANAGE_ACTIVITY,
-      );
-      if (manageUrl) {
-        args.historyManager.addItem(
-          {
-            type: MessageType.INFO,
-            text: `Please open this URL in a browser: ${manageUrl}`,
-          },
-          Date.now(),
-        );
-      }
+      await openG1Url('activity', G1_UTM_CAMPAIGNS.MANAGE_ACTIVITY);
       return 'stop';
-    }
 
     case 'stop':
     default:
@@ -219,25 +213,13 @@ async function handleEmptyWalletMenu(
       failedModel: usageLimitReachedModel,
       fallbackModel,
       resetTime,
-      onGetCredits: async () => {
+      onGetCredits: () => {
         logCreditPurchaseClick(
           config,
           'empty_wallet_menu',
           usageLimitReachedModel,
         );
-        const creditsUrl = await openG1Url(
-          'credits',
-          G1_UTM_CAMPAIGNS.EMPTY_WALLET_ADD_CREDITS,
-        );
-        if (creditsUrl) {
-          args.historyManager.addItem(
-            {
-              type: MessageType.INFO,
-              text: `Please open this URL in a browser: ${creditsUrl}`,
-            },
-            Date.now(),
-          );
-        }
+        void openG1Url('credits', G1_UTM_CAMPAIGNS.EMPTY_WALLET_ADD_CREDITS);
       },
       resolve,
     });
@@ -298,16 +280,11 @@ function logCreditPurchaseClick(
 async function openG1Url(
   path: 'activity' | 'credits',
   campaign: string,
-): Promise<string | undefined> {
+): Promise<void> {
   try {
     const userEmail = new UserAccountManager().getCachedGoogleAccount() ?? '';
-    const url = buildG1Url(path, userEmail, campaign);
-    if (!shouldLaunchBrowser()) {
-      return url;
-    }
-    await openBrowserSecurely(url);
+    await openBrowserSecurely(buildG1Url(path, userEmail, campaign));
   } catch {
     // Ignore browser open errors
   }
-  return undefined;
 }

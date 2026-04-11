@@ -13,12 +13,6 @@ export enum TaskType {
 }
 export const TaskTypeSchema = z.nativeEnum(TaskType);
 
-export const TASK_TYPE_LABELS: Record<TaskType, string> = {
-  [TaskType.EPIC]: '[EPIC]',
-  [TaskType.TASK]: '[TASK]',
-  [TaskType.BUG]: '[BUG]',
-};
-
 export enum TaskStatus {
   OPEN = 'open',
   IN_PROGRESS = 'in_progress',

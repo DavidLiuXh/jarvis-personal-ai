@@ -12,7 +12,6 @@ import type {
 import {
   PREVIEW_GEMINI_MODEL,
   PREVIEW_GEMINI_3_1_MODEL,
-  PREVIEW_GEMINI_FLASH_MODEL,
 } from '../config/models.js';
 
 /**
@@ -33,7 +32,6 @@ export const G1_CREDIT_TYPE: CreditType = 'GOOGLE_ONE_AI';
 export const OVERAGE_ELIGIBLE_MODELS = new Set([
   PREVIEW_GEMINI_MODEL,
   PREVIEW_GEMINI_3_1_MODEL,
-  PREVIEW_GEMINI_FLASH_MODEL,
 ]);
 
 /**

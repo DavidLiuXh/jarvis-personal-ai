@@ -7,7 +7,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { renderHook } from '../../test-utils/render.js';
 import { act } from 'react';
-import { useVim, type VimMode } from './vim.js';
+import { useVim } from './vim.js';
+import type { VimMode } from './vim.js';
 import type { TextBuffer } from '../components/shared/text-buffer.js';
 import type { Key } from './useKeypress.js';
 
@@ -70,9 +71,9 @@ describe('useVim passthrough', () => {
       name: 'Ctrl-X',
       key: createKey({ name: 'x', ctrl: true, sequence: '\x18' }),
     },
-  ])('should pass through $name in $mode mode', async ({ mode, key }) => {
+  ])('should pass through $name in $mode mode', ({ mode, key }) => {
     mockVimContext.vimMode = mode;
-    const { result } = await renderHook(() => useVim(mockBuffer as TextBuffer));
+    const { result } = renderHook(() => useVim(mockBuffer as TextBuffer));
 
     let handled = true;
     act(() => {

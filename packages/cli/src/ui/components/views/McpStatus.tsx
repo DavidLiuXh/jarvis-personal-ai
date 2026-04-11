@@ -4,7 +4,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { MCPServerStatus, type MCPServerConfig } from '@google/gemini-cli-core';
+import type { MCPServerConfig } from '@google/gemini-cli-core';
+import { MCPServerStatus } from '@google/gemini-cli-core';
 import { Box, Text } from 'ink';
 import type React from 'react';
 import { MAX_MCP_RESOURCES_TO_SHOW } from '../../constants.js';
@@ -47,12 +48,7 @@ export const McpStatus: React.FC<McpStatusProps> = ({
   showDescriptions,
   showSchema,
 }) => {
-  const serverNames = Object.keys(servers).filter(
-    (serverName) =>
-      !blockedServers.some(
-        (blockedServer) => blockedServer.name === serverName,
-      ),
-  );
+  const serverNames = Object.keys(servers);
 
   if (serverNames.length === 0 && blockedServers.length === 0) {
     return (
@@ -86,6 +82,7 @@ export const McpStatus: React.FC<McpStatusProps> = ({
 
       <Text bold>Configured MCP servers:</Text>
       <Box height={1} />
+
       {serverNames.map((serverName) => {
         const server = servers[serverName];
         const serverTools = tools.filter(

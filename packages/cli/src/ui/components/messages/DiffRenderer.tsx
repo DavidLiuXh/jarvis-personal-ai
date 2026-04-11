@@ -7,22 +7,22 @@
 import type React from 'react';
 import { useMemo } from 'react';
 import { Box, Text, useIsScreenReaderEnabled } from 'ink';
+import crypto from 'node:crypto';
 import { colorizeCode, colorizeLine } from '../../utils/CodeColorizer.js';
 import { MaxSizedBox } from '../shared/MaxSizedBox.js';
 import { theme as semanticTheme } from '../../semantic-colors.js';
 import type { Theme } from '../../themes/theme.js';
 import { useSettings } from '../../contexts/SettingsContext.js';
-import { getFileExtension } from '../../utils/fileUtils.js';
 
-export interface DiffLine {
+interface DiffLine {
   type: 'add' | 'del' | 'context' | 'hunk' | 'other';
   oldLine?: number;
   newLine?: number;
   content: string;
 }
 
-export function parseDiffWithLineNumbers(diffContent: string): DiffLine[] {
-  const lines = diffContent.split(/\r?\n/);
+function parseDiffWithLineNumbers(diffContent: string): DiffLine[] {
+  const lines = diffContent.split('\n');
   const result: DiffLine[] = [];
   let currentOldLine = 0;
   let currentNewLine = 0;
@@ -32,7 +32,6 @@ export function parseDiffWithLineNumbers(diffContent: string): DiffLine[] {
   for (const line of lines) {
     const hunkMatch = line.match(hunkHeaderRegex);
     if (hunkMatch) {
-      currentOldLine = parseInt(hunkMatch[1], 10);
       currentOldLine = parseInt(hunkMatch[1], 10);
       currentNewLine = parseInt(hunkMatch[2], 10);
       inHunk = true;
@@ -89,8 +88,6 @@ interface DiffRendererProps {
   availableTerminalHeight?: number;
   terminalWidth: number;
   theme?: Theme;
-  disableColor?: boolean;
-  paddingX?: number;
 }
 
 const DEFAULT_TAB_WIDTH = 4; // Spaces per tab for normalization
@@ -102,8 +99,6 @@ export const DiffRenderer: React.FC<DiffRendererProps> = ({
   availableTerminalHeight,
   terminalWidth,
   theme,
-  disableColor = false,
-  paddingX = 0,
 }) => {
   const settings = useSettings();
 
@@ -116,7 +111,17 @@ export const DiffRenderer: React.FC<DiffRendererProps> = ({
     return parseDiffWithLineNumbers(diffContent);
   }, [diffContent]);
 
-  const isNewFileResult = useMemo(() => isNewFile(parsedLines), [parsedLines]);
+  const isNewFile = useMemo(() => {
+    if (parsedLines.length === 0) return false;
+    return parsedLines.every(
+      (line) =>
+        line.type === 'add' ||
+        line.type === 'hunk' ||
+        line.type === 'other' ||
+        line.content.startsWith('diff --git') ||
+        line.content.startsWith('new file mode'),
+    );
+  }, [parsedLines]);
 
   const renderedOutput = useMemo(() => {
     if (!diffContent || typeof diffContent !== 'string') {
@@ -125,7 +130,11 @@ export const DiffRenderer: React.FC<DiffRendererProps> = ({
 
     if (parsedLines.length === 0) {
       return (
-        <Box padding={1}>
+        <Box
+          borderStyle="round"
+          borderColor={semanticTheme.border.default}
+          padding={1}
+        >
           <Text dimColor>No changes detected.</Text>
         </Box>
       );
@@ -142,14 +151,14 @@ export const DiffRenderer: React.FC<DiffRendererProps> = ({
       );
     }
 
-    if (isNewFileResult) {
+    if (isNewFile) {
       // Extract only the added lines' content
       const addedContent = parsedLines
         .filter((line) => line.type === 'add')
         .map((line) => line.content)
         .join('\n');
       // Attempt to infer language from filename, default to plain text if no filename
-      const fileExtension = getFileExtension(filename);
+      const fileExtension = filename?.split('.').pop() || null;
       const language = fileExtension
         ? getLanguageFromExtension(fileExtension)
         : null;
@@ -160,74 +169,39 @@ export const DiffRenderer: React.FC<DiffRendererProps> = ({
         maxWidth: terminalWidth,
         theme,
         settings,
-        disableColor,
-        paddingX,
       });
     } else {
-      const key = filename ? `diff-box-${filename}` : undefined;
-
-      return (
-        <MaxSizedBox
-          paddingX={paddingX}
-          maxHeight={availableTerminalHeight}
-          maxWidth={terminalWidth}
-          key={key}
-        >
-          {renderDiffLines({
-            parsedLines,
-            filename,
-            tabWidth,
-            terminalWidth,
-            disableColor,
-          })}
-        </MaxSizedBox>
+      return renderDiffContent(
+        parsedLines,
+        filename,
+        tabWidth,
+        availableTerminalHeight,
+        terminalWidth,
       );
     }
   }, [
     diffContent,
     parsedLines,
     screenReaderEnabled,
-    isNewFileResult,
+    isNewFile,
     filename,
     availableTerminalHeight,
     terminalWidth,
     theme,
     settings,
     tabWidth,
-    disableColor,
-    paddingX,
   ]);
 
   return renderedOutput;
 };
 
-export const isNewFile = (parsedLines: DiffLine[]): boolean => {
-  if (parsedLines.length === 0) return false;
-  return parsedLines.every(
-    (line) =>
-      line.type === 'add' ||
-      line.type === 'hunk' ||
-      line.type === 'other' ||
-      line.content.startsWith('diff --git') ||
-      line.content.startsWith('new file mode'),
-  );
-};
-
-export interface RenderDiffLinesOptions {
-  parsedLines: DiffLine[];
-  filename?: string;
-  tabWidth?: number;
-  terminalWidth: number;
-  disableColor?: boolean;
-}
-
-export const renderDiffLines = ({
-  parsedLines,
-  filename,
+const renderDiffContent = (
+  parsedLines: DiffLine[],
+  filename: string | undefined,
   tabWidth = DEFAULT_TAB_WIDTH,
-  terminalWidth,
-  disableColor = false,
-}: RenderDiffLinesOptions): React.ReactNode[] => {
+  availableTerminalHeight: number | undefined,
+  terminalWidth: number,
+) => {
   // 1. Normalize whitespace (replace tabs with spaces) *before* further processing
   const normalizedLines = parsedLines.map((line) => ({
     ...line,
@@ -240,11 +214,15 @@ export const renderDiffLines = ({
   );
 
   if (displayableLines.length === 0) {
-    return [
-      <Box key="no-changes" padding={1}>
+    return (
+      <Box
+        borderStyle="round"
+        borderColor={semanticTheme.border.default}
+        padding={1}
+      >
         <Text dimColor>No changes detected.</Text>
-      </Box>,
-    ];
+      </Box>
+    );
   }
 
   const maxLineNumber = Math.max(
@@ -254,7 +232,7 @@ export const renderDiffLines = ({
   );
   const gutterWidth = Math.max(1, maxLineNumber.toString().length);
 
-  const fileExtension = getFileExtension(filename);
+  const fileExtension = filename?.split('.').pop() || null;
   const language = fileExtension
     ? getLanguageFromExtension(fileExtension)
     : null;
@@ -273,6 +251,10 @@ export const renderDiffLines = ({
   if (!isFinite(baseIndentation)) {
     baseIndentation = 0;
   }
+
+  const key = filename
+    ? `diff-box-${filename}`
+    : `diff-box-${crypto.createHash('sha1').update(JSON.stringify(parsedLines)).digest('hex')}`;
 
   let lastLineNumber: number | null = null;
   const MAX_CONTEXT_LINES_WITHOUT_GAP = 5;
@@ -339,26 +321,12 @@ export const renderDiffLines = ({
 
       const displayContent = line.content.substring(baseIndentation);
 
-      const backgroundColor = disableColor
-        ? undefined
-        : line.type === 'add'
+      const backgroundColor =
+        line.type === 'add'
           ? semanticTheme.background.diff.added
           : line.type === 'del'
             ? semanticTheme.background.diff.removed
             : undefined;
-
-      const gutterColor = disableColor
-        ? undefined
-        : semanticTheme.text.secondary;
-
-      const symbolColor = disableColor
-        ? undefined
-        : line.type === 'add'
-          ? semanticTheme.status.success
-          : line.type === 'del'
-            ? semanticTheme.status.error
-            : undefined;
-
       acc.push(
         <Box key={lineKey} flexDirection="row">
           <Box
@@ -368,24 +336,32 @@ export const renderDiffLines = ({
             backgroundColor={backgroundColor}
             justifyContent="flex-end"
           >
-            <Text color={gutterColor}>{gutterNumStr}</Text>
+            <Text color={semanticTheme.text.secondary}>{gutterNumStr}</Text>
           </Box>
           {line.type === 'context' ? (
             <>
               <Text>{prefixSymbol} </Text>
-              <Text wrap="wrap">
-                {colorizeLine(
-                  displayContent,
-                  language,
-                  undefined,
-                  disableColor,
-                )}
-              </Text>
+              <Text wrap="wrap">{colorizeLine(displayContent, language)}</Text>
             </>
           ) : (
-            <Text backgroundColor={backgroundColor} wrap="wrap">
-              <Text color={symbolColor}>{prefixSymbol}</Text>{' '}
-              {colorizeLine(displayContent, language, undefined, disableColor)}
+            <Text
+              backgroundColor={
+                line.type === 'add'
+                  ? semanticTheme.background.diff.added
+                  : semanticTheme.background.diff.removed
+              }
+              wrap="wrap"
+            >
+              <Text
+                color={
+                  line.type === 'add'
+                    ? semanticTheme.status.success
+                    : semanticTheme.status.error
+                }
+              >
+                {prefixSymbol}
+              </Text>{' '}
+              {colorizeLine(displayContent, language)}
             </Text>
           )}
         </Box>,
@@ -395,7 +371,15 @@ export const renderDiffLines = ({
     [],
   );
 
-  return content;
+  return (
+    <MaxSizedBox
+      maxHeight={availableTerminalHeight}
+      maxWidth={terminalWidth}
+      key={key}
+    >
+      {content}
+    </MaxSizedBox>
+  );
 };
 
 const getLanguageFromExtension = (extension: string): string | null => {

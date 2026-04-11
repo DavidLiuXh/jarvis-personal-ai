@@ -80,8 +80,8 @@ describe('useToolScheduler', () => {
     vi.clearAllMocks();
   });
 
-  it('initializes with empty tool calls', async () => {
-    const { result } = await renderHook(() =>
+  it('initializes with empty tool calls', () => {
+    const { result } = renderHook(() =>
       useToolScheduler(
         vi.fn().mockResolvedValue(undefined),
         mockConfig,
@@ -92,8 +92,8 @@ describe('useToolScheduler', () => {
     expect(toolCalls).toEqual([]);
   });
 
-  it('updates tool calls when MessageBus emits TOOL_CALLS_UPDATE', async () => {
-    const { result } = await renderHook(() =>
+  it('updates tool calls when MessageBus emits TOOL_CALLS_UPDATE', () => {
+    const { result } = renderHook(() =>
       useToolScheduler(
         vi.fn().mockResolvedValue(undefined),
         mockConfig,
@@ -134,8 +134,8 @@ describe('useToolScheduler', () => {
     });
   });
 
-  it('preserves responseSubmittedToGemini flag across updates', async () => {
-    const { result } = await renderHook(() =>
+  it('preserves responseSubmittedToGemini flag across updates', () => {
+    const { result } = renderHook(() =>
       useToolScheduler(
         vi.fn().mockResolvedValue(undefined),
         mockConfig,
@@ -163,6 +163,7 @@ describe('useToolScheduler', () => {
       },
     };
 
+    // 1. Initial success
     act(() => {
       void mockMessageBus.publish({
         type: MessageBusType.TOOL_CALLS_UPDATE,
@@ -171,6 +172,7 @@ describe('useToolScheduler', () => {
       } as ToolCallsUpdateMessage);
     });
 
+    // 2. Mark as submitted
     act(() => {
       const [, , markAsSubmitted] = result.current;
       markAsSubmitted(['call-1']);
@@ -178,7 +180,7 @@ describe('useToolScheduler', () => {
 
     expect(result.current[0][0].responseSubmittedToGemini).toBe(true);
 
-    // Verify flag is preserved across updates
+    // 3. Receive another update (should preserve the true flag)
     act(() => {
       void mockMessageBus.publish({
         type: MessageBusType.TOOL_CALLS_UPDATE,
@@ -190,9 +192,9 @@ describe('useToolScheduler', () => {
     expect(result.current[0][0].responseSubmittedToGemini).toBe(true);
   });
 
-  it('updates lastToolOutputTime when tools are executing', async () => {
+  it('updates lastToolOutputTime when tools are executing', () => {
     vi.useFakeTimers();
-    const { result } = await renderHook(() =>
+    const { result } = renderHook(() =>
       useToolScheduler(
         vi.fn().mockResolvedValue(undefined),
         mockConfig,
@@ -229,8 +231,8 @@ describe('useToolScheduler', () => {
     vi.useRealTimers();
   });
 
-  it('delegates cancelAll to the Core Scheduler', async () => {
-    const { result } = await renderHook(() =>
+  it('delegates cancelAll to the Core Scheduler', () => {
+    const { result } = renderHook(() =>
       useToolScheduler(
         vi.fn().mockResolvedValue(undefined),
         mockConfig,
@@ -283,7 +285,7 @@ describe('useToolScheduler', () => {
         }) as unknown as Scheduler,
     );
 
-    const { result } = await renderHook(() =>
+    const { result } = renderHook(() =>
       useToolScheduler(onComplete, mockConfig, () => undefined),
     );
 
@@ -308,8 +310,8 @@ describe('useToolScheduler', () => {
     expect(onComplete).toHaveBeenCalledWith([completedToolCall]);
   });
 
-  it('setToolCallsForDisplay re-groups tools by schedulerId (Multi-Scheduler support)', async () => {
-    const { result } = await renderHook(() =>
+  it('setToolCallsForDisplay re-groups tools by schedulerId (Multi-Scheduler support)', () => {
+    const { result } = renderHook(() =>
       useToolScheduler(
         vi.fn().mockResolvedValue(undefined),
         mockConfig,
@@ -346,6 +348,7 @@ describe('useToolScheduler', () => {
       confirmationDetails: { type: 'info', title: 'Confirm', prompt: 'Yes?' },
     };
 
+    // 1. Populate state with multiple schedulers
     act(() => {
       void mockMessageBus.publish({
         type: MessageBusType.TOOL_CALLS_UPDATE,
@@ -369,6 +372,7 @@ describe('useToolScheduler', () => {
       toolCalls.find((t) => t.request.callId === 'call-sub'),
     ).toBeDefined();
 
+    // 2. Call setToolCallsForDisplay (e.g., simulate a manual update or clear)
     act(() => {
       const [, , , setToolCalls] = result.current;
       setToolCalls((prev) =>
@@ -376,13 +380,14 @@ describe('useToolScheduler', () => {
       );
     });
 
+    // 3. Verify that tools are still present and maintain their scheduler IDs
     const [toolCalls2] = result.current;
     expect(toolCalls2).toHaveLength(2);
     expect(toolCalls2.every((t) => t.responseSubmittedToGemini)).toBe(true);
   });
 
-  it('ignores TOOL_CALLS_UPDATE from non-root schedulers when no tools await approval', async () => {
-    const { result } = await renderHook(() =>
+  it('ignores TOOL_CALLS_UPDATE from non-root schedulers when no tools await approval', () => {
+    const { result } = renderHook(() =>
       useToolScheduler(
         vi.fn().mockResolvedValue(undefined),
         mockConfig,
@@ -415,8 +420,8 @@ describe('useToolScheduler', () => {
     expect(result.current[0]).toHaveLength(0);
   });
 
-  it('allows TOOL_CALLS_UPDATE from non-root schedulers when tools are awaiting approval', async () => {
-    const { result } = await renderHook(() =>
+  it('allows TOOL_CALLS_UPDATE from non-root schedulers when tools are awaiting approval', () => {
+    const { result } = renderHook(() =>
       useToolScheduler(
         vi.fn().mockResolvedValue(undefined),
         mockConfig,
@@ -453,8 +458,8 @@ describe('useToolScheduler', () => {
     expect(toolCalls[0].status).toBe(CoreToolCallStatus.AwaitingApproval);
   });
 
-  it('preserves subagent tools in the UI after they have been approved', async () => {
-    const { result } = await renderHook(() =>
+  it('preserves subagent tools in the UI after they have been approved', () => {
+    const { result } = renderHook(() =>
       useToolScheduler(
         vi.fn().mockResolvedValue(undefined),
         mockConfig,
@@ -477,6 +482,7 @@ describe('useToolScheduler', () => {
       confirmationDetails: { type: 'info', title: 'Confirm', prompt: 'Yes?' },
     } as WaitingToolCall;
 
+    // 1. Initial approval request
     act(() => {
       void mockMessageBus.publish({
         type: MessageBusType.TOOL_CALLS_UPDATE,
@@ -487,6 +493,7 @@ describe('useToolScheduler', () => {
 
     expect(result.current[0]).toHaveLength(1);
 
+    // 2. Approved and executing
     const approvedCall = {
       ...subagentCall,
       status: CoreToolCallStatus.Executing as const,
@@ -503,7 +510,7 @@ describe('useToolScheduler', () => {
     expect(result.current[0]).toHaveLength(1);
     expect(result.current[0][0].status).toBe(CoreToolCallStatus.Executing);
 
-    // Background tool should not be shown
+    // 3. New turn with a background tool (should NOT be shown)
     const backgroundTool = {
       status: CoreToolCallStatus.Executing as const,
       request: {
@@ -531,9 +538,9 @@ describe('useToolScheduler', () => {
     expect(result.current[0]).toHaveLength(0);
   });
 
-  it('adapts success/error status to executing when a tail call is present', async () => {
+  it('adapts success/error status to executing when a tail call is present', () => {
     vi.useFakeTimers();
-    const { result } = await renderHook(() =>
+    const { result } = renderHook(() =>
       useToolScheduler(
         vi.fn().mockResolvedValue(undefined),
         mockConfig,
@@ -587,145 +594,5 @@ describe('useToolScheduler', () => {
     expect(lastOutputTime).toBeGreaterThan(startTime);
 
     vi.useRealTimers();
-  });
-
-  it('accumulates SUBAGENT_ACTIVITY events and attaches them to toolCalls', async () => {
-    const { result } = await renderHook(() =>
-      useToolScheduler(
-        vi.fn().mockResolvedValue(undefined),
-        mockConfig,
-        () => undefined,
-      ),
-    );
-
-    const mockToolCall = {
-      status: CoreToolCallStatus.Executing as const,
-      request: {
-        callId: 'call-1',
-        name: 'research',
-        args: {},
-        isClientInitiated: false,
-        prompt_id: 'p1',
-      },
-      tool: createMockTool({ name: 'research' }),
-      invocation: createMockInvocation(),
-    } as ExecutingToolCall;
-
-    act(() => {
-      void mockMessageBus.publish({
-        type: MessageBusType.TOOL_CALLS_UPDATE,
-        toolCalls: [mockToolCall],
-        schedulerId: ROOT_SCHEDULER_ID,
-      } as ToolCallsUpdateMessage);
-    });
-
-    expect(result.current[0]).toHaveLength(1);
-    expect(result.current[0][0].subagentHistory).toBeUndefined();
-
-    act(() => {
-      void mockMessageBus.publish({
-        type: MessageBusType.SUBAGENT_ACTIVITY,
-        subagentName: 'research',
-        activity: {
-          id: '1',
-          type: 'thought',
-          content: 'Thinking...',
-          status: 'running',
-        },
-      });
-    });
-
-    expect(result.current[0][0].subagentHistory).toHaveLength(1);
-    expect(result.current[0][0].subagentHistory![0].content).toBe(
-      'Thinking...',
-    );
-
-    act(() => {
-      void mockMessageBus.publish({
-        type: MessageBusType.SUBAGENT_ACTIVITY,
-        subagentName: 'research',
-        activity: {
-          id: '2',
-          type: 'tool_call',
-          content: 'Calling tool',
-          status: 'completed',
-        },
-      });
-    });
-
-    expect(result.current[0][0].subagentHistory).toHaveLength(2);
-    expect(result.current[0][0].subagentHistory![1].content).toBe(
-      'Calling tool',
-    );
-  });
-
-  it('replaces SUBAGENT_ACTIVITY events by ID instead of appending', async () => {
-    const { result } = await renderHook(() =>
-      useToolScheduler(
-        vi.fn().mockResolvedValue(undefined),
-        mockConfig,
-        () => undefined,
-      ),
-    );
-
-    const mockToolCall = {
-      status: CoreToolCallStatus.Executing as const,
-      request: {
-        callId: 'call-1',
-        name: 'research',
-        args: {},
-        isClientInitiated: false,
-        prompt_id: 'p1',
-      },
-      tool: createMockTool({ name: 'research' }),
-      invocation: createMockInvocation(),
-    };
-
-    act(() => {
-      void mockMessageBus.publish({
-        type: MessageBusType.TOOL_CALLS_UPDATE,
-        toolCalls: [mockToolCall],
-        schedulerId: ROOT_SCHEDULER_ID,
-      });
-    });
-
-    act(() => {
-      void mockMessageBus.publish({
-        type: MessageBusType.SUBAGENT_ACTIVITY,
-        subagentName: 'research',
-        activity: {
-          id: '1',
-          type: 'thought',
-          content: 'Thinking...',
-          status: 'running',
-        },
-      });
-    });
-
-    expect(result.current[0][0].subagentHistory).toHaveLength(1);
-    expect(result.current[0][0].subagentHistory![0].content).toBe(
-      'Thinking...',
-    );
-
-    // Publish same ID with updated content
-    act(() => {
-      void mockMessageBus.publish({
-        type: MessageBusType.SUBAGENT_ACTIVITY,
-        subagentName: 'research',
-        activity: {
-          id: '1',
-          type: 'thought',
-          content: 'Thinking... Done!',
-          status: 'completed',
-        },
-      });
-    });
-
-    // Should still be length 1, and content should be updated
-    expect(result.current[0][0].subagentHistory).toHaveLength(1);
-    expect(result.current[0][0].subagentHistory![0].content).toBe(
-      'Thinking... Done!',
-    );
-    expect(result.current[0][0].subagentHistory![0].status).toBe('completed');
   });
 });

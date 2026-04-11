@@ -2,8 +2,8 @@
 
 exports[`LoginWithGoogleRestartDialog > renders correctly 1`] = `
 "╭──────────────────────────────────────────────────────────────────────────────────────────────────╮
-│ You've successfully signed in with Google. Gemini CLI needs to be restarted. Press R to restart, │
-│ or Esc to choose a different authentication method.                                              │
+│ You have successfully logged in with Google. Gemini CLI needs to be restarted. Press 'r' to      │
+│ restart, or 'escape' to choose a different auth method.                                          │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
 "
 `;

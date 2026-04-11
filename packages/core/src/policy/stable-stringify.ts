@@ -57,11 +57,7 @@
  * // Returns: '{"safe":"data"}'
  */
 export function stableStringify(obj: unknown): string {
-  const stringify = (
-    currentObj: unknown,
-    ancestors: Set<unknown>,
-    isTopLevel = false,
-  ): string => {
+  const stringify = (currentObj: unknown, ancestors: Set<unknown>): string => {
     // Handle primitives and null
     if (currentObj === undefined) {
       return 'null'; // undefined in arrays becomes null in JSON
@@ -93,10 +89,7 @@ export function stableStringify(obj: unknown): string {
           if (jsonValue === null) {
             return 'null';
           }
-          // The result of toJSON is effectively a new object graph, but it
-          // takes the place of the current node, so we preserve the top-level
-          // status of the current node.
-          return stringify(jsonValue, ancestors, isTopLevel);
+          return stringify(jsonValue, ancestors);
         } catch {
           // If toJSON throws, treat as a regular object
         }
@@ -108,7 +101,7 @@ export function stableStringify(obj: unknown): string {
           if (item === undefined || typeof item === 'function') {
             return 'null';
           }
-          return stringify(item, ancestors, false);
+          return stringify(item, ancestors);
         });
         return '[' + items.join(',') + ']';
       }
@@ -122,17 +115,7 @@ export function stableStringify(obj: unknown): string {
         const value = (currentObj as Record<string, unknown>)[key];
         // Skip undefined and function values in objects (per JSON spec)
         if (value !== undefined && typeof value !== 'function') {
-          let pairStr =
-            JSON.stringify(key) + ':' + stringify(value, ancestors, false);
-
-          if (isTopLevel) {
-            // We use a null byte (\0) to denote structural boundaries.
-            // This is safe because any literal \0 in the user's data will
-            // be escaped by JSON.stringify into "\u0000" before reaching here.
-            pairStr = '\0' + pairStr + '\0';
-          }
-
-          pairs.push(pairStr);
+          pairs.push(JSON.stringify(key) + ':' + stringify(value, ancestors));
         }
       }
 
@@ -142,5 +125,5 @@ export function stableStringify(obj: unknown): string {
     }
   };
 
-  return stringify(obj, new Set(), true);
+  return stringify(obj, new Set());
 }

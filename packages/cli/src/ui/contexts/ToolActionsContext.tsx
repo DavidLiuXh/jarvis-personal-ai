@@ -48,14 +48,11 @@ interface ToolActionsContextValue {
   ) => Promise<void>;
   cancel: (callId: string) => Promise<void>;
   isDiffingEnabled: boolean;
-  isExpanded: (callId: string) => boolean;
-  toggleExpansion: (callId: string) => void;
-  toggleAllExpansion: (callIds: string[]) => void;
 }
 
 const ToolActionsContext = createContext<ToolActionsContextValue | null>(null);
 
-export const useToolActions = (): ToolActionsContextValue => {
+export const useToolActions = () => {
   const context = useContext(ToolActionsContext);
   if (!context) {
     throw new Error('useToolActions must be used within a ToolActionsProvider');
@@ -67,22 +64,12 @@ interface ToolActionsProviderProps {
   children: React.ReactNode;
   config: Config;
   toolCalls: IndividualToolCallDisplay[];
-  isExpanded: (callId: string) => boolean;
-  toggleExpansion: (callId: string) => void;
-  toggleAllExpansion: (callIds: string[]) => void;
 }
 
 export const ToolActionsProvider: React.FC<ToolActionsProviderProps> = (
   props: ToolActionsProviderProps,
 ) => {
-  const {
-    children,
-    config,
-    toolCalls,
-    isExpanded,
-    toggleExpansion,
-    toggleAllExpansion,
-  } = props;
+  const { children, config, toolCalls } = props;
 
   // Hoist IdeClient logic here to keep UI pure
   const [ideClient, setIdeClient] = useState<IdeClient | null>(null);
@@ -90,23 +77,24 @@ export const ToolActionsProvider: React.FC<ToolActionsProviderProps> = (
 
   useEffect(() => {
     let isMounted = true;
-    let activeClient: IdeClient | null = null;
-
-    const handleStatusChange = () => {
-      if (isMounted && activeClient) {
-        setIsDiffingEnabled(activeClient.isDiffingEnabled());
-      }
-    };
-
     if (config.getIdeMode()) {
       IdeClient.getInstance()
         .then((client) => {
           if (!isMounted) return;
-          activeClient = client;
           setIdeClient(client);
           setIsDiffingEnabled(client.isDiffingEnabled());
 
+          const handleStatusChange = () => {
+            if (isMounted) {
+              setIsDiffingEnabled(client.isDiffingEnabled());
+            }
+          };
+
           client.addStatusChangeListener(handleStatusChange);
+          // Return a cleanup function for the listener
+          return () => {
+            client.removeStatusChangeListener(handleStatusChange);
+          };
         })
         .catch((error) => {
           debugLogger.error('Failed to get IdeClient instance:', error);
@@ -114,9 +102,6 @@ export const ToolActionsProvider: React.FC<ToolActionsProviderProps> = (
     }
     return () => {
       isMounted = false;
-      if (activeClient) {
-        activeClient.removeStatusChangeListener(handleStatusChange);
-      }
     };
   }, [config]);
 
@@ -179,16 +164,7 @@ export const ToolActionsProvider: React.FC<ToolActionsProviderProps> = (
   );
 
   return (
-    <ToolActionsContext.Provider
-      value={{
-        confirm,
-        cancel,
-        isDiffingEnabled,
-        isExpanded,
-        toggleExpansion,
-        toggleAllExpansion,
-      }}
-    >
+    <ToolActionsContext.Provider value={{ confirm, cancel, isDiffingEnabled }}>
       {children}
     </ToolActionsContext.Provider>
   );

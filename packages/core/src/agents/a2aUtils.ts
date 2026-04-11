@@ -12,11 +12,9 @@ import type {
   FilePart,
   Artifact,
   TaskState,
-  AgentCard,
-  AgentInterface,
+  TaskStatusUpdateEvent,
 } from '@a2a-js/sdk';
 import type { SendMessageResult } from './a2a-client-manager.js';
-import type { SubagentActivityItem } from './types.js';
 
 export const AUTH_REQUIRED_MSG = `[Authorization Required] The agent has indicated it requires authorization to proceed. Please follow the agent's instructions.`;
 
@@ -102,11 +100,12 @@ export class A2AResultReassembler {
         }
         break;
 
-      case 'message':
+      case 'message': {
         this.pushMessage(chunk);
         break;
+      }
+
       default:
-        // Handle unknown kinds gracefully
         break;
     }
   }
@@ -124,39 +123,17 @@ export class A2AResultReassembler {
 
   private pushMessage(message: Message | undefined) {
     if (!message) return;
-    const text = extractPartsText(message.parts, '');
+    const text = extractPartsText(message.parts, '\n');
     if (text && this.messageLog[this.messageLog.length - 1] !== text) {
       this.messageLog.push(text);
     }
   }
 
   /**
-   * Returns an array of activity items representing the current reassembled state.
-   */
-  toActivityItems(): SubagentActivityItem[] {
-    const isAuthRequired = this.messageLog.includes(AUTH_REQUIRED_MSG);
-    return [
-      isAuthRequired
-        ? {
-            id: 'auth-required',
-            type: 'thought',
-            content: AUTH_REQUIRED_MSG,
-            status: 'running',
-          }
-        : {
-            id: 'pending',
-            type: 'thought',
-            content: 'Working...',
-            status: 'running',
-          },
-    ];
-  }
-
-  /**
    * Returns a human-readable string representation of the current reassembled state.
    */
   toString(): string {
-    const joinedMessages = this.messageLog.join('');
+    const joinedMessages = this.messageLog.join('\n\n');
 
     const artifactsOutput = Array.from(this.artifacts.keys())
       .map((id) => {
@@ -233,91 +210,6 @@ function extractPartText(part: Part): string {
   return '';
 }
 
-/**
- * Normalizes proto field name aliases that the SDK doesn't handle yet.
- * The A2A proto spec uses `supported_interfaces` and `protocol_binding`,
- * while the SDK expects `additionalInterfaces` and `transport`.
- * TODO: Remove once @a2a-js/sdk handles these aliases natively.
- */
-export function normalizeAgentCard(card: unknown): AgentCard {
-  if (!isObject(card)) {
-    throw new Error('Agent card is missing.');
-  }
-
-  // Shallow-copy to avoid mutating the SDK's cached object.
-  // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion
-  const result = { ...card } as unknown as AgentCard;
-
-  // Map supportedInterfaces → additionalInterfaces if needed
-  if (!result.additionalInterfaces) {
-    const raw = card;
-    if (Array.isArray(raw['supportedInterfaces'])) {
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion
-      result.additionalInterfaces = raw[
-        'supportedInterfaces'
-      ] as AgentInterface[];
-    }
-  }
-
-  // Map protocolBinding → transport on each interface
-  for (const intf of result.additionalInterfaces ?? []) {
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion
-    const raw = intf as unknown as Record<string, unknown>;
-    const binding = raw['protocolBinding'];
-
-    if (!intf.transport && typeof binding === 'string') {
-      intf.transport = binding;
-    }
-  }
-
-  return result;
-}
-
-/**
- * Extracts contextId and taskId from a Message, Task, or Update response.
- * Follows the pattern from the A2A CLI sample to maintain conversational continuity.
- */
-export function extractIdsFromResponse(result: SendMessageResult): {
-  contextId?: string;
-  taskId?: string;
-  clearTaskId?: boolean;
-} {
-  let contextId: string | undefined;
-  let taskId: string | undefined;
-  let clearTaskId = false;
-
-  if (!('kind' in result)) return { contextId, taskId, clearTaskId };
-
-  switch (result.kind) {
-    case 'message':
-    case 'artifact-update':
-      taskId = result.taskId;
-      contextId = result.contextId;
-      break;
-
-    case 'task':
-      taskId = result.id;
-      contextId = result.contextId;
-      if (isTerminalState(result.status?.state)) {
-        clearTaskId = true;
-      }
-      break;
-
-    case 'status-update':
-      taskId = result.taskId;
-      contextId = result.contextId;
-      if (isTerminalState(result.status?.state)) {
-        clearTaskId = true;
-      }
-      break;
-    default:
-      // Handle other kind values if any
-      break;
-  }
-
-  return { contextId, taskId, clearTaskId };
-}
-
 // Type Guards
 
 function isTextPart(part: Part): part is TextPart {
@@ -330,6 +222,12 @@ function isDataPart(part: Part): part is DataPart {
 
 function isFilePart(part: Part): part is FilePart {
   return part.kind === 'file';
+}
+
+function isStatusUpdateEvent(
+  result: SendMessageResult,
+): result is TaskStatusUpdateEvent {
+  return result.kind === 'status-update';
 }
 
 /**
@@ -345,8 +243,39 @@ export function isTerminalState(state: TaskState | undefined): boolean {
 }
 
 /**
- * Type guard to check if a value is a non-array object.
+ * Extracts contextId and taskId from a Message, Task, or Update response.
+ * Follows the pattern from the A2A CLI sample to maintain conversational continuity.
  */
-function isObject(val: unknown): val is Record<string, unknown> {
-  return typeof val === 'object' && val !== null && !Array.isArray(val);
+export function extractIdsFromResponse(result: SendMessageResult): {
+  contextId?: string;
+  taskId?: string;
+  clearTaskId?: boolean;
+} {
+  let contextId: string | undefined;
+  let taskId: string | undefined;
+  let clearTaskId = false;
+
+  if ('kind' in result) {
+    const kind = result.kind;
+    if (kind === 'message' || kind === 'artifact-update') {
+      taskId = result.taskId;
+      contextId = result.contextId;
+    } else if (kind === 'task') {
+      taskId = result.id;
+      contextId = result.contextId;
+      if (isTerminalState(result.status?.state)) {
+        clearTaskId = true;
+      }
+    } else if (isStatusUpdateEvent(result)) {
+      taskId = result.taskId;
+      contextId = result.contextId;
+      // Note: We ignore the 'final' flag here per A2A protocol best practices,
+      // as a stream can close while a task is still in a 'working' state.
+      if (isTerminalState(result.status?.state)) {
+        clearTaskId = true;
+      }
+    }
+  }
+
+  return { contextId, taskId, clearTaskId };
 }

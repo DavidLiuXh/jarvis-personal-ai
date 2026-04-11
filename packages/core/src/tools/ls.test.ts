@@ -17,14 +17,6 @@ import { WorkspaceContext } from '../utils/workspaceContext.js';
 import { createMockMessageBus } from '../test-utils/mock-message-bus.js';
 import { GEMINI_IGNORE_FILE_NAME } from '../config/constants.js';
 
-vi.mock('./jit-context.js', () => ({
-  discoverJitContext: vi.fn().mockResolvedValue(''),
-  appendJitContext: vi.fn().mockImplementation((content, context) => {
-    if (!context) return content;
-    return `${content}\n\n--- Newly Discovered Project Context ---\n${context}\n--- End Project Context ---`;
-  }),
-}));
-
 describe('LSTool', () => {
   let lsTool: LSTool;
   let tempRootDir: string;
@@ -131,10 +123,7 @@ describe('LSTool', () => {
 
       expect(result.llmContent).toContain('[DIR] subdir');
       expect(result.llmContent).toContain('file1.txt');
-      expect(result.returnDisplay).toEqual({
-        summary: 'Found 2 item(s).',
-        files: ['[DIR] subdir', 'file1.txt'],
-      });
+      expect(result.returnDisplay).toBe('Listed 2 item(s).');
     });
 
     it('should list files from secondary workspace directory', async () => {
@@ -149,10 +138,7 @@ describe('LSTool', () => {
       const result = await invocation.execute(abortSignal);
 
       expect(result.llmContent).toContain('secondary-file.txt');
-      expect(result.returnDisplay).toEqual({
-        summary: 'Found 1 item(s).',
-        files: expect.any(Array),
-      });
+      expect(result.returnDisplay).toBe('Listed 1 item(s).');
     });
 
     it('should handle empty directories', async () => {
@@ -177,10 +163,7 @@ describe('LSTool', () => {
 
       expect(result.llmContent).toContain('file1.txt');
       expect(result.llmContent).not.toContain('file2.log');
-      expect(result.returnDisplay).toEqual({
-        summary: 'Found 1 item(s).',
-        files: expect.any(Array),
-      });
+      expect(result.returnDisplay).toBe('Listed 1 item(s).');
     });
 
     it('should respect gitignore patterns', async () => {
@@ -194,9 +177,7 @@ describe('LSTool', () => {
       expect(result.llmContent).toContain('file1.txt');
       expect(result.llmContent).not.toContain('file2.log');
       // .git is always ignored by default.
-      expect(result.returnDisplay).toEqual(
-        expect.objectContaining({ summary: 'Found 2 item(s). (2 ignored)' }),
-      );
+      expect(result.returnDisplay).toBe('Listed 2 item(s). (2 ignored)');
     });
 
     it('should respect geminiignore patterns', async () => {
@@ -211,9 +192,7 @@ describe('LSTool', () => {
 
       expect(result.llmContent).toContain('file1.txt');
       expect(result.llmContent).not.toContain('file2.log');
-      expect(result.returnDisplay).toEqual(
-        expect.objectContaining({ summary: 'Found 2 item(s). (1 ignored)' }),
-      );
+      expect(result.returnDisplay).toBe('Listed 2 item(s). (1 ignored)');
     });
 
     it('should handle non-directory paths', async () => {
@@ -300,10 +279,7 @@ describe('LSTool', () => {
       // Should still list the other files
       expect(result.llmContent).toContain('file1.txt');
       expect(result.llmContent).not.toContain('problematic.txt');
-      expect(result.returnDisplay).toEqual({
-        summary: 'Found 1 item(s).',
-        files: expect.any(Array),
-      });
+      expect(result.returnDisplay).toBe('Listed 1 item(s).');
 
       statSpy.mockRestore();
     });
@@ -363,43 +339,7 @@ describe('LSTool', () => {
       const result = await invocation.execute(abortSignal);
 
       expect(result.llmContent).toContain('secondary-file.txt');
-      expect(result.returnDisplay).toEqual({
-        summary: 'Found 1 item(s).',
-        files: expect.any(Array),
-      });
-    });
-  });
-
-  describe('JIT context discovery', () => {
-    it('should append JIT context to output when enabled and context is found', async () => {
-      const { discoverJitContext } = await import('./jit-context.js');
-      vi.mocked(discoverJitContext).mockResolvedValue('Use the useAuth hook.');
-
-      await fs.writeFile(path.join(tempRootDir, 'jit-file.txt'), 'content');
-
-      const invocation = lsTool.build({ dir_path: tempRootDir });
-      const result = await invocation.execute(abortSignal);
-
-      expect(discoverJitContext).toHaveBeenCalled();
-      expect(result.llmContent).toContain('Newly Discovered Project Context');
-      expect(result.llmContent).toContain('Use the useAuth hook.');
-    });
-
-    it('should not append JIT context when disabled', async () => {
-      const { discoverJitContext } = await import('./jit-context.js');
-      vi.mocked(discoverJitContext).mockResolvedValue('');
-
-      await fs.writeFile(
-        path.join(tempRootDir, 'jit-disabled-file.txt'),
-        'content',
-      );
-
-      const invocation = lsTool.build({ dir_path: tempRootDir });
-      const result = await invocation.execute(abortSignal);
-
-      expect(result.llmContent).not.toContain(
-        'Newly Discovered Project Context',
-      );
+      expect(result.returnDisplay).toBe('Listed 1 item(s).');
     });
   });
 });

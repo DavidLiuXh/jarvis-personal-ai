@@ -19,6 +19,7 @@ const runInDevTraceSpan = vi.hoisted(() =>
     const metadata = { attributes: opts.attributes || {} };
     return fn({
       metadata,
+      endSpan: vi.fn(),
     });
   }),
 );
@@ -72,9 +73,7 @@ describe('LoggingContentGenerator', () => {
       getContentGeneratorConfig: vi.fn().mockReturnValue({
         authType: 'API_KEY',
       }),
-      getTelemetryLogPromptsEnabled: vi.fn().mockReturnValue(true),
       refreshUserQuotaIfStale: vi.fn().mockResolvedValue(undefined),
-      getSessionId: vi.fn().mockReturnValue('test-session-id'),
     } as unknown as Config;
     loggingContentGenerator = new LoggingContentGenerator(wrapped, config);
     vi.useFakeTimers();
@@ -159,7 +158,7 @@ describe('LoggingContentGenerator', () => {
       const spanArgs = vi.mocked(runInDevTraceSpan).mock.calls[0];
       const fn = spanArgs[1];
       const metadata: SpanMetadata = { name: '', attributes: {} };
-      await fn({ metadata });
+      await fn({ metadata, endSpan: vi.fn() });
 
       expect(metadata).toMatchObject({
         input: req.contents,
@@ -223,7 +222,7 @@ describe('LoggingContentGenerator', () => {
       const spanArgs = vi.mocked(runInDevTraceSpan).mock.calls[0];
       const fn = spanArgs[1];
       const metadata: SpanMetadata = { name: '', attributes: {} };
-      promise = fn({ metadata });
+      promise = fn({ metadata, endSpan: vi.fn() });
 
       await expect(promise).rejects.toThrow(error);
 
@@ -312,100 +311,6 @@ describe('LoggingContentGenerator', () => {
         ).rejects.toSatisfy((error: unknown) => {
           const gError = error as { response: { data: unknown } };
           expect(gError.response.data).toBe(invalidAscii);
-          return true;
-        });
-      });
-
-      it('should decode Uint8Array data in Gaxios errors', async () => {
-        const req = { contents: [], model: 'gemini-pro' };
-
-        const gaxiosError = Object.assign(new Error('Gaxios Error'), {
-          response: { data: new Uint8Array([72, 101, 108, 108, 111]) },
-        });
-
-        vi.mocked(wrapped.generateContent).mockRejectedValue(gaxiosError);
-
-        await expect(
-          loggingContentGenerator.generateContent(
-            req,
-            'prompt-123',
-            LlmRole.MAIN,
-          ),
-        ).rejects.toSatisfy((error: unknown) => {
-          const gError = error as { response: { data: unknown } };
-          expect(gError.response.data).toBe('Hello');
-          return true;
-        });
-      });
-
-      it('should decode multi-byte UTF-8 from comma-separated byte strings', async () => {
-        const req = { contents: [], model: 'gemini-pro' };
-
-        // "Héllo" in UTF-8 bytes: H=72, é=195,169, l=108, l=108, o=111
-        const utf8Data = '72,195,169,108,108,111';
-        const gaxiosError = Object.assign(new Error('Gaxios Error'), {
-          response: { data: utf8Data },
-        });
-
-        vi.mocked(wrapped.generateContent).mockRejectedValue(gaxiosError);
-
-        await expect(
-          loggingContentGenerator.generateContent(
-            req,
-            'prompt-123',
-            LlmRole.MAIN,
-          ),
-        ).rejects.toSatisfy((error: unknown) => {
-          const gError = error as { response: { data: unknown } };
-          expect(gError.response.data).toBe('Héllo');
-          return true;
-        });
-      });
-
-      it('should decode 3-byte UTF-8 from comma-separated byte strings', async () => {
-        const req = { contents: [], model: 'gemini-pro' };
-
-        // "こんにちは" in UTF-8 bytes (3 bytes per character)
-        const utf8Data =
-          '227,129,147,227,130,147,227,129,171,227,129,161,227,129,175';
-        const gaxiosError = Object.assign(new Error('Gaxios Error'), {
-          response: { data: utf8Data },
-        });
-
-        vi.mocked(wrapped.generateContent).mockRejectedValue(gaxiosError);
-
-        await expect(
-          loggingContentGenerator.generateContent(
-            req,
-            'prompt-123',
-            LlmRole.MAIN,
-          ),
-        ).rejects.toSatisfy((error: unknown) => {
-          const gError = error as { response: { data: unknown } };
-          expect(gError.response.data).toBe('こんにちは');
-          return true;
-        });
-      });
-
-      it('should reject byte strings with values outside 0-255 range', async () => {
-        const req = { contents: [], model: 'gemini-pro' };
-
-        const outOfRange = '72,256,108';
-        const gaxiosError = Object.assign(new Error('Gaxios Error'), {
-          response: { data: outOfRange },
-        });
-
-        vi.mocked(wrapped.generateContent).mockRejectedValue(gaxiosError);
-
-        await expect(
-          loggingContentGenerator.generateContent(
-            req,
-            'prompt-123',
-            LlmRole.MAIN,
-          ),
-        ).rejects.toSatisfy((error: unknown) => {
-          const gError = error as { response: { data: unknown } };
-          expect(gError.response.data).toBe(outOfRange);
           return true;
         });
       });
@@ -502,7 +407,7 @@ describe('LoggingContentGenerator', () => {
       expect(runInDevTraceSpan).toHaveBeenCalledWith(
         expect.objectContaining({
           operation: GeminiCliOperation.LLMCall,
-
+          noAutoEnd: true,
           attributes: expect.objectContaining({
             [GEN_AI_REQUEST_MODEL]: 'gemini-pro',
             [GEN_AI_PROMPT_NAME]: userPromptId,
@@ -522,7 +427,7 @@ describe('LoggingContentGenerator', () => {
       vi.mocked(wrapped.generateContentStream).mockResolvedValue(
         createAsyncGenerator(),
       );
-      stream = await fn({ metadata });
+      stream = await fn({ metadata, endSpan: vi.fn() });
 
       for await (const _ of stream) {
         // consume stream
@@ -739,7 +644,7 @@ describe('LoggingContentGenerator', () => {
       const spanArgs = vi.mocked(runInDevTraceSpan).mock.calls[0];
       const fn = spanArgs[1];
       const metadata: SpanMetadata = { name: '', attributes: {} };
-      await fn({ metadata });
+      await fn({ metadata, endSpan: vi.fn() });
 
       expect(metadata).toMatchObject({
         input: req.contents,
@@ -804,7 +709,7 @@ describe('estimateContextBreakdown', () => {
         {
           functionDeclarations: [
             {
-              name: 'mcp_myserver_search',
+              name: 'myserver__search',
               description: 'Search via MCP',
               parameters: {},
             },
@@ -842,7 +747,8 @@ describe('estimateContextBreakdown', () => {
     expect(builtinOnly.mcp_servers).toBe(0);
   });
 
-  it('should not classify tools without mcp_ prefix as MCP', () => {
+  it('should not classify tools with __ in the middle of a segment as MCP', () => {
+    // "__" at start or end (not a valid server__tool pattern) should not be MCP
     const config = {
       tools: [
         {
@@ -936,7 +842,7 @@ describe('estimateContextBreakdown', () => {
           functionDeclarations: [
             { name: 'read_file', description: 'Read', parameters: {} },
             {
-              name: 'mcp_myserver_search',
+              name: 'myserver__search',
               description: 'MCP search',
               parameters: {},
             },
@@ -952,7 +858,7 @@ describe('estimateContextBreakdown', () => {
     expect(result.history).toBeGreaterThan(0);
     // tool_calls should only contain non-MCP tools
     expect(result.tool_calls['read_file']).toBeGreaterThan(0);
-    expect(result.tool_calls['mcp_myserver_search']).toBeUndefined();
+    expect(result.tool_calls['myserver__search']).toBeUndefined();
     // MCP tokens are only in mcp_servers
     expect(result.mcp_servers).toBeGreaterThan(0);
   });
@@ -964,7 +870,7 @@ describe('estimateContextBreakdown', () => {
         parts: [
           {
             functionCall: {
-              name: 'mcp_myserver_search',
+              name: 'myserver__search',
               args: { query: 'test' },
             },
           },
@@ -975,7 +881,7 @@ describe('estimateContextBreakdown', () => {
         parts: [
           {
             functionResponse: {
-              name: 'mcp_myserver_search',
+              name: 'myserver__search',
               response: { results: [] },
             },
           },
@@ -984,7 +890,7 @@ describe('estimateContextBreakdown', () => {
     ];
     const result = estimateContextBreakdown(contents);
     // MCP tool calls should NOT appear in tool_calls
-    expect(result.tool_calls['mcp_myserver_search']).toBeUndefined();
+    expect(result.tool_calls['myserver__search']).toBeUndefined();
     // MCP call tokens should only be counted in mcp_servers
     expect(result.mcp_servers).toBeGreaterThan(0);
   });
@@ -1002,7 +908,7 @@ describe('estimateContextBreakdown', () => {
           },
           {
             functionCall: {
-              name: 'mcp_myserver_search',
+              name: 'myserver__search',
               args: { q: 'hello' },
             },
           },
@@ -1013,7 +919,7 @@ describe('estimateContextBreakdown', () => {
     // Non-MCP tools should be in tool_calls
     expect(result.tool_calls['read_file']).toBeGreaterThan(0);
     // MCP tools should NOT be in tool_calls
-    expect(result.tool_calls['mcp_myserver_search']).toBeUndefined();
+    expect(result.tool_calls['myserver__search']).toBeUndefined();
     // MCP tool calls should only be in mcp_servers
     expect(result.mcp_servers).toBeGreaterThan(0);
   });

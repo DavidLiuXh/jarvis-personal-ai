@@ -14,13 +14,10 @@ import {
   type ToolInvocation,
   type ToolLocation,
   type ToolResult,
-  type PolicyUpdateOptions,
-  type ToolConfirmationOutcome,
 } from './tools.js';
 import { ToolErrorType } from './tool-error.js';
-import { buildFilePathArgsPattern } from '../policy/utils.js';
 
-import type { PartListUnion } from '@google/genai';
+import type { PartUnion } from '@google/genai';
 import {
   processSingleFileContent,
   getSpecificMimeType,
@@ -34,11 +31,6 @@ import { READ_FILE_TOOL_NAME, READ_FILE_DISPLAY_NAME } from './tool-names.js';
 import { FileDiscoveryService } from '../services/fileDiscoveryService.js';
 import { READ_FILE_DEFINITION } from './definitions/coreTools.js';
 import { resolveToolDeclaration } from './definitions/resolver.js';
-import {
-  discoverJitContext,
-  appendJitContext,
-  appendJitContextToParts,
-} from './jit-context.js';
 
 /**
  * Parameters for the ReadFile tool
@@ -96,14 +88,6 @@ class ReadFileToolInvocation extends BaseToolInvocation<
     ];
   }
 
-  override getPolicyUpdateOptions(
-    _outcome: ToolConfirmationOutcome,
-  ): PolicyUpdateOptions | undefined {
-    return {
-      argsPattern: buildFilePathArgsPattern(this.params.file_path),
-    };
-  }
-
   async execute(): Promise<ToolResult> {
     const validationError = this.config.validatePathAccess(
       this.resolvedPath,
@@ -139,7 +123,7 @@ class ReadFileToolInvocation extends BaseToolInvocation<
       };
     }
 
-    let llmContent: PartListUnion;
+    let llmContent: PartUnion;
     if (result.isTruncated) {
       const [start, end] = result.linesShown!;
       const total = result.originalLineCount!;
@@ -174,16 +158,6 @@ ${result.llmContent}`;
         programming_language,
       ),
     );
-
-    // Discover JIT subdirectory context for the accessed file path
-    const jitContext = await discoverJitContext(this.config, this.resolvedPath);
-    if (jitContext) {
-      if (typeof llmContent === 'string') {
-        llmContent = appendJitContext(llmContent, jitContext);
-      } else {
-        llmContent = appendJitContextToParts(llmContent, jitContext);
-      }
-    }
 
     return {
       llmContent,

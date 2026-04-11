@@ -6,14 +6,14 @@
 
 import type React from 'react';
 import { useCallback } from 'react';
+import type { Key } from '../../hooks/useKeypress.js';
 import { Text, Box } from 'ink';
-import { useKeypress, type Key } from '../../hooks/useKeypress.js';
+import { useKeypress } from '../../hooks/useKeypress.js';
 import chalk from 'chalk';
 import { theme } from '../../semantic-colors.js';
-import { expandPastePlaceholders, type TextBuffer } from './text-buffer.js';
+import type { TextBuffer } from './text-buffer.js';
 import { cpSlice, cpIndexToOffset } from '../../utils/textUtils.js';
-import { Command } from '../../key/keyMatchers.js';
-import { useKeyMatchers } from '../../hooks/useKeyMatchers.js';
+import { keyMatchers, Command } from '../../keyMatchers.js';
 
 export interface TextInputProps {
   buffer: TextBuffer;
@@ -30,7 +30,6 @@ export function TextInput({
   onCancel,
   focus = true,
 }: TextInputProps): React.JSX.Element {
-  const keyMatchers = useKeyMatchers();
   const {
     text,
     handleInput,
@@ -48,14 +47,14 @@ export function TextInput({
       }
 
       if (keyMatchers[Command.SUBMIT](key) && onSubmit) {
-        onSubmit(expandPastePlaceholders(text, buffer.pastedContent));
+        onSubmit(text);
         return true;
       }
 
       const handled = handleInput(key);
       return handled;
     },
-    [handleInput, onCancel, onSubmit, text, buffer.pastedContent, keyMatchers],
+    [handleInput, onCancel, onSubmit, text],
   );
 
   useKeypress(handleKeyPress, { isActive: focus, priority: true });

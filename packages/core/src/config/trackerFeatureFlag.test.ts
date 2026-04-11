@@ -8,7 +8,6 @@ import { describe, it, expect } from 'vitest';
 import { Config } from './config.js';
 import { TRACKER_CREATE_TASK_TOOL_NAME } from '../tools/tool-names.js';
 import * as os from 'node:os';
-import type { AgentLoopContext } from './agent-loop-context.js';
 
 describe('Config Tracker Feature Flag', () => {
   const baseParams = {
@@ -22,8 +21,7 @@ describe('Config Tracker Feature Flag', () => {
   it('should not register tracker tools by default', async () => {
     const config = new Config(baseParams);
     await config.initialize();
-    const loopContext: AgentLoopContext = config;
-    const registry = loopContext.toolRegistry;
+    const registry = config.getToolRegistry();
     expect(registry.getTool(TRACKER_CREATE_TASK_TOOL_NAME)).toBeUndefined();
   });
 
@@ -33,8 +31,7 @@ describe('Config Tracker Feature Flag', () => {
       tracker: true,
     });
     await config.initialize();
-    const loopContext: AgentLoopContext = config;
-    const registry = loopContext.toolRegistry;
+    const registry = config.getToolRegistry();
     expect(registry.getTool(TRACKER_CREATE_TASK_TOOL_NAME)).toBeDefined();
   });
 
@@ -44,8 +41,7 @@ describe('Config Tracker Feature Flag', () => {
       tracker: false,
     });
     await config.initialize();
-    const loopContext: AgentLoopContext = config;
-    const registry = loopContext.toolRegistry;
+    const registry = config.getToolRegistry();
     expect(registry.getTool(TRACKER_CREATE_TASK_TOOL_NAME)).toBeUndefined();
   });
 });

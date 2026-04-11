@@ -8,7 +8,6 @@ import { render } from '../../../test-utils/render.js';
 import { describe, it, expect } from 'vitest';
 import { SkillsList } from './SkillsList.js';
 import { type SkillDefinition } from '@google/gemini-cli-core';
-import { SKILLS_DOCS_URL } from '../../constants.js';
 
 describe('SkillsList Component', () => {
   const mockSkills: SkillDefinition[] = [
@@ -36,9 +35,10 @@ describe('SkillsList Component', () => {
   ];
 
   it('should render enabled and disabled skills separately', async () => {
-    const { lastFrame, unmount } = await render(
+    const { lastFrame, unmount, waitUntilReady } = render(
       <SkillsList skills={mockSkills} showDescriptions={true} />,
     );
+    await waitUntilReady();
     const output = lastFrame();
 
     expect(output).toContain('Available Agent Skills:');
@@ -55,9 +55,10 @@ describe('SkillsList Component', () => {
   });
 
   it('should not render descriptions when showDescriptions is false', async () => {
-    const { lastFrame, unmount } = await render(
+    const { lastFrame, unmount, waitUntilReady } = render(
       <SkillsList skills={mockSkills} showDescriptions={false} />,
     );
+    await waitUntilReady();
     const output = lastFrame();
 
     expect(output).toContain('skill1');
@@ -71,20 +72,23 @@ describe('SkillsList Component', () => {
   });
 
   it('should render "No skills available" when skills list is empty', async () => {
-    const { lastFrame, unmount } = await render(
+    const { lastFrame, unmount, waitUntilReady } = render(
       <SkillsList skills={[]} showDescriptions={true} />,
     );
+    await waitUntilReady();
     const output = lastFrame();
-    expect(output).toContain('No skills available.');
-    expect(output).toContain(`Learn how to add skills: ${SKILLS_DOCS_URL}`);
+
+    expect(output).toContain('No skills available');
+
     unmount();
   });
 
   it('should only render Available Agent Skills section when all skills are enabled', async () => {
     const enabledOnly = mockSkills.filter((s) => !s.disabled);
-    const { lastFrame, unmount } = await render(
+    const { lastFrame, unmount, waitUntilReady } = render(
       <SkillsList skills={enabledOnly} showDescriptions={true} />,
     );
+    await waitUntilReady();
     const output = lastFrame();
 
     expect(output).toContain('Available Agent Skills:');
@@ -95,9 +99,10 @@ describe('SkillsList Component', () => {
 
   it('should only render Disabled Skills section when all skills are disabled', async () => {
     const disabledOnly = mockSkills.filter((s) => s.disabled);
-    const { lastFrame, unmount } = await render(
+    const { lastFrame, unmount, waitUntilReady } = render(
       <SkillsList skills={disabledOnly} showDescriptions={true} />,
     );
+    await waitUntilReady();
     const output = lastFrame();
 
     expect(output).not.toContain('Available Agent Skills:');
@@ -116,9 +121,10 @@ describe('SkillsList Component', () => {
       isBuiltin: true,
     };
 
-    const { lastFrame, unmount } = await render(
+    const { lastFrame, unmount, waitUntilReady } = render(
       <SkillsList skills={[builtinSkill]} showDescriptions={true} />,
     );
+    await waitUntilReady();
     const output = lastFrame();
 
     expect(output).toContain('builtin-skill');

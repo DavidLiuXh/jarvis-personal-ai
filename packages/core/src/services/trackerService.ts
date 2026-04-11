@@ -51,8 +51,8 @@ export class TrackerService {
     };
 
     if (task.parentId) {
-      const parent = await this.getTask(task.parentId);
-      if (!parent) {
+      const parentList = await this.listTasks();
+      if (!parentList.find((t) => t.id === task.parentId)) {
         throw new Error(`Parent task with ID ${task.parentId} not found.`);
       }
     }
@@ -143,7 +143,14 @@ export class TrackerService {
     const isClosing = updates.status === TaskStatus.CLOSED;
     const changingDependencies = updates.dependencies !== undefined;
 
-    const task = await this.getTask(id);
+    let taskMap: Map<string, TrackerTask> | undefined;
+
+    if (isClosing || changingDependencies) {
+      const allTasks = await this.listTasks();
+      taskMap = new Map<string, TrackerTask>(allTasks.map((t) => [t.id, t]));
+    }
+
+    const task = taskMap ? taskMap.get(id) : await this.getTask(id);
 
     if (!task) {
       throw new Error(`Task with ID ${id} not found.`);
@@ -152,7 +159,9 @@ export class TrackerService {
     const updatedTask = { ...task, ...updates, id: task.id };
 
     if (updatedTask.parentId) {
-      const parentExists = !!(await this.getTask(updatedTask.parentId));
+      const parentExists = taskMap
+        ? taskMap.has(updatedTask.parentId)
+        : !!(await this.getTask(updatedTask.parentId));
       if (!parentExists) {
         throw new Error(
           `Parent task with ID ${updatedTask.parentId} not found.`,
@@ -160,12 +169,15 @@ export class TrackerService {
       }
     }
 
-    if (isClosing && task.status !== TaskStatus.CLOSED) {
-      await this.validateCanClose(updatedTask);
-    }
+    if (taskMap) {
+      if (isClosing && task.status !== TaskStatus.CLOSED) {
+        this.validateCanClose(updatedTask, taskMap);
+      }
 
-    if (changingDependencies) {
-      await this.validateNoCircularDependencies(updatedTask);
+      if (changingDependencies) {
+        taskMap.set(updatedTask.id, updatedTask);
+        this.validateNoCircularDependencies(updatedTask, taskMap);
+      }
     }
 
     TrackerTaskSchema.parse(updatedTask);
@@ -185,9 +197,12 @@ export class TrackerService {
   /**
    * Validates that a task can be closed (all dependencies must be closed).
    */
-  private async validateCanClose(task: TrackerTask): Promise<void> {
+  private validateCanClose(
+    task: TrackerTask,
+    taskMap: Map<string, TrackerTask>,
+  ): void {
     for (const depId of task.dependencies) {
-      const dep = await this.getTask(depId);
+      const dep = taskMap.get(depId);
       if (!dep) {
         throw new Error(`Dependency ${depId} not found for task ${task.id}.`);
       }
@@ -202,15 +217,14 @@ export class TrackerService {
   /**
    * Validates that there are no circular dependencies.
    */
-  private async validateNoCircularDependencies(
+  private validateNoCircularDependencies(
     task: TrackerTask,
-  ): Promise<void> {
+    taskMap: Map<string, TrackerTask>,
+  ): void {
     const visited = new Set<string>();
     const stack = new Set<string>();
-    const cache = new Map<string, TrackerTask>();
-    cache.set(task.id, task);
 
-    const check = async (currentId: string) => {
+    const check = (currentId: string) => {
       if (stack.has(currentId)) {
         throw new Error(
           `Circular dependency detected involving task ${currentId}.`,
@@ -223,23 +237,17 @@ export class TrackerService {
       visited.add(currentId);
       stack.add(currentId);
 
-      let currentTask = cache.get(currentId);
+      const currentTask = taskMap.get(currentId);
       if (!currentTask) {
-        const fetched = await this.getTask(currentId);
-        if (!fetched) {
-          throw new Error(`Dependency ${currentId} not found.`);
-        }
-        currentTask = fetched;
-        cache.set(currentId, currentTask);
+        throw new Error(`Dependency ${currentId} not found.`);
       }
-
       for (const depId of currentTask.dependencies) {
-        await check(depId);
+        check(depId);
       }
 
       stack.delete(currentId);
     };
 
-    await check(task.id);
+    check(task.id);
   }
 }

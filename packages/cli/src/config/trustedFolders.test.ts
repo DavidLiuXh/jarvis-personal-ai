@@ -19,8 +19,9 @@ import {
   isWorkspaceTrusted,
   resetTrustedFoldersForTesting,
 } from './trustedFolders.js';
-import { loadEnvironment, type Settings } from './settings.js';
+import { loadEnvironment } from './settings.js';
 import { createMockSettings } from '../test-utils/settings.js';
+import type { Settings } from './settings.js';
 
 // We explicitly do NOT mock 'fs' or 'proper-lockfile' here to ensure
 // we are testing the actual behavior on the real file system.

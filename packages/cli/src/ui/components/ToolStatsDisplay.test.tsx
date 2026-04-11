@@ -8,7 +8,7 @@ import { render } from '../../test-utils/render.js';
 import { describe, it, expect, vi } from 'vitest';
 import { ToolStatsDisplay } from './ToolStatsDisplay.js';
 import * as SessionContext from '../contexts/SessionContext.js';
-import { type SessionMetrics } from '../contexts/SessionContext.js';
+import type { SessionMetrics } from '../contexts/SessionContext.js';
 import { ToolCallDecision } from '@google/gemini-cli-core';
 
 // Mock the context to provide controlled data for testing
@@ -36,7 +36,8 @@ const renderWithMockedStats = async (metrics: SessionMetrics) => {
     startNewPrompt: vi.fn(),
   });
 
-  const result = await render(<ToolStatsDisplay />);
+  const result = render(<ToolStatsDisplay />);
+  await result.waitUntilReady();
   return result;
 };
 

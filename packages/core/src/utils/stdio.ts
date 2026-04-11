@@ -78,54 +78,42 @@ export function patchStdio(): () => void {
 }
 
 /**
- * Type guard to check if a property key exists on an object.
- */
-function isKey<T extends object>(
-  key: string | symbol | number,
-  obj: T,
-): key is keyof T {
-  return key in obj;
-}
-
-/**
  * Creates proxies for process.stdout and process.stderr that use the real write methods
  * (writeToStdout and writeToStderr) bypassing any monkey patching.
  * This is used to write to the real output even when stdio is patched.
  */
 export function createWorkingStdio() {
-  const stdoutHandler: ProxyHandler<typeof process.stdout> = {
-    get(target, prop) {
+  const inkStdout = new Proxy(process.stdout, {
+    get(target, prop, receiver) {
       if (prop === 'write') {
         return writeToStdout;
       }
-      if (isKey(prop, target)) {
-        const value = target[prop];
-        if (typeof value === 'function') {
-          return value.bind(target);
-        }
-        return value;
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+      const value = Reflect.get(target, prop, receiver);
+      if (typeof value === 'function') {
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-return
+        return value.bind(target);
       }
-      return undefined;
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-return
+      return value;
     },
-  };
-  const inkStdout = new Proxy(process.stdout, stdoutHandler);
+  });
 
-  const stderrHandler: ProxyHandler<typeof process.stderr> = {
-    get(target, prop) {
+  const inkStderr = new Proxy(process.stderr, {
+    get(target, prop, receiver) {
       if (prop === 'write') {
         return writeToStderr;
       }
-      if (isKey(prop, target)) {
-        const value = target[prop];
-        if (typeof value === 'function') {
-          return value.bind(target);
-        }
-        return value;
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+      const value = Reflect.get(target, prop, receiver);
+      if (typeof value === 'function') {
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-return
+        return value.bind(target);
       }
-      return undefined;
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-return
+      return value;
     },
-  };
-  const inkStderr = new Proxy(process.stderr, stderrHandler);
+  });
 
   return { stdout: inkStdout, stderr: inkStderr };
 }

@@ -29,15 +29,6 @@ export enum ConfigSource {
 }
 
 /**
- * Returns true if a hook source implies it is a user-visible hook.
- * Only System hooks are hidden by default to reduce noise.
- */
-export function isUserVisibleHook(source?: string | ConfigSource): boolean {
-  if (!source) return true; // Treat unknown/legacy hooks as user-visible
-  return source !== ConfigSource.System;
-}
-
-/**
  * Event names for the hook system
  */
 export enum HookEventName {
@@ -206,17 +197,10 @@ export class DefaultHookOutput implements HookOutput {
   }
 
   /**
-   * Check if this output represents a blocking decision (block or deny)
+   * Check if this output represents a blocking decision
    */
   isBlockingDecision(): boolean {
     return this.decision === 'block' || this.decision === 'deny';
-  }
-
-  /**
-   * Check if this output represents an 'ask' decision
-   */
-  isAskDecision(): boolean {
-    return this.decision === 'ask';
   }
 
   /**
@@ -734,8 +718,6 @@ export interface HookExecutionResult {
   exitCode?: number;
   duration: number;
   error?: Error;
-  /** The format of the output provided by the hook */
-  outputFormat?: 'json' | 'text';
 }
 
 /**

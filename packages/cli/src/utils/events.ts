@@ -23,7 +23,6 @@ export enum AppEvent {
   PasteTimeout = 'paste-timeout',
   TerminalBackground = 'terminal-background',
   TransientMessage = 'transient-message',
-  ScrollToBottom = 'scroll-to-bottom',
 }
 
 export interface AppEvents {
@@ -33,7 +32,6 @@ export interface AppEvents {
   [AppEvent.PasteTimeout]: never[];
   [AppEvent.TerminalBackground]: [string];
   [AppEvent.TransientMessage]: [TransientMessagePayload];
-  [AppEvent.ScrollToBottom]: never[];
 }
 
 export const appEvents = new EventEmitter<AppEvents>();

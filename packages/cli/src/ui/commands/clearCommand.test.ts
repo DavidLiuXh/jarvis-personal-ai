@@ -4,7 +4,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { vi, describe, it, expect, beforeEach, type Mock } from 'vitest';
+import type { Mock } from 'vitest';
+import { vi, describe, it, expect, beforeEach } from 'vitest';
 import { clearCommand } from './clearCommand.js';
 import { type CommandContext } from './types.js';
 import { createMockCommandContext } from '../../test-utils/mockCommandContext.js';
@@ -16,12 +17,12 @@ vi.mock('@google/gemini-cli-core', async () => {
     ...actual,
     uiTelemetryService: {
       setLastPromptTokenCount: vi.fn(),
-      clear: vi.fn(),
     },
   };
 });
 
-import { uiTelemetryService, type GeminiClient } from '@google/gemini-cli-core';
+import type { GeminiClient } from '@google/gemini-cli-core';
+import { uiTelemetryService } from '@google/gemini-cli-core';
 
 describe('clearCommand', () => {
   let mockContext: CommandContext;
@@ -36,25 +37,24 @@ describe('clearCommand', () => {
 
     mockContext = createMockCommandContext({
       services: {
-        agentContext: {
-          config: {
-            getEnableHooks: vi.fn().mockReturnValue(false),
-            setSessionId: vi.fn(),
-            getMessageBus: vi.fn().mockReturnValue(undefined),
-            getHookSystem: vi.fn().mockReturnValue({
-              fireSessionEndEvent: vi.fn().mockResolvedValue(undefined),
-              fireSessionStartEvent: vi.fn().mockResolvedValue(undefined),
-            }),
-            injectionService: {
-              clear: mockHintClear,
-            },
+        config: {
+          getGeminiClient: () =>
+            ({
+              resetChat: mockResetChat,
+              getChat: () => ({
+                getChatRecordingService: mockGetChatRecordingService,
+              }),
+            }) as unknown as GeminiClient,
+          setSessionId: vi.fn(),
+          getEnableHooks: vi.fn().mockReturnValue(false),
+          getMessageBus: vi.fn().mockReturnValue(undefined),
+          getHookSystem: vi.fn().mockReturnValue({
+            fireSessionEndEvent: vi.fn().mockResolvedValue(undefined),
+            fireSessionStartEvent: vi.fn().mockResolvedValue(undefined),
+          }),
+          userHintService: {
+            clear: mockHintClear,
           },
-          geminiClient: {
-            resetChat: mockResetChat,
-            getChat: () => ({
-              getChatRecordingService: mockGetChatRecordingService,
-            }),
-          } as unknown as GeminiClient,
         },
       },
     });
@@ -74,16 +74,17 @@ describe('clearCommand', () => {
 
     expect(mockResetChat).toHaveBeenCalledTimes(1);
     expect(mockHintClear).toHaveBeenCalledTimes(1);
-    expect(uiTelemetryService.clear).toHaveBeenCalled();
-    expect(uiTelemetryService.clear).toHaveBeenCalledTimes(1);
+    expect(uiTelemetryService.setLastPromptTokenCount).toHaveBeenCalledWith(0);
+    expect(uiTelemetryService.setLastPromptTokenCount).toHaveBeenCalledTimes(1);
     expect(mockContext.ui.clear).toHaveBeenCalledTimes(1);
 
     // Check the order of operations.
     const setDebugMessageOrder = (mockContext.ui.setDebugMessage as Mock).mock
       .invocationCallOrder[0];
     const resetChatOrder = mockResetChat.mock.invocationCallOrder[0];
-    const resetTelemetryOrder = (uiTelemetryService.clear as Mock).mock
-      .invocationCallOrder[0];
+    const resetTelemetryOrder = (
+      uiTelemetryService.setLastPromptTokenCount as Mock
+    ).mock.invocationCallOrder[0];
     const clearOrder = (mockContext.ui.clear as Mock).mock
       .invocationCallOrder[0];
 
@@ -99,7 +100,7 @@ describe('clearCommand', () => {
 
     const nullConfigContext = createMockCommandContext({
       services: {
-        agentContext: null,
+        config: null,
       },
     });
 
@@ -109,8 +110,8 @@ describe('clearCommand', () => {
       'Clearing terminal.',
     );
     expect(mockResetChat).not.toHaveBeenCalled();
-    expect(uiTelemetryService.clear).toHaveBeenCalled();
-    expect(uiTelemetryService.clear).toHaveBeenCalledTimes(1);
+    expect(uiTelemetryService.setLastPromptTokenCount).toHaveBeenCalledWith(0);
+    expect(uiTelemetryService.setLastPromptTokenCount).toHaveBeenCalledTimes(1);
     expect(nullConfigContext.ui.clear).toHaveBeenCalledTimes(1);
   });
 });

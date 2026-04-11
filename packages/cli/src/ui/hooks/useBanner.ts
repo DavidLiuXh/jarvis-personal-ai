@@ -4,20 +4,11 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { persistentState } from '../../utils/persistentState.js';
 import crypto from 'node:crypto';
 
 const DEFAULT_MAX_BANNER_SHOWN_COUNT = 5;
-
-// Track banners incremented during this session to prevent multiple increments
-// on React unmounts/remounts
-const sessionIncrementedBanners = new Set<string>();
-
-// For testing purposes
-export function _clearSessionBannersForTest() {
-  sessionIncrementedBanners.clear();
-}
 
 interface BannerData {
   defaultText: string;
@@ -31,25 +22,25 @@ export function useBanner(bannerData: BannerData) {
     () => persistentState.get('defaultBannerShownCount') || {},
   );
 
-  const activeText = warningText ? warningText : defaultText;
-
   const hashedText = crypto
     .createHash('sha256')
-    .update(activeText)
+    .update(defaultText)
     .digest('hex');
 
   const currentBannerCount = bannerCounts[hashedText] || 0;
 
-  const showBanner =
-    activeText !== '' && currentBannerCount < DEFAULT_MAX_BANNER_SHOWN_COUNT;
+  const showDefaultBanner =
+    warningText === '' && currentBannerCount < DEFAULT_MAX_BANNER_SHOWN_COUNT;
 
-  const rawBannerText = showBanner ? activeText : '';
+  const rawBannerText = showDefaultBanner ? defaultText : warningText;
   const bannerText = rawBannerText.replace(/\\n/g, '\n');
 
+  const lastIncrementedKey = useRef<string | null>(null);
+
   useEffect(() => {
-    if (showBanner && activeText) {
-      if (!sessionIncrementedBanners.has(activeText)) {
-        sessionIncrementedBanners.add(activeText);
+    if (showDefaultBanner && defaultText) {
+      if (lastIncrementedKey.current !== defaultText) {
+        lastIncrementedKey.current = defaultText;
 
         const allCounts = persistentState.get('defaultBannerShownCount') || {};
         const current = allCounts[hashedText] || 0;
@@ -60,7 +51,7 @@ export function useBanner(bannerData: BannerData) {
         });
       }
     }
-  }, [showBanner, activeText, hashedText]);
+  }, [showDefaultBanner, defaultText, hashedText]);
 
   return {
     bannerText,

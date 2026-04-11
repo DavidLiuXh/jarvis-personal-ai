@@ -33,7 +33,6 @@ export const parseSlashCommand = (
   let commandToExecute: SlashCommand | undefined;
   let pathIndex = 0;
   const canonicalPath: string[] = [];
-  let parentCommand: SlashCommand | undefined;
 
   for (const part of commandPath) {
     // TODO: For better performance and architectural clarity, this two-pass
@@ -53,7 +52,6 @@ export const parseSlashCommand = (
     }
 
     if (foundCommand) {
-      parentCommand = commandToExecute;
       commandToExecute = foundCommand;
       canonicalPath.push(foundCommand.name);
       pathIndex++;
@@ -68,22 +66,6 @@ export const parseSlashCommand = (
   }
 
   const args = parts.slice(pathIndex).join(' ');
-
-  // Backtrack if the matched (sub)command doesn't take arguments but some were provided,
-  // AND the parent command is capable of handling them.
-  if (
-    commandToExecute &&
-    commandToExecute.takesArgs === false &&
-    args.length > 0 &&
-    parentCommand &&
-    parentCommand.action
-  ) {
-    return {
-      commandToExecute: parentCommand,
-      args: parts.slice(pathIndex - 1).join(' '),
-      canonicalPath: canonicalPath.slice(0, -1),
-    };
-  }
 
   return { commandToExecute, args, canonicalPath };
 };

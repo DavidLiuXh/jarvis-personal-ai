@@ -19,16 +19,12 @@ export interface UseExtensionRegistryResult {
 
 export function useExtensionRegistry(
   initialQuery = '',
-  registryURI?: string,
 ): UseExtensionRegistryResult {
   const [extensions, setExtensions] = useState<RegistryExtension[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const client = useMemo(
-    () => new ExtensionRegistryClient(registryURI),
-    [registryURI],
-  );
+  const client = useMemo(() => new ExtensionRegistryClient(), []);
 
   // Ref to track the latest query to avoid race conditions
   const latestQueryRef = useRef(initialQuery);

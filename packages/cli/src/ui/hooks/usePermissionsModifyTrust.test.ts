@@ -16,15 +16,13 @@ import {
 import { act } from 'react';
 import { renderHook } from '../../test-utils/render.js';
 import { usePermissionsModifyTrust } from './usePermissionsModifyTrust.js';
-import {
-  TrustLevel,
-  type LoadedTrustedFolders,
-} from '../../config/trustedFolders.js';
+import { TrustLevel } from '../../config/trustedFolders.js';
 import type { LoadedSettings } from '../../config/settings.js';
+import type { LoadedTrustedFolders } from '../../config/trustedFolders.js';
 import { coreEvents } from '@google/gemini-cli-core';
 
 // Hoist mocks
-const mockedCwd = vi.hoisted(() => vi.fn().mockReturnValue('/mock/cwd'));
+const mockedCwd = vi.hoisted(() => vi.fn());
 const mockedLoadTrustedFolders = vi.hoisted(() => vi.fn());
 const mockedIsWorkspaceTrusted = vi.hoisted(() => vi.fn());
 const mockedUseSettings = vi.hoisted(() => vi.fn());
@@ -93,7 +91,7 @@ describe('usePermissionsModifyTrust', () => {
   });
 
   describe('when targetDirectory is the current workspace', () => {
-    it('should initialize with the correct trust level', async () => {
+    it('should initialize with the correct trust level', () => {
       mockedLoadTrustedFolders.mockReturnValue({
         user: { config: { '/test/dir': TrustLevel.TRUST_FOLDER } },
       } as unknown as LoadedTrustedFolders);
@@ -102,14 +100,14 @@ describe('usePermissionsModifyTrust', () => {
         source: 'file',
       });
 
-      const { result } = await renderHook(() =>
+      const { result } = renderHook(() =>
         usePermissionsModifyTrust(mockOnExit, mockAddItem, mockedCwd()),
       );
 
       expect(result.current.currentTrustLevel).toBe(TrustLevel.TRUST_FOLDER);
     });
 
-    it('should detect inherited trust from parent', async () => {
+    it('should detect inherited trust from parent', () => {
       mockedLoadTrustedFolders.mockReturnValue({
         user: { config: {} },
         setValue: vi.fn(),
@@ -119,7 +117,7 @@ describe('usePermissionsModifyTrust', () => {
         source: 'file',
       });
 
-      const { result } = await renderHook(() =>
+      const { result } = renderHook(() =>
         usePermissionsModifyTrust(mockOnExit, mockAddItem, mockedCwd()),
       );
 
@@ -127,7 +125,7 @@ describe('usePermissionsModifyTrust', () => {
       expect(result.current.isInheritedTrustFromIde).toBe(false);
     });
 
-    it('should detect inherited trust from IDE', async () => {
+    it('should detect inherited trust from IDE', () => {
       mockedLoadTrustedFolders.mockReturnValue({
         user: { config: {} }, // No explicit trust
       } as unknown as LoadedTrustedFolders);
@@ -136,7 +134,7 @@ describe('usePermissionsModifyTrust', () => {
         source: 'ide',
       });
 
-      const { result } = await renderHook(() =>
+      const { result } = renderHook(() =>
         usePermissionsModifyTrust(mockOnExit, mockAddItem, mockedCwd()),
       );
 
@@ -155,7 +153,7 @@ describe('usePermissionsModifyTrust', () => {
         .mockReturnValueOnce({ isTrusted: false, source: 'file' })
         .mockReturnValueOnce({ isTrusted: true, source: 'file' });
 
-      const { result } = await renderHook(() =>
+      const { result } = renderHook(() =>
         usePermissionsModifyTrust(mockOnExit, mockAddItem, mockedCwd()),
       );
 
@@ -179,7 +177,7 @@ describe('usePermissionsModifyTrust', () => {
         source: 'file',
       });
 
-      const { result } = await renderHook(() =>
+      const { result } = renderHook(() =>
         usePermissionsModifyTrust(mockOnExit, mockAddItem, mockedCwd()),
       );
 
@@ -206,7 +204,7 @@ describe('usePermissionsModifyTrust', () => {
         .mockReturnValueOnce({ isTrusted: false, source: 'file' })
         .mockReturnValueOnce({ isTrusted: true, source: 'file' });
 
-      const { result } = await renderHook(() =>
+      const { result } = renderHook(() =>
         usePermissionsModifyTrust(mockOnExit, mockAddItem, mockedCwd()),
       );
 
@@ -236,7 +234,7 @@ describe('usePermissionsModifyTrust', () => {
         source: 'file',
       });
 
-      const { result } = await renderHook(() =>
+      const { result } = renderHook(() =>
         usePermissionsModifyTrust(mockOnExit, mockAddItem, mockedCwd()),
       );
 
@@ -263,7 +261,7 @@ describe('usePermissionsModifyTrust', () => {
         source: 'ide',
       });
 
-      const { result } = await renderHook(() =>
+      const { result } = renderHook(() =>
         usePermissionsModifyTrust(mockOnExit, mockAddItem, mockedCwd()),
       );
 
@@ -284,7 +282,7 @@ describe('usePermissionsModifyTrust', () => {
   describe('when targetDirectory is not the current workspace', () => {
     const otherDirectory = '/other/dir';
 
-    it('should not detect inherited trust', async () => {
+    it('should not detect inherited trust', () => {
       mockedLoadTrustedFolders.mockReturnValue({
         user: { config: {} },
       } as unknown as LoadedTrustedFolders);
@@ -293,7 +291,7 @@ describe('usePermissionsModifyTrust', () => {
         source: 'file',
       });
 
-      const { result } = await renderHook(() =>
+      const { result } = renderHook(() =>
         usePermissionsModifyTrust(mockOnExit, mockAddItem, otherDirectory),
       );
 
@@ -312,7 +310,7 @@ describe('usePermissionsModifyTrust', () => {
         source: 'file',
       });
 
-      const { result } = await renderHook(() =>
+      const { result } = renderHook(() =>
         usePermissionsModifyTrust(mockOnExit, mockAddItem, otherDirectory),
       );
 
@@ -338,7 +336,7 @@ describe('usePermissionsModifyTrust', () => {
         source: 'file',
       });
 
-      const { result } = await renderHook(() =>
+      const { result } = renderHook(() =>
         usePermissionsModifyTrust(mockOnExit, mockAddItem, otherDirectory),
       );
 
@@ -366,7 +364,7 @@ describe('usePermissionsModifyTrust', () => {
 
     const emitFeedbackSpy = vi.spyOn(coreEvents, 'emitFeedback');
 
-    const { result } = await renderHook(() =>
+    const { result } = renderHook(() =>
       usePermissionsModifyTrust(mockOnExit, mockAddItem, mockedCwd()),
     );
 
@@ -396,7 +394,7 @@ describe('usePermissionsModifyTrust', () => {
 
     const emitFeedbackSpy = vi.spyOn(coreEvents, 'emitFeedback');
 
-    const { result } = await renderHook(() =>
+    const { result } = renderHook(() =>
       usePermissionsModifyTrust(mockOnExit, mockAddItem, mockedCwd()),
     );
 

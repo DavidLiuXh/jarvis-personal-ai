@@ -11,11 +11,12 @@ import type {
   AnyDeclarativeTool,
   AnyToolInvocation,
   ToolLiveOutput,
-  ExecuteOptions,
 } from '../tools/tools.js';
 import { ToolErrorType } from '../tools/tool-error.js';
-import { DiscoveredMCPToolInvocation } from '../tools/mcp-tool.js';
 import { debugLogger } from '../utils/debugLogger.js';
+import type { ShellExecutionConfig } from '../index.js';
+import { ShellToolInvocation } from '../tools/shell.js';
+import { DiscoveredMCPToolInvocation } from '../tools/mcp-tool.js';
 
 /**
  * Extracts MCP context from a tool invocation if it's an MCP tool.
@@ -24,8 +25,8 @@ import { debugLogger } from '../utils/debugLogger.js';
  * @param config Config to look up server details
  * @returns MCP context if this is an MCP tool, undefined otherwise
  */
-export function extractMcpContext(
-  invocation: AnyToolInvocation,
+function extractMcpContext(
+  invocation: ShellToolInvocation | AnyToolInvocation,
   config: Config,
 ): McpToolContext | undefined {
   if (!(invocation instanceof DiscoveredMCPToolInvocation)) {
@@ -61,20 +62,21 @@ export function extractMcpContext(
  * @param toolName The name of the tool
  * @param signal Abort signal for cancellation
  * @param liveOutputCallback Optional callback for live output updates
- * @param options Optional execution options (shell config, execution ID callback, etc.)
+ * @param shellExecutionConfig Optional shell execution config
+ * @param setPidCallback Optional callback to set the PID for shell invocations
  * @param config Config to look up MCP server details for hook context
  * @returns The tool result
  */
 export async function executeToolWithHooks(
-  invocation: AnyToolInvocation,
+  invocation: ShellToolInvocation | AnyToolInvocation,
   toolName: string,
   signal: AbortSignal,
   tool: AnyDeclarativeTool,
   liveOutputCallback?: (outputChunk: ToolLiveOutput) => void,
-  options?: ExecuteOptions,
+  shellExecutionConfig?: ShellExecutionConfig,
+  setPidCallback?: (pid: number) => void,
   config?: Config,
   originalRequestName?: string,
-  skipBeforeHook?: boolean,
 ): Promise<ToolResult> {
   // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion
   const toolInput = (invocation.params || {}) as Record<string, unknown>;
@@ -83,9 +85,9 @@ export async function executeToolWithHooks(
 
   // Extract MCP context if this is an MCP tool (only if config is provided)
   const mcpContext = config ? extractMcpContext(invocation, config) : undefined;
-  const hookSystem = config?.getHookSystem();
 
-  if (hookSystem && !skipBeforeHook) {
+  const hookSystem = config?.getHookSystem();
+  if (hookSystem) {
     const beforeOutput = await hookSystem.fireBeforeToolEvent(
       toolName,
       toolInput,
@@ -152,13 +154,22 @@ export async function executeToolWithHooks(
     }
   }
 
-  // Execute the actual tool. Tools that support backgrounding can optionally
-  // surface an execution ID via the callback.
-  const toolResult: ToolResult = await invocation.execute(
-    signal,
-    liveOutputCallback,
-    options,
-  );
+  // Execute the actual tool
+  let toolResult: ToolResult;
+  if (setPidCallback && invocation instanceof ShellToolInvocation) {
+    toolResult = await invocation.execute(
+      signal,
+      liveOutputCallback,
+      shellExecutionConfig,
+      setPidCallback,
+    );
+  } else {
+    toolResult = await invocation.execute(
+      signal,
+      liveOutputCallback,
+      shellExecutionConfig,
+    );
+  }
 
   // Append notification if parameters were modified
   if (inputWasModified) {

@@ -11,7 +11,6 @@ import {
   shutdownTelemetry,
   isTelemetrySdkInitialized,
   ExitCodes,
-  resetBrowserSession,
 } from '@google/gemini-cli-core';
 import type { Config } from '@google/gemini-cli-core';
 
@@ -24,22 +23,8 @@ export function registerCleanup(fn: (() => void) | (() => Promise<void>)) {
   cleanupFunctions.push(fn);
 }
 
-export function removeCleanup(fn: (() => void) | (() => Promise<void>)) {
-  const index = cleanupFunctions.indexOf(fn);
-  if (index !== -1) {
-    cleanupFunctions.splice(index, 1);
-  }
-}
-
 export function registerSyncCleanup(fn: () => void) {
   syncCleanupFunctions.push(fn);
-}
-
-export function removeSyncCleanup(fn: () => void) {
-  const index = syncCleanupFunctions.indexOf(fn);
-  if (index !== -1) {
-    syncCleanupFunctions.splice(index, 1);
-  }
 }
 
 /**
@@ -57,7 +42,7 @@ export function runSyncCleanup() {
   for (const fn of syncCleanupFunctions) {
     try {
       fn();
-    } catch {
+    } catch (_) {
       // Ignore errors during cleanup.
     }
   }
@@ -74,30 +59,23 @@ export function registerTelemetryConfig(config: Config) {
 
 export async function runExitCleanup() {
   // drain stdin to prevent printing garbage on exit
-  // https://github.com/google-gemini/gemini-cli/issues/16801
+  // https://github.com/google-gemini/gemini-cli/issues/1680
   await drainStdin();
 
   runSyncCleanup();
   for (const fn of cleanupFunctions) {
     try {
       await fn();
-    } catch {
+    } catch (_) {
       // Ignore errors during cleanup.
     }
   }
   cleanupFunctions.length = 0; // Clear the array
 
-  // Close persistent browser sessions before disposing config
-  try {
-    await resetBrowserSession();
-  } catch {
-    // Ignore errors during browser cleanup
-  }
-
   if (configForTelemetry) {
     try {
       await configForTelemetry.dispose();
-    } catch {
+    } catch (_) {
       // Ignore errors during disposal
     }
   }
@@ -107,7 +85,7 @@ export async function runExitCleanup() {
   if (configForTelemetry && isTelemetrySdkInitialized()) {
     try {
       await shutdownTelemetry(configForTelemetry);
-    } catch {
+    } catch (_) {
       // Ignore errors during telemetry shutdown
     }
   }

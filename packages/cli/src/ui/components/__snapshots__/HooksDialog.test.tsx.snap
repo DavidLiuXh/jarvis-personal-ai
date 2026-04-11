@@ -6,8 +6,6 @@ exports[`HooksDialog > snapshots > renders empty hooks dialog 1`] = `
 │                                                                                                  │
 │ No hooks configured.                                                                             │
 │                                                                                                  │
-│ (Press Esc to close)                                                                             │
-│                                                                                                  │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
 "
 `;
@@ -32,8 +30,6 @@ exports[`HooksDialog > snapshots > renders hook using command as name when name 
 │                                                                                                  │
 │ Tip: Use /hooks enable <hook-name> or /hooks disable <hook-name> to toggle individual hooks. Use │
 │ /hooks enable-all or /hooks disable-all to toggle all hooks at once.                             │
-│                                                                                                  │
-│ (Press Esc to close)                                                                             │
 │                                                                                                  │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
 "
@@ -60,8 +56,6 @@ exports[`HooksDialog > snapshots > renders hook with all metadata (matcher, sequ
 │                                                                                                  │
 │ Tip: Use /hooks enable <hook-name> or /hooks disable <hook-name> to toggle individual hooks. Use │
 │ /hooks enable-all or /hooks disable-all to toggle all hooks at once.                             │
-│                                                                                                  │
-│ (Press Esc to close)                                                                             │
 │                                                                                                  │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
 "
@@ -99,8 +93,6 @@ exports[`HooksDialog > snapshots > renders hooks grouped by event name with enab
 │ Tip: Use /hooks enable <hook-name> or /hooks disable <hook-name> to toggle individual hooks. Use │
 │ /hooks enable-all or /hooks disable-all to toggle all hooks at once.                             │
 │                                                                                                  │
-│ (Press Esc to close)                                                                             │
-│                                                                                                  │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
 "
 `;
@@ -126,8 +118,6 @@ exports[`HooksDialog > snapshots > renders single hook with security warning, so
 │                                                                                                  │
 │ Tip: Use /hooks enable <hook-name> or /hooks disable <hook-name> to toggle individual hooks. Use │
 │ /hooks enable-all or /hooks disable-all to toggle all hooks at once.                             │
-│                                                                                                  │
-│ (Press Esc to close)                                                                             │
 │                                                                                                  │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
 "

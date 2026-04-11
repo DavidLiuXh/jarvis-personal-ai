@@ -4,15 +4,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {
-  vi,
-  describe,
-  it,
-  expect,
-  beforeEach,
-  afterEach,
-  type MockInstance,
-} from 'vitest';
+import type { MockInstance } from 'vitest';
+import { vi, describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { ideCommand } from './ideCommand.js';
 import { type CommandContext } from './types.js';
 import { IDE_DEFINITIONS } from '@google/gemini-cli-core';
@@ -60,12 +53,10 @@ describe('ideCommand', () => {
         settings: {
           setValue: vi.fn(),
         },
-        agentContext: {
-          config: {
-            getIdeMode: vi.fn(),
-            setIdeMode: vi.fn(),
-            getUsageStatisticsEnabled: vi.fn().mockReturnValue(false),
-          },
+        config: {
+          getIdeMode: vi.fn(),
+          setIdeMode: vi.fn(),
+          getUsageStatisticsEnabled: vi.fn().mockReturnValue(false),
         },
       },
     } as unknown as CommandContext;

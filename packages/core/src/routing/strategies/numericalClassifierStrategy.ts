@@ -18,6 +18,7 @@ import type { Config } from '../../config/config.js';
 import { debugLogger } from '../../utils/debugLogger.js';
 import type { LocalLiteRtLmClient } from '../../core/localLiteRtLmClient.js';
 import { LlmRole } from '../../telemetry/types.js';
+import { AuthType } from '../../core/contentGenerator.js';
 
 // The number of recent history turns to provide to the router for context.
 const HISTORY_TURNS_FOR_CONTEXT = 8;
@@ -93,6 +94,39 @@ const ClassifierResponseSchema = z.object({
   complexity_score: z.number().min(1).max(100),
 });
 
+/**
+ * Deterministically calculates the routing threshold based on the session ID.
+ * This ensures a consistent experience for the user within a session.
+ *
+ * This implementation uses the FNV-1a hash algorithm (32-bit).
+ * @see https://en.wikipedia.org/wiki/Fowler%E2%80%93Noll%E2%80%93Vo_hash_function
+ *
+ * @param sessionId The unique session identifier.
+ * @returns The threshold (50 or 80).
+ */
+function getComplexityThreshold(sessionId: string): number {
+  const FNV_OFFSET_BASIS_32 = 0x811c9dc5;
+  const FNV_PRIME_32 = 0x01000193;
+
+  let hash = FNV_OFFSET_BASIS_32;
+
+  for (let i = 0; i < sessionId.length; i++) {
+    hash ^= sessionId.charCodeAt(i);
+    // Multiply by prime (simulate 32-bit overflow with bitwise shift)
+    hash = Math.imul(hash, FNV_PRIME_32);
+  }
+
+  // Ensure positive integer
+  hash = hash >>> 0;
+
+  // Normalize to 0-99
+  const normalized = hash % 100;
+  // 50% split:
+  // 0-49: Strict (80)
+  // 50-99: Control (50)
+  return normalized < 50 ? 80 : 50;
+}
+
 export class NumericalClassifierStrategy implements RoutingStrategy {
   readonly name = 'numerical_classifier';
 
@@ -109,7 +143,7 @@ export class NumericalClassifierStrategy implements RoutingStrategy {
         return null;
       }
 
-      if (!isGemini3Model(model, config)) {
+      if (!isGemini3Model(model)) {
         return null;
       }
 
@@ -146,21 +180,20 @@ export class NumericalClassifierStrategy implements RoutingStrategy {
       const score = routerResponse.complexity_score;
 
       const { threshold, groupLabel, modelAlias } =
-        await this.getRoutingDecision(score, config);
-      const [useGemini3_1, useGemini3_1FlashLite, useCustomToolModel] =
-        await Promise.all([
-          config.getGemini31Launched(),
-          config.getGemini31FlashLiteLaunched(),
-          config.getUseCustomToolModel(),
-        ]);
+        await this.getRoutingDecision(
+          score,
+          config,
+          config.getSessionId() || 'unknown-session',
+        );
+      const useGemini3_1 = (await config.getGemini31Launched?.()) ?? false;
+      const useCustomToolModel =
+        useGemini3_1 &&
+        config.getContentGeneratorConfig().authType === AuthType.USE_GEMINI;
       const selectedModel = resolveClassifierModel(
         model,
         modelAlias,
         useGemini3_1,
-        useGemini3_1FlashLite,
         useCustomToolModel,
-        config.getHasAccessToPreviewModel?.() ?? true,
-        config,
       );
 
       const latencyMs = Date.now() - startTime;
@@ -182,19 +215,29 @@ export class NumericalClassifierStrategy implements RoutingStrategy {
   private async getRoutingDecision(
     score: number,
     config: Config,
+    sessionId: string,
   ): Promise<{
     threshold: number;
     groupLabel: string;
     modelAlias: typeof FLASH_MODEL | typeof PRO_MODEL;
   }> {
-    const threshold = await config.getResolvedClassifierThreshold();
+    let threshold: number;
+    let groupLabel: string;
+
     const remoteThresholdValue = await config.getClassifierThreshold();
 
-    let groupLabel: string;
-    if (threshold === remoteThresholdValue) {
+    if (
+      remoteThresholdValue !== undefined &&
+      !isNaN(remoteThresholdValue) &&
+      remoteThresholdValue >= 0 &&
+      remoteThresholdValue <= 100
+    ) {
+      threshold = remoteThresholdValue;
       groupLabel = 'Remote';
     } else {
-      groupLabel = 'Default';
+      // Fallback to deterministic A/B test
+      threshold = getComplexityThreshold(sessionId);
+      groupLabel = threshold === 80 ? 'Strict' : 'Control';
     }
 
     const modelAlias = score >= threshold ? PRO_MODEL : FLASH_MODEL;

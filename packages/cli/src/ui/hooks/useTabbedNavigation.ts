@@ -6,8 +6,7 @@
 
 import { useReducer, useCallback, useEffect, useRef } from 'react';
 import { useKeypress, type Key } from './useKeypress.js';
-import { Command } from '../key/keyMatchers.js';
-import { useKeyMatchers } from './useKeyMatchers.js';
+import { keyMatchers, Command } from '../keyMatchers.js';
 
 /**
  * Options for the useTabbedNavigation hook.
@@ -148,7 +147,6 @@ export function useTabbedNavigation({
   isActive = true,
   onTabChange,
 }: UseTabbedNavigationOptions): UseTabbedNavigationResult {
-  const keyMatchers = useKeyMatchers();
   const [state, dispatch] = useReducer(tabbedNavigationReducer, {
     currentIndex: Math.max(0, Math.min(initialIndex, tabCount - 1)),
     tabCount,
@@ -233,7 +231,6 @@ export function useTabbedNavigation({
       goToNextTab,
       goToPrevTab,
       isNavigationBlocked,
-      keyMatchers,
     ],
   );
 

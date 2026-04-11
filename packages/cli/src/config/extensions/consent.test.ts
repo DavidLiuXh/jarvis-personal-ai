@@ -59,9 +59,8 @@ vi.mock('@google/gemini-cli-core', async (importOriginal) => {
 });
 
 async function expectConsentSnapshot(consentString: string) {
-  const renderResult = await render(
-    React.createElement(Text, null, consentString),
-  );
+  const renderResult = render(React.createElement(Text, null, consentString));
+  await renderResult.waitUntilReady();
   await expect(renderResult).toMatchSvgSnapshot();
 }
 
@@ -286,25 +285,6 @@ describe('consent', () => {
           false,
         );
         expect(requestConsent).toHaveBeenCalledTimes(1);
-      });
-
-      it('should request consent if extension is migrated', async () => {
-        const requestConsent = vi.fn().mockResolvedValue(true);
-        await maybeRequestConsentOrFail(
-          baseConfig,
-          requestConsent,
-          false,
-          { ...baseConfig, name: 'old-ext' },
-          false,
-          [],
-          [],
-          true,
-        );
-
-        expect(requestConsent).toHaveBeenCalledTimes(1);
-        let consentString = requestConsent.mock.calls[0][0] as string;
-        consentString = normalizePathsForSnapshot(consentString, tempDir);
-        await expectConsentSnapshot(consentString);
       });
 
       it('should request consent if skills change', async () => {

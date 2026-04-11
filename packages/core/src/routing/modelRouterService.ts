@@ -78,9 +78,10 @@ export class ModelRouterService {
 
     const [enableNumericalRouting, thresholdValue] = await Promise.all([
       this.config.getNumericalRoutingEnabled(),
-      this.config.getResolvedClassifierThreshold(),
+      this.config.getClassifierThreshold(),
     ]);
-    const classifierThreshold = String(thresholdValue);
+    const classifierThreshold =
+      thresholdValue !== undefined ? String(thresholdValue) : undefined;
 
     let failed = false;
     let error_message: string | undefined;

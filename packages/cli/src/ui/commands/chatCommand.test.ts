@@ -70,19 +70,18 @@ describe('chatCommand', () => {
 
     mockContext = createMockCommandContext({
       services: {
-        agentContext: {
-          config: {
-            getProjectRoot: () => '/project/root',
-            getContentGeneratorConfig: () => ({
-              authType: AuthType.LOGIN_WITH_GOOGLE,
-            }),
-            storage: {
-              getProjectTempDir: () => '/project/root/.gemini/tmp/mockhash',
-            },
+        config: {
+          getProjectRoot: () => '/project/root',
+          getGeminiClient: () =>
+            ({
+              getChat: mockGetChat,
+            }) as unknown as GeminiClient,
+          storage: {
+            getProjectTempDir: () => '/project/root/.gemini/tmp/mockhash',
           },
-          geminiClient: {
-            getChat: mockGetChat,
-          } as unknown as GeminiClient,
+          getContentGeneratorConfig: () => ({
+            authType: AuthType.LOGIN_WITH_GOOGLE,
+          }),
         },
         logger: {
           saveCheckpoint: mockSaveCheckpoint,
@@ -100,11 +99,8 @@ describe('chatCommand', () => {
 
   it('should have the correct main command definition', () => {
     expect(chatCommand.name).toBe('chat');
-    expect(chatCommand.description).toBe(
-      'Browse auto-saved conversations and manage chat checkpoints',
-    );
-    expect(chatCommand.autoExecute).toBe(true);
-    expect(chatCommand.subCommands).toHaveLength(6);
+    expect(chatCommand.description).toBe('Manage conversation history');
+    expect(chatCommand.subCommands).toHaveLength(5);
   });
 
   describe('list subcommand', () => {
@@ -162,7 +158,7 @@ describe('chatCommand', () => {
       expect(result).toEqual({
         type: 'message',
         messageType: 'error',
-        content: 'Missing tag. Usage: /resume save <tag>',
+        content: 'Missing tag. Usage: /chat save <tag>',
       });
     });
 
@@ -256,7 +252,7 @@ describe('chatCommand', () => {
       expect(result).toEqual({
         type: 'message',
         messageType: 'error',
-        content: 'Missing tag. Usage: /resume resume <tag>',
+        content: 'Missing tag. Usage: /chat resume <tag>',
       });
     });
 
@@ -390,7 +386,7 @@ describe('chatCommand', () => {
       expect(result).toEqual({
         type: 'message',
         messageType: 'error',
-        content: 'Missing tag. Usage: /resume delete <tag>',
+        content: 'Missing tag. Usage: /chat delete <tag>',
       });
     });
 
@@ -699,11 +695,7 @@ Hi there!`;
 
       beforeEach(() => {
         mockGetLatestApiRequest = vi.fn();
-        if (!mockContext.services.agentContext!.config) {
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          (mockContext.services.agentContext!.config as any) = {};
-        }
-        mockContext.services.agentContext!.config.getLatestApiRequest =
+        mockContext.services.config!.getLatestApiRequest =
           mockGetLatestApiRequest;
         vi.spyOn(process, 'cwd').mockReturnValue('/project/root');
         vi.spyOn(Date, 'now').mockReturnValue(1234567890);

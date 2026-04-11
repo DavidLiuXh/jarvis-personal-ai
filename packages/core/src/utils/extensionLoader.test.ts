@@ -98,10 +98,6 @@ describe('SimpleExtensionLoader', () => {
     mockConfig = {
       getMcpClientManager: () => mockMcpClientManager,
       getEnableExtensionReloading: () => extensionReloadingEnabled,
-      geminiClient: {
-        isInitialized: () => true,
-        setTools: mockGeminiClientSetTools,
-      },
       getGeminiClient: vi.fn(() => ({
         isInitialized: () => true,
         setTools: mockGeminiClientSetTools,

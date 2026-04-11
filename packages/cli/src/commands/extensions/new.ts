@@ -25,7 +25,7 @@ async function pathExists(path: string) {
   try {
     await access(path);
     return true;
-  } catch {
+  } catch (_e) {
     return false;
   }
 }

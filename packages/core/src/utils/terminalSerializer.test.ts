@@ -30,12 +30,11 @@ describe('terminalSerializer', () => {
         allowProposedApi: true,
       });
       const result = serializeTerminalToObject(terminal);
-      expect(result).toHaveLength(1);
+      expect(result).toHaveLength(24);
       result.forEach((line) => {
         // Expect each line to be either empty or contain a single token with spaces
-        // Actually, the first cell will have inverse: true (cursor), so it will have multiple tokens
         if (line.length > 0) {
-          expect(line[line.length - 1].text.trim()).toBe('');
+          expect(line[0].text.trim()).toBe('');
         }
       });
     });

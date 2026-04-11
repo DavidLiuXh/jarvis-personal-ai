@@ -207,16 +207,13 @@ export class StartupProfiler {
       if (measure && phase.cpuUsage) {
         startupPhases.push({
           name: phase.name,
-          duration_ms: Math.round(measure.duration),
+          duration_ms: measure.duration,
           cpu_usage_user_usec: phase.cpuUsage.user,
           cpu_usage_system_usec: phase.cpuUsage.system,
-          start_time_usec: Math.round(
-            (performance.timeOrigin + measure.startTime) * 1000,
-          ),
-          end_time_usec: Math.round(
+          start_time_usec: (performance.timeOrigin + measure.startTime) * 1000,
+          end_time_usec:
             (performance.timeOrigin + measure.startTime + measure.duration) *
-              1000,
-          ),
+            1000,
         });
       }
     }

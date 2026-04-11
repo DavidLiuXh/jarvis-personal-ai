@@ -7,15 +7,10 @@
 import { useState, useEffect, useCallback } from 'react';
 import { Box, Text } from 'ink';
 import Spinner from 'ink-spinner';
-import {
-  debugLogger,
-  spawnAsync,
-  LlmRole,
-  type Config,
-} from '@google/gemini-cli-core';
+import type { Config } from '@google/gemini-cli-core';
+import { debugLogger, spawnAsync, LlmRole } from '@google/gemini-cli-core';
 import { useKeypress } from '../../hooks/useKeypress.js';
-import { Command } from '../../key/keyMatchers.js';
-import { useKeyMatchers } from '../../hooks/useKeyMatchers.js';
+import { keyMatchers, Command } from '../../keyMatchers.js';
 
 interface Issue {
   number: number;
@@ -111,7 +106,6 @@ export const TriageDuplicates = ({
   onExit: () => void;
   initialLimit?: number;
 }) => {
-  const keyMatchers = useKeyMatchers();
   const [state, setState] = useState<TriageState>({
     status: 'loading',
     issues: [],

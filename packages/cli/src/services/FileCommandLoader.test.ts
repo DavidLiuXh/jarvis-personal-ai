@@ -6,7 +6,8 @@
 
 import * as glob from 'glob';
 import * as path from 'node:path';
-import { GEMINI_DIR, Storage, type Config } from '@google/gemini-cli-core';
+import type { Config } from '@google/gemini-cli-core';
+import { GEMINI_DIR, Storage } from '@google/gemini-cli-core';
 import mock from 'mock-fs';
 import { FileCommandLoader } from './FileCommandLoader.js';
 import { assert, vi } from 'vitest';

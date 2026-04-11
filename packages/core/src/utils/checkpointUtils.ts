@@ -14,7 +14,7 @@ import type { ToolCallRequestInfo } from '../scheduler/types.js';
 
 export interface ToolCallData<HistoryType = unknown, ArgsType = unknown> {
   history?: HistoryType;
-  clientHistory?: readonly Content[];
+  clientHistory?: Content[];
   commitHash?: string;
   toolCall: {
     name: string;
@@ -49,12 +49,12 @@ export function generateCheckpointFileName(
   toolCall: ToolCallRequestInfo,
 ): string | null {
   const toolArgs = toolCall.args;
-  const rawFilePath = toolArgs['file_path'];
+  // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion
+  const toolFilePath = toolArgs['file_path'] as string;
 
-  if (typeof rawFilePath !== 'string' || !rawFilePath) {
+  if (!toolFilePath) {
     return null;
   }
-  const toolFilePath = rawFilePath;
 
   const timestamp = new Date()
     .toISOString()
@@ -168,18 +168,15 @@ export function getCheckpointInfoList(
 
   for (const [file, content] of checkpointFiles) {
     try {
-      const parsed: unknown = JSON.parse(content);
-      const result = z
-        .object({ messageId: z.string() })
-        .passthrough()
-        .safeParse(parsed);
-      if (result.success) {
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion
+      const toolCallData = JSON.parse(content) as ToolCallData;
+      if (toolCallData.messageId) {
         checkpointInfoList.push({
-          messageId: result.data.messageId,
+          messageId: toolCallData.messageId,
           checkpoint: file.replace('.json', ''),
         });
       }
-    } catch {
+    } catch (_e) {
       // Ignore invalid JSON files
     }
   }

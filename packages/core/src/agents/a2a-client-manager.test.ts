@@ -5,8 +5,11 @@
  */
 
 import { vi, describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { A2AClientManager } from './a2a-client-manager.js';
-import type { AgentCard } from '@a2a-js/sdk';
+import {
+  A2AClientManager,
+  type SendMessageResult,
+} from './a2a-client-manager.js';
+import type { AgentCard, Task } from '@a2a-js/sdk';
 import {
   ClientFactory,
   DefaultAgentCardResolver,
@@ -15,29 +18,7 @@ import {
   type AuthenticationHandler,
   type Client,
 } from '@a2a-js/sdk/client';
-import type { Config } from '../config/config.js';
-import { Agent as UndiciAgent, ProxyAgent } from 'undici';
 import { debugLogger } from '../utils/debugLogger.js';
-
-interface MockClient {
-  sendMessageStream: ReturnType<typeof vi.fn>;
-  getTask: ReturnType<typeof vi.fn>;
-  cancelTask: ReturnType<typeof vi.fn>;
-}
-
-vi.mock('@a2a-js/sdk/client', async (importOriginal) => {
-  const actual = await importOriginal();
-  return {
-    ...(actual as Record<string, unknown>),
-    createAuthenticatingFetchWithRetry: vi.fn(),
-    ClientFactory: vi.fn(),
-    DefaultAgentCardResolver: vi.fn(),
-    ClientFactoryOptions: {
-      createFrom: vi.fn(),
-      default: {},
-    },
-  };
-});
 
 vi.mock('../utils/debugLogger.js', () => ({
   debugLogger: {
@@ -45,71 +26,75 @@ vi.mock('../utils/debugLogger.js', () => ({
   },
 }));
 
+vi.mock('@a2a-js/sdk/client', () => {
+  const ClientFactory = vi.fn();
+  const DefaultAgentCardResolver = vi.fn();
+  const RestTransportFactory = vi.fn();
+  const JsonRpcTransportFactory = vi.fn();
+  const ClientFactoryOptions = {
+    default: {},
+    createFrom: vi.fn(),
+  };
+  const createAuthenticatingFetchWithRetry = vi.fn();
+
+  DefaultAgentCardResolver.prototype.resolve = vi.fn();
+  ClientFactory.prototype.createFromUrl = vi.fn();
+
+  return {
+    ClientFactory,
+    ClientFactoryOptions,
+    DefaultAgentCardResolver,
+    RestTransportFactory,
+    JsonRpcTransportFactory,
+    createAuthenticatingFetchWithRetry,
+  };
+});
+
 describe('A2AClientManager', () => {
   let manager: A2AClientManager;
-  const mockAgentCard: AgentCard = {
-    name: 'test-agent',
-    description: 'A test agent',
-    url: 'http://test.agent',
-    version: '1.0.0',
-    protocolVersion: '0.1.0',
-    capabilities: {},
-    skills: [],
-    defaultInputModes: [],
-    defaultOutputModes: [],
-  };
 
-  const mockClient: MockClient = {
-    sendMessageStream: vi.fn(),
-    getTask: vi.fn(),
-    cancelTask: vi.fn(),
-  };
-
+  // Stable mocks initialized once
+  const sendMessageStreamMock = vi.fn();
+  const getTaskMock = vi.fn();
+  const cancelTaskMock = vi.fn();
+  const getAgentCardMock = vi.fn();
   const authFetchMock = vi.fn();
-  const mockConfig = {
-    getProxy: vi.fn(),
-  } as unknown as Config;
+
+  const mockClient = {
+    sendMessageStream: sendMessageStreamMock,
+    getTask: getTaskMock,
+    cancelTask: cancelTaskMock,
+    getAgentCard: getAgentCardMock,
+  } as unknown as Client;
+
+  const mockAgentCard: Partial<AgentCard> = { name: 'TestAgent' };
 
   beforeEach(() => {
     vi.clearAllMocks();
-    manager = new A2AClientManager(mockConfig);
+    A2AClientManager.resetInstanceForTesting();
+    manager = A2AClientManager.getInstance();
 
-    // Re-create the instances as plain objects that can be spied on
-    const factoryInstance = {
-      createFromUrl: vi.fn(),
-      createFromAgentCard: vi.fn(),
-    };
-    const resolverInstance = {
-      resolve: vi.fn(),
-    };
-
-    vi.mocked(ClientFactory).mockReturnValue(
-      factoryInstance as unknown as ClientFactory,
-    );
-    vi.mocked(DefaultAgentCardResolver).mockReturnValue(
-      resolverInstance as unknown as DefaultAgentCardResolver,
-    );
-
-    vi.spyOn(factoryInstance, 'createFromUrl').mockResolvedValue(
-      mockClient as unknown as Client,
-    );
-    vi.spyOn(factoryInstance, 'createFromAgentCard').mockResolvedValue(
-      mockClient as unknown as Client,
-    );
-    vi.spyOn(resolverInstance, 'resolve').mockResolvedValue({
+    // Default mock implementations
+    getAgentCardMock.mockResolvedValue({
       ...mockAgentCard,
       url: 'http://test.agent/real/endpoint',
     } as AgentCard);
 
-    vi.spyOn(ClientFactoryOptions, 'createFrom').mockImplementation(
-      (_defaults, overrides) => overrides as unknown as ClientFactoryOptions,
+    vi.mocked(ClientFactory.prototype.createFromUrl).mockResolvedValue(
+      mockClient,
     );
 
-    vi.mocked(createAuthenticatingFetchWithRetry).mockImplementation(() =>
-      authFetchMock.mockResolvedValue({
-        ok: true,
-        json: async () => ({}),
-      } as Response),
+    vi.mocked(DefaultAgentCardResolver.prototype.resolve).mockResolvedValue({
+      ...mockAgentCard,
+      url: 'http://test.agent/real/endpoint',
+    } as AgentCard);
+
+    vi.mocked(ClientFactoryOptions.createFrom).mockImplementation(
+      (_defaults, overrides) => overrides as ClientFactoryOptions,
+    );
+
+    vi.mocked(createAuthenticatingFetchWithRetry).mockReturnValue(
+      authFetchMock,
     );
 
     vi.stubGlobal(
@@ -126,371 +111,149 @@ describe('A2AClientManager', () => {
     vi.unstubAllGlobals();
   });
 
-  describe('getInstance / dispatcher initialization', () => {
-    it('should use UndiciAgent when no proxy is configured', async () => {
-      await manager.loadAgent('TestAgent', {
-        type: 'url',
-        url: 'http://test.agent/card',
-      });
-
-      const resolverOptions = vi.mocked(DefaultAgentCardResolver).mock
-        .calls[0][0];
-      const cardFetch = resolverOptions?.fetchImpl as typeof fetch;
-      await cardFetch('http://test.agent/card');
-
-      const fetchCall = vi
-        .mocked(fetch)
-        .mock.calls.find((call) => call[0] === 'http://test.agent/card');
-      expect(fetchCall).toBeDefined();
-      expect(
-        (fetchCall![1] as { dispatcher?: unknown })?.dispatcher,
-      ).toBeInstanceOf(UndiciAgent);
-      expect(
-        (fetchCall![1] as { dispatcher?: unknown })?.dispatcher,
-      ).not.toBeInstanceOf(ProxyAgent);
-    });
-
-    it('should use ProxyAgent when a proxy is configured via Config', async () => {
-      const mockConfigWithProxy = {
-        getProxy: () => 'http://my-proxy:8080',
-      } as Config;
-
-      manager = new A2AClientManager(mockConfigWithProxy);
-      await manager.loadAgent('TestProxyAgent', {
-        type: 'url',
-        url: 'http://test.proxy.agent/card',
-      });
-
-      const resolverOptions = vi.mocked(DefaultAgentCardResolver).mock
-        .calls[0][0];
-      const cardFetch = resolverOptions?.fetchImpl as typeof fetch;
-      await cardFetch('http://test.proxy.agent/card');
-
-      const fetchCall = vi
-        .mocked(fetch)
-        .mock.calls.find((call) => call[0] === 'http://test.proxy.agent/card');
-      expect(fetchCall).toBeDefined();
-      expect(
-        (fetchCall![1] as { dispatcher?: unknown })?.dispatcher,
-      ).toBeInstanceOf(ProxyAgent);
-    });
+  it('should enforce the singleton pattern', () => {
+    const instance1 = A2AClientManager.getInstance();
+    const instance2 = A2AClientManager.getInstance();
+    expect(instance1).toBe(instance2);
   });
 
   describe('loadAgent', () => {
     it('should create and cache an A2AClient', async () => {
-      const agentCard = await manager.loadAgent('TestAgent', {
-        type: 'url',
-        url: 'http://test.agent/card',
-      });
+      const agentCard = await manager.loadAgent(
+        'TestAgent',
+        'http://test.agent/card',
+      );
+      expect(agentCard).toMatchObject(mockAgentCard);
       expect(manager.getAgentCard('TestAgent')).toBe(agentCard);
       expect(manager.getClient('TestAgent')).toBeDefined();
     });
 
-    it('should configure ClientFactory with REST, JSON-RPC, and gRPC transports', async () => {
-      await manager.loadAgent('TestAgent', {
-        type: 'url',
-        url: 'http://test.agent/card',
-      });
-      expect(ClientFactoryOptions.createFrom).toHaveBeenCalled();
-    });
-
     it('should throw an error if an agent with the same name is already loaded', async () => {
-      await manager.loadAgent('TestAgent', {
-        type: 'url',
-        url: 'http://test.agent/card',
-      });
+      await manager.loadAgent('TestAgent', 'http://test.agent/card');
       await expect(
-        manager.loadAgent('TestAgent', {
-          type: 'url',
-          url: 'http://test.agent/card',
-        }),
+        manager.loadAgent('TestAgent', 'http://another.agent/card'),
       ).rejects.toThrow("Agent with name 'TestAgent' is already loaded.");
     });
 
     it('should use native fetch by default', async () => {
-      await manager.loadAgent('TestAgent', {
-        type: 'url',
-        url: 'http://test.agent/card',
-      });
+      await manager.loadAgent('TestAgent', 'http://test.agent/card');
       expect(createAuthenticatingFetchWithRetry).not.toHaveBeenCalled();
     });
 
-    it('should use provided custom authentication handler for transports only', async () => {
+    it('should use provided custom authentication handler', async () => {
       const customAuthHandler = {
         headers: vi.fn(),
         shouldRetryWithHeaders: vi.fn(),
       };
       await manager.loadAgent(
-        'TestAgent',
-        { type: 'url', url: 'http://test.agent/card' },
+        'CustomAuthAgent',
+        'http://custom.agent/card',
         customAuthHandler as unknown as AuthenticationHandler,
       );
 
-      // Card resolver should NOT use the authenticated fetch by default.
-      const resolverOptions = vi.mocked(DefaultAgentCardResolver).mock
-        .calls[0][0];
-      expect(resolverOptions?.fetchImpl).not.toBe(authFetchMock);
-    });
-
-    it('should use unauthenticated fetch for card resolver and avoid authenticated fetch if success', async () => {
-      const customAuthHandler = {
-        headers: vi.fn(),
-        shouldRetryWithHeaders: vi.fn(),
-      };
-      await manager.loadAgent(
-        'AuthCardAgent',
-        { type: 'url', url: 'http://authcard.agent/card' },
-        customAuthHandler as unknown as AuthenticationHandler,
+      expect(createAuthenticatingFetchWithRetry).toHaveBeenCalledWith(
+        expect.anything(),
+        customAuthHandler,
       );
-
-      const resolverOptions = vi.mocked(DefaultAgentCardResolver).mock
-        .calls[0][0];
-      const cardFetch = resolverOptions?.fetchImpl as typeof fetch;
-
-      expect(cardFetch).toBeDefined();
-
-      await cardFetch('http://test.url');
-
-      expect(fetch).toHaveBeenCalledWith('http://test.url', expect.anything());
-      expect(authFetchMock).not.toHaveBeenCalled();
-    });
-
-    it('should retry with authenticating fetch if agent card fetch returns 401', async () => {
-      const customAuthHandler = {
-        headers: vi.fn(),
-        shouldRetryWithHeaders: vi.fn(),
-      };
-
-      // Mock the initial unauthenticated fetch to fail with 401
-      vi.mocked(fetch).mockResolvedValueOnce({
-        ok: false,
-        status: 401,
-        json: async () => ({}),
-      } as Response);
-
-      await manager.loadAgent(
-        'AuthCardAgent401',
-        { type: 'url', url: 'http://authcard.agent/card' },
-        customAuthHandler as unknown as AuthenticationHandler,
-      );
-
-      const resolverOptions = vi.mocked(DefaultAgentCardResolver).mock
-        .calls[0][0];
-      const cardFetch = resolverOptions?.fetchImpl as typeof fetch;
-
-      await cardFetch('http://test.url');
-
-      expect(fetch).toHaveBeenCalledWith('http://test.url', expect.anything());
-      expect(authFetchMock).toHaveBeenCalledWith('http://test.url', undefined);
     });
 
     it('should log a debug message upon loading an agent', async () => {
-      await manager.loadAgent('TestAgent', {
-        type: 'url',
-        url: 'http://test.agent/card',
-      });
+      await manager.loadAgent('TestAgent', 'http://test.agent/card');
       expect(debugLogger.debug).toHaveBeenCalledWith(
-        expect.stringContaining("Loaded agent 'TestAgent'"),
+        "[A2AClientManager] Loaded agent 'TestAgent' from http://test.agent/card",
       );
     });
 
     it('should clear the cache', async () => {
-      await manager.loadAgent('TestAgent', {
-        type: 'url',
-        url: 'http://test.agent/card',
-      });
+      await manager.loadAgent('TestAgent', 'http://test.agent/card');
+      expect(manager.getAgentCard('TestAgent')).toBeDefined();
+      expect(manager.getClient('TestAgent')).toBeDefined();
+
       manager.clearCache();
+
       expect(manager.getAgentCard('TestAgent')).toBeUndefined();
       expect(manager.getClient('TestAgent')).toBeUndefined();
-    });
-
-    it('should load an agent from inline JSON without calling resolver', async () => {
-      const inlineJson = JSON.stringify(mockAgentCard);
-      const agentCard = await manager.loadAgent('JsonAgent', {
-        type: 'json',
-        json: inlineJson,
-      });
-      expect(agentCard).toBeDefined();
-      expect(agentCard.name).toBe('test-agent');
-      expect(manager.getAgentCard('JsonAgent')).toBe(agentCard);
-      expect(manager.getClient('JsonAgent')).toBeDefined();
-      // Resolver should not have been called for inline JSON
-      const resolverInstance = vi.mocked(DefaultAgentCardResolver).mock
-        .results[0]?.value;
-      if (resolverInstance) {
-        expect(resolverInstance.resolve).not.toHaveBeenCalled();
-      }
-    });
-
-    it('should throw a descriptive error for invalid inline JSON', async () => {
-      await expect(
-        manager.loadAgent('BadJsonAgent', {
-          type: 'json',
-          json: 'not valid json {{',
-        }),
-      ).rejects.toThrow(
-        /Failed to parse inline agent card JSON for agent 'BadJsonAgent'/,
-      );
-    });
-
-    it('should log "inline JSON" for JSON-loaded agents', async () => {
-      const inlineJson = JSON.stringify(mockAgentCard);
-      await manager.loadAgent('JsonLogAgent', {
-        type: 'json',
-        json: inlineJson,
-      });
       expect(debugLogger.debug).toHaveBeenCalledWith(
-        expect.stringContaining('inline JSON'),
+        '[A2AClientManager] Cache cleared.',
       );
-    });
-
-    it('should throw if resolveAgentCard fails', async () => {
-      const resolverInstance = {
-        resolve: vi.fn().mockRejectedValue(new Error('Resolution failed')),
-      };
-      vi.mocked(DefaultAgentCardResolver).mockReturnValue(
-        resolverInstance as unknown as DefaultAgentCardResolver,
-      );
-
-      await expect(
-        manager.loadAgent('FailAgent', {
-          type: 'url',
-          url: 'http://fail.agent',
-        }),
-      ).rejects.toThrow('Resolution failed');
-    });
-
-    it('should throw if factory.createFromAgentCard fails', async () => {
-      const factoryInstance = {
-        createFromAgentCard: vi
-          .fn()
-          .mockRejectedValue(new Error('Factory failed')),
-      };
-      vi.mocked(ClientFactory).mockReturnValue(
-        factoryInstance as unknown as ClientFactory,
-      );
-
-      await expect(
-        manager.loadAgent('FailAgent', {
-          type: 'url',
-          url: 'http://fail.agent',
-        }),
-      ).rejects.toThrow('Factory failed');
-    });
-  });
-
-  describe('getAgentCard and getClient', () => {
-    it('should return undefined if agent is not found', () => {
-      expect(manager.getAgentCard('Unknown')).toBeUndefined();
-      expect(manager.getClient('Unknown')).toBeUndefined();
     });
   });
 
   describe('sendMessageStream', () => {
     beforeEach(async () => {
-      await manager.loadAgent('TestAgent', {
-        type: 'url',
-        url: 'http://test.agent/card',
-      });
+      await manager.loadAgent('TestAgent', 'http://test.agent');
     });
 
     it('should send a message and return a stream', async () => {
-      mockClient.sendMessageStream.mockReturnValue(
+      const mockResult = {
+        kind: 'message',
+        messageId: 'a',
+        parts: [],
+        role: 'agent',
+      } as SendMessageResult;
+
+      sendMessageStreamMock.mockReturnValue(
         (async function* () {
-          yield { kind: 'message' };
+          yield mockResult;
         })(),
       );
 
       const stream = manager.sendMessageStream('TestAgent', 'Hello');
       const results = [];
-      for await (const result of stream) {
-        results.push(result);
+      for await (const res of stream) {
+        results.push(res);
       }
 
-      expect(results).toHaveLength(1);
-      expect(mockClient.sendMessageStream).toHaveBeenCalled();
-    });
-
-    it('should use contextId and taskId when provided', async () => {
-      mockClient.sendMessageStream.mockReturnValue(
-        (async function* () {
-          yield { kind: 'message' };
-        })(),
-      );
-
-      const stream = manager.sendMessageStream('TestAgent', 'Hello', {
-        contextId: 'ctx123',
-        taskId: 'task456',
-      });
-      // trigger execution
-      for await (const _ of stream) {
-        break;
-      }
-
-      expect(mockClient.sendMessageStream).toHaveBeenCalledWith(
+      expect(results).toEqual([mockResult]);
+      expect(sendMessageStreamMock).toHaveBeenCalledWith(
         expect.objectContaining({
-          message: expect.objectContaining({
-            contextId: 'ctx123',
-            taskId: 'task456',
-          }),
+          message: expect.anything(),
         }),
         expect.any(Object),
       );
     });
 
-    it('should correctly propagate AbortSignal to the stream', async () => {
-      mockClient.sendMessageStream.mockReturnValue(
+    it('should use contextId and taskId when provided', async () => {
+      sendMessageStreamMock.mockReturnValue(
         (async function* () {
-          yield { kind: 'message' };
+          yield {
+            kind: 'message',
+            messageId: 'a',
+            parts: [],
+            role: 'agent',
+          } as SendMessageResult;
         })(),
       );
 
-      const controller = new AbortController();
+      const expectedContextId = 'user-context-id';
+      const expectedTaskId = 'user-task-id';
+
       const stream = manager.sendMessageStream('TestAgent', 'Hello', {
-        signal: controller.signal,
+        contextId: expectedContextId,
+        taskId: expectedTaskId,
       });
-      // trigger execution
+
       for await (const _ of stream) {
-        break;
+        // consume stream
       }
 
-      expect(mockClient.sendMessageStream).toHaveBeenCalledWith(
-        expect.any(Object),
-        expect.objectContaining({ signal: controller.signal }),
-      );
-    });
-
-    it('should handle a multi-chunk stream with different event types', async () => {
-      mockClient.sendMessageStream.mockReturnValue(
-        (async function* () {
-          yield { kind: 'message', messageId: 'm1' };
-          yield { kind: 'status-update', taskId: 't1' };
-        })(),
-      );
-
-      const stream = manager.sendMessageStream('TestAgent', 'Hello');
-      const results = [];
-      for await (const result of stream) {
-        results.push(result);
-      }
-
-      expect(results).toHaveLength(2);
-      expect(results[0].kind).toBe('message');
-      expect(results[1].kind).toBe('status-update');
+      const call = sendMessageStreamMock.mock.calls[0][0];
+      expect(call.message.contextId).toBe(expectedContextId);
+      expect(call.message.taskId).toBe(expectedTaskId);
     });
 
     it('should throw prefixed error on failure', async () => {
-      mockClient.sendMessageStream.mockImplementation(() => {
-        throw new Error('Network failure');
+      sendMessageStreamMock.mockImplementationOnce(() => {
+        throw new Error('Network error');
       });
 
       const stream = manager.sendMessageStream('TestAgent', 'Hello');
       await expect(async () => {
         for await (const _ of stream) {
-          // empty
+          // consume
         }
       }).rejects.toThrow(
-        '[A2AClientManager] sendMessageStream Error [TestAgent]: Network failure',
+        '[A2AClientManager] sendMessageStream Error [TestAgent]: Network error',
       );
     });
 
@@ -498,7 +261,7 @@ describe('A2AClientManager', () => {
       const stream = manager.sendMessageStream('NonExistentAgent', 'Hello');
       await expect(async () => {
         for await (const _ of stream) {
-          // empty
+          // consume
         }
       }).rejects.toThrow("Agent 'NonExistentAgent' not found.");
     });
@@ -506,26 +269,28 @@ describe('A2AClientManager', () => {
 
   describe('getTask', () => {
     beforeEach(async () => {
-      await manager.loadAgent('TestAgent', {
-        type: 'url',
-        url: 'http://test.agent/card',
-      });
+      await manager.loadAgent('TestAgent', 'http://test.agent');
     });
 
     it('should get a task from the correct agent', async () => {
-      const mockTask = { id: 'task123', kind: 'task' };
-      mockClient.getTask.mockResolvedValue(mockTask);
+      getTaskMock.mockResolvedValue({
+        id: 'task123',
+        contextId: 'a',
+        kind: 'task',
+        status: { state: 'completed' },
+      } as Task);
 
-      const result = await manager.getTask('TestAgent', 'task123');
-      expect(result).toBe(mockTask);
-      expect(mockClient.getTask).toHaveBeenCalledWith({ id: 'task123' });
+      await manager.getTask('TestAgent', 'task123');
+      expect(getTaskMock).toHaveBeenCalledWith({
+        id: 'task123',
+      });
     });
 
     it('should throw prefixed error on failure', async () => {
-      mockClient.getTask.mockRejectedValue(new Error('Not found'));
+      getTaskMock.mockRejectedValueOnce(new Error('Network error'));
 
       await expect(manager.getTask('TestAgent', 'task123')).rejects.toThrow(
-        'A2AClient getTask Error [TestAgent]: Not found',
+        'A2AClient getTask Error [TestAgent]: Network error',
       );
     });
 
@@ -538,26 +303,28 @@ describe('A2AClientManager', () => {
 
   describe('cancelTask', () => {
     beforeEach(async () => {
-      await manager.loadAgent('TestAgent', {
-        type: 'url',
-        url: 'http://test.agent/card',
-      });
+      await manager.loadAgent('TestAgent', 'http://test.agent');
     });
 
     it('should cancel a task on the correct agent', async () => {
-      const mockTask = { id: 'task123', kind: 'task' };
-      mockClient.cancelTask.mockResolvedValue(mockTask);
+      cancelTaskMock.mockResolvedValue({
+        id: 'task123',
+        contextId: 'a',
+        kind: 'task',
+        status: { state: 'canceled' },
+      } as Task);
 
-      const result = await manager.cancelTask('TestAgent', 'task123');
-      expect(result).toBe(mockTask);
-      expect(mockClient.cancelTask).toHaveBeenCalledWith({ id: 'task123' });
+      await manager.cancelTask('TestAgent', 'task123');
+      expect(cancelTaskMock).toHaveBeenCalledWith({
+        id: 'task123',
+      });
     });
 
     it('should throw prefixed error on failure', async () => {
-      mockClient.cancelTask.mockRejectedValue(new Error('Cannot cancel'));
+      cancelTaskMock.mockRejectedValueOnce(new Error('Network error'));
 
       await expect(manager.cancelTask('TestAgent', 'task123')).rejects.toThrow(
-        'A2AClient cancelTask Error [TestAgent]: Cannot cancel',
+        'A2AClient cancelTask Error [TestAgent]: Network error',
       );
     });
 

@@ -16,7 +16,6 @@ import {
 } from 'react';
 import { getBoundingBox, type DOMElement } from 'ink';
 import { useMouse, type MouseEvent } from '../hooks/useMouse.js';
-import { terminalCapabilityManager } from '../utils/terminalCapabilityManager.js';
 
 export interface ScrollState {
   scrollTop: number;
@@ -126,33 +125,8 @@ export const ScrollProvider: React.FC<{ children: React.ReactNode }> = ({
     }
   }, []);
 
-  const scrollMomentumRef = useRef({
-    count: 0,
-    lastTime: 0,
-  });
-
   const handleScroll = (direction: 'up' | 'down', mouseEvent: MouseEvent) => {
-    let multiplier = 1;
-    const now = Date.now();
-
-    if (!terminalCapabilityManager.isGhosttyTerminal()) {
-      const timeSinceLastScroll = now - scrollMomentumRef.current.lastTime;
-      // 50ms threshold to consider scrolls consecutive
-      if (timeSinceLastScroll < 50) {
-        scrollMomentumRef.current.count += 1;
-        // Accelerate up to 3x, starting after 5 consecutive scrolls.
-        // Each consecutive scroll increases the multiplier by 0.1.
-        multiplier = Math.min(
-          3,
-          1 + Math.max(0, scrollMomentumRef.current.count - 5) * 0.1,
-        );
-      } else {
-        scrollMomentumRef.current.count = 0;
-      }
-    }
-    scrollMomentumRef.current.lastTime = now;
-
-    const delta = (direction === 'up' ? -1 : 1) * multiplier;
+    const delta = direction === 'up' ? -1 : 1;
     const candidates = findScrollableCandidates(
       mouseEvent,
       scrollablesRef.current,
@@ -168,16 +142,15 @@ export const ScrollProvider: React.FC<{ children: React.ReactNode }> = ({
       const canScrollUp = effectiveScrollTop > 0.001;
       const canScrollDown =
         effectiveScrollTop < scrollHeight - innerHeight - 0.001;
-      const totalDelta = Math.round(pendingDelta + delta);
 
       if (direction === 'up' && canScrollUp) {
-        pendingScrollsRef.current.set(candidate.id, totalDelta);
+        pendingScrollsRef.current.set(candidate.id, pendingDelta + delta);
         scheduleFlush();
         return true;
       }
 
       if (direction === 'down' && canScrollDown) {
-        pendingScrollsRef.current.set(candidate.id, totalDelta);
+        pendingScrollsRef.current.set(candidate.id, pendingDelta + delta);
         scheduleFlush();
         return true;
       }

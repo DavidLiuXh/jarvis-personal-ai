@@ -70,7 +70,6 @@ export interface UIActions {
   handleResumeSession: (session: SessionInfo) => Promise<void>;
   handleDeleteSession: (session: SessionInfo) => Promise<void>;
   setQueueErrorMessage: (message: string | null) => void;
-  addMessage: (message: string) => void;
   popAllMessages: () => string | undefined;
   handleApiKeySubmit: (apiKey: string) => Promise<void>;
   handleApiKeyCancel: () => void;
@@ -81,9 +80,9 @@ export interface UIActions {
   revealCleanUiDetailsTemporarily: (durationMs?: number) => void;
   handleWarning: (message: string) => void;
   setEmbeddedShellFocused: (value: boolean) => void;
-  dismissBackgroundTask: (pid: number) => Promise<void>;
-  setActiveBackgroundTaskPid: (pid: number) => void;
-  setIsBackgroundTaskListOpen: (isOpen: boolean) => void;
+  dismissBackgroundShell: (pid: number) => void;
+  setActiveBackgroundShellPid: (pid: number) => void;
+  setIsBackgroundShellListOpen: (isOpen: boolean) => void;
   setAuthContext: (context: { requiresRestart?: boolean }) => void;
   onHintInput: (char: string) => void;
   onHintBackspace: () => void;

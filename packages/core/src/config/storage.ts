@@ -62,10 +62,6 @@ export class Storage {
     return path.join(Storage.getGlobalGeminiDir(), 'mcp-oauth-tokens.json');
   }
 
-  static getA2AOAuthTokensPath(): string {
-    return path.join(Storage.getGlobalGeminiDir(), 'a2a-oauth-tokens.json');
-  }
-
   static getGlobalSettingsPath(): string {
     return path.join(Storage.getGlobalGeminiDir(), 'settings.json');
   }
@@ -96,10 +92,6 @@ export class Storage {
 
   static getUserPoliciesDir(): string {
     return path.join(Storage.getGlobalGeminiDir(), 'policies');
-  }
-
-  static getUserKeybindingsPath(): string {
-    return path.join(Storage.getGlobalGeminiDir(), 'keybindings.json');
   }
 
   static getUserAgentsDir(): string {
@@ -174,13 +166,6 @@ export class Storage {
 
   getWorkspacePoliciesDir(): string {
     return path.join(this.getGeminiDir(), 'policies');
-  }
-
-  getWorkspaceAutoSavedPolicyPath(): string {
-    return path.join(
-      this.getWorkspacePoliciesDir(),
-      AUTO_SAVED_POLICY_FILENAME,
-    );
   }
 
   getAutoSavedPolicyPath(): string {
@@ -266,18 +251,6 @@ export class Storage {
     return path.join(historyDir, identifier);
   }
 
-  getProjectMemoryDir(): string {
-    return this.getProjectMemoryTempDir();
-  }
-
-  getProjectMemoryTempDir(): string {
-    return path.join(this.getProjectTempDir(), 'memory');
-  }
-
-  getProjectSkillsMemoryDir(): string {
-    return path.join(this.getProjectMemoryTempDir(), 'skills');
-  }
-
   getWorkspaceSettingsPath(): string {
     return path.join(this.getGeminiDir(), 'settings.json');
   }
@@ -314,9 +287,6 @@ export class Storage {
   }
 
   getProjectTempTrackerDir(): string {
-    if (this.sessionId) {
-      return path.join(this.getProjectTempDir(), this.sessionId, 'tracker');
-    }
     return path.join(this.getProjectTempDir(), 'tracker');
   }
 
@@ -353,9 +323,7 @@ export class Storage {
     const chatsDir = path.join(this.getProjectTempDir(), 'chats');
     try {
       const files = await fs.promises.readdir(chatsDir);
-      const jsonFiles = files.filter(
-        (f) => f.endsWith('.json') || f.endsWith('.jsonl'),
-      );
+      const jsonFiles = files.filter((f) => f.endsWith('.json'));
 
       const sessions = await Promise.all(
         jsonFiles.map(async (file) => {

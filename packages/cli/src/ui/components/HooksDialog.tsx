@@ -9,8 +9,7 @@ import { useState, useMemo } from 'react';
 import { Box, Text } from 'ink';
 import { theme } from '../semantic-colors.js';
 import { useKeypress } from '../hooks/useKeypress.js';
-import { Command } from '../key/keyMatchers.js';
-import { useKeyMatchers } from '../hooks/useKeyMatchers.js';
+import { keyMatchers, Command } from '../keyMatchers.js';
 
 /**
  * Hook entry type matching HookRegistryEntry from core
@@ -50,7 +49,6 @@ export const HooksDialog: React.FC<HooksDialogProps> = ({
   onClose,
   maxVisibleHooks = DEFAULT_MAX_VISIBLE_HOOKS,
 }) => {
-  const keyMatchers = useKeyMatchers();
   const [scrollOffset, setScrollOffset] = useState(0);
 
   // Flatten hooks with their event names for easier scrolling
@@ -244,11 +242,6 @@ export const HooksDialog: React.FC<HooksDialogProps> = ({
           </Box>
         </>
       )}
-      <Box marginTop={1} flexDirection="column">
-        <Text color={theme.text.secondary} wrap="truncate">
-          (Press Esc to close)
-        </Text>
-      </Box>
     </Box>
   );
 };

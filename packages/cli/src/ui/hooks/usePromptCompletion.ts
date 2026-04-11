@@ -5,12 +5,8 @@
  */
 
 import { useState, useCallback, useRef, useEffect, useMemo } from 'react';
-import {
-  debugLogger,
-  getResponseText,
-  LlmRole,
-  type Config,
-} from '@google/gemini-cli-core';
+import type { Config } from '@google/gemini-cli-core';
+import { debugLogger, getResponseText, LlmRole } from '@google/gemini-cli-core';
 import type { Content } from '@google/genai';
 import type { TextBuffer } from '../components/shared/text-buffer.js';
 import { isSlashCommand } from '../utils/commandUtils.js';
