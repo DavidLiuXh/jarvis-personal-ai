@@ -31,7 +31,6 @@ import {
   canLoadServer,
 } from '../../config/mcp/mcpServerEnablement.js';
 import { loadSettings } from '../../config/settings.js';
-import { parseSlashCommand } from '../../utils/commands.js';
 
 const authCommand: SlashCommand = {
   name: 'auth',
@@ -43,8 +42,8 @@ const authCommand: SlashCommand = {
     args: string,
   ): Promise<MessageActionReturn> => {
     const serverName = args.trim();
-    const agentContext = context.services.agentContext;
-    const config = agentContext?.config;
+    const { config } = context.services;
+
     if (!config) {
       return {
         type: 'message',
@@ -139,7 +138,7 @@ const authCommand: SlashCommand = {
         await mcpClientManager.restartServer(serverName);
       }
       // Update the client with the new tools
-      const geminiClient = context.services.agentContext?.geminiClient;
+      const geminiClient = config.getGeminiClient();
       if (geminiClient?.isInitialized()) {
         await geminiClient.setTools();
       }
@@ -150,7 +149,7 @@ const authCommand: SlashCommand = {
       return {
         type: 'message',
         messageType: 'info',
-        content: `Successfully authenticated and reloaded tools for '${serverName}'`,
+        content: `Successfully authenticated and refreshed tools for '${serverName}'.`,
       };
     } catch (error) {
       return {
@@ -163,8 +162,7 @@ const authCommand: SlashCommand = {
     }
   },
   completion: async (context: CommandContext, partialArg: string) => {
-    const agentContext = context.services.agentContext;
-    const config = agentContext?.config;
+    const { config } = context.services;
     if (!config) return [];
 
     const mcpServers = config.getMcpClientManager()?.getMcpServers() || {};
@@ -178,10 +176,8 @@ const listAction = async (
   context: CommandContext,
   showDescriptions = false,
   showSchema = false,
-  serverNameFilter?: string,
 ): Promise<void | MessageActionReturn> => {
-  const agentContext = context.services.agentContext;
-  const config = agentContext?.config;
+  const { config } = context.services;
   if (!config) {
     return {
       type: 'message',
@@ -192,7 +188,7 @@ const listAction = async (
 
   config.setUserInteractedWithMcp();
 
-  const toolRegistry = agentContext.toolRegistry;
+  const toolRegistry = config.getToolRegistry();
   if (!toolRegistry) {
     return {
       type: 'message',
@@ -201,24 +197,10 @@ const listAction = async (
     };
   }
 
-  let mcpServers = config.getMcpClientManager()?.getMcpServers() || {};
+  const mcpServers = config.getMcpClientManager()?.getMcpServers() || {};
+  const serverNames = Object.keys(mcpServers);
   const blockedMcpServers =
     config.getMcpClientManager()?.getBlockedMcpServers() || [];
-
-  if (serverNameFilter) {
-    const filter = serverNameFilter.trim().toLowerCase();
-    if (filter) {
-      mcpServers = Object.fromEntries(
-        Object.entries(mcpServers).filter(
-          ([name]) =>
-            name.toLowerCase().includes(filter) ||
-            normalizeServerId(name).includes(filter),
-        ),
-      );
-    }
-  }
-
-  const serverNames = Object.keys(mcpServers);
 
   const connectingServers = serverNames.filter(
     (name) => getMCPServerStatus(name) === MCPServerStatus.CONNECTING,
@@ -322,7 +304,7 @@ const listCommand: SlashCommand = {
   description: 'List configured MCP servers and tools',
   kind: CommandKind.BUILT_IN,
   autoExecute: true,
-  action: (context, args) => listAction(context, false, false, args),
+  action: (context) => listAction(context),
 };
 
 const descCommand: SlashCommand = {
@@ -331,7 +313,7 @@ const descCommand: SlashCommand = {
   description: 'List configured MCP servers and tools with descriptions',
   kind: CommandKind.BUILT_IN,
   autoExecute: true,
-  action: (context, args) => listAction(context, true, false, args),
+  action: (context) => listAction(context, true),
 };
 
 const schemaCommand: SlashCommand = {
@@ -340,21 +322,19 @@ const schemaCommand: SlashCommand = {
     'List configured MCP servers and tools with descriptions and schemas',
   kind: CommandKind.BUILT_IN,
   autoExecute: true,
-  action: (context, args) => listAction(context, true, true, args),
+  action: (context) => listAction(context, true, true),
 };
 
-const reloadCommand: SlashCommand = {
-  name: 'reload',
-  altNames: ['refresh'],
-  description: 'Reloads MCP servers',
+const refreshCommand: SlashCommand = {
+  name: 'refresh',
+  altNames: ['reload'],
+  description: 'Restarts MCP servers',
   kind: CommandKind.BUILT_IN,
   autoExecute: true,
-  takesArgs: false,
   action: async (
     context: CommandContext,
   ): Promise<void | SlashCommandActionReturn> => {
-    const agentContext = context.services.agentContext;
-    const config = agentContext?.config;
+    const { config } = context.services;
     if (!config) {
       return {
         type: 'message',
@@ -374,13 +354,13 @@ const reloadCommand: SlashCommand = {
 
     context.ui.addItem({
       type: 'info',
-      text: 'Reloading MCP servers...',
+      text: 'Restarting MCP servers...',
     });
 
     await mcpClientManager.restart();
 
     // Update the client with the new tools
-    const geminiClient = agentContext.geminiClient;
+    const geminiClient = config.getGeminiClient();
     if (geminiClient?.isInitialized()) {
       await geminiClient.setTools();
     }
@@ -397,8 +377,7 @@ async function handleEnableDisable(
   args: string,
   enable: boolean,
 ): Promise<MessageActionReturn> {
-  const agentContext = context.services.agentContext;
-  const config = agentContext?.config;
+  const { config } = context.services;
   if (!config) {
     return {
       type: 'message',
@@ -481,13 +460,13 @@ async function handleEnableDisable(
   const mcpClientManager = config.getMcpClientManager();
   if (mcpClientManager) {
     context.ui.addItem(
-      { type: 'info', text: 'Reloading MCP servers...' },
+      { type: 'info', text: 'Restarting MCP servers...' },
       Date.now(),
     );
     await mcpClientManager.restart();
   }
-  if (agentContext.geminiClient?.isInitialized())
-    await agentContext.geminiClient.setTools();
+  if (config.getGeminiClient()?.isInitialized())
+    await config.getGeminiClient().setTools();
   context.ui.reloadCommands();
 
   return { type: 'message', messageType: 'info', content: msg };
@@ -498,8 +477,7 @@ async function getEnablementCompletion(
   partialArg: string,
   showEnabled: boolean,
 ): Promise<string[]> {
-  const agentContext = context.services.agentContext;
-  const config = agentContext?.config;
+  const { config } = context.services;
   if (!config) return [];
   const servers = Object.keys(
     config.getMcpClientManager()?.getMcpServers() || {},
@@ -543,22 +521,9 @@ export const mcpCommand: SlashCommand = {
     descCommand,
     schemaCommand,
     authCommand,
-    reloadCommand,
+    refreshCommand,
     enableCommand,
     disableCommand,
   ],
-  action: async (
-    context: CommandContext,
-    args: string,
-  ): Promise<void | SlashCommandActionReturn> => {
-    if (args) {
-      const parsed = parseSlashCommand(`/${args}`, mcpCommand.subCommands!);
-      if (parsed.commandToExecute?.action) {
-        return parsed.commandToExecute.action(context, parsed.args);
-      }
-      // If no subcommand matches, treat the whole args as a filter for list
-      return listAction(context, false, false, args);
-    }
-    return listAction(context);
-  },
+  action: async (context: CommandContext) => listAction(context),
 };

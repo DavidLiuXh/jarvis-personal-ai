@@ -5,23 +5,13 @@
  */
 
 import type React from 'react';
-import {
-  useState,
-  useRef,
-  useCallback,
-  useMemo,
-  useLayoutEffect,
-  useEffect,
-  useId,
-} from 'react';
+import { useState, useRef, useCallback, useMemo, useLayoutEffect } from 'react';
 import { Box, ResizeObserver, type DOMElement } from 'ink';
 import { useKeypress, type Key } from '../../hooks/useKeypress.js';
 import { useScrollable } from '../../contexts/ScrollProvider.js';
 import { useAnimatedScrollbar } from '../../hooks/useAnimatedScrollbar.js';
 import { useBatchedScroll } from '../../hooks/useBatchedScroll.js';
-import { Command } from '../../key/keyMatchers.js';
-import { useOverflowActions } from '../../contexts/OverflowContext.js';
-import { useKeyMatchers } from '../../hooks/useKeyMatchers.js';
+import { keyMatchers, Command } from '../../keyMatchers.js';
 
 interface ScrollableProps {
   children?: React.ReactNode;
@@ -32,10 +22,6 @@ interface ScrollableProps {
   hasFocus: boolean;
   scrollToBottom?: boolean;
   flexGrow?: number;
-  reportOverflow?: boolean;
-  overflowToBackbuffer?: boolean;
-  scrollbar?: boolean;
-  stableScrollback?: boolean;
 }
 
 export const Scrollable: React.FC<ScrollableProps> = ({
@@ -47,17 +33,10 @@ export const Scrollable: React.FC<ScrollableProps> = ({
   hasFocus,
   scrollToBottom,
   flexGrow,
-  reportOverflow = false,
-  overflowToBackbuffer,
-  scrollbar = true,
-  stableScrollback,
 }) => {
-  const keyMatchers = useKeyMatchers();
   const [scrollTop, setScrollTop] = useState(0);
   const viewportRef = useRef<DOMElement | null>(null);
   const contentRef = useRef<DOMElement | null>(null);
-  const overflowActions = useOverflowActions();
-  const id = useId();
   const [size, setSize] = useState({
     innerHeight: typeof height === 'number' ? height : 0,
     scrollHeight: 0,
@@ -73,37 +52,8 @@ export const Scrollable: React.FC<ScrollableProps> = ({
     scrollTopRef.current = scrollTop;
   }, [scrollTop]);
 
-  useEffect(() => {
-    if (reportOverflow && size.scrollHeight > size.innerHeight) {
-      overflowActions?.addOverflowingId?.(id);
-    } else {
-      overflowActions?.removeOverflowingId?.(id);
-    }
-  }, [
-    reportOverflow,
-    size.scrollHeight,
-    size.innerHeight,
-    id,
-    overflowActions,
-  ]);
-
-  useEffect(
-    () => () => {
-      overflowActions?.removeOverflowingId?.(id);
-    },
-    [id, overflowActions],
-  );
-
   const viewportObserverRef = useRef<ResizeObserver | null>(null);
   const contentObserverRef = useRef<ResizeObserver | null>(null);
-
-  useEffect(
-    () => () => {
-      viewportObserverRef.current?.disconnect();
-      contentObserverRef.current?.disconnect();
-    },
-    [],
-  );
 
   const viewportRefCallback = useCallback((node: DOMElement | null) => {
     viewportObserverRef.current?.disconnect();
@@ -261,9 +211,6 @@ export const Scrollable: React.FC<ScrollableProps> = ({
       scrollTop={scrollTop}
       flexGrow={flexGrow}
       scrollbarThumbColor={scrollbarColor}
-      overflowToBackbuffer={overflowToBackbuffer}
-      scrollbar={scrollbar}
-      stableScrollback={stableScrollback}
     >
       {/*
         This inner box is necessary to prevent the parent from shrinking

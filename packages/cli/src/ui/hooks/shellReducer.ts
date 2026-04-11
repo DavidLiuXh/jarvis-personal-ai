@@ -4,13 +4,9 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import type { AnsiOutput, CompletionBehavior } from '@google/gemini-cli-core';
-import {
-  MAX_SHELL_OUTPUT_SIZE,
-  SHELL_OUTPUT_TRUNCATION_BUFFER,
-} from '../constants.js';
+import type { AnsiOutput } from '@google/gemini-cli-core';
 
-export interface BackgroundTask {
+export interface BackgroundShell {
   pid: number;
   command: string;
   output: string | AnsiOutput;
@@ -18,14 +14,13 @@ export interface BackgroundTask {
   binaryBytesReceived: number;
   status: 'running' | 'exited';
   exitCode?: number;
-  completionBehavior?: CompletionBehavior;
 }
 
 export interface ShellState {
   activeShellPtyId: number | null;
   lastShellOutputTime: number;
-  backgroundTasks: Map<number, BackgroundTask>;
-  isBackgroundTaskVisible: boolean;
+  backgroundShells: Map<number, BackgroundShell>;
+  isBackgroundShellVisible: boolean;
 }
 
 export type ShellAction =
@@ -34,22 +29,21 @@ export type ShellAction =
   | { type: 'SET_VISIBILITY'; visible: boolean }
   | { type: 'TOGGLE_VISIBILITY' }
   | {
-      type: 'REGISTER_TASK';
+      type: 'REGISTER_SHELL';
       pid: number;
       command: string;
       initialOutput: string | AnsiOutput;
-      completionBehavior?: CompletionBehavior;
     }
-  | { type: 'UPDATE_TASK'; pid: number; update: Partial<BackgroundTask> }
-  | { type: 'APPEND_TASK_OUTPUT'; pid: number; chunk: string | AnsiOutput }
-  | { type: 'SYNC_BACKGROUND_TASKS' }
-  | { type: 'DISMISS_TASK'; pid: number };
+  | { type: 'UPDATE_SHELL'; pid: number; update: Partial<BackgroundShell> }
+  | { type: 'APPEND_SHELL_OUTPUT'; pid: number; chunk: string | AnsiOutput }
+  | { type: 'SYNC_BACKGROUND_SHELLS' }
+  | { type: 'DISMISS_SHELL'; pid: number };
 
 export const initialState: ShellState = {
   activeShellPtyId: null,
   lastShellOutputTime: 0,
-  backgroundTasks: new Map(),
-  isBackgroundTaskVisible: false,
+  backgroundShells: new Map(),
+  isBackgroundShellVisible: false,
 };
 
 export function shellReducer(
@@ -62,107 +56,75 @@ export function shellReducer(
     case 'SET_OUTPUT_TIME':
       return { ...state, lastShellOutputTime: action.time };
     case 'SET_VISIBILITY':
-      return { ...state, isBackgroundTaskVisible: action.visible };
+      return { ...state, isBackgroundShellVisible: action.visible };
     case 'TOGGLE_VISIBILITY':
       return {
         ...state,
-        isBackgroundTaskVisible: !state.isBackgroundTaskVisible,
+        isBackgroundShellVisible: !state.isBackgroundShellVisible,
       };
-    case 'REGISTER_TASK': {
-      if (state.backgroundTasks.has(action.pid)) return state;
-      const nextTasks = new Map(state.backgroundTasks);
-      nextTasks.set(action.pid, {
+    case 'REGISTER_SHELL': {
+      if (state.backgroundShells.has(action.pid)) return state;
+      const nextShells = new Map(state.backgroundShells);
+      nextShells.set(action.pid, {
         pid: action.pid,
         command: action.command,
         output: action.initialOutput,
         isBinary: false,
         binaryBytesReceived: 0,
         status: 'running',
-        completionBehavior: action.completionBehavior,
       });
-      return { ...state, backgroundTasks: nextTasks };
+      return { ...state, backgroundShells: nextShells };
     }
-    case 'UPDATE_TASK': {
-      const task = state.backgroundTasks.get(action.pid);
-      if (!task) return state;
-      const nextTasks = new Map(state.backgroundTasks);
-      const updatedTask = { ...task, ...action.update };
+    case 'UPDATE_SHELL': {
+      const shell = state.backgroundShells.get(action.pid);
+      if (!shell) return state;
+      const nextShells = new Map(state.backgroundShells);
+      const updatedShell = { ...shell, ...action.update };
       // Maintain insertion order, move to end if status changed to exited
       if (action.update.status === 'exited') {
-        nextTasks.delete(action.pid);
+        nextShells.delete(action.pid);
       }
-      nextTasks.set(action.pid, updatedTask);
-      return { ...state, backgroundTasks: nextTasks };
+      nextShells.set(action.pid, updatedShell);
+      return { ...state, backgroundShells: nextShells };
     }
-    case 'APPEND_TASK_OUTPUT': {
-      const task = state.backgroundTasks.get(action.pid);
-      if (!task) return state;
-      // Note: we mutate the task object in the map for background updates
+    case 'APPEND_SHELL_OUTPUT': {
+      const shell = state.backgroundShells.get(action.pid);
+      if (!shell) return state;
+      // Note: we mutate the shell object in the map for background updates
       // to avoid re-rendering if the drawer is not visible.
       // This is an intentional performance optimization for the CLI.
-      let newOutput = task.output;
+      let newOutput = shell.output;
       if (typeof action.chunk === 'string') {
-        // Check combined length BEFORE concatenation — the + operator itself
-        // can throw if the resulting string would exceed ~1 GB.
-        const currentOutput =
-          typeof task.output === 'string' ? task.output : '';
-        const combinedLength = currentOutput.length + action.chunk.length;
-
-        if (
-          combinedLength >
-          MAX_SHELL_OUTPUT_SIZE + SHELL_OUTPUT_TRUNCATION_BUFFER
-        ) {
-          if (action.chunk.length >= MAX_SHELL_OUTPUT_SIZE) {
-            // Incoming chunk alone exceeds the cap — keep its tail.
-            newOutput = action.chunk.slice(-MAX_SHELL_OUTPUT_SIZE);
-          } else {
-            // Keep as much of the existing output as possible, then append.
-            const keepFromCurrent = MAX_SHELL_OUTPUT_SIZE - action.chunk.length;
-            newOutput = currentOutput.slice(-keepFromCurrent) + action.chunk;
-          }
-
-          // Native slice operates on UTF-16 code units, so it may split a
-          // surrogate pair at the truncation boundary. If the first code unit
-          // of the result is a low surrogate (\uDC00-\uDFFF), trim it off to
-          // avoid emitting a broken character.
-          if (newOutput.length > 0) {
-            const firstCharCode = newOutput.charCodeAt(0);
-            if (firstCharCode >= 0xdc00 && firstCharCode <= 0xdfff) {
-              newOutput = newOutput.slice(1);
-            }
-          }
-        } else {
-          newOutput = currentOutput + action.chunk;
-        }
-      } else if (action.chunk) {
-        // AnsiOutput replaces the whole buffer.
+        newOutput =
+          typeof shell.output === 'string'
+            ? shell.output + action.chunk
+            : action.chunk;
+      } else {
         newOutput = action.chunk;
       }
-      // If action.chunk is falsy (e.g. empty string already handled above via
-      // typeof gate), newOutput remains unchanged — no data loss.
-      task.output = newOutput;
+      shell.output = newOutput;
 
       const nextState = { ...state, lastShellOutputTime: Date.now() };
 
-      if (state.isBackgroundTaskVisible) {
+      if (state.isBackgroundShellVisible) {
         return {
           ...nextState,
-          backgroundTasks: new Map(state.backgroundTasks),
+          backgroundShells: new Map(state.backgroundShells),
         };
       }
       return nextState;
     }
-    case 'SYNC_BACKGROUND_TASKS': {
-      return { ...state, backgroundTasks: new Map(state.backgroundTasks) };
+    case 'SYNC_BACKGROUND_SHELLS': {
+      return { ...state, backgroundShells: new Map(state.backgroundShells) };
     }
-    case 'DISMISS_TASK': {
-      const nextTasks = new Map(state.backgroundTasks);
-      nextTasks.delete(action.pid);
+    case 'DISMISS_SHELL': {
+      const nextShells = new Map(state.backgroundShells);
+      nextShells.delete(action.pid);
       return {
         ...state,
-        backgroundTasks: nextTasks,
-        isBackgroundTaskVisible:
-          nextTasks.size === 0 ? false : state.isBackgroundTaskVisible,
+        backgroundShells: nextShells,
+        isBackgroundShellVisible:
+          nextShells.size === 0 ? false : state.isBackgroundShellVisible,
       };
     }
     default:

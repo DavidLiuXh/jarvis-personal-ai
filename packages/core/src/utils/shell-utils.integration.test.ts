@@ -51,7 +51,7 @@ describe('execStreaming (Integration)', () => {
         for await (const line of generator) {
           lines.push(line);
         }
-      } catch {
+      } catch (_e) {
         // ignore
       }
       return lines;

@@ -13,13 +13,13 @@ import {
   useMemo,
   useEffect,
 } from 'react';
+
 import type {
   SessionMetrics,
   ModelMetrics,
-  RoleMetrics,
   ToolCallStats,
 } from '@google/gemini-cli-core';
-import { uiTelemetryService } from '@google/gemini-cli-core';
+import { uiTelemetryService, sessionId } from '@google/gemini-cli-core';
 
 export enum ToolCallDecision {
   ACCEPT = 'accept',
@@ -139,7 +139,7 @@ function areMetricsEqual(a: SessionMetrics, b: SessionMetrics): boolean {
   return true;
 }
 
-export type { SessionMetrics, ModelMetrics, RoleMetrics };
+export type { SessionMetrics, ModelMetrics };
 
 export interface SessionStatsState {
   sessionId: string;
@@ -182,10 +182,9 @@ const SessionStatsContext = createContext<SessionStatsContextValue | undefined>(
 
 // --- Provider Component ---
 
-export const SessionStatsProvider: React.FC<{
-  children: React.ReactNode;
-  sessionId: string;
-}> = ({ children, sessionId }) => {
+export const SessionStatsProvider: React.FC<{ children: React.ReactNode }> = ({
+  children,
+}) => {
   const [stats, setStats] = useState<SessionStatsState>({
     sessionId,
     sessionStartTime: new Date(),
@@ -217,17 +216,7 @@ export const SessionStatsProvider: React.FC<{
       });
     };
 
-    const handleClear = (newSessionId?: string) => {
-      setStats((prevState) => ({
-        ...prevState,
-        sessionId: newSessionId || prevState.sessionId,
-        sessionStartTime: new Date(),
-        promptCount: 0,
-      }));
-    };
-
     uiTelemetryService.on('update', handleUpdate);
-    uiTelemetryService.on('clear', handleClear);
     // Set initial state
     handleUpdate({
       metrics: uiTelemetryService.getMetrics(),
@@ -236,7 +225,6 @@ export const SessionStatsProvider: React.FC<{
 
     return () => {
       uiTelemetryService.off('update', handleUpdate);
-      uiTelemetryService.off('clear', handleClear);
     };
   }, []);
 

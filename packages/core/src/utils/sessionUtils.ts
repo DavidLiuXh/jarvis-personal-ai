@@ -51,24 +51,15 @@ export function convertSessionToClientHistory(
         parts: ensurePartArray(msg.content),
       });
     } else if (msg.type === 'gemini') {
-      const modelParts: Part[] = [];
-
-      // Add thoughts if present
-      if (msg.thoughts && msg.thoughts.length > 0) {
-        for (const thought of msg.thoughts) {
-          const thoughtText = thought.subject
-            ? `**${thought.subject}** ${thought.description}`
-            : thought.description;
-          modelParts.push({
-            text: thoughtText,
-            thought: true,
-          } as Part);
-        }
-      }
-
       const hasToolCalls = msg.toolCalls && msg.toolCalls.length > 0;
 
       if (hasToolCalls) {
+        const modelParts: Part[] = [];
+
+        // TODO: Revisit if we should preserve more than just Part metadata (e.g. thoughtSignatures)
+        // currently those are only required within an active loop turn which resume clears
+        // by forcing a new user text prompt.
+
         // Preserve original parts to maintain multimodal integrity
         if (msg.content) {
           modelParts.push(...ensurePartArray(msg.content));
@@ -123,14 +114,14 @@ export function convertSessionToClientHistory(
         }
       } else {
         if (msg.content) {
-          modelParts.push(...ensurePartArray(msg.content));
-        }
+          const parts = ensurePartArray(msg.content);
 
-        if (modelParts.length > 0) {
-          clientHistory.push({
-            role: 'model',
-            parts: modelParts,
-          });
+          if (parts.length > 0) {
+            clientHistory.push({
+              role: 'model',
+              parts,
+            });
+          }
         }
       }
     }

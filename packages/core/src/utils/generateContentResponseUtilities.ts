@@ -13,7 +13,6 @@ import type {
 import { getResponseText } from './partUtils.js';
 import { supportsMultimodalFunctionResponse } from '../config/models.js';
 import { debugLogger } from './debugLogger.js';
-import type { Config } from '../config/config.js';
 
 /**
  * Formats tool output for a Gemini FunctionResponse.
@@ -49,7 +48,6 @@ export function convertToFunctionResponse(
   callId: string,
   llmContent: PartListUnion,
   model: string,
-  config?: Config,
 ): Part[] {
   if (typeof llmContent === 'string') {
     return [createFunctionResponsePart(callId, toolName, llmContent)];
@@ -98,10 +96,7 @@ export function convertToFunctionResponse(
     },
   };
 
-  const isMultimodalFRSupported = supportsMultimodalFunctionResponse(
-    model,
-    config,
-  );
+  const isMultimodalFRSupported = supportsMultimodalFunctionResponse(model);
   const siblingParts: Part[] = [...fileDataParts];
 
   if (inlineDataParts.length > 0) {

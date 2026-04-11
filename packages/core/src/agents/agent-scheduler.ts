@@ -11,8 +11,6 @@ import type {
   CompletedToolCall,
 } from '../scheduler/types.js';
 import type { ToolRegistry } from '../tools/tool-registry.js';
-import type { PromptRegistry } from '../prompts/prompt-registry.js';
-import type { ResourceRegistry } from '../resources/resource-registry.js';
 import type { EditorType } from '../utils/editor.js';
 
 /**
@@ -21,16 +19,10 @@ import type { EditorType } from '../utils/editor.js';
 export interface AgentSchedulingOptions {
   /** The unique ID for this agent's scheduler. */
   schedulerId: string;
-  /** The name of the subagent. */
-  subagent?: string;
   /** The ID of the tool call that invoked this agent. */
   parentCallId?: string;
   /** The tool registry specific to this agent. */
   toolRegistry: ToolRegistry;
-  /** The prompt registry specific to this agent. */
-  promptRegistry?: PromptRegistry;
-  /** The resource registry specific to this agent. */
-  resourceRegistry?: ResourceRegistry;
   /** AbortSignal for cancellation. */
   signal: AbortSignal;
   /** Optional function to get the preferred editor for tool modifications. */
@@ -54,40 +46,26 @@ export async function scheduleAgentTools(
 ): Promise<CompletedToolCall[]> {
   const {
     schedulerId,
-    subagent,
     parentCallId,
     toolRegistry,
-    promptRegistry,
-    resourceRegistry,
     signal,
     getPreferredEditor,
     onWaitingForConfirmation,
   } = options;
 
-  const schedulerContext = {
-    config,
-    promptId: config.promptId,
-    toolRegistry,
-    promptRegistry: promptRegistry ?? config.getPromptRegistry(),
-    resourceRegistry: resourceRegistry ?? config.getResourceRegistry(),
-    messageBus: toolRegistry.messageBus,
-    geminiClient: config.geminiClient,
-    sandboxManager: config.sandboxManager,
-  };
+  // Create a proxy/override of the config to provide the agent-specific tool registry.
+  // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+  const agentConfig: Config = Object.create(config);
+  agentConfig.getToolRegistry = () => toolRegistry;
 
   const scheduler = new Scheduler({
-    context: schedulerContext,
-    messageBus: toolRegistry.messageBus,
+    config: agentConfig,
+    messageBus: config.getMessageBus(),
     getPreferredEditor: getPreferredEditor ?? (() => undefined),
     schedulerId,
-    subagent,
     parentCallId,
     onWaitingForConfirmation,
   });
 
-  try {
-    return await scheduler.schedule(requests, signal);
-  } finally {
-    scheduler.dispose();
-  }
+  return scheduler.schedule(requests, signal);
 }

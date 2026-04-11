@@ -248,13 +248,7 @@ export async function linkSkill(
       await fs.rm(destPath, { recursive: true, force: true });
     }
 
-    // Use 'junction' on Windows to avoid EPERM errors — junctions don't
-    // require elevated privileges or Developer Mode (fixes #24816)
-    await fs.symlink(
-      skillSourceDir,
-      destPath,
-      process.platform === 'win32' ? 'junction' : 'dir',
-    );
+    await fs.symlink(skillSourceDir, destPath, 'dir');
     linkedSkills.push({ name: skillName, location: destPath });
   }
 
@@ -275,32 +269,14 @@ export async function uninstallSkill(
       ? storage.getProjectSkillsDir()
       : Storage.getUserSkillsDir();
 
-  // Load all skills in the target directory to find the one with the matching name
-  const discoveredSkills = await loadSkillsFromDir(targetDir);
-  const skillToUninstall = discoveredSkills.find((s) => s.name === name);
+  const skillPath = path.join(targetDir, name);
 
-  if (!skillToUninstall) {
-    // Fallback: Check if a directory with the given name exists.
-    // This maintains backward compatibility for cases where the metadata might be missing or corrupted
-    // but the directory name matches the user's request.
-    const skillPath = path.resolve(targetDir, name);
+  const exists = await fs.stat(skillPath).catch(() => null);
 
-    // Security check: ensure the resolved path is within the target directory to prevent path traversal
-    if (!skillPath.startsWith(path.resolve(targetDir))) {
-      return null;
-    }
-
-    const exists = await fs.lstat(skillPath).catch(() => null);
-
-    if (!exists) {
-      return null;
-    }
-
-    await fs.rm(skillPath, { recursive: true, force: true });
-    return { location: skillPath };
+  if (!exists) {
+    return null;
   }
 
-  const skillDir = path.dirname(skillToUninstall.location);
-  await fs.rm(skillDir, { recursive: true, force: true });
-  return { location: skillDir };
+  await fs.rm(skillPath, { recursive: true, force: true });
+  return { location: skillPath };
 }

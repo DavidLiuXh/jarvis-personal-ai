@@ -29,7 +29,7 @@ export class OverrideStrategy implements RoutingStrategy {
     const overrideModel = context.requestedModel ?? config.getModel();
 
     // If the model is 'auto' we should pass to the next strategy.
-    if (isAutoModel(overrideModel, config)) {
+    if (isAutoModel(overrideModel)) {
       return null;
     }
 
@@ -38,10 +38,6 @@ export class OverrideStrategy implements RoutingStrategy {
       model: resolveModel(
         overrideModel,
         config.getGemini31LaunchedSync?.() ?? false,
-        config.getGemini31FlashLiteLaunchedSync?.() ?? false,
-        false,
-        config.getHasAccessToPreviewModel?.() ?? true,
-        config,
       ),
       metadata: {
         source: this.name,

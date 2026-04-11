@@ -6,16 +6,8 @@
 
 import { useState, useEffect, useRef, useMemo } from 'react';
 import { StreamingState } from '../types.js';
-import {
-  hasRedirection,
-  type CoreToolCallStatus,
-  type ToolCallRequestInfo,
-} from '@google/gemini-cli-core';
-
-export interface MinimalTrackedToolCall {
-  status: CoreToolCallStatus;
-  request: ToolCallRequestInfo;
-}
+import { hasRedirection } from '@google/gemini-cli-core';
+import { type TrackedToolCall } from './useToolScheduler.js';
 
 export interface TurnActivityStatus {
   operationStartTime: number;
@@ -29,7 +21,7 @@ export interface TurnActivityStatus {
 export const useTurnActivityMonitor = (
   streamingState: StreamingState,
   activePtyId: number | string | null | undefined,
-  pendingToolCalls: MinimalTrackedToolCall[] = [],
+  pendingToolCalls: TrackedToolCall[] = [],
 ): TurnActivityStatus => {
   const [operationStartTime, setOperationStartTime] = useState(0);
 

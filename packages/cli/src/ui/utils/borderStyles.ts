@@ -13,7 +13,7 @@ import type {
   HistoryItemToolGroup,
   IndividualToolCallDisplay,
 } from '../types.js';
-import type { BackgroundTask } from '../hooks/shellReducer.js';
+import type { BackgroundShell } from '../hooks/shellReducer.js';
 import type { TrackedToolCall } from '../hooks/useToolScheduler.js';
 
 function isTrackedToolCall(
@@ -29,14 +29,11 @@ export function getToolGroupBorderAppearance(
   item:
     | HistoryItem
     | HistoryItemWithoutId
-    | {
-        type: 'tool_group';
-        tools: Array<IndividualToolCallDisplay | TrackedToolCall>;
-      },
+    | { type: 'tool_group'; tools: TrackedToolCall[] },
   activeShellPtyId: number | null | undefined,
   embeddedShellFocused: boolean | undefined,
   allPendingItems: HistoryItemWithoutId[] = [],
-  backgroundTasks: Map<number, BackgroundTask> = new Map(),
+  backgroundShells: Map<number, BackgroundShell> = new Map(),
 ): { borderColor: string; borderDimColor: boolean } {
   if (item.type !== 'tool_group') {
     return { borderColor: '', borderDimColor: false };
@@ -44,7 +41,7 @@ export function getToolGroupBorderAppearance(
 
   // If this item has no tools, it's a closing slice for the current batch.
   // We need to look at the last pending item to determine the batch's appearance.
-  const toolsToInspect =
+  const toolsToInspect: Array<IndividualToolCallDisplay | TrackedToolCall> =
     item.tools.length > 0
       ? item.tools
       : allPendingItems
@@ -103,7 +100,7 @@ export function getToolGroupBorderAppearance(
   // If we have an active PTY that isn't a background shell, then the current
   // pending batch is definitely a shell batch.
   const isCurrentlyInShellTurn =
-    !!activeShellPtyId && !backgroundTasks.has(activeShellPtyId);
+    !!activeShellPtyId && !backgroundShells.has(activeShellPtyId);
 
   const isShell =
     isShellCommand || (item.tools.length === 0 && isCurrentlyInShellTurn);

@@ -354,7 +354,7 @@ export class IdeClient {
           if (parsedJson && parsedJson.content === null) {
             return undefined;
           }
-        } catch {
+        } catch (_e) {
           logger.debug(
             `Invalid JSON in closeDiff response for ${filePath}:`,
             textPart.text,
@@ -602,7 +602,7 @@ export class IdeClient {
       await this.discoverTools();
       this.setState(IDEConnectionStatus.Connected);
       return true;
-    } catch {
+    } catch (_error) {
       if (transport) {
         try {
           await transport.close();
@@ -636,7 +636,7 @@ export class IdeClient {
       await this.discoverTools();
       this.setState(IDEConnectionStatus.Connected);
       return true;
-    } catch {
+    } catch (_error) {
       if (transport) {
         try {
           await transport.close();

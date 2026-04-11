@@ -7,11 +7,9 @@
 import type React from 'react';
 import { Box, Text } from 'ink';
 import { theme } from '../semantic-colors.js';
-import { formatCommand } from '../key/keybindingUtils.js';
-import { Command } from '../key/keyBindings.js';
 
 export const RawMarkdownIndicator: React.FC = () => {
-  const modKey = formatCommand(Command.TOGGLE_MARKDOWN);
+  const modKey = process.platform === 'darwin' ? 'option+m' : 'alt+m';
   return (
     <Box>
       <Text>

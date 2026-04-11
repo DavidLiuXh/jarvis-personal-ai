@@ -9,7 +9,6 @@ import { type ReactNode } from 'react';
 import { theme } from '../semantic-colors.js';
 import { MarkdownDisplay } from '../utils/MarkdownDisplay.js';
 import { RadioButtonSelect } from './shared/RadioButtonSelect.js';
-import { DialogFooter } from './shared/DialogFooter.js';
 
 type ConsentPromptProps = {
   // If a simple string is given, it will render using markdown by default.
@@ -38,17 +37,13 @@ export const ConsentPrompt = (props: ConsentPromptProps) => {
       ) : (
         prompt
       )}
-      <Box marginTop={1} flexDirection="column">
+      <Box marginTop={1}>
         <RadioButtonSelect
           items={[
             { label: 'Yes', value: true, key: 'Yes' },
             { label: 'No', value: false, key: 'No' },
           ]}
           onSelect={onConfirm}
-        />
-        <DialogFooter
-          primaryAction="Enter to select"
-          navigationActions="↑/↓ to navigate"
         />
       </Box>
     </Box>

@@ -241,7 +241,6 @@ export class Turn {
   readonly pendingToolCalls: ToolCallRequestInfo[] = [];
   private debugResponses: GenerateContentResponse[] = [];
   private pendingCitations = new Set<string>();
-  private cachedResponseText: string | undefined = undefined;
   finishReason: FinishReason | undefined = undefined;
 
   constructor(
@@ -433,15 +432,11 @@ export class Turn {
   /**
    * Get the concatenated response text from all responses in this turn.
    * This extracts and joins all text content from the model's responses.
-   * The result is cached since this is called multiple times per turn.
    */
   getResponseText(): string {
-    if (this.cachedResponseText === undefined) {
-      this.cachedResponseText = this.debugResponses
-        .map((response) => getResponseText(response))
-        .filter((text): text is string => text !== null)
-        .join(' ');
-    }
-    return this.cachedResponseText;
+    return this.debugResponses
+      .map((response) => getResponseText(response))
+      .filter((text): text is string => text !== null)
+      .join(' ');
   }
 }

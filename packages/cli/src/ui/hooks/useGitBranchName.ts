@@ -31,7 +31,7 @@ export function useGitBranchName(cwd: string): string | undefined {
         );
         setBranchName(hashStdout.toString().trim());
       }
-    } catch {
+    } catch (_error) {
       setBranchName(undefined);
     }
   }, [cwd, setBranchName]);
@@ -57,7 +57,7 @@ export function useGitBranchName(cwd: string): string | undefined {
             fetchBranchName();
           }
         });
-      } catch {
+      } catch (_watchError) {
         // Silently ignore watcher errors (e.g. permissions or file not existing),
         // similar to how exec errors are handled.
         // The branch name will simply not update automatically.

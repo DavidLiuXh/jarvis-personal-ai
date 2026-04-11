@@ -5,16 +5,17 @@
  */
 
 import type React from 'react';
-import { Component, type ReactNode, act } from 'react';
+import { Component, type ReactNode } from 'react';
 import { renderHook, render } from '../../test-utils/render.js';
+import { act } from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { SettingsContext, useSettingsStore } from './SettingsContext.js';
 import {
-  SettingScope,
-  createTestMergedSettings,
   type LoadedSettings,
+  SettingScope,
   type LoadedSettingsSnapshot,
   type SettingsFile,
+  createTestMergedSettings,
 } from '../../config/settings.js';
 
 const createMockSettingsFile = (path: string): SettingsFile => ({
@@ -90,15 +91,15 @@ describe('SettingsContext', () => {
     </SettingsContext.Provider>
   );
 
-  it('should provide the correct initial state', async () => {
-    const { result } = await renderHook(() => useSettingsStore(), { wrapper });
+  it('should provide the correct initial state', () => {
+    const { result } = renderHook(() => useSettingsStore(), { wrapper });
 
     expect(result.current.settings.merged).toEqual(mockSnapshot.merged);
     expect(result.current.settings.isTrusted).toBe(true);
   });
 
-  it('should allow accessing settings for a specific scope', async () => {
-    const { result } = await renderHook(() => useSettingsStore(), { wrapper });
+  it('should allow accessing settings for a specific scope', () => {
+    const { result } = renderHook(() => useSettingsStore(), { wrapper });
 
     const userSettings = result.current.settings.forScope(SettingScope.User);
     expect(userSettings).toBe(mockSnapshot.user);
@@ -109,8 +110,8 @@ describe('SettingsContext', () => {
     expect(workspaceSettings).toBe(mockSnapshot.workspace);
   });
 
-  it('should trigger re-renders when settings change (external event)', async () => {
-    const { result } = await renderHook(() => useSettingsStore(), { wrapper });
+  it('should trigger re-renders when settings change (external event)', () => {
+    const { result } = renderHook(() => useSettingsStore(), { wrapper });
 
     expect(result.current.settings.merged.ui?.theme).toBe('default-theme');
 
@@ -130,8 +131,8 @@ describe('SettingsContext', () => {
     expect(result.current.settings.merged.ui?.theme).toBe('new-theme');
   });
 
-  it('should call store.setValue when setSetting is called', async () => {
-    const { result } = await renderHook(() => useSettingsStore(), { wrapper });
+  it('should call store.setValue when setSetting is called', () => {
+    const { result } = renderHook(() => useSettingsStore(), { wrapper });
 
     act(() => {
       result.current.setSetting(SettingScope.User, 'ui.theme', 'dark');
@@ -144,12 +145,12 @@ describe('SettingsContext', () => {
     );
   });
 
-  it('should throw error if used outside provider', async () => {
+  it('should throw error if used outside provider', () => {
     const onError = vi.fn();
     // Suppress console.error (React logs error boundary info)
     const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 
-    await render(
+    render(
       <ErrorBoundary onError={onError}>
         <TestHarness />
       </ErrorBoundary>,

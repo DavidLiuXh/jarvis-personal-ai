@@ -17,7 +17,7 @@ describe('SuggestionsDisplay', () => {
   ];
 
   it('renders loading state', async () => {
-    const { lastFrame } = await render(
+    const { lastFrame, waitUntilReady } = render(
       <SuggestionsDisplay
         suggestions={[]}
         activeIndex={0}
@@ -28,11 +28,12 @@ describe('SuggestionsDisplay', () => {
         mode="reverse"
       />,
     );
+    await waitUntilReady();
     expect(lastFrame()).toMatchSnapshot();
   });
 
   it('renders nothing when empty and not loading', async () => {
-    const { lastFrame } = await render(
+    const { lastFrame, waitUntilReady } = render(
       <SuggestionsDisplay
         suggestions={[]}
         activeIndex={0}
@@ -43,11 +44,12 @@ describe('SuggestionsDisplay', () => {
         mode="reverse"
       />,
     );
+    await waitUntilReady();
     expect(lastFrame({ allowEmpty: true })).toBe('');
   });
 
   it('renders suggestions list', async () => {
-    const { lastFrame } = await render(
+    const { lastFrame, waitUntilReady } = render(
       <SuggestionsDisplay
         suggestions={mockSuggestions}
         activeIndex={0}
@@ -58,13 +60,14 @@ describe('SuggestionsDisplay', () => {
         mode="reverse"
       />,
     );
+    await waitUntilReady();
     expect(lastFrame()).toMatchSnapshot();
   });
 
   it('highlights active item', async () => {
     // This test relies on visual inspection or implementation details (colors)
     // For now, we just ensure it renders without error and contains the item
-    const { lastFrame } = await render(
+    const { lastFrame, waitUntilReady } = render(
       <SuggestionsDisplay
         suggestions={mockSuggestions}
         activeIndex={1}
@@ -75,6 +78,7 @@ describe('SuggestionsDisplay', () => {
         mode="reverse"
       />,
     );
+    await waitUntilReady();
     expect(lastFrame()).toMatchSnapshot();
   });
 
@@ -85,7 +89,7 @@ describe('SuggestionsDisplay', () => {
       description: `Description ${i}`,
     }));
 
-    const { lastFrame } = await render(
+    const { lastFrame, waitUntilReady } = render(
       <SuggestionsDisplay
         suggestions={manySuggestions}
         activeIndex={10}
@@ -96,6 +100,7 @@ describe('SuggestionsDisplay', () => {
         mode="reverse"
       />,
     );
+    await waitUntilReady();
     expect(lastFrame()).toMatchSnapshot();
   });
 
@@ -108,7 +113,7 @@ describe('SuggestionsDisplay', () => {
       },
     ];
 
-    const { lastFrame } = await render(
+    const { lastFrame, waitUntilReady } = render(
       <SuggestionsDisplay
         suggestions={mcpSuggestions}
         activeIndex={0}
@@ -119,45 +124,7 @@ describe('SuggestionsDisplay', () => {
         mode="reverse"
       />,
     );
+    await waitUntilReady();
     expect(lastFrame()).toMatchSnapshot();
-  });
-
-  it('renders command section separators for slash mode', async () => {
-    const groupedSuggestions = [
-      {
-        label: 'list',
-        value: 'list',
-        description: 'Browse auto-saved chats',
-        sectionTitle: 'auto',
-      },
-      {
-        label: 'list',
-        value: 'list',
-        description: 'List checkpoints',
-        sectionTitle: 'checkpoints',
-      },
-      {
-        label: 'save',
-        value: 'save',
-        description: 'Save checkpoint',
-        sectionTitle: 'checkpoints',
-      },
-    ];
-
-    const { lastFrame } = await render(
-      <SuggestionsDisplay
-        suggestions={groupedSuggestions}
-        activeIndex={0}
-        isLoading={false}
-        width={100}
-        scrollOffset={0}
-        userInput="/resume"
-        mode="slash"
-      />,
-    );
-
-    const frame = lastFrame();
-    expect(frame).toContain('-- auto --');
-    expect(frame).toContain('-- checkpoints --');
   });
 });

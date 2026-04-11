@@ -29,8 +29,6 @@ import {
   cleanupTerminalOnExit,
   terminalCapabilityManager,
 } from '../utils/terminalCapabilityManager.js';
-import { formatCommand } from '../key/keybindingUtils.js';
-import { Command } from '../key/keyBindings.js';
 
 vi.mock('@google/gemini-cli-core', async () => {
   const actual = await vi.importActual('@google/gemini-cli-core');
@@ -80,7 +78,7 @@ describe('useSuspend', () => {
     setPlatform(originalPlatform);
   });
 
-  it('cleans terminal state on suspend and restores/repaints on resume in alternate screen mode', async () => {
+  it('cleans terminal state on suspend and restores/repaints on resume in alternate screen mode', () => {
     const handleWarning = vi.fn();
     const setRawMode = vi.fn();
     const refreshStatic = vi.fn();
@@ -88,7 +86,7 @@ describe('useSuspend', () => {
     const enableSupportedModes =
       terminalCapabilityManager.enableSupportedModes as unknown as Mock;
 
-    const { result, unmount } = await renderHook(() =>
+    const { result, unmount } = renderHook(() =>
       useSuspend({
         handleWarning,
         setRawMode,
@@ -101,12 +99,8 @@ describe('useSuspend', () => {
     act(() => {
       result.current.handleSuspend();
     });
-
-    const suspendKey = formatCommand(Command.SUSPEND_APP);
-    const undoKey = formatCommand(Command.UNDO);
-
     expect(handleWarning).toHaveBeenCalledWith(
-      `Press ${suspendKey} again to suspend. Undo has moved to ${undoKey}.`,
+      'Press Ctrl+Z again to suspend. Undo has moved to Cmd + Z or Alt/Opt + Z.',
     );
 
     act(() => {
@@ -137,13 +131,13 @@ describe('useSuspend', () => {
     unmount();
   });
 
-  it('does not toggle alternate screen or mouse restore when alternate screen mode is disabled', async () => {
+  it('does not toggle alternate screen or mouse restore when alternate screen mode is disabled', () => {
     const handleWarning = vi.fn();
     const setRawMode = vi.fn();
     const refreshStatic = vi.fn();
     const setForceRerenderKey = vi.fn();
 
-    const { result, unmount } = await renderHook(() =>
+    const { result, unmount } = renderHook(() =>
       useSuspend({
         handleWarning,
         setRawMode,
@@ -169,7 +163,7 @@ describe('useSuspend', () => {
     unmount();
   });
 
-  it('warns and skips suspension on windows', async () => {
+  it('warns and skips suspension on windows', () => {
     setPlatform('win32');
 
     const handleWarning = vi.fn();
@@ -177,7 +171,7 @@ describe('useSuspend', () => {
     const refreshStatic = vi.fn();
     const setForceRerenderKey = vi.fn();
 
-    const { result, unmount } = await renderHook(() =>
+    const { result, unmount } = renderHook(() =>
       useSuspend({
         handleWarning,
         setRawMode,
@@ -196,9 +190,8 @@ describe('useSuspend', () => {
       result.current.handleSuspend();
     });
 
-    const suspendKey = formatCommand(Command.SUSPEND_APP);
     expect(handleWarning).toHaveBeenCalledWith(
-      `${suspendKey} suspend is not supported on Windows.`,
+      'Ctrl+Z suspend is not supported on Windows.',
     );
     expect(killSpy).not.toHaveBeenCalled();
     expect(cleanupTerminalOnExit).not.toHaveBeenCalled();

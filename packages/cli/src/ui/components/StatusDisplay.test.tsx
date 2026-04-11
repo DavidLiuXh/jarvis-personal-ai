@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render } from '../../test-utils/render.js';
 import { Text } from 'ink';
 import { StatusDisplay } from './StatusDisplay.js';
@@ -51,7 +51,7 @@ const createMockUIState = (overrides: UIStateOverrides = {}): UIState =>
     ideContextState: null,
     geminiMdFileCount: 0,
     contextFileNames: [],
-    backgroundTaskCount: 0,
+    backgroundShellCount: 0,
     buffer: { text: '' },
     history: [{ id: 1, type: 'user', text: 'test' }],
     ...overrides,
@@ -75,7 +75,7 @@ const renderStatusDisplay = async (
   settings = createMockSettings(),
   config = createMockConfig(),
 ) => {
-  const result = await render(
+  const result = render(
     <ConfigContext.Provider value={config as unknown as Config}>
       <SettingsContext.Provider value={settings as unknown as LoadedSettings}>
         <UIStateContext.Provider value={uiState}>
@@ -84,6 +84,7 @@ const renderStatusDisplay = async (
       </SettingsContext.Provider>
     </ConfigContext.Provider>,
   );
+  await result.waitUntilReady();
   return result;
 };
 
@@ -159,9 +160,9 @@ describe('StatusDisplay', () => {
     unmount();
   });
 
-  it('passes backgroundTaskCount to ContextSummaryDisplay', async () => {
+  it('passes backgroundShellCount to ContextSummaryDisplay', async () => {
     const uiState = createMockUIState({
-      backgroundTaskCount: 3,
+      backgroundShellCount: 3,
     });
     const { lastFrame, unmount } = await renderStatusDisplay(
       { hideContextSummary: false },

@@ -6,27 +6,27 @@
 
 import { render } from '../../test-utils/render.js';
 import { RawMarkdownIndicator } from './RawMarkdownIndicator.js';
-import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest';
+import { describe, it, expect, afterEach } from 'vitest';
 
 describe('RawMarkdownIndicator', () => {
   const originalPlatform = process.platform;
-
-  beforeEach(() => vi.stubEnv('FORCE_GENERIC_KEYBINDING_HINTS', ''));
 
   afterEach(() => {
     Object.defineProperty(process, 'platform', {
       value: originalPlatform,
     });
-    vi.unstubAllEnvs();
   });
 
   it('renders correct key binding for darwin', async () => {
     Object.defineProperty(process, 'platform', {
       value: 'darwin',
     });
-    const { lastFrame, unmount } = await render(<RawMarkdownIndicator />);
+    const { lastFrame, waitUntilReady, unmount } = render(
+      <RawMarkdownIndicator />,
+    );
+    await waitUntilReady();
     expect(lastFrame()).toContain('raw markdown mode');
-    expect(lastFrame()).toContain('Option+M to toggle');
+    expect(lastFrame()).toContain('option+m to toggle');
     unmount();
   });
 
@@ -34,9 +34,12 @@ describe('RawMarkdownIndicator', () => {
     Object.defineProperty(process, 'platform', {
       value: 'linux',
     });
-    const { lastFrame, unmount } = await render(<RawMarkdownIndicator />);
+    const { lastFrame, waitUntilReady, unmount } = render(
+      <RawMarkdownIndicator />,
+    );
+    await waitUntilReady();
     expect(lastFrame()).toContain('raw markdown mode');
-    expect(lastFrame()).toContain('Alt+M to toggle');
+    expect(lastFrame()).toContain('alt+m to toggle');
     unmount();
   });
 });

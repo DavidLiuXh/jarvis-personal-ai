@@ -4,14 +4,13 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import type React from 'react';
 import { useCallback } from 'react';
+import type React from 'react';
 import { useKeypress } from '../hooks/useKeypress.js';
 import { ShellExecutionService } from '@google/gemini-cli-core';
-import { keyToAnsi, type Key } from '../key/keyToAnsi.js';
+import { keyToAnsi, type Key } from '../hooks/keyToAnsi.js';
 import { ACTIVE_SHELL_MAX_LINES } from '../constants.js';
-import { Command } from '../key/keyMatchers.js';
-import { useKeyMatchers } from '../hooks/useKeyMatchers.js';
+import { Command, keyMatchers } from '../keyMatchers.js';
 
 export interface ShellInputPromptProps {
   activeShellPtyId: number | null;
@@ -24,7 +23,6 @@ export const ShellInputPrompt: React.FC<ShellInputPromptProps> = ({
   focus = true,
   scrollPageSize = ACTIVE_SHELL_MAX_LINES,
 }) => {
-  const keyMatchers = useKeyMatchers();
   const handleShellInputSubmit = useCallback(
     (input: string) => {
       if (activeShellPtyId) {
@@ -75,13 +73,7 @@ export const ShellInputPrompt: React.FC<ShellInputPromptProps> = ({
 
       return false;
     },
-    [
-      focus,
-      handleShellInputSubmit,
-      activeShellPtyId,
-      scrollPageSize,
-      keyMatchers,
-    ],
+    [focus, handleShellInputSubmit, activeShellPtyId, scrollPageSize],
   );
 
   useKeypress(handleInput, { isActive: focus });

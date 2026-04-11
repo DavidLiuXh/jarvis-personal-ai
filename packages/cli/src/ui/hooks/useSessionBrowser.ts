@@ -6,19 +6,19 @@
 
 import { useState, useCallback } from 'react';
 import type { HistoryItemWithoutId } from '../types.js';
+import * as fs from 'node:fs/promises';
 import path from 'node:path';
+import type {
+  Config,
+  ConversationRecord,
+  ResumedSessionData,
+} from '@google/gemini-cli-core';
 import {
   coreEvents,
   convertSessionToClientHistory,
-  uiTelemetryService,
-  loadConversationRecord,
-  type Config,
-  type ResumedSessionData,
 } from '@google/gemini-cli-core';
-import {
-  convertSessionToHistoryFormats,
-  type SessionInfo,
-} from '../../utils/sessionUtils.js';
+import type { SessionInfo } from '../../utils/sessionUtils.js';
+import { convertSessionToHistoryFormats } from '../../utils/sessionUtils.js';
 import type { Part } from '@google/genai';
 
 export { convertSessionToHistoryFormats };
@@ -60,17 +60,14 @@ export const useSessionBrowser = (
           const originalFilePath = path.join(chatsDir, fileName);
 
           // Load up the conversation.
-          const conversation = await loadConversationRecord(originalFilePath);
-          if (!conversation) {
-            throw new Error(
-              `Failed to parse conversation from ${originalFilePath}`,
-            );
-          }
+          // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+          const conversation: ConversationRecord = JSON.parse(
+            await fs.readFile(originalFilePath, 'utf8'),
+          );
 
           // Use the old session's ID to continue it.
           const existingSessionId = conversation.sessionId;
           config.setSessionId(existingSessionId);
-          uiTelemetryService.hydrate(conversation);
 
           const resumedSessionData = {
             conversation,
@@ -99,7 +96,7 @@ export const useSessionBrowser = (
      * Deletes a session by ID using the ChatRecordingService.
      */
     handleDeleteSession: useCallback(
-      async (session: SessionInfo) => {
+      (session: SessionInfo) => {
         // Note: Chat sessions are stored on disk using a filename derived from
         // the session, e.g. "session-<timestamp>-<sessionIdPrefix>.json".
         // The ChatRecordingService.deleteSession API expects this file basename
@@ -109,7 +106,7 @@ export const useSessionBrowser = (
             .getGeminiClient()
             ?.getChatRecordingService();
           if (chatRecordingService) {
-            await chatRecordingService.deleteSession(session.file);
+            chatRecordingService.deleteSession(session.file);
           }
         } catch (error) {
           coreEvents.emitFeedback('error', 'Error deleting session:', error);

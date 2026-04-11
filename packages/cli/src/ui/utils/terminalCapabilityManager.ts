@@ -13,14 +13,12 @@ import {
   disableModifyOtherKeys,
   enableBracketedPasteMode,
   disableBracketedPasteMode,
-  disableMouseEvents,
 } from '@google/gemini-cli-core';
 import { parseColor } from '../themes/color-utils.js';
 
 export type TerminalBackgroundColor = string | undefined;
 
-const TERMINAL_CLEANUP_SEQUENCE =
-  '\x1b[<u\x1b[>4;0m\x1b[?2004l\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l';
+const TERMINAL_CLEANUP_SEQUENCE = '\x1b[<u\x1b[>4;0m\x1b[?2004l';
 
 export function cleanupTerminalOnExit() {
   try {
@@ -35,7 +33,6 @@ export function cleanupTerminalOnExit() {
   disableKittyKeyboardProtocol();
   disableModifyOtherKeys();
   disableBracketedPasteMode();
-  disableMouseEvents();
 }
 
 export class TerminalCapabilityManager {
@@ -141,6 +138,9 @@ export class TerminalCapabilityManager {
           process.stdin.setRawMode(false);
         }
         this.detectionComplete = true;
+
+        this.enableSupportedModes();
+
         resolve();
       };
 
@@ -246,11 +246,9 @@ export class TerminalCapabilityManager {
   enableSupportedModes() {
     try {
       if (this.kittySupported) {
-        debugLogger.log('Enabling Kitty keyboard protocol');
         enableKittyKeyboardProtocol();
         this.kittyEnabled = true;
       } else if (this.modifyOtherKeysSupported) {
-        debugLogger.log('Enabling modifyOtherKeys');
         enableModifyOtherKeys();
       }
       // Always enable bracketed paste since it'll be ignored if unsupported.
@@ -270,18 +268,6 @@ export class TerminalCapabilityManager {
 
   isKittyProtocolEnabled(): boolean {
     return this.kittyEnabled;
-  }
-
-  isGhosttyTerminal(env: NodeJS.ProcessEnv = process.env): boolean {
-    const termProgram = env['TERM_PROGRAM']?.toLowerCase();
-    const term = env['TERM']?.toLowerCase();
-    const name = this.getTerminalName()?.toLowerCase();
-
-    return !!(
-      name?.includes('ghostty') ||
-      termProgram?.includes('ghostty') ||
-      term?.includes('ghostty')
-    );
   }
 
   supportsOsc9Notifications(env: NodeJS.ProcessEnv = process.env): boolean {

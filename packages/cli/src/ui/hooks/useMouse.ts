@@ -5,11 +5,8 @@
  */
 
 import { useEffect } from 'react';
-import {
-  useMouseContext,
-  type MouseHandler,
-  type MouseEvent,
-} from '../contexts/MouseContext.js';
+import type { MouseHandler, MouseEvent } from '../contexts/MouseContext.js';
+import { useMouseContext } from '../contexts/MouseContext.js';
 
 export type { MouseEvent };
 

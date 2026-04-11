@@ -16,7 +16,6 @@ import {
   ToolConfirmationOutcome,
   type ToolConfirmationPayload,
   type ToolCallConfirmationDetails,
-  type ForcedToolDecision,
 } from '../tools/tools.js';
 import {
   type ValidatingToolCall,
@@ -117,8 +116,6 @@ export async function resolveConfirmation(
     getPreferredEditor: () => EditorType | undefined;
     schedulerId: string;
     onWaitingForConfirmation?: (waiting: boolean) => void;
-    systemMessage?: string;
-    forcedDecision?: ForcedToolDecision;
   },
 ): Promise<ResolutionResult> {
   const { state, onWaitingForConfirmation } = deps;
@@ -129,7 +126,7 @@ export async function resolveConfirmation(
   // Loop exists to allow the user to modify the parameters and see the new
   // diff.
   while (outcome === ToolConfirmationOutcome.ModifyWithEditor) {
-    if (signal.aborted) throw new Error('Operation cancelled by user');
+    if (signal.aborted) throw new Error('Operation cancelled');
 
     const currentCall = state.getToolCall(callId);
     if (!currentCall || !('invocation' in currentCall)) {
@@ -137,17 +134,10 @@ export async function resolveConfirmation(
     }
     const currentInvocation = currentCall.invocation;
 
-    const details = await currentInvocation.shouldConfirmExecute(
-      signal,
-      deps.forcedDecision,
-    );
+    const details = await currentInvocation.shouldConfirmExecute(signal);
     if (!details) {
       outcome = ToolConfirmationOutcome.ProceedOnce;
       break;
-    }
-
-    if (deps.systemMessage) {
-      details.systemMessage = deps.systemMessage;
     }
 
     await notifyHooks(deps, details);

@@ -15,18 +15,15 @@ import {
 } from 'react';
 import { Box, Text } from 'ink';
 import { theme } from '../semantic-colors.js';
-import { checkExhaustive, type Question } from '@google/gemini-cli-core';
+import type { Question } from '@google/gemini-cli-core';
 import { BaseSelectionList } from './shared/BaseSelectionList.js';
 import type { SelectionListItem } from '../hooks/useSelectionList.js';
 import { TabHeader, type Tab } from './shared/TabHeader.js';
 import { useKeypress, type Key } from '../hooks/useKeypress.js';
-import { Command } from '../key/keyMatchers.js';
+import { keyMatchers, Command } from '../keyMatchers.js';
+import { checkExhaustive } from '@google/gemini-cli-core';
 import { TextInput } from './shared/TextInput.js';
-import { formatCommand } from '../key/keybindingUtils.js';
-import {
-  useTextBuffer,
-  expandPastePlaceholders,
-} from './shared/text-buffer.js';
+import { useTextBuffer } from './shared/text-buffer.js';
 import { getCachedStringWidth } from '../utils/textUtils.js';
 import { useTabbedNavigation } from '../hooks/useTabbedNavigation.js';
 import { DialogFooter } from './shared/DialogFooter.js';
@@ -35,7 +32,6 @@ import { RenderInline } from '../utils/InlineMarkdownRenderer.js';
 import { MaxSizedBox } from './shared/MaxSizedBox.js';
 import { UIStateContext } from '../contexts/UIStateContext.js';
 import { useAlternateBuffer } from '../hooks/useAlternateBuffer.js';
-import { useKeyMatchers } from '../hooks/useKeyMatchers.js';
 
 /** Padding for dialog content to prevent text from touching edges. */
 const DIALOG_PADDING = 4;
@@ -208,7 +204,6 @@ const ReviewView: React.FC<ReviewViewProps> = ({
   progressHeader,
   extraParts,
 }) => {
-  const keyMatchers = useKeyMatchers();
   const unansweredCount = questions.length - Object.keys(answers).length;
   const hasUnanswered = unansweredCount > 0;
 
@@ -257,7 +252,7 @@ const ReviewView: React.FC<ReviewViewProps> = ({
       </Box>
       <DialogFooter
         primaryAction="Enter to submit"
-        navigationActions={`${formatCommand(Command.DIALOG_NEXT)}/${formatCommand(Command.DIALOG_PREV)} to edit answers`}
+        navigationActions="Tab/Shift+Tab to edit answers"
         extraParts={extraParts}
       />
     </Box>
@@ -289,7 +284,6 @@ const TextQuestionView: React.FC<TextQuestionViewProps> = ({
   progressHeader,
   keyboardHints,
 }) => {
-  const keyMatchers = useKeyMatchers();
   const isAlternateBuffer = useAlternateBuffer();
   const prefix = '> ';
   const horizontalPadding = 1; // 1 for cursor
@@ -308,12 +302,10 @@ const TextQuestionView: React.FC<TextQuestionViewProps> = ({
   const lastTextValueRef = useRef(textValue);
   useEffect(() => {
     if (textValue !== lastTextValueRef.current) {
-      onSelectionChange?.(
-        expandPastePlaceholders(textValue, buffer.pastedContent),
-      );
+      onSelectionChange?.(textValue);
       lastTextValueRef.current = textValue;
     }
-  }, [textValue, onSelectionChange, buffer.pastedContent]);
+  }, [textValue, onSelectionChange]);
 
   // Handle Ctrl+C to clear all text
   const handleExtraKeys = useCallback(
@@ -327,7 +319,7 @@ const TextQuestionView: React.FC<TextQuestionViewProps> = ({
       }
       return false;
     },
-    [buffer, textValue, keyMatchers],
+    [buffer, textValue],
   );
 
   useKeypress(handleExtraKeys, { isActive: true, priority: true });
@@ -395,7 +387,7 @@ interface OptionItem {
   key: string;
   label: string;
   description: string;
-  type: 'option' | 'other' | 'done' | 'all';
+  type: 'option' | 'other' | 'done';
   index: number;
 }
 
@@ -407,7 +399,6 @@ interface ChoiceQuestionState {
 
 type ChoiceQuestionAction =
   | { type: 'TOGGLE_INDEX'; payload: { index: number; multiSelect: boolean } }
-  | { type: 'TOGGLE_ALL'; payload: { totalOptions: number } }
   | {
       type: 'SET_CUSTOM_SELECTED';
       payload: { selected: boolean; multiSelect: boolean };
@@ -420,25 +411,6 @@ function choiceQuestionReducer(
   action: ChoiceQuestionAction,
 ): ChoiceQuestionState {
   switch (action.type) {
-    case 'TOGGLE_ALL': {
-      const { totalOptions } = action.payload;
-      const allSelected = state.selectedIndices.size === totalOptions;
-      if (allSelected) {
-        return {
-          ...state,
-          selectedIndices: new Set(),
-        };
-      } else {
-        const newIndices = new Set<number>();
-        for (let i = 0; i < totalOptions; i++) {
-          newIndices.add(i);
-        }
-        return {
-          ...state,
-          selectedIndices: newIndices,
-        };
-      }
-    }
     case 'TOGGLE_INDEX': {
       const { index, multiSelect } = action.payload;
       const newIndices = new Set(multiSelect ? state.selectedIndices : []);
@@ -509,11 +481,9 @@ const ChoiceQuestionView: React.FC<ChoiceQuestionViewProps> = ({
   progressHeader,
   keyboardHints,
 }) => {
-  const keyMatchers = useKeyMatchers();
   const isAlternateBuffer = useAlternateBuffer();
-  const hasAll = question.multiSelect && (question.options?.length ?? 0) > 1;
-  // Calculate total options including 'All' and 'Other' to ensure consistent numbering column width
-  const numOptions = (question.options?.length ?? 0) + (hasAll ? 1 : 0) + 1;
+  const numOptions =
+    (question.options?.length ?? 0) + (question.type !== 'yesno' ? 1 : 0);
   const numLen = String(numOptions).length;
   const radioWidth = 2; // "● "
   const numberWidth = numLen + 2; // e.g., "1. "
@@ -618,15 +588,11 @@ const ChoiceQuestionView: React.FC<ChoiceQuestionViewProps> = ({
         }
       });
       if (includeCustomOption && customOption.trim()) {
-        const expanded = expandPastePlaceholders(
-          customOption,
-          customBuffer.pastedContent,
-        );
-        answers.push(expanded.trim());
+        answers.push(customOption.trim());
       }
       return answers.join(', ');
     },
-    [questionOptions, customBuffer.pastedContent],
+    [questionOptions],
   );
 
   // Synchronize selection changes with parent - only when it actually changes
@@ -704,7 +670,6 @@ const ChoiceQuestionView: React.FC<ChoiceQuestionViewProps> = ({
       customBuffer,
       onEditingCustomOption,
       customOptionText,
-      keyMatchers,
     ],
   );
 
@@ -724,27 +689,17 @@ const ChoiceQuestionView: React.FC<ChoiceQuestionViewProps> = ({
       },
     );
 
-    // Add 'All of the above' for multi-select
-    if (question.multiSelect && questionOptions.length > 1) {
-      const allItem: OptionItem = {
-        key: 'all',
-        label: 'All of the above',
-        description: 'Select all options',
-        type: 'all',
+    // Only add custom option for choice type, not yesno
+    if (question.type !== 'yesno') {
+      const otherItem: OptionItem = {
+        key: 'other',
+        label: customOptionText || '',
+        description: '',
+        type: 'other',
         index: list.length,
       };
-      list.push({ key: 'all', value: allItem });
+      list.push({ key: 'other', value: otherItem });
     }
-
-    // Add custom option for choice and yesno types
-    const otherItem: OptionItem = {
-      key: 'other',
-      label: customOptionText || '',
-      description: '',
-      type: 'other',
-      index: list.length,
-    };
-    list.push({ key: 'other', value: otherItem });
 
     if (question.multiSelect) {
       const doneItem: OptionItem = {
@@ -758,7 +713,7 @@ const ChoiceQuestionView: React.FC<ChoiceQuestionViewProps> = ({
     }
 
     return list;
-  }, [questionOptions, question.multiSelect, customOptionText]);
+  }, [questionOptions, question.multiSelect, question.type, customOptionText]);
 
   const handleHighlight = useCallback(
     (itemValue: OptionItem) => {
@@ -786,11 +741,6 @@ const ChoiceQuestionView: React.FC<ChoiceQuestionViewProps> = ({
             type: 'TOGGLE_CUSTOM_SELECTED',
             payload: { multiSelect: true },
           });
-        } else if (itemValue.type === 'all') {
-          dispatch({
-            type: 'TOGGLE_ALL',
-            payload: { totalOptions: questionOptions.length },
-          });
         } else if (itemValue.type === 'done') {
           // Done just triggers navigation, selections already saved via useEffect
           onAnswer(
@@ -807,23 +757,16 @@ const ChoiceQuestionView: React.FC<ChoiceQuestionViewProps> = ({
         } else if (itemValue.type === 'other') {
           // In single select, selecting other submits it if it has text
           if (customOptionText.trim()) {
-            onAnswer(
-              expandPastePlaceholders(
-                customOptionText,
-                customBuffer.pastedContent,
-              ).trim(),
-            );
+            onAnswer(customOptionText.trim());
           }
         }
       }
     },
     [
       question.multiSelect,
-      questionOptions.length,
       selectedIndices,
       isCustomOptionSelected,
       customOptionText,
-      customBuffer.pastedContent,
       onAnswer,
       buildAnswerString,
     ],
@@ -843,29 +786,16 @@ const ChoiceQuestionView: React.FC<ChoiceQuestionViewProps> = ({
   const TITLE_MARGIN = 1;
   const FOOTER_HEIGHT = 2; // DialogFooter + margin
   const overhead = HEADER_HEIGHT + TITLE_MARGIN + FOOTER_HEIGHT;
-
   const listHeight = availableHeight
     ? Math.max(1, availableHeight - overhead)
     : undefined;
-
-  // Reserve space for at least 3 items if more selectionItems available.
-  const reservedListHeight = Math.min(selectionItems.length * 2, 6);
-  const questionHeightLimit =
+  const questionHeight =
     listHeight && !isAlternateBuffer
-      ? question.unconstrainedHeight
-        ? Math.max(1, listHeight - selectionItems.length * 2)
-        : Math.max(1, listHeight - Math.max(DIALOG_PADDING, reservedListHeight))
+      ? Math.min(15, Math.max(1, listHeight - DIALOG_PADDING))
       : undefined;
-
   const maxItemsToShow =
-    listHeight && (!isAlternateBuffer || availableHeight !== undefined)
-      ? Math.min(
-          selectionItems.length,
-          Math.max(
-            1,
-            Math.floor((listHeight - (questionHeightLimit ?? 0)) / 2),
-          ),
-        )
+    listHeight && questionHeight
+      ? Math.max(1, Math.floor((listHeight - questionHeight) / 2))
       : selectionItems.length;
 
   return (
@@ -873,7 +803,7 @@ const ChoiceQuestionView: React.FC<ChoiceQuestionViewProps> = ({
       {progressHeader}
       <Box marginBottom={TITLE_MARGIN}>
         <MaxSizedBox
-          maxHeight={questionHeightLimit}
+          maxHeight={questionHeight}
           maxWidth={availableWidth}
           overflowDirection="bottom"
         >
@@ -902,16 +832,11 @@ const ChoiceQuestionView: React.FC<ChoiceQuestionViewProps> = ({
         renderItem={(item, context) => {
           const optionItem = item.value;
           const isChecked =
-            (optionItem.type === 'option' &&
-              selectedIndices.has(optionItem.index)) ||
-            (optionItem.type === 'other' && isCustomOptionSelected) ||
-            (optionItem.type === 'all' &&
-              selectedIndices.size === questionOptions.length);
+            selectedIndices.has(optionItem.index) ||
+            (optionItem.type === 'other' && isCustomOptionSelected);
           const showCheck =
             question.multiSelect &&
-            (optionItem.type === 'option' ||
-              optionItem.type === 'other' ||
-              optionItem.type === 'all');
+            (optionItem.type === 'option' || optionItem.type === 'other');
 
           // Render inline text input for custom option
           if (optionItem.type === 'other') {
@@ -1009,7 +934,6 @@ export const AskUserDialog: React.FC<AskUserDialogProps> = ({
   availableHeight: availableHeightProp,
   extraParts,
 }) => {
-  const keyMatchers = useKeyMatchers();
   const uiState = useContext(UIStateContext);
   const availableHeight =
     availableHeightProp ??
@@ -1059,7 +983,7 @@ export const AskUserDialog: React.FC<AskUserDialogProps> = ({
       }
       return false;
     },
-    [onCancel, submitted, isEditingCustomOption, keyMatchers],
+    [onCancel, submitted, isEditingCustomOption],
   );
 
   useKeypress(handleCancel, {
@@ -1092,7 +1016,7 @@ export const AskUserDialog: React.FC<AskUserDialogProps> = ({
       }
       return false;
     },
-    [questions.length, submitted, goToNextTab, goToPrevTab, keyMatchers],
+    [questions.length, submitted, goToNextTab, goToPrevTab],
   );
 
   useKeypress(handleNavigation, {
@@ -1222,7 +1146,7 @@ export const AskUserDialog: React.FC<AskUserDialogProps> = ({
       navigationActions={
         questions.length > 1
           ? currentQuestion.type === 'text' || isEditingCustomOption
-            ? `${formatCommand(Command.DIALOG_NEXT)}/${formatCommand(Command.DIALOG_PREV)} to switch questions`
+            ? 'Tab/Shift+Tab to switch questions'
             : '←/→ to switch questions'
           : currentQuestion.type === 'text' || isEditingCustomOption
             ? undefined

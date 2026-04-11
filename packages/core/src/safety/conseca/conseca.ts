@@ -23,13 +23,12 @@ import type { Config } from '../../config/config.js';
 import { generatePolicy } from './policy-generator.js';
 import { enforcePolicy } from './policy-enforcer.js';
 import type { SecurityPolicy } from './types.js';
-import type { AgentLoopContext } from '../../config/agent-loop-context.js';
 
 export class ConsecaSafetyChecker implements InProcessChecker {
   private static instance: ConsecaSafetyChecker | undefined;
   private currentPolicy: SecurityPolicy | null = null;
   private activeUserPrompt: string | null = null;
-  private context: AgentLoopContext | null = null;
+  private config: Config | null = null;
 
   /**
    * Private constructor to enforce singleton pattern.
@@ -51,8 +50,8 @@ export class ConsecaSafetyChecker implements InProcessChecker {
     ConsecaSafetyChecker.instance = undefined;
   }
 
-  setContext(context: AgentLoopContext): void {
-    this.context = context;
+  setConfig(config: Config): void {
+    this.config = config;
   }
 
   async check(input: SafetyCheckInput): Promise<SafetyCheckResult> {
@@ -60,7 +59,7 @@ export class ConsecaSafetyChecker implements InProcessChecker {
       `[Conseca] check called. History is: ${JSON.stringify(input.context.history)}`,
     );
 
-    if (!this.context) {
+    if (!this.config) {
       debugLogger.debug('[Conseca] check failed: Config not initialized');
       return {
         decision: SafetyCheckDecision.ALLOW,
@@ -68,7 +67,7 @@ export class ConsecaSafetyChecker implements InProcessChecker {
       };
     }
 
-    if (!this.context.config.enableConseca) {
+    if (!this.config.enableConseca) {
       debugLogger.debug('[Conseca] check skipped: Conseca is not enabled.');
       return {
         decision: SafetyCheckDecision.ALLOW,
@@ -79,14 +78,14 @@ export class ConsecaSafetyChecker implements InProcessChecker {
     const userPrompt = this.extractUserPrompt(input);
     let trustedContent = '';
 
-    const toolRegistry = this.context.toolRegistry;
+    const toolRegistry = this.config.getToolRegistry();
     if (toolRegistry) {
       const tools = toolRegistry.getFunctionDeclarations();
       trustedContent = JSON.stringify(tools, null, 2);
     }
 
     if (userPrompt) {
-      await this.getPolicy(userPrompt, trustedContent, this.context.config);
+      await this.getPolicy(userPrompt, trustedContent, this.config);
     } else {
       debugLogger.debug(
         `[Conseca] Skipping policy generation because userPrompt is null`,
@@ -105,12 +104,12 @@ export class ConsecaSafetyChecker implements InProcessChecker {
       result = await enforcePolicy(
         this.currentPolicy,
         input.toolCall,
-        this.context.config,
+        this.config,
       );
     }
 
     logConsecaVerdict(
-      this.context.config,
+      this.config,
       new ConsecaVerdictEvent(
         userPrompt || '',
         JSON.stringify(this.currentPolicy || {}),

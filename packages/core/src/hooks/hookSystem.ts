@@ -48,8 +48,6 @@ export interface BeforeModelHookResult {
   reason?: string;
   /** Synthetic response to return instead of calling the model (if blocked) */
   syntheticResponse?: GenerateContentResponse;
-  /** Modified model override (if not blocked) */
-  modifiedModel?: string;
   /** Modified config (if not blocked) */
   modifiedConfig?: GenerateContentConfig;
   /** Modified contents (if not blocked) */
@@ -294,7 +292,6 @@ export class HookSystem {
           beforeModelOutput.applyLLMRequestModifications(llmRequest);
         return {
           blocked: false,
-          modifiedModel: modifiedRequest?.model,
           modifiedConfig: modifiedRequest?.config,
           modifiedContents: modifiedRequest?.contents,
         };

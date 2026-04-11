@@ -35,7 +35,7 @@ export function isGitRepository(directory: string): boolean {
     }
 
     return false;
-  } catch {
+  } catch (_error) {
     // If any filesystem error occurs, assume not a git repo
     return false;
   }
@@ -67,7 +67,7 @@ export function findGitRoot(directory: string): string | null {
     }
 
     return null;
-  } catch {
+  } catch (_error) {
     return null;
   }
 }

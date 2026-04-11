@@ -23,9 +23,9 @@ export const isGitHubRepository = (): boolean => {
     const pattern = /github\.com/;
 
     return pattern.test(remotes);
-  } catch (error) {
+  } catch (_error) {
     // If any filesystem error occurs, assume not a git repo
-    debugLogger.debug(`Failed to get git remote:`, error);
+    debugLogger.debug(`Failed to get git remote:`, _error);
     return false;
   }
 };
@@ -85,10 +85,10 @@ export const getLatestGitHubRelease = async (
     }
     // eslint-disable-next-line @typescript-eslint/no-unsafe-return
     return releaseTag;
-  } catch (error) {
+  } catch (_error) {
     debugLogger.debug(
       `Failed to determine latest run-gemini-cli release:`,
-      error,
+      _error,
     );
     throw new Error(
       `Unable to determine the latest run-gemini-cli release on GitHub.`,

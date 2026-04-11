@@ -4,19 +4,12 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {
-  vi,
-  describe,
-  it,
-  expect,
-  beforeEach,
-  afterEach,
-  type MockInstance,
-} from 'vitest';
-import { type Config } from '@google/gemini-cli-core';
+import { vi, describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { coreEvents } from '@google/gemini-cli-core';
 import { handleList, listCommand } from './list.js';
 import { loadSettings, type LoadedSettings } from '../../config/settings.js';
 import { loadCliConfig } from '../../config/config.js';
+import type { Config } from '@google/gemini-cli-core';
 import chalk from 'chalk';
 
 vi.mock('@google/gemini-cli-core', async (importOriginal) => {
@@ -40,16 +33,12 @@ vi.mock('../utils.js', () => ({
 describe('skills list command', () => {
   const mockLoadSettings = vi.mocked(loadSettings);
   const mockLoadCliConfig = vi.mocked(loadCliConfig);
-  let stdoutWriteSpy: MockInstance<typeof process.stdout.write>;
 
   beforeEach(async () => {
     vi.clearAllMocks();
     mockLoadSettings.mockReturnValue({
       merged: {},
     } as unknown as LoadedSettings);
-    stdoutWriteSpy = vi
-      .spyOn(process.stdout, 'write')
-      .mockImplementation(() => true);
   });
 
   afterEach(() => {
@@ -68,7 +57,10 @@ describe('skills list command', () => {
 
       await handleList({});
 
-      expect(stdoutWriteSpy).toHaveBeenCalledWith('No skills discovered.\n');
+      expect(coreEvents.emitConsoleLog).toHaveBeenCalledWith(
+        'log',
+        'No skills discovered.',
+      );
     });
 
     it('should list all discovered skills', async () => {
@@ -96,19 +88,24 @@ describe('skills list command', () => {
 
       await handleList({});
 
-      expect(stdoutWriteSpy).toHaveBeenCalledWith(
-        chalk.bold('Discovered Agent Skills:') + '\n\n',
+      expect(coreEvents.emitConsoleLog).toHaveBeenCalledWith(
+        'log',
+        chalk.bold('Discovered Agent Skills:'),
       );
-      expect(stdoutWriteSpy).toHaveBeenCalledWith(
+      expect(coreEvents.emitConsoleLog).toHaveBeenCalledWith(
+        'log',
         expect.stringContaining('skill1'),
       );
-      expect(stdoutWriteSpy).toHaveBeenCalledWith(
+      expect(coreEvents.emitConsoleLog).toHaveBeenCalledWith(
+        'log',
         expect.stringContaining(chalk.green('[Enabled]')),
       );
-      expect(stdoutWriteSpy).toHaveBeenCalledWith(
+      expect(coreEvents.emitConsoleLog).toHaveBeenCalledWith(
+        'log',
         expect.stringContaining('skill2'),
       );
-      expect(stdoutWriteSpy).toHaveBeenCalledWith(
+      expect(coreEvents.emitConsoleLog).toHaveBeenCalledWith(
+        'log',
         expect.stringContaining(chalk.red('[Disabled]')),
       );
     });
@@ -139,10 +136,12 @@ describe('skills list command', () => {
 
       // Default
       await handleList({ all: false });
-      expect(stdoutWriteSpy).toHaveBeenCalledWith(
+      expect(coreEvents.emitConsoleLog).toHaveBeenCalledWith(
+        'log',
         expect.stringContaining('regular'),
       );
-      expect(stdoutWriteSpy).not.toHaveBeenCalledWith(
+      expect(coreEvents.emitConsoleLog).not.toHaveBeenCalledWith(
+        'log',
         expect.stringContaining('builtin'),
       );
 
@@ -150,13 +149,16 @@ describe('skills list command', () => {
 
       // With all: true
       await handleList({ all: true });
-      expect(stdoutWriteSpy).toHaveBeenCalledWith(
+      expect(coreEvents.emitConsoleLog).toHaveBeenCalledWith(
+        'log',
         expect.stringContaining('regular'),
       );
-      expect(stdoutWriteSpy).toHaveBeenCalledWith(
+      expect(coreEvents.emitConsoleLog).toHaveBeenCalledWith(
+        'log',
         expect.stringContaining('builtin'),
       );
-      expect(stdoutWriteSpy).toHaveBeenCalledWith(
+      expect(coreEvents.emitConsoleLog).toHaveBeenCalledWith(
+        'log',
         expect.stringContaining(chalk.gray(' [Built-in]')),
       );
     });

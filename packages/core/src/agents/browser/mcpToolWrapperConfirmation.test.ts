@@ -14,7 +14,6 @@ import {
   type ToolCallConfirmationDetails,
   type PolicyUpdateOptions,
 } from '../../tools/tools.js';
-import { makeFakeConfig } from '../../test-utils/config.js';
 
 interface TestableConfirmation {
   getConfirmationDetails(
@@ -30,7 +29,6 @@ describe('mcpToolWrapper Confirmation', () => {
   let mockMessageBus: MessageBus;
 
   beforeEach(() => {
-    makeFakeConfig(); // ensure config module is loaded
     mockBrowserManager = {
       getDiscoveredTools: vi
         .fn()
@@ -61,7 +59,7 @@ describe('mcpToolWrapper Confirmation', () => {
     expect(details).toEqual(
       expect.objectContaining({
         type: 'mcp',
-        serverName: 'browser_agent',
+        serverName: 'browser-agent',
         toolName: 'test_tool',
       }),
     );
@@ -76,7 +74,7 @@ describe('mcpToolWrapper Confirmation', () => {
     expect(mockMessageBus.publish).toHaveBeenCalledWith(
       expect.objectContaining({
         type: MessageBusType.UPDATE_POLICY,
-        mcpName: 'browser_agent',
+        mcpName: 'browser-agent',
         persist: false,
       }),
     );
@@ -94,7 +92,7 @@ describe('mcpToolWrapper Confirmation', () => {
     );
 
     expect(options).toEqual({
-      mcpName: 'browser_agent',
+      mcpName: 'browser-agent',
     });
   });
 });

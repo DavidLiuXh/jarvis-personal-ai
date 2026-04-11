@@ -7,7 +7,6 @@
 import fsPromises from 'node:fs/promises';
 import { debugLogger } from '../utils/debugLogger.js';
 import { MAX_LINE_LENGTH_TEXT_FILE } from '../utils/constants.js';
-import type { GrepResult } from './tools.js';
 
 /**
  * Result object for a single grep match
@@ -149,18 +148,12 @@ export async function formatGrepResults(
   },
   searchLocationDescription: string,
   totalMaxMatches: number,
-): Promise<{ llmContent: string; returnDisplay: GrepResult }> {
+): Promise<{ llmContent: string; returnDisplay: string }> {
   const { pattern, names_only, include_pattern } = params;
 
   if (allMatches.length === 0) {
     const noMatchMsg = `No matches found for pattern "${pattern}" ${searchLocationDescription}${include_pattern ? ` (filter: "${include_pattern}")` : ''}.`;
-    return {
-      llmContent: noMatchMsg,
-      returnDisplay: {
-        summary: 'No matches found',
-        matches: [],
-      },
-    };
+    return { llmContent: noMatchMsg, returnDisplay: `No matches found` };
   }
 
   const matchesByFile = groupMatchesByFile(allMatches);
@@ -188,10 +181,7 @@ export async function formatGrepResults(
     llmContent += filePaths.join('\n');
     return {
       llmContent: llmContent.trim(),
-      returnDisplay: {
-        summary: `Found ${filePaths.length} files${wasTruncated ? ' (limited)' : ''}`,
-        matches: [],
-      },
+      returnDisplay: `Found ${filePaths.length} files${wasTruncated ? ' (limited)' : ''}`,
     };
   }
 
@@ -223,16 +213,8 @@ export async function formatGrepResults(
 
   return {
     llmContent: llmContent.trim(),
-    returnDisplay: {
-      summary: `Found ${matchCount} ${matchTerm}${wasTruncated ? ' (limited)' : ''}`,
-      matches: allMatches
-        .filter((m) => !m.isContext)
-        .map((m) => ({
-          filePath: m.filePath,
-          absolutePath: m.absolutePath,
-          lineNumber: m.lineNumber,
-          line: m.line,
-        })),
-    },
+    returnDisplay: `Found ${matchCount} ${matchTerm}${
+      wasTruncated ? ' (limited)' : ''
+    }`,
   };
 }

@@ -140,7 +140,7 @@ export abstract class ExtensionLoader {
     extension: GeminiCLIExtension,
   ): Promise<void> {
     if (extension.excludeTools && extension.excludeTools.length > 0) {
-      const geminiClient = this.config?.geminiClient;
+      const geminiClient = this.config?.getGeminiClient();
       if (geminiClient?.isInitialized()) {
         await geminiClient.setTools();
       }

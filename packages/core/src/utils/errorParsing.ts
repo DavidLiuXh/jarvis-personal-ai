@@ -66,7 +66,7 @@ export function parseAndFormatApiError(
           if (isApiError(nestedError)) {
             finalMessage = nestedError.error.message;
           }
-        } catch {
+        } catch (_e) {
           // It's not a nested JSON error, so we just use the message as is.
         }
         let text = `[API Error: ${finalMessage} (Status: ${parsedError.error.status})]`;
@@ -75,7 +75,7 @@ export function parseAndFormatApiError(
         }
         return text;
       }
-    } catch {
+    } catch (_e) {
       // Not a valid JSON, fall through and return the original message.
     }
     return `[API Error: ${error}]`;

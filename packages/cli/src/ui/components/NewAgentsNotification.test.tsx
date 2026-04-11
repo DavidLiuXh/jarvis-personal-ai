@@ -22,25 +22,6 @@ describe('NewAgentsNotification', () => {
     {
       name: 'Agent B',
       description: 'Description B',
-      kind: 'local' as const,
-      inputConfig: { inputSchema: {} },
-      promptConfig: {},
-      modelConfig: {},
-      runConfig: {},
-      mcpServers: {
-        github: {
-          command: 'npx',
-          args: ['-y', '@modelcontextprotocol/server-github'],
-        },
-        postgres: {
-          command: 'npx',
-          args: ['-y', '@modelcontextprotocol/server-postgres'],
-        },
-      },
-    },
-    {
-      name: 'Agent C',
-      description: 'Description C',
       kind: 'remote' as const,
       agentCardUrl: '',
       inputConfig: { inputSchema: {} },
@@ -49,9 +30,10 @@ describe('NewAgentsNotification', () => {
   const onSelect = vi.fn();
 
   it('renders agent list', async () => {
-    const { lastFrame, unmount } = await render(
+    const { lastFrame, waitUntilReady, unmount } = render(
       <NewAgentsNotification agents={mockAgents} onSelect={onSelect} />,
     );
+    await waitUntilReady();
 
     const frame = lastFrame();
     expect(frame).toMatchSnapshot();
@@ -67,9 +49,10 @@ describe('NewAgentsNotification', () => {
       inputConfig: { inputSchema: {} },
     }));
 
-    const { lastFrame, unmount } = await render(
+    const { lastFrame, waitUntilReady, unmount } = render(
       <NewAgentsNotification agents={manyAgents} onSelect={onSelect} />,
     );
+    await waitUntilReady();
 
     const frame = lastFrame();
     expect(frame).toMatchSnapshot();
@@ -84,7 +67,7 @@ describe('NewAgentsNotification', () => {
         }),
     );
 
-    const { lastFrame, stdin, unmount } = await render(
+    const { lastFrame, stdin, unmount } = render(
       <NewAgentsNotification agents={mockAgents} onSelect={asyncOnSelect} />,
     );
 

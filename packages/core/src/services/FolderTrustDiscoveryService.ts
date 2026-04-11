@@ -16,7 +16,6 @@ export interface FolderDiscoveryResults {
   mcps: string[];
   hooks: string[];
   skills: string[];
-  agents: string[];
   settings: string[];
   securityWarnings: string[];
   discoveryErrors: string[];
@@ -38,7 +37,6 @@ export class FolderTrustDiscoveryService {
       mcps: [],
       hooks: [],
       skills: [],
-      agents: [],
       settings: [],
       securityWarnings: [],
       discoveryErrors: [],
@@ -52,7 +50,6 @@ export class FolderTrustDiscoveryService {
     await Promise.all([
       this.discoverCommands(geminiDir, results),
       this.discoverSkills(geminiDir, results),
-      this.discoverAgents(geminiDir, results),
       this.discoverSettings(geminiDir, results),
     ]);
 
@@ -102,34 +99,6 @@ export class FolderTrustDiscoveryService {
     }
   }
 
-  private static async discoverAgents(
-    geminiDir: string,
-    results: FolderDiscoveryResults,
-  ) {
-    const agentsDir = path.join(geminiDir, 'agents');
-    if (await this.exists(agentsDir)) {
-      try {
-        const entries = await fs.readdir(agentsDir, { withFileTypes: true });
-        for (const entry of entries) {
-          if (
-            entry.isFile() &&
-            entry.name.endsWith('.md') &&
-            !entry.name.startsWith('_')
-          ) {
-            results.agents.push(path.basename(entry.name, '.md'));
-          }
-        }
-        if (results.agents.length > 0) {
-          results.securityWarnings.push('This project contains custom agents.');
-        }
-      } catch (e) {
-        results.discoveryErrors.push(
-          `Failed to discover agents: ${e instanceof Error ? e.message : String(e)}`,
-        );
-      }
-    }
-  }
-
   private static async discoverSettings(
     geminiDir: string,
     results: FolderDiscoveryResults,
@@ -150,7 +119,7 @@ export class FolderTrustDiscoveryService {
         (key) => !['mcpServers', 'hooks', '$schema'].includes(key),
       );
 
-      results.securityWarnings.push(...this.collectSecurityWarnings(settings));
+      results.securityWarnings = this.collectSecurityWarnings(settings);
 
       const mcpServers = settings['mcpServers'];
       if (this.isRecord(mcpServers)) {
@@ -163,7 +132,6 @@ export class FolderTrustDiscoveryService {
         for (const event of Object.values(hooksConfig)) {
           if (!Array.isArray(event)) continue;
           for (const hook of event) {
-            // eslint-disable-next-line no-restricted-syntax
             if (this.isRecord(hook) && typeof hook['command'] === 'string') {
               hooks.add(hook['command']);
             }
@@ -187,6 +155,10 @@ export class FolderTrustDiscoveryService {
       ? settings['tools']
       : undefined;
 
+    const experimental = this.isRecord(settings['experimental'])
+      ? settings['experimental']
+      : undefined;
+
     const security = this.isRecord(settings['security'])
       ? settings['security']
       : undefined;
@@ -202,6 +174,10 @@ export class FolderTrustDiscoveryService {
       {
         condition: Array.isArray(allowedTools) && allowedTools.length > 0,
         message: 'This project auto-approves certain tools (tools.allowed).',
+      },
+      {
+        condition: experimental?.['enableAgents'] === true,
+        message: 'This project enables autonomous agents (enableAgents).',
       },
       {
         condition: folderTrust?.['enabled'] === false,

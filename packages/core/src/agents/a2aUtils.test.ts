@@ -4,14 +4,13 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect } from 'vitest';
 import {
   extractMessageText,
   extractIdsFromResponse,
   isTerminalState,
   A2AResultReassembler,
   AUTH_REQUIRED_MSG,
-  normalizeAgentCard,
 } from './a2aUtils.js';
 import type { SendMessageResult } from './a2a-client-manager.js';
 import type {
@@ -25,14 +24,6 @@ import type {
 } from '@a2a-js/sdk';
 
 describe('a2aUtils', () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-  });
-
-  afterEach(() => {
-    vi.restoreAllMocks();
-  });
-
   describe('isTerminalState', () => {
     it('should return true for completed, failed, canceled, and rejected', () => {
       expect(isTerminalState('completed')).toBe(true);
@@ -232,114 +223,6 @@ describe('a2aUtils', () => {
         } as Message),
       ).toBe('');
     });
-
-    it('should handle file parts with neither name nor uri', () => {
-      const message: Message = {
-        kind: 'message',
-        role: 'user',
-        messageId: '1',
-        parts: [
-          {
-            kind: 'file',
-            file: {
-              mimeType: 'text/plain',
-            },
-          } as FilePart,
-        ],
-      };
-      expect(extractMessageText(message)).toBe('File: [binary/unnamed]');
-    });
-  });
-
-  describe('normalizeAgentCard', () => {
-    it('should throw if input is not an object', () => {
-      expect(() => normalizeAgentCard(null)).toThrow('Agent card is missing.');
-      expect(() => normalizeAgentCard(undefined)).toThrow(
-        'Agent card is missing.',
-      );
-      expect(() => normalizeAgentCard('not an object')).toThrow(
-        'Agent card is missing.',
-      );
-    });
-
-    it('should preserve unknown fields while providing defaults for mandatory ones', () => {
-      const raw = {
-        name: 'my-agent',
-        customField: 'keep-me',
-      };
-
-      const normalized = normalizeAgentCard(raw);
-
-      expect(normalized.name).toBe('my-agent');
-      // @ts-expect-error - testing dynamic preservation
-      expect(normalized.customField).toBe('keep-me');
-      expect(normalized.description).toBeUndefined();
-      expect(normalized.skills).toBeUndefined();
-      expect(normalized.defaultInputModes).toBeUndefined();
-    });
-
-    it('should map supportedInterfaces to additionalInterfaces with protocolBinding → transport', () => {
-      const raw = {
-        name: 'test',
-        supportedInterfaces: [
-          {
-            url: 'grpc://test',
-            protocolBinding: 'GRPC',
-            protocolVersion: '1.0',
-          },
-        ],
-      };
-
-      const normalized = normalizeAgentCard(raw);
-
-      expect(normalized.additionalInterfaces).toHaveLength(1);
-
-      const intf = normalized.additionalInterfaces?.[0] as unknown as Record<
-        string,
-        unknown
-      >;
-
-      expect(intf['transport']).toBe('GRPC');
-      expect(intf['url']).toBe('grpc://test');
-    });
-
-    it('should not overwrite additionalInterfaces if already present', () => {
-      const raw = {
-        name: 'test',
-        additionalInterfaces: [{ url: 'http://grpc', transport: 'GRPC' }],
-        supportedInterfaces: [{ url: 'http://other', transport: 'REST' }],
-      };
-
-      const normalized = normalizeAgentCard(raw);
-      expect(normalized.additionalInterfaces).toHaveLength(1);
-      expect(normalized.additionalInterfaces?.[0].url).toBe('http://grpc');
-    });
-
-    it('should NOT override existing transport if protocolBinding is also present', () => {
-      const raw = {
-        name: 'priority-test',
-        supportedInterfaces: [
-          { url: 'foo', transport: 'GRPC', protocolBinding: 'REST' },
-        ],
-      };
-      const normalized = normalizeAgentCard(raw);
-      expect(normalized.additionalInterfaces?.[0].transport).toBe('GRPC');
-    });
-
-    it('should not mutate the original card object', () => {
-      const raw = {
-        name: 'test',
-        supportedInterfaces: [{ url: 'grpc://test', protocolBinding: 'GRPC' }],
-      };
-
-      const normalized = normalizeAgentCard(raw);
-      expect(normalized).not.toBe(raw);
-      expect(normalized.additionalInterfaces).toBeDefined();
-      // Original should not have additionalInterfaces added
-      expect(
-        (raw as Record<string, unknown>)['additionalInterfaces'],
-      ).toBeUndefined();
-    });
   });
 
   describe('A2AResultReassembler', () => {
@@ -350,7 +233,6 @@ describe('a2aUtils', () => {
       reassembler.update({
         kind: 'status-update',
         taskId: 't1',
-        contextId: 'ctx1',
         status: {
           state: 'working',
           message: {
@@ -365,7 +247,6 @@ describe('a2aUtils', () => {
       reassembler.update({
         kind: 'artifact-update',
         taskId: 't1',
-        contextId: 'ctx1',
         append: false,
         artifact: {
           artifactId: 'a1',
@@ -378,7 +259,6 @@ describe('a2aUtils', () => {
       reassembler.update({
         kind: 'status-update',
         taskId: 't1',
-        contextId: 'ctx1',
         status: {
           state: 'working',
           message: {
@@ -393,7 +273,6 @@ describe('a2aUtils', () => {
       reassembler.update({
         kind: 'artifact-update',
         taskId: 't1',
-        contextId: 'ctx1',
         append: true,
         artifact: {
           artifactId: 'a1',
@@ -403,7 +282,7 @@ describe('a2aUtils', () => {
 
       const output = reassembler.toString();
       expect(output).toBe(
-        'Analyzing...Processing...\n\nArtifact (Code):\nprint("Done")',
+        'Analyzing...\n\nProcessing...\n\nArtifact (Code):\nprint("Done")',
       );
     });
 
@@ -412,7 +291,6 @@ describe('a2aUtils', () => {
 
       reassembler.update({
         kind: 'status-update',
-        contextId: 'ctx1',
         status: {
           state: 'auth-required',
           message: {
@@ -432,7 +310,6 @@ describe('a2aUtils', () => {
 
       reassembler.update({
         kind: 'status-update',
-        contextId: 'ctx1',
         status: {
           state: 'auth-required',
         },
@@ -446,7 +323,6 @@ describe('a2aUtils', () => {
 
       const chunk = {
         kind: 'status-update',
-        contextId: 'ctx1',
         status: {
           state: 'auth-required',
           message: {
@@ -475,8 +351,6 @@ describe('a2aUtils', () => {
 
       reassembler.update({
         kind: 'task',
-        id: 'task-1',
-        contextId: 'ctx1',
         status: { state: 'completed' },
         history: [
           {
@@ -495,8 +369,6 @@ describe('a2aUtils', () => {
 
       reassembler.update({
         kind: 'task',
-        id: 'task-1',
-        contextId: 'ctx1',
         status: { state: 'working' },
         history: [
           {
@@ -515,8 +387,6 @@ describe('a2aUtils', () => {
 
       reassembler.update({
         kind: 'task',
-        id: 'task-1',
-        contextId: 'ctx1',
         status: { state: 'completed' },
         artifacts: [
           {

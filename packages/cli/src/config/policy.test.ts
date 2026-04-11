@@ -183,6 +183,7 @@ describe('resolveWorkspacePolicyState', () => {
       setAutoAcceptWorkspacePolicies(originalValue);
     }
   });
+
   it('should not return workspace policies if cwd is the home directory', async () => {
     const policiesDir = path.join(tempDir, '.gemini', 'policies');
     fs.mkdirSync(policiesDir, { recursive: true });

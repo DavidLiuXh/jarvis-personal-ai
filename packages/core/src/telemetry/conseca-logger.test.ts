@@ -112,7 +112,7 @@ describe('conseca-logger', () => {
       'user prompt',
       'policy',
       'tool call',
-      'allow',
+      'ALLOW',
       'rationale',
     );
 
@@ -122,7 +122,7 @@ describe('conseca-logger', () => {
     expect(logs.getLogger).toHaveBeenCalled();
     expect(mockLogger.emit).toHaveBeenCalledWith(
       expect.objectContaining({
-        body: 'Conseca Verdict: allow.',
+        body: 'Conseca Verdict: ALLOW.',
         attributes: expect.objectContaining({
           'event.name': EVENT_CONSECA_VERDICT,
         }),

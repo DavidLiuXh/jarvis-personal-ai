@@ -16,6 +16,7 @@ import { GIT_COMMIT_INFO } from '../../generated/git-commit.js';
 import { formatBytes } from '../utils/formatters.js';
 import {
   IdeClient,
+  sessionId,
   getVersion,
   INITIAL_HISTORY_LENGTH,
   debugLogger,
@@ -31,8 +32,8 @@ export const bugCommand: SlashCommand = {
   autoExecute: false,
   action: async (context: CommandContext, args?: string): Promise<void> => {
     const bugDescription = (args || '').trim();
-    const agentContext = context.services.agentContext;
-    const config = agentContext?.config;
+    const { config } = context.services;
+
     const osVersion = `${process.platform} ${process.version}`;
     let sandboxEnv = 'no sandbox';
     if (process.env['SANDBOX'] && process.env['SANDBOX'] !== 'sandbox-exec') {
@@ -58,7 +59,7 @@ export const bugCommand: SlashCommand = {
     let info = `
 * **CLI Version:** ${cliVersion}
 * **Git Commit:** ${GIT_COMMIT_INFO}
-* **Session ID:** ${config?.getSessionId() || 'Unknown'}
+* **Session ID:** ${sessionId}
 * **Operating System:** ${osVersion}
 * **Sandbox Environment:** ${sandboxEnv}
 * **Model Version:** ${modelVersion}
@@ -72,7 +73,7 @@ export const bugCommand: SlashCommand = {
       info += `* **IDE Client:** ${ideClient}\n`;
     }
 
-    const chat = agentContext?.geminiClient?.getChat();
+    const chat = config?.getGeminiClient()?.getChat();
     const history = chat?.getHistory() || [];
     let historyFileMessage = '';
     let problemValue = bugDescription;
@@ -133,7 +134,7 @@ export const bugCommand: SlashCommand = {
 };
 
 async function getIdeClientName(context: CommandContext) {
-  if (!context.services.agentContext?.config.getIdeMode()) {
+  if (!context.services.config?.getIdeMode()) {
     return '';
   }
   const ideClient = await IdeClient.getInstance();

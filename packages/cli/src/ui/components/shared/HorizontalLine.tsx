@@ -10,12 +10,10 @@ import { theme } from '../../semantic-colors.js';
 
 interface HorizontalLineProps {
   color?: string;
-  dim?: boolean;
 }
 
 export const HorizontalLine: React.FC<HorizontalLineProps> = ({
   color = theme.border.default,
-  dim = false,
 }) => (
   <Box
     width="100%"
@@ -25,6 +23,5 @@ export const HorizontalLine: React.FC<HorizontalLineProps> = ({
     borderLeft={false}
     borderRight={false}
     borderColor={color}
-    borderDimColor={dim}
   />
 );

@@ -17,7 +17,7 @@ import {
 } from '@google/gemini-cli-core';
 
 import type { CallableTool } from '@google/genai';
-import { MessageType, type HistoryItemMcpStatus } from '../types.js';
+import { MessageType } from '../types.js';
 
 vi.mock('@google/gemini-cli-core', async (importOriginal) => {
   const actual =
@@ -119,10 +119,7 @@ describe('mcpCommand', () => {
 
     mockContext = createMockCommandContext({
       services: {
-        agentContext: {
-          config: mockConfig,
-          toolRegistry: mockConfig.getToolRegistry(),
-        },
+        config: mockConfig,
       },
     });
   });
@@ -135,7 +132,7 @@ describe('mcpCommand', () => {
     it('should show an error if config is not available', async () => {
       const contextWithoutConfig = createMockCommandContext({
         services: {
-          agentContext: null,
+          config: null,
         },
       });
 
@@ -149,8 +146,7 @@ describe('mcpCommand', () => {
     });
 
     it('should show an error if tool registry is not available', async () => {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (mockContext.services.agentContext as any).toolRegistry = undefined;
+      mockConfig.getToolRegistry = vi.fn().mockReturnValue(undefined);
 
       const result = await mcpCommand.action!(mockContext, '');
 
@@ -200,13 +196,9 @@ describe('mcpCommand', () => {
         ...mockServer3Tools,
       ];
 
-      const mockToolRegistry = {
+      mockConfig.getToolRegistry = vi.fn().mockReturnValue({
         getAllTools: vi.fn().mockReturnValue(allTools),
-      };
-      mockConfig.getToolRegistry = vi.fn().mockReturnValue(mockToolRegistry);
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (mockContext.services.agentContext as any).toolRegistry =
-        mockToolRegistry;
+      });
 
       const resourcesByServer: Record<
         string,
@@ -279,42 +271,6 @@ describe('mcpCommand', () => {
           showDescriptions: false,
         }),
       );
-    });
-
-    it('should filter servers by name when an argument is provided to list', async () => {
-      await mcpCommand.action!(mockContext, 'list server1');
-
-      expect(mockContext.ui.addItem).toHaveBeenCalledWith(
-        expect.objectContaining({
-          type: MessageType.MCP_STATUS,
-          servers: expect.objectContaining({
-            server1: expect.any(Object),
-          }),
-        }),
-      );
-
-      // Should NOT contain server2 or server3
-      const call = vi.mocked(mockContext.ui.addItem).mock
-        .calls[0][0] as HistoryItemMcpStatus;
-      expect(Object.keys(call.servers)).toEqual(['server1']);
-    });
-
-    it('should filter servers by name and show descriptions when an argument is provided to desc', async () => {
-      await mcpCommand.action!(mockContext, 'desc server2');
-
-      expect(mockContext.ui.addItem).toHaveBeenCalledWith(
-        expect.objectContaining({
-          type: MessageType.MCP_STATUS,
-          showDescriptions: true,
-          servers: expect.objectContaining({
-            server2: expect.any(Object),
-          }),
-        }),
-      );
-
-      const call = vi.mocked(mockContext.ui.addItem).mock
-        .calls[0][0] as HistoryItemMcpStatus;
-      expect(Object.keys(call.servers)).toEqual(['server2']);
     });
   });
 });

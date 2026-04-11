@@ -5,6 +5,7 @@
  */
 
 import type { CommandModule } from 'yargs';
+import { debugLogger } from '@google/gemini-cli-core';
 import { loadSettings } from '../../config/settings.js';
 import { loadCliConfig, type CliArgs } from '../../config/config.js';
 import { exitCli } from '../utils.js';
@@ -41,11 +42,12 @@ export async function handleList(args: { all?: boolean }) {
   });
 
   if (skills.length === 0) {
-    process.stdout.write('No skills discovered.\n');
+    debugLogger.log('No skills discovered.');
     return;
   }
 
-  process.stdout.write(chalk.bold('Discovered Agent Skills:') + '\n\n');
+  debugLogger.log(chalk.bold('Discovered Agent Skills:'));
+  debugLogger.log('');
 
   for (const skill of skills) {
     const status = skill.disabled
@@ -54,11 +56,10 @@ export async function handleList(args: { all?: boolean }) {
 
     const builtinSuffix = skill.isBuiltin ? chalk.gray(' [Built-in]') : '';
 
-    process.stdout.write(
-      `${chalk.bold(skill.name)} ${status}${builtinSuffix}\n`,
-    );
-    process.stdout.write(`  Description: ${skill.description}\n`);
-    process.stdout.write(`  Location:    ${skill.location}\n\n`);
+    debugLogger.log(`${chalk.bold(skill.name)} ${status}${builtinSuffix}`);
+    debugLogger.log(`  Description: ${skill.description}`);
+    debugLogger.log(`  Location:    ${skill.location}`);
+    debugLogger.log('');
   }
 }
 

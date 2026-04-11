@@ -13,7 +13,6 @@ import {
   ApprovalMode,
   getShellConfiguration,
   PolicyDecision,
-  NoopSandboxManager,
 } from '@google/gemini-cli-core';
 import { quote } from 'shell-quote';
 import { createPartFromText } from '@google/genai';
@@ -78,20 +77,10 @@ describe('ShellProcessor', () => {
       getTargetDir: vi.fn().mockReturnValue('/test/dir'),
       getApprovalMode: vi.fn().mockReturnValue(ApprovalMode.DEFAULT),
       getEnableInteractiveShell: vi.fn().mockReturnValue(false),
-      getShellExecutionConfig: vi.fn().mockReturnValue({
-        sandboxManager: new NoopSandboxManager(),
-        sanitizationConfig: {
-          allowedEnvironmentVariables: [],
-          blockedEnvironmentVariables: [],
-          enableEnvironmentVariableRedaction: false,
-        },
-      }),
+      getShellExecutionConfig: vi.fn().mockReturnValue({}),
       getPolicyEngine: vi.fn().mockReturnValue({
         check: mockPolicyEngineCheck,
       }),
-      get config() {
-        return this as unknown as Config;
-      },
     };
 
     context = createMockCommandContext({
@@ -101,7 +90,7 @@ describe('ShellProcessor', () => {
         args: 'default args',
       },
       services: {
-        agentContext: mockConfig as Config,
+        config: mockConfig as Config,
       },
       session: {
         sessionShellAllowlist: new Set(),
@@ -123,7 +112,7 @@ describe('ShellProcessor', () => {
     const prompt: PromptPipelineContent = createPromptPipelineContent('!{ls}');
     const contextWithoutConfig = createMockCommandContext({
       services: {
-        agentContext: null,
+        config: null,
       },
     });
 

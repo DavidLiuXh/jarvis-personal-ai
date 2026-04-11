@@ -5,10 +5,8 @@
  */
 
 import type { Config } from '../config/config.js';
-import {
-  openBrowserSecurely,
-  shouldLaunchBrowser,
-} from '../utils/secure-browser-launcher.js';
+import { AuthType } from '../core/contentGenerator.js';
+import { openBrowserSecurely } from '../utils/secure-browser-launcher.js';
 import { debugLogger } from '../utils/debugLogger.js';
 import { getErrorMessage } from '../utils/errors.js';
 import type { FallbackIntent, FallbackRecommendation } from './types.js';
@@ -20,7 +18,7 @@ import {
   applyAvailabilityTransition,
 } from '../availability/policyHelpers.js';
 
-export const UPGRADE_URL_PAGE = 'https://goo.gle/set-up-gemini-code-assist';
+const UPGRADE_URL_PAGE = 'https://goo.gle/set-up-gemini-code-assist';
 
 export async function handleFallback(
   config: Config,
@@ -28,6 +26,10 @@ export async function handleFallback(
   authType?: string,
   error?: unknown,
 ): Promise<string | boolean | null> {
+  if (authType !== AuthType.LOGIN_WITH_GOOGLE) {
+    return null;
+  }
+
   const chain = resolvePolicyChain(config);
   const { failedPolicy, candidates } = buildFallbackPolicyContext(
     chain,
@@ -110,12 +112,6 @@ export async function handleFallback(
 }
 
 async function handleUpgrade() {
-  if (!shouldLaunchBrowser()) {
-    debugLogger.log(
-      `Cannot open browser in this environment. Please visit: ${UPGRADE_URL_PAGE}`,
-    );
-    return;
-  }
   try {
     await openBrowserSecurely(UPGRADE_URL_PAGE);
   } catch (error) {

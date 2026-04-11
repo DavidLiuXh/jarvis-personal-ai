@@ -24,10 +24,7 @@ import {
 } from '../../config/extensions/update.js';
 import { ExtensionUpdateState } from '../state/extensions.js';
 import { ExtensionManager } from '../../config/extension-manager.js';
-import {
-  loadSettings,
-  resetSettingsCacheForTesting,
-} from '../../config/settings.js';
+import { loadSettings } from '../../config/settings.js';
 
 vi.mock('os', async (importOriginal) => {
   const mockedOs = await importOriginal<typeof os>();
@@ -62,7 +59,6 @@ describe('useExtensionUpdates', () => {
   let extensionManager: ExtensionManager;
 
   beforeEach(() => {
-    resetSettingsCacheForTesting();
     vi.mocked(loadAgentsFromDirectory).mockResolvedValue({
       agents: [],
       errors: [],
@@ -127,7 +123,7 @@ describe('useExtensionUpdates', () => {
       return null;
     }
 
-    await render(<TestComponent />);
+    render(<TestComponent />);
 
     await waitFor(() => {
       expect(addItem).toHaveBeenCalledWith(
@@ -177,7 +173,7 @@ describe('useExtensionUpdates', () => {
       return null;
     }
 
-    await render(<TestComponent />);
+    render(<TestComponent />);
 
     await waitFor(
       () => {
@@ -255,7 +251,7 @@ describe('useExtensionUpdates', () => {
       return null;
     }
 
-    await render(<TestComponent />);
+    render(<TestComponent />);
 
     await waitFor(
       () => {
@@ -338,7 +334,7 @@ describe('useExtensionUpdates', () => {
       return null;
     }
 
-    await render(<TestComponent />);
+    render(<TestComponent />);
 
     await waitFor(() => {
       expect(addItem).toHaveBeenCalledTimes(1);

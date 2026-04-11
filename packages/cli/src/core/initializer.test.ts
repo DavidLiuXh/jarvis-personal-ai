@@ -105,9 +105,6 @@ describe('initializer', () => {
       mockSettings,
     );
 
-    // Wait for the background promise to resolve
-    await new Promise((resolve) => setTimeout(resolve, 0));
-
     expect(result).toEqual({
       authError: null,
       accountSuspensionInfo: null,

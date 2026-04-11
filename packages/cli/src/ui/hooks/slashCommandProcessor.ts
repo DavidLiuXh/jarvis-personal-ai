@@ -52,7 +52,6 @@ import { CommandService } from '../../services/CommandService.js';
 import { BuiltinCommandLoader } from '../../services/BuiltinCommandLoader.js';
 import { FileCommandLoader } from '../../services/FileCommandLoader.js';
 import { McpPromptLoader } from '../../services/McpPromptLoader.js';
-import { SkillCommandLoader } from '../../services/SkillCommandLoader.js';
 import { parseSlashCommand } from '../../utils/commands.js';
 import {
   type ExtensionUpdateAction,
@@ -84,7 +83,7 @@ interface SlashCommandProcessorActions {
   toggleDebugProfiler: () => void;
   dispatchExtensionStateUpdate: (action: ExtensionUpdateAction) => void;
   addConfirmUpdateExtensionRequest: (request: ConfirmationRequest) => void;
-  toggleBackgroundTasks: () => void;
+  toggleBackgroundShell: () => void;
   toggleShortcutsHelp: () => void;
   setText: (text: string) => void;
 }
@@ -209,7 +208,7 @@ export const useSlashCommandProcessor = (
   const commandContext = useMemo(
     (): CommandContext => ({
       services: {
-        agentContext: config,
+        config,
         settings,
         git: gitService,
         logger,
@@ -242,7 +241,7 @@ export const useSlashCommandProcessor = (
           actions.addConfirmUpdateExtensionRequest,
         setConfirmationRequest,
         removeComponent: () => setCustomDialog(null),
-        toggleBackgroundTasks: actions.toggleBackgroundTasks,
+        toggleBackgroundShell: actions.toggleBackgroundShell,
         toggleShortcutsHelp: actions.toggleShortcutsHelp,
       },
       session: {
@@ -325,9 +324,8 @@ export const useSlashCommandProcessor = (
     (async () => {
       const commandService = await CommandService.create(
         [
-          new BuiltinCommandLoader(config),
-          new SkillCommandLoader(config),
           new McpPromptLoader(config),
+          new BuiltinCommandLoader(config),
           new FileCommandLoader(config),
         ],
         controller.signal,
@@ -447,7 +445,6 @@ export const useSlashCommandProcessor = (
                     type: 'schedule_tool',
                     toolName: result.toolName,
                     toolArgs: result.toolArgs,
-                    postSubmitPrompt: result.postSubmitPrompt,
                   };
                 case 'message':
                   addItem(
@@ -505,9 +502,7 @@ export const useSlashCommandProcessor = (
                       const props = result.props as Record<string, unknown>;
                       if (
                         !props ||
-                        // eslint-disable-next-line no-restricted-syntax
                         typeof props['name'] !== 'string' ||
-                        // eslint-disable-next-line no-restricted-syntax
                         typeof props['displayName'] !== 'string' ||
                         !props['definition']
                       ) {

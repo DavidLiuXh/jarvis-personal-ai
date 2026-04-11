@@ -14,7 +14,7 @@ import {
   type ConversationOffered,
   type StreamingLatency,
 } from './types.js';
-import type { CompletedToolCall } from '../scheduler/types.js';
+import type { CompletedToolCall } from '../core/coreToolScheduler.js';
 import type { Config } from '../config/config.js';
 import { debugLogger } from '../utils/debugLogger.js';
 import { getCodeAssistServer } from './codeAssist.js';
@@ -36,7 +36,6 @@ export async function recordConversationOffered(
   response: GenerateContentResponse,
   streamingLatency: StreamingLatency,
   abortSignal: AbortSignal | undefined,
-  trajectoryId: string | undefined,
 ): Promise<void> {
   try {
     if (traceId) {
@@ -45,7 +44,6 @@ export async function recordConversationOffered(
         traceId,
         abortSignal,
         streamingLatency,
-        trajectoryId,
       );
       if (offered) {
         await server.recordConversationOffered(offered);
@@ -89,7 +87,6 @@ export function createConversationOffered(
   traceId: string,
   signal: AbortSignal | undefined,
   streamingLatency: StreamingLatency,
-  trajectoryId: string | undefined,
 ): ConversationOffered | undefined {
   // Only send conversation offered events for responses that contain edit
   // function calls. Non-edit function calls don't represent file modifications.
@@ -110,7 +107,6 @@ export function createConversationOffered(
     streamingLatency,
     isAgentic: true,
     initiationMethod: InitiationMethod.COMMAND,
-    trajectoryId,
   };
 }
 
@@ -208,7 +204,6 @@ function createConversationInteraction(
     removedLines,
     language,
     isAgentic: true,
-    initiationMethod: InitiationMethod.COMMAND,
   };
 }
 

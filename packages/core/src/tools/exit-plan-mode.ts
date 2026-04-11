@@ -7,12 +7,12 @@
 import {
   BaseDeclarativeTool,
   BaseToolInvocation,
-  Kind,
-  ToolConfirmationOutcome,
-  type ToolConfirmationPayload,
-  type ToolExitPlanModeConfirmationDetails,
-  type ToolExitPlanModeConfirmationPayload,
   type ToolResult,
+  Kind,
+  type ToolExitPlanModeConfirmationDetails,
+  type ToolConfirmationPayload,
+  type ToolExitPlanModeConfirmationPayload,
+  ToolConfirmationOutcome,
 } from './tools.js';
 import type { MessageBus } from '../confirmation-bus/message-bus.js';
 import path from 'node:path';
@@ -28,7 +28,7 @@ import { resolveToolDeclaration } from './definitions/resolver.js';
 import { getPlanModeExitMessage } from '../utils/approvalModeUtils.js';
 
 export interface ExitPlanModeParams {
-  plan_filename: string;
+  plan_path: string;
 }
 
 export class ExitPlanModeTool extends BaseDeclarativeTool<
@@ -41,7 +41,8 @@ export class ExitPlanModeTool extends BaseDeclarativeTool<
     private config: Config,
     messageBus: MessageBus,
   ) {
-    const definition = getExitPlanModeDefinition();
+    const plansDir = config.storage.getPlansDir();
+    const definition = getExitPlanModeDefinition(plansDir);
     super(
       ExitPlanModeTool.Name,
       'Exit Plan Mode',
@@ -55,21 +56,22 @@ export class ExitPlanModeTool extends BaseDeclarativeTool<
   protected override validateToolParamValues(
     params: ExitPlanModeParams,
   ): string | null {
-    if (!params.plan_filename || params.plan_filename.trim() === '') {
-      return 'plan_filename is required.';
+    if (!params.plan_path || params.plan_path.trim() === '') {
+      return 'plan_path is required.';
     }
 
-    const safeFilename = path.basename(params.plan_filename);
+    // Since validateToolParamValues is synchronous, we use a basic synchronous check
+    // for path traversal safety. High-level async validation is deferred to shouldConfirmExecute.
     const plansDir = resolveToRealPath(this.config.storage.getPlansDir());
-    const resolvedPath = path.join(
-      this.config.storage.getPlansDir(),
-      safeFilename,
+    const resolvedPath = path.resolve(
+      this.config.getTargetDir(),
+      params.plan_path,
     );
 
     const realPath = resolveToRealPath(resolvedPath);
 
     if (!isSubpath(plansDir, realPath)) {
-      return `Access denied: plan path (${resolvedPath}) must be within the designated plans directory (${plansDir}).`;
+      return `Access denied: plan path must be within the designated plans directory.`;
     }
 
     return null;
@@ -91,7 +93,8 @@ export class ExitPlanModeTool extends BaseDeclarativeTool<
   }
 
   override getSchema(modelId?: string) {
-    return resolveToolDeclaration(getExitPlanModeDefinition(), modelId);
+    const plansDir = this.config.storage.getPlansDir();
+    return resolveToolDeclaration(getExitPlanModeDefinition(plansDir), modelId);
   }
 }
 
@@ -119,8 +122,9 @@ export class ExitPlanModeInvocation extends BaseToolInvocation<
     const resolvedPlanPath = this.getResolvedPlanPath();
 
     const pathError = await validatePlanPath(
-      this.params.plan_filename,
+      this.params.plan_path,
       this.config.storage.getPlansDir(),
+      this.config.getTargetDir(),
     );
     if (pathError) {
       this.planValidationError = pathError;
@@ -134,7 +138,7 @@ export class ExitPlanModeInvocation extends BaseToolInvocation<
     }
 
     const decision = await this.getMessageBusDecision(abortSignal);
-    if (decision === 'deny') {
+    if (decision === 'DENY') {
       throw new Error(
         `Tool execution for "${
           this._toolDisplayName || this._toolName
@@ -142,17 +146,17 @@ export class ExitPlanModeInvocation extends BaseToolInvocation<
       );
     }
 
-    if (decision === 'allow') {
+    if (decision === 'ALLOW') {
       // If policy is allow, auto-approve with default settings and execute.
       this.confirmationOutcome = ToolConfirmationOutcome.ProceedOnce;
       this.approvalPayload = {
         approved: true,
-        approvalMode: this.getAllowApprovalMode(),
+        approvalMode: ApprovalMode.DEFAULT,
       };
       return false;
     }
 
-    // decision is 'ask_user'
+    // decision is 'ASK_USER'
     return {
       type: 'exit_plan_mode',
       title: 'Plan Approval',
@@ -170,7 +174,7 @@ export class ExitPlanModeInvocation extends BaseToolInvocation<
   }
 
   getDescription(): string {
-    return `Requesting plan approval for: ${path.join(this.config.storage.getPlansDir(), this.params.plan_filename)}`;
+    return `Requesting plan approval for: ${this.params.plan_path}`;
   }
 
   /**
@@ -178,8 +182,7 @@ export class ExitPlanModeInvocation extends BaseToolInvocation<
    * Note: Validation is done in validateToolParamValues, so this assumes the path is valid.
    */
   private getResolvedPlanPath(): string {
-    const safeFilename = path.basename(this.params.plan_filename);
-    return path.join(this.config.storage.getPlansDir(), safeFilename);
+    return path.resolve(this.config.getTargetDir(), this.params.plan_path);
   }
 
   async execute(_signal: AbortSignal): Promise<ToolResult> {
@@ -200,17 +203,11 @@ export class ExitPlanModeInvocation extends BaseToolInvocation<
       };
     }
 
-    // When a user policy grants `allow` for exit_plan_mode, the scheduler
-    // skips the confirmation phase entirely and shouldConfirmExecute is never
-    // called, leaving approvalPayload null.
-    const payload = this.approvalPayload ?? {
-      approved: true,
-      approvalMode: this.getAllowApprovalMode(),
-    };
-    if (payload.approved) {
+    const payload = this.approvalPayload;
+    if (payload?.approved) {
       const newMode = payload.approvalMode ?? ApprovalMode.DEFAULT;
 
-      if (newMode === ApprovalMode.PLAN) {
+      if (newMode === ApprovalMode.PLAN || newMode === ApprovalMode.YOLO) {
         throw new Error(`Unexpected approval mode: ${newMode}`);
       }
 
@@ -248,19 +245,5 @@ Ask the user for specific feedback on how to improve the plan.`,
         };
       }
     }
-  }
-
-  /**
-   * Determines the approval mode to switch to when plan mode is exited via a policy ALLOW.
-   * In non-interactive environments, this defaults to YOLO to allow automated execution.
-   */
-  private getAllowApprovalMode(): ApprovalMode {
-    if (!this.config.isInteractive()) {
-      // For non-interactive environment requires minimal user action, exit as YOLO mode for plan implementation.
-      return ApprovalMode.YOLO;
-    }
-    // By default, YOLO mode in interactive environment cannot enter/exit plan mode.
-    // Always exit plan mode and move to default approval mode if exit_plan_mode tool is configured with allow decision.
-    return ApprovalMode.DEFAULT;
   }
 }

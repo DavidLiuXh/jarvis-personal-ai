@@ -6,7 +6,6 @@
 
 import stripAnsi from 'strip-ansi';
 import type { SessionMetrics } from '../telemetry/uiTelemetry.js';
-import { getErrorType } from '../utils/errors.js';
 import type { JsonError, JsonOutput } from './types.js';
 
 export class JsonFormatter {
@@ -43,7 +42,7 @@ export class JsonFormatter {
     sessionId?: string,
   ): string {
     const jsonError: JsonError = {
-      type: getErrorType(error),
+      type: error.constructor.name,
       message: stripAnsi(error.message),
       ...(code && { code }),
     };

@@ -11,8 +11,9 @@ import { useUIState } from '../contexts/UIStateContext.js';
 import { useSettings } from '../contexts/SettingsContext.js';
 import { useConfig } from '../contexts/ConfigContext.js';
 import { ContextSummaryDisplay } from './ContextSummaryDisplay.js';
+import { HookStatusDisplay } from './HookStatusDisplay.js';
 
-export interface StatusDisplayProps {
+interface StatusDisplayProps {
   hideContextSummary: boolean;
 }
 
@@ -27,6 +28,13 @@ export const StatusDisplay: React.FC<StatusDisplayProps> = ({
     return <Text color={theme.status.error}>|⌐■_■|</Text>;
   }
 
+  if (
+    uiState.activeHooks.length > 0 &&
+    settings.merged.hooksConfig.notifications
+  ) {
+    return <HookStatusDisplay activeHooks={uiState.activeHooks} />;
+  }
+
   if (!settings.merged.ui.hideContextSummary && !hideContextSummary) {
     return (
       <ContextSummaryDisplay
@@ -38,7 +46,7 @@ export const StatusDisplay: React.FC<StatusDisplayProps> = ({
           config.getMcpClientManager()?.getBlockedMcpServers() ?? []
         }
         skillCount={config.getSkillManager().getDisplayableSkills().length}
-        backgroundProcessCount={uiState.backgroundTaskCount}
+        backgroundProcessCount={uiState.backgroundShellCount}
       />
     );
   }

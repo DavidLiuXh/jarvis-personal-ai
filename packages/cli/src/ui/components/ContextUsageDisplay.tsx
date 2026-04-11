@@ -38,7 +38,7 @@ export const ContextUsageDisplay = ({
   }
 
   const label =
-    terminalWidth < MIN_TERMINAL_WIDTH_FOR_FULL_LABEL ? '%' : '% used';
+    terminalWidth < MIN_TERMINAL_WIDTH_FOR_FULL_LABEL ? '%' : '% context used';
 
   return (
     <Text color={textColor}>

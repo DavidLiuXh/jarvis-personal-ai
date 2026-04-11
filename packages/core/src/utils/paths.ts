@@ -325,14 +325,9 @@ export function getProjectHash(projectRoot: string): string {
  * - On Windows, converts to lowercase for case-insensitivity.
  */
 export function normalizePath(p: string): string {
-  const platform = process.platform;
-  const isWindows = platform === 'win32';
-  const pathModule = isWindows ? path.win32 : path;
-
-  const resolved = pathModule.resolve(p);
+  const resolved = path.resolve(p);
   const normalized = resolved.replace(/\\/g, '/');
-  const isCaseInsensitive = isWindows || platform === 'darwin';
-  return isCaseInsensitive ? normalized.toLowerCase() : normalized;
+  return process.platform === 'win32' ? normalized.toLowerCase() : normalized;
 }
 
 /**
@@ -342,47 +337,17 @@ export function normalizePath(p: string): string {
  * @returns True if childPath is a subpath of parentPath, false otherwise.
  */
 export function isSubpath(parentPath: string, childPath: string): boolean {
-  const platform = process.platform;
-  const isWindows = platform === 'win32';
-  const isDarwin = platform === 'darwin';
+  const isWindows = process.platform === 'win32';
   const pathModule = isWindows ? path.win32 : path;
 
-  // Resolve both paths to absolute to ensure consistent comparison,
-  // especially when mixing relative and absolute paths or when casing differs.
-  let p = pathModule.resolve(parentPath);
-  let c = pathModule.resolve(childPath);
-
-  // On Windows, path.relative is case-insensitive.
-  // On POSIX (including Darwin), path.relative is case-sensitive.
-  // We want it to be case-insensitive on Darwin to match user expectation and sandbox policy.
-  if (isDarwin) {
-    p = p.toLowerCase();
-    c = c.toLowerCase();
-  }
-
-  const relative = pathModule.relative(p, c);
+  // On Windows, path.relative is case-insensitive. On POSIX, it's case-sensitive.
+  const relative = pathModule.relative(parentPath, childPath);
 
   return (
     !relative.startsWith(`..${pathModule.sep}`) &&
     relative !== '..' &&
     !pathModule.isAbsolute(relative)
   );
-}
-
-/**
- * Type guard to verify a value is a string and does not contain null bytes.
- */
-export function isValidPathString(p: unknown): p is string {
-  return typeof p === 'string' && !p.includes('\0');
-}
-
-/**
- * Asserts that a value is a valid path string, throwing an Error otherwise.
- */
-export function assertValidPathString(p: unknown): asserts p is string {
-  if (!isValidPathString(p)) {
-    throw new Error(`Invalid path: ${String(p)}`);
-  }
 }
 
 /**
@@ -394,9 +359,8 @@ export function assertValidPathString(p: unknown): asserts p is string {
  * @param pathStr The path string to resolve.
  * @returns The resolved real path.
  */
-export function resolveToRealPath(pathStr: string): string {
-  assertValidPathString(pathStr);
-  let resolvedPath = pathStr;
+export function resolveToRealPath(path: string): string {
+  let resolvedPath = path;
 
   try {
     if (resolvedPath.startsWith('file://')) {
@@ -404,53 +368,15 @@ export function resolveToRealPath(pathStr: string): string {
     }
 
     resolvedPath = decodeURIComponent(resolvedPath);
-  } catch {
+  } catch (_e) {
     // Ignore error (e.g. malformed URI), keep path from previous step
   }
 
-  return robustRealpath(path.resolve(resolvedPath));
-}
-
-function robustRealpath(p: string, visited = new Set<string>()): string {
-  const key = process.platform === 'win32' ? p.toLowerCase() : p;
-  if (visited.has(key)) {
-    throw new Error(`Infinite recursion detected in robustRealpath: ${p}`);
-  }
-  visited.add(key);
   try {
-    return fs.realpathSync(p);
-  } catch (e: unknown) {
-    if (
-      e &&
-      typeof e === 'object' &&
-      'code' in e &&
-      (e.code === 'ENOENT' || e.code === 'EISDIR')
-    ) {
-      try {
-        const stat = fs.lstatSync(p);
-        if (stat.isSymbolicLink()) {
-          const target = fs.readlinkSync(p);
-          const resolvedTarget = path.resolve(path.dirname(p), target);
-          return robustRealpath(resolvedTarget, visited);
-        }
-      } catch (lstatError: unknown) {
-        // Not a symlink, or lstat failed. Re-throw if it's not an expected
-        // ENOENT (e.g., a permissions error), otherwise resolve parent.
-        if (
-          !(
-            lstatError &&
-            typeof lstatError === 'object' &&
-            'code' in lstatError &&
-            (lstatError.code === 'ENOENT' || lstatError.code === 'EISDIR')
-          )
-        ) {
-          throw lstatError;
-        }
-      }
-      const parent = path.dirname(p);
-      if (parent === p) return p;
-      return path.join(robustRealpath(parent, visited), path.basename(p));
-    }
-    throw e;
+    return fs.realpathSync(resolvedPath);
+  } catch (_e) {
+    // If realpathSync fails, it might be because the path doesn't exist.
+    // In that case, we can fall back to the path processed.
+    return resolvedPath;
   }
 }

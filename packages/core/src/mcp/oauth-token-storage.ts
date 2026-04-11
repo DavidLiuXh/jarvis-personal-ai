@@ -21,23 +21,14 @@ import {
 } from './token-storage/index.js';
 
 /**
- * Class for managing OAuth token storage and retrieval.
- * Used by both MCP and A2A OAuth providers. Pass a custom `tokenFilePath`
- * to store tokens in a protocol-specific file.
+ * Class for managing MCP OAuth token storage and retrieval.
  */
 export class MCPOAuthTokenStorage implements TokenStorage {
-  private readonly hybridTokenStorage: HybridTokenStorage;
+  private readonly hybridTokenStorage = new HybridTokenStorage(
+    DEFAULT_SERVICE_NAME,
+  );
   private readonly useEncryptedFile =
     process.env[FORCE_ENCRYPTED_FILE_ENV_VAR] === 'true';
-  private readonly customTokenFilePath?: string;
-
-  constructor(
-    tokenFilePath?: string,
-    serviceName: string = DEFAULT_SERVICE_NAME,
-  ) {
-    this.customTokenFilePath = tokenFilePath;
-    this.hybridTokenStorage = new HybridTokenStorage(serviceName);
-  }
 
   /**
    * Get the path to the token storage file.
@@ -45,7 +36,7 @@ export class MCPOAuthTokenStorage implements TokenStorage {
    * @returns The full path to the token storage file
    */
   private getTokenFilePath(): string {
-    return this.customTokenFilePath ?? Storage.getMcpOAuthTokensPath();
+    return Storage.getMcpOAuthTokensPath();
   }
 
   /**

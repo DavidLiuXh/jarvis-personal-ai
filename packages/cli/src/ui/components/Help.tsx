@@ -10,8 +10,6 @@ import { theme } from '../semantic-colors.js';
 import { type SlashCommand, CommandKind } from '../commands/types.js';
 import { KEYBOARD_SHORTCUTS_URL } from '../constants.js';
 import { sanitizeForDisplay } from '../utils/textUtils.js';
-import { formatCommand } from '../key/keybindingUtils.js';
-import { Command } from '../key/keyBindings.js';
 
 interface Help {
   commands: readonly SlashCommand[];
@@ -118,75 +116,75 @@ export const Help: React.FC<Help> = ({ commands }) => (
     </Text>
     <Text color={theme.text.primary}>
       <Text bold color={theme.text.accent}>
-        {formatCommand(Command.MOVE_WORD_LEFT)}/
-        {formatCommand(Command.MOVE_WORD_RIGHT)}
+        Alt+Left/Right
       </Text>{' '}
       - Jump through words in the input
     </Text>
     <Text color={theme.text.primary}>
       <Text bold color={theme.text.accent}>
-        {formatCommand(Command.QUIT)}
+        Ctrl+C
       </Text>{' '}
       - Quit application
     </Text>
     <Text color={theme.text.primary}>
       <Text bold color={theme.text.accent}>
-        {formatCommand(Command.NEWLINE)}
+        {process.platform === 'win32' ? 'Ctrl+Enter' : 'Ctrl+J'}
       </Text>{' '}
-      - New line
+      {process.platform === 'linux'
+        ? '- New line (Alt+Enter works for certain linux distros)'
+        : '- New line'}
     </Text>
     <Text color={theme.text.primary}>
       <Text bold color={theme.text.accent}>
-        {formatCommand(Command.CLEAR_SCREEN)}
+        Ctrl+L
       </Text>{' '}
       - Clear the screen
     </Text>
     <Text color={theme.text.primary}>
       <Text bold color={theme.text.accent}>
-        {formatCommand(Command.TOGGLE_COPY_MODE)}
+        Ctrl+S
       </Text>{' '}
       - Enter selection mode to copy text
     </Text>
     <Text color={theme.text.primary}>
       <Text bold color={theme.text.accent}>
-        {formatCommand(Command.OPEN_EXTERNAL_EDITOR)}
+        Ctrl+X
       </Text>{' '}
       - Open input in external editor
     </Text>
     <Text color={theme.text.primary}>
       <Text bold color={theme.text.accent}>
-        {formatCommand(Command.TOGGLE_YOLO)}
+        Ctrl+Y
       </Text>{' '}
       - Toggle YOLO mode
     </Text>
     <Text color={theme.text.primary}>
       <Text bold color={theme.text.accent}>
-        {formatCommand(Command.SUBMIT)}
+        Enter
       </Text>{' '}
       - Send message
     </Text>
     <Text color={theme.text.primary}>
       <Text bold color={theme.text.accent}>
-        {formatCommand(Command.ESCAPE)}
+        Esc
       </Text>{' '}
       - Cancel operation / Clear input (double press)
     </Text>
     <Text color={theme.text.primary}>
       <Text bold color={theme.text.accent}>
-        {formatCommand(Command.PAGE_UP)}/{formatCommand(Command.PAGE_DOWN)}
+        Page Up/Down
       </Text>{' '}
       - Scroll page up/down
     </Text>
     <Text color={theme.text.primary}>
       <Text bold color={theme.text.accent}>
-        {formatCommand(Command.CYCLE_APPROVAL_MODE)}
+        Shift+Tab
       </Text>{' '}
       - Toggle auto-accepting edits
     </Text>
     <Text color={theme.text.primary}>
       <Text bold color={theme.text.accent}>
-        {formatCommand(Command.HISTORY_UP)}/
-        {formatCommand(Command.HISTORY_DOWN)}
+        Up/Down
       </Text>{' '}
       - Cycle through your prompt history
     </Text>

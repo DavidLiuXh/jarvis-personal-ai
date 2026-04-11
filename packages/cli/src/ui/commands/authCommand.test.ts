@@ -9,7 +9,6 @@ import { authCommand } from './authCommand.js';
 import { type CommandContext } from './types.js';
 import { createMockCommandContext } from '../../test-utils/mockCommandContext.js';
 import { SettingScope } from '../../config/settings.js';
-import type { GeminiClient } from '@google/gemini-cli-core';
 
 vi.mock('@google/gemini-cli-core', async () => {
   const actual = await vi.importActual('@google/gemini-cli-core');
@@ -25,10 +24,8 @@ describe('authCommand', () => {
   beforeEach(() => {
     mockContext = createMockCommandContext({
       services: {
-        agentContext: {
-          geminiClient: {
-            stripThoughtsFromHistory: vi.fn(),
-          },
+        config: {
+          getGeminiClient: vi.fn(),
         },
       },
     });
@@ -37,13 +34,11 @@ describe('authCommand', () => {
     vi.clearAllMocks();
   });
 
-  it('should have subcommands: signin and signout', () => {
+  it('should have subcommands: login and logout', () => {
     expect(authCommand.subCommands).toBeDefined();
     expect(authCommand.subCommands).toHaveLength(2);
-    expect(authCommand.subCommands?.[0]?.name).toBe('signin');
-    expect(authCommand.subCommands?.[0]?.altNames).toContain('login');
-    expect(authCommand.subCommands?.[1]?.name).toBe('signout');
-    expect(authCommand.subCommands?.[1]?.altNames).toContain('logout');
+    expect(authCommand.subCommands?.[0]?.name).toBe('login');
+    expect(authCommand.subCommands?.[1]?.name).toBe('logout');
   });
 
   it('should return a dialog action to open the auth dialog when called with no args', () => {
@@ -64,19 +59,19 @@ describe('authCommand', () => {
     expect(authCommand.description).toBe('Manage authentication');
   });
 
-  describe('auth signin subcommand', () => {
+  describe('auth login subcommand', () => {
     it('should return auth dialog action', () => {
       const loginCommand = authCommand.subCommands?.[0];
-      expect(loginCommand?.name).toBe('signin');
+      expect(loginCommand?.name).toBe('login');
       const result = loginCommand!.action!(mockContext, '');
       expect(result).toEqual({ type: 'dialog', dialog: 'auth' });
     });
   });
 
-  describe('auth signout subcommand', () => {
+  describe('auth logout subcommand', () => {
     it('should clear cached credentials', async () => {
       const logoutCommand = authCommand.subCommands?.[1];
-      expect(logoutCommand?.name).toBe('signout');
+      expect(logoutCommand?.name).toBe('logout');
 
       const { clearCachedCredentialFile } = await import(
         '@google/gemini-cli-core'
@@ -104,19 +99,17 @@ describe('authCommand', () => {
       const mockStripThoughts = vi.fn();
       const mockClient = {
         stripThoughtsFromHistory: mockStripThoughts,
-      } as unknown as GeminiClient;
-      if (mockContext.services.agentContext?.config) {
-        mockContext.services.agentContext.config.getGeminiClient = vi.fn(
-          () => mockClient,
-        );
+      } as unknown as ReturnType<
+        NonNullable<typeof mockContext.services.config>['getGeminiClient']
+      >;
+
+      if (mockContext.services.config) {
+        mockContext.services.config.getGeminiClient = vi.fn(() => mockClient);
       }
 
       await logoutCommand!.action!(mockContext, '');
 
-      expect(
-        mockContext.services.agentContext?.geminiClient
-          .stripThoughtsFromHistory,
-      ).toHaveBeenCalled();
+      expect(mockStripThoughts).toHaveBeenCalled();
     });
 
     it('should return logout action to signal explicit state change', async () => {
@@ -128,7 +121,7 @@ describe('authCommand', () => {
 
     it('should handle missing config gracefully', async () => {
       const logoutCommand = authCommand.subCommands?.[1];
-      mockContext.services.agentContext = null;
+      mockContext.services.config = null;
 
       const result = await logoutCommand!.action!(mockContext, '');
 

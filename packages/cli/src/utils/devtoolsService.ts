@@ -4,7 +4,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { debugLogger, type Config } from '@google/gemini-cli-core';
+import { debugLogger } from '@google/gemini-cli-core';
+import type { Config } from '@google/gemini-cli-core';
 import WebSocket from 'ws';
 import {
   initActivityLogger,

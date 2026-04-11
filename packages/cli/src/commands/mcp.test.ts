@@ -6,7 +6,8 @@
 
 import { describe, it, expect, vi } from 'vitest';
 import { mcpCommand } from './mcp.js';
-import yargs, { type Argv } from 'yargs';
+import { type Argv } from 'yargs';
+import yargs from 'yargs';
 
 describe('mcp command', () => {
   it('should have correct command definition', () => {
@@ -32,7 +33,7 @@ describe('mcp command', () => {
 
     try {
       await parser.parse('mcp');
-    } catch {
+    } catch (_error) {
       // yargs might throw an error when demandCommand is not met
     }
 

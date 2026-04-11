@@ -87,7 +87,6 @@ export const DialogManager = ({
           !!uiState.quota.proQuotaRequest.isModelNotFoundError
         }
         authType={uiState.quota.proQuotaRequest.authType}
-        tierName={config?.getUserTierName()}
         onChoice={uiActions.handleProQuotaChoice}
       />
     );
@@ -253,7 +252,6 @@ export const DialogManager = ({
           displayName={uiState.selectedAgentDisplayName}
           definition={uiState.selectedAgentDefinition}
           settings={settings}
-          availableTerminalHeight={terminalHeight - staticExtraHeight}
           onClose={uiActions.closeAgentConfigDialog}
           onSave={async () => {
             // Reload agent registry to pick up changes

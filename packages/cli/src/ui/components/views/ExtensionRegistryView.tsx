@@ -5,9 +5,10 @@
  */
 
 import type React from 'react';
-import { useMemo, useCallback, useState } from 'react';
+import { useMemo, useCallback } from 'react';
 import { Box, Text } from 'ink';
 import type { RegistryExtension } from '../../../config/extensionRegistryClient.js';
+
 import {
   SearchableList,
   type GenericListItem,
@@ -22,17 +23,9 @@ import type { ExtensionManager } from '../../../config/extension-manager.js';
 import { useRegistrySearch } from '../../hooks/useRegistrySearch.js';
 
 import { useUIState } from '../../contexts/UIStateContext.js';
-import { ExtensionDetails } from './ExtensionDetails.js';
 
 export interface ExtensionRegistryViewProps {
-  onSelect?: (
-    extension: RegistryExtension,
-    requestConsentOverride?: (consent: string) => Promise<boolean>,
-  ) => void | Promise<void>;
-  onLink?: (
-    extension: RegistryExtension,
-    requestConsentOverride?: (consent: string) => Promise<boolean>,
-  ) => void | Promise<void>;
+  onSelect?: (extension: RegistryExtension) => void;
   onClose?: () => void;
   extensionManager: ExtensionManager;
 }
@@ -43,29 +36,20 @@ interface ExtensionItem extends GenericListItem {
 
 export function ExtensionRegistryView({
   onSelect,
-  onLink,
   onClose,
   extensionManager,
 }: ExtensionRegistryViewProps): React.JSX.Element {
+  const { extensions, loading, error, search } = useExtensionRegistry();
   const config = useConfig();
-  const { extensions, loading, error, search } = useExtensionRegistry(
-    '',
-    config.getExtensionRegistryURI(),
-  );
-  const { terminalHeight, staticExtraHeight, historyManager } = useUIState();
-  const [selectedExtension, setSelectedExtension] =
-    useState<RegistryExtension | null>(null);
+  const { terminalHeight, staticExtraHeight } = useUIState();
 
-  const { extensionsUpdateState, dispatchExtensionStateUpdate } =
-    useExtensionUpdates(
-      extensionManager,
-      historyManager.addItem,
-      config.getEnableExtensionReloading(),
-    );
-
-  const [installedExtensions, setInstalledExtensions] = useState(() =>
-    extensionManager.getExtensions(),
+  const { extensionsUpdateState } = useExtensionUpdates(
+    extensionManager,
+    () => 0,
+    config.getEnableExtensionReloading(),
   );
+
+  const installedExtensions = extensionManager.getExtensions();
 
   const items: ExtensionItem[] = useMemo(
     () =>
@@ -78,61 +62,11 @@ export function ExtensionRegistryView({
     [extensions],
   );
 
-  const handleSelect = useCallback((item: ExtensionItem) => {
-    setSelectedExtension(item.extension);
-  }, []);
-
-  const handleBack = useCallback(() => {
-    setSelectedExtension(null);
-  }, []);
-
-  const handleInstall = useCallback(
-    async (
-      extension: RegistryExtension,
-      requestConsentOverride?: (consent: string) => Promise<boolean>,
-    ) => {
-      await onSelect?.(extension, requestConsentOverride);
-
-      // Refresh installed extensions list
-      setInstalledExtensions(extensionManager.getExtensions());
-
-      // Go back to the search page (list view)
-      setSelectedExtension(null);
+  const handleSelect = useCallback(
+    (item: ExtensionItem) => {
+      onSelect?.(item.extension);
     },
-    [onSelect, extensionManager],
-  );
-
-  const handleLink = useCallback(
-    async (
-      extension: RegistryExtension,
-      requestConsentOverride?: (consent: string) => Promise<boolean>,
-    ) => {
-      await onLink?.(extension, requestConsentOverride);
-
-      // Refresh installed extensions list
-      setInstalledExtensions(extensionManager.getExtensions());
-
-      // Go back to the search page (list view)
-      setSelectedExtension(null);
-    },
-    [onLink, extensionManager],
-  );
-
-  const handleUpdate = useCallback(
-    async (extension: RegistryExtension) => {
-      dispatchExtensionStateUpdate({
-        type: 'SCHEDULE_UPDATE',
-        payload: {
-          all: false,
-          names: [extension.extensionName],
-          onComplete: () => {
-            // Refresh installed extensions list if needed
-            setInstalledExtensions(extensionManager.getExtensions());
-          },
-        },
-      });
-    },
-    [dispatchExtensionStateUpdate, extensionManager],
+    [onSelect],
   );
 
   const renderItem = useCallback(
@@ -143,6 +77,7 @@ export function ExtensionRegistryView({
       const updateState = extensionsUpdateState.get(
         item.extension.extensionName,
       );
+      const hasUpdate = updateState === ExtensionUpdateState.UPDATE_AVAILABLE;
 
       return (
         <Box flexDirection="row" width="100%" justifyContent="space-between">
@@ -165,20 +100,15 @@ export function ExtensionRegistryView({
             <Box flexShrink={0} marginX={1}>
               <Text color={theme.text.secondary}>|</Text>
             </Box>
-            {updateState === ExtensionUpdateState.UPDATE_AVAILABLE ? (
+            {isInstalled && (
+              <Box marginRight={1} flexShrink={0}>
+                <Text color={theme.status.success}>[Installed]</Text>
+              </Box>
+            )}
+            {hasUpdate && (
               <Box marginRight={1} flexShrink={0}>
                 <Text color={theme.status.warning}>[Update available]</Text>
               </Box>
-            ) : updateState === ExtensionUpdateState.UPDATING ? (
-              <Box marginRight={1} flexShrink={0}>
-                <Text color={theme.text.secondary}>[Updating...]</Text>
-              </Box>
-            ) : (
-              isInstalled && (
-                <Box marginRight={1} flexShrink={0}>
-                  <Text color={theme.status.success}>[Installed]</Text>
-                </Box>
-              )
             )}
             <Box flexShrink={1} minWidth={0}>
               <Text color={theme.text.secondary} wrap="truncate-end">
@@ -273,50 +203,19 @@ export function ExtensionRegistryView({
   }
 
   return (
-    <>
-      <Box
-        display={selectedExtension ? 'none' : 'flex'}
-        flexDirection="column"
-        width="100%"
-        height="100%"
-      >
-        <SearchableList<ExtensionItem>
-          title="Extensions"
-          items={items}
-          onSelect={handleSelect}
-          onClose={onClose || (() => {})}
-          searchPlaceholder="Search extension gallery"
-          renderItem={renderItem}
-          header={header}
-          footer={footer}
-          maxItemsToShow={maxItemsToShow}
-          useSearch={useRegistrySearch}
-          onSearch={search}
-          resetSelectionOnItemsChange={true}
-          isFocused={!selectedExtension}
-        />
-      </Box>
-      {selectedExtension && (
-        <ExtensionDetails
-          extension={selectedExtension}
-          onBack={handleBack}
-          onInstall={async (requestConsentOverride) => {
-            await handleInstall(selectedExtension, requestConsentOverride);
-          }}
-          onLink={async (requestConsentOverride) => {
-            await handleLink(selectedExtension, requestConsentOverride);
-          }}
-          isInstalled={installedExtensions.some(
-            (e) => e.name === selectedExtension.extensionName,
-          )}
-          updateState={extensionsUpdateState.get(
-            selectedExtension.extensionName,
-          )}
-          onUpdate={async () => {
-            await handleUpdate(selectedExtension);
-          }}
-        />
-      )}
-    </>
+    <SearchableList<ExtensionItem>
+      title="Extensions"
+      items={items}
+      onSelect={handleSelect}
+      onClose={onClose || (() => {})}
+      searchPlaceholder="Search extension gallery"
+      renderItem={renderItem}
+      header={header}
+      footer={footer}
+      maxItemsToShow={maxItemsToShow}
+      useSearch={useRegistrySearch}
+      onSearch={search}
+      resetSelectionOnItemsChange={true}
+    />
   );
 }

@@ -19,20 +19,20 @@ import {
   type GenerateContentParameters,
 } from '@google/genai';
 import { toParts } from '../code_assist/converter.js';
-import {
-  retryWithBackoff,
-  isRetryableError,
-  getRetryErrorType,
-} from '../utils/retry.js';
+import { retryWithBackoff, isRetryableError } from '../utils/retry.js';
 import type { ValidationRequiredError } from '../utils/googleQuotaErrors.js';
-import { resolveModel, supportsModernFeatures } from '../config/models.js';
+import type { Config } from '../config/config.js';
+import {
+  resolveModel,
+  isGemini2Model,
+  supportsModernFeatures,
+} from '../config/models.js';
 import { hasCycleInSchema } from '../tools/tools.js';
 import type { StructuredError } from './turn.js';
-import type { CompletedToolCall } from '../scheduler/types.js';
+import type { CompletedToolCall } from './coreToolScheduler.js';
 import {
   logContentRetry,
   logContentRetryFailure,
-  logNetworkRetryAttempt,
 } from '../telemetry/loggers.js';
 import {
   ChatRecordingService,
@@ -41,7 +41,6 @@ import {
 import {
   ContentRetryEvent,
   ContentRetryFailureEvent,
-  NetworkRetryAttemptEvent,
   type LlmRole,
 } from '../telemetry/types.js';
 import { handleFallback } from '../fallback/handler.js';
@@ -54,7 +53,6 @@ import {
   createAvailabilityContextProvider,
 } from '../availability/policyHelpers.js';
 import { coreEvents } from '../utils/events.js';
-import type { AgentLoopContext } from '../config/agent-loop-context.js';
 
 export enum StreamEventType {
   /** A regular content chunk from the API. */
@@ -75,21 +73,18 @@ export type StreamEvent =
   | { type: StreamEventType.AGENT_EXECUTION_BLOCKED; reason: string };
 
 /**
- * Options for retrying mid-stream errors (e.g. invalid content or API disconnects).
+ * Options for retrying due to invalid content from the model.
  */
-interface MidStreamRetryOptions {
+interface ContentRetryOptions {
   /** Total number of attempts to make (1 initial + N retries). */
   maxAttempts: number;
-  /** The base delay in milliseconds for backoff. */
+  /** The base delay in milliseconds for linear backoff. */
   initialDelayMs: number;
-  /** Whether to use exponential backoff instead of linear. */
-  useExponentialBackoff: boolean;
 }
 
-const MID_STREAM_RETRY_OPTIONS: MidStreamRetryOptions = {
-  maxAttempts: 4, // 1 initial call + 3 retries mid-stream
-  initialDelayMs: 1000,
-  useExponentialBackoff: true,
+const INVALID_CONTENT_RETRY_OPTIONS: ContentRetryOptions = {
+  maxAttempts: 2, // 1 initial call + 1 retry
+  initialDelayMs: 500,
 };
 
 export const SYNTHETIC_THOUGHT_SIGNATURE = 'skip_thought_signature_validator';
@@ -250,25 +245,20 @@ export class GeminiChat {
   private lastPromptTokenCount: number;
 
   constructor(
-    private readonly context: AgentLoopContext,
+    private readonly config: Config,
     private systemInstruction: string = '',
     private tools: Tool[] = [],
     private history: Content[] = [],
     resumedSessionData?: ResumedSessionData,
     private readonly onModelChanged?: (modelId: string) => Promise<Tool[]>,
+    kind: 'main' | 'subagent' = 'main',
   ) {
     validateHistory(history);
-    this.chatRecordingService = new ChatRecordingService(context);
+    this.chatRecordingService = new ChatRecordingService(config);
+    this.chatRecordingService.initialize(resumedSessionData, kind);
     this.lastPromptTokenCount = estimateTokenCountSync(
       this.history.flatMap((c) => c.parts || []),
     );
-  }
-
-  async initialize(
-    resumedSessionData?: ResumedSessionData,
-    kind: 'main' | 'subagent' = 'main',
-  ) {
-    await this.chatRecordingService.initialize(resumedSessionData, kind);
   }
 
   setSystemInstruction(sysInstr: string) {
@@ -319,7 +309,7 @@ export class GeminiChat {
 
     const userContent = createUserContent(message);
     const { model } =
-      this.context.config.modelConfigService.getResolvedConfig(modelConfigKey);
+      this.config.modelConfigService.getResolvedConfig(modelConfigKey);
 
     // Record user input - capture complete message with all parts (text, files, images, etc.)
     // but skip recording function responses (tool call results) as they should be stored in tool call records
@@ -354,7 +344,9 @@ export class GeminiChat {
       this: GeminiChat,
     ): AsyncGenerator<StreamEvent, void, void> {
       try {
-        const maxAttempts = this.context.config.getMaxAttempts();
+        let lastError: unknown = new Error('Request failed after all retries.');
+
+        const maxAttempts = INVALID_CONTENT_RETRY_OPTIONS.maxAttempts;
 
         for (let attempt = 0; attempt < maxAttempts; attempt++) {
           let isConnectionPhase = true;
@@ -382,13 +374,15 @@ export class GeminiChat {
               yield { type: StreamEventType.CHUNK, value: chunk };
             }
 
-            return;
+            lastError = null;
+            break;
           } catch (error) {
             if (error instanceof AgentExecutionStoppedError) {
               yield {
                 type: StreamEventType.AGENT_EXECUTION_STOPPED,
                 reason: error.reason,
               };
+              lastError = null; // Clear error as this is an expected stop
               return; // Stop the generator
             }
 
@@ -403,83 +397,68 @@ export class GeminiChat {
                   value: error.syntheticResponse,
                 };
               }
+              lastError = null; // Clear error as this is an expected stop
               return; // Stop the generator
             }
 
-            if (isConnectionPhase) {
-              // Connection phase errors have already been retried by retryWithBackoff.
-              // If they bubble up here, they are exhausted or fatal.
-              throw error;
-            }
-
             // Check if the error is retryable (e.g., transient SSL errors
-            // like ERR_SSL_SSLV3_ALERT_BAD_RECORD_MAC or ApiError)
+            // like ERR_SSL_SSLV3_ALERT_BAD_RECORD_MAC)
             const isRetryable = isRetryableError(
               error,
-              this.context.config.getRetryFetchErrors(),
+              this.config.getRetryFetchErrors(),
             );
 
+            // For connection phase errors, only retryable errors should continue
+            if (isConnectionPhase) {
+              if (!isRetryable || signal.aborted) {
+                throw error;
+              }
+              // Fall through to retry logic for retryable connection errors
+            }
+            lastError = error;
             const isContentError = error instanceof InvalidStreamError;
-            const errorType = isContentError
-              ? error.type
-              : getRetryErrorType(error);
 
-            if (isContentError || (isRetryable && !signal.aborted)) {
-              // The issue requests exactly 3 retries (4 attempts) for API errors during stream iteration.
-              // Regardless of the global maxAttempts (e.g. 10), we only want to retry these mid-stream API errors
-              // up to 3 times before finally throwing the error to the user.
-              const maxMidStreamAttempts = MID_STREAM_RETRY_OPTIONS.maxAttempts;
+            if (
+              (isContentError && isGemini2Model(model)) ||
+              (isRetryable && !signal.aborted)
+            ) {
+              // Check if we have more attempts left.
+              if (attempt < maxAttempts - 1) {
+                const delayMs = INVALID_CONTENT_RETRY_OPTIONS.initialDelayMs;
+                const retryType = isContentError ? error.type : 'NETWORK_ERROR';
 
-              if (
-                attempt < maxAttempts - 1 &&
-                attempt < maxMidStreamAttempts - 1
-              ) {
-                const delayMs = MID_STREAM_RETRY_OPTIONS.useExponentialBackoff
-                  ? MID_STREAM_RETRY_OPTIONS.initialDelayMs *
-                    Math.pow(2, attempt)
-                  : MID_STREAM_RETRY_OPTIONS.initialDelayMs * (attempt + 1);
-
-                if (isContentError) {
-                  logContentRetry(
-                    this.context.config,
-                    new ContentRetryEvent(attempt, errorType, delayMs, model),
-                  );
-                } else {
-                  logNetworkRetryAttempt(
-                    this.context.config,
-                    new NetworkRetryAttemptEvent(
-                      attempt + 1,
-                      maxAttempts,
-                      errorType,
-                      delayMs,
-                      model,
-                    ),
-                  );
-                }
+                logContentRetry(
+                  this.config,
+                  new ContentRetryEvent(attempt, retryType, delayMs, model),
+                );
                 coreEvents.emitRetryAttempt({
                   attempt: attempt + 1,
-                  maxAttempts: Math.min(maxAttempts, maxMidStreamAttempts),
-                  delayMs,
-                  error: errorType,
+                  maxAttempts,
+                  delayMs: delayMs * (attempt + 1),
+                  error: error instanceof Error ? error.message : String(error),
                   model,
                 });
-                await new Promise((res) => setTimeout(res, delayMs));
+                await new Promise((res) =>
+                  setTimeout(res, delayMs * (attempt + 1)),
+                );
                 continue;
               }
             }
-
-            // If we've aborted, we throw without logging a failure.
-            if (signal.aborted) {
-              throw error;
-            }
-
-            logContentRetryFailure(
-              this.context.config,
-              new ContentRetryFailureEvent(attempt + 1, errorType, model),
-            );
-
-            throw error;
+            break;
           }
+        }
+
+        if (lastError) {
+          if (
+            lastError instanceof InvalidStreamError &&
+            isGemini2Model(model)
+          ) {
+            logContentRetryFailure(
+              this.config,
+              new ContentRetryFailureEvent(maxAttempts, lastError.type, model),
+            );
+          }
+          throw lastError;
         }
       } finally {
         streamDoneResolver!();
@@ -491,7 +470,7 @@ export class GeminiChat {
 
   private async makeApiCallAndProcessStream(
     modelConfigKey: ModelConfigKey,
-    requestContents: readonly Content[],
+    requestContents: Content[],
     prompt_id: string,
     abortSignal: AbortSignal,
     role: LlmRole,
@@ -504,55 +483,35 @@ export class GeminiChat {
       model: availabilityFinalModel,
       config: newAvailabilityConfig,
       maxAttempts: availabilityMaxAttempts,
-    } = applyModelSelection(this.context.config, modelConfigKey);
+    } = applyModelSelection(this.config, modelConfigKey);
 
     let lastModelToUse = availabilityFinalModel;
     let currentGenerateContentConfig: GenerateContentConfig =
       newAvailabilityConfig;
     let lastConfig: GenerateContentConfig = currentGenerateContentConfig;
-    let lastContentsToUse: Content[] = [...requestContents];
+    let lastContentsToUse: Content[] = requestContents;
 
     const getAvailabilityContext = createAvailabilityContextProvider(
-      this.context.config,
+      this.config,
       () => lastModelToUse,
     );
     // Track initial active model to detect fallback changes
-    const initialActiveModel = this.context.config.getActiveModel();
+    const initialActiveModel = this.config.getActiveModel();
 
     const apiCall = async () => {
-      const useGemini3_1 =
-        (await this.context.config.getGemini31Launched?.()) ?? false;
-      const useGemini3_1FlashLite =
-        (await this.context.config.getGemini31FlashLiteLaunched?.()) ?? false;
-      const hasAccessToPreview =
-        this.context.config.getHasAccessToPreviewModel?.() ?? true;
-
+      const useGemini3_1 = (await this.config.getGemini31Launched?.()) ?? false;
       // Default to the last used model (which respects arguments/availability selection)
-      let modelToUse = resolveModel(
-        lastModelToUse,
-        useGemini3_1,
-        useGemini3_1FlashLite,
-        false,
-        hasAccessToPreview,
-        this.context.config,
-      );
+      let modelToUse = resolveModel(lastModelToUse, useGemini3_1);
 
       // If the active model has changed (e.g. due to a fallback updating the config),
       // we switch to the new active model.
-      if (this.context.config.getActiveModel() !== initialActiveModel) {
-        modelToUse = resolveModel(
-          this.context.config.getActiveModel(),
-          useGemini3_1,
-          useGemini3_1FlashLite,
-          false,
-          hasAccessToPreview,
-          this.context.config,
-        );
+      if (this.config.getActiveModel() !== initialActiveModel) {
+        modelToUse = resolveModel(this.config.getActiveModel(), useGemini3_1);
       }
 
       if (modelToUse !== lastModelToUse) {
         const { generateContentConfig: newConfig } =
-          this.context.config.modelConfigService.getResolvedConfig({
+          this.config.modelConfigService.getResolvedConfig({
             ...modelConfigKey,
             model: modelToUse,
           });
@@ -569,11 +528,11 @@ export class GeminiChat {
         abortSignal,
       };
 
-      let contentsToUse: Content[] = supportsModernFeatures(modelToUse)
-        ? [...contentsForPreviewModel]
-        : [...requestContents];
+      let contentsToUse = supportsModernFeatures(modelToUse)
+        ? contentsForPreviewModel
+        : requestContents;
 
-      const hookSystem = this.context.config.getHookSystem();
+      const hookSystem = this.config.getHookSystem();
       if (hookSystem) {
         const beforeModelResult = await hookSystem.fireBeforeModelEvent({
           model: modelToUse,
@@ -602,21 +561,6 @@ export class GeminiChat {
           );
         }
 
-        if (beforeModelResult.modifiedModel) {
-          modelToUse = resolveModel(
-            beforeModelResult.modifiedModel,
-            useGemini3_1,
-            useGemini3_1FlashLite,
-            false,
-            hasAccessToPreview,
-            this.context.config,
-          );
-          lastModelToUse = modelToUse;
-          // Re-evaluate contentsToUse based on the new model's feature support
-          contentsToUse = supportsModernFeatures(modelToUse)
-            ? [...contentsForPreviewModel]
-            : [...requestContents];
-        }
         if (beforeModelResult.modifiedConfig) {
           Object.assign(config, beforeModelResult.modifiedConfig);
         }
@@ -656,7 +600,7 @@ export class GeminiChat {
       lastConfig = config;
       lastContentsToUse = contentsToUse;
 
-      return this.context.config.getContentGenerator().generateContentStream(
+      return this.config.getContentGenerator().generateContentStream(
         {
           model: modelToUse,
           contents: contentsToUse,
@@ -670,12 +614,12 @@ export class GeminiChat {
     const onPersistent429Callback = async (
       authType?: string,
       error?: unknown,
-    ) => handleFallback(this.context.config, lastModelToUse, authType, error);
+    ) => handleFallback(this.config, lastModelToUse, authType, error);
 
     const onValidationRequiredCallback = async (
       validationError: ValidationRequiredError,
     ) => {
-      const handler = this.context.config.getValidationHandler();
+      const handler = this.config.getValidationHandler();
       if (typeof handler !== 'function') {
         // No handler registered, re-throw to show default error message
         throw validationError;
@@ -690,17 +634,15 @@ export class GeminiChat {
     const streamResponse = await retryWithBackoff(apiCall, {
       onPersistent429: onPersistent429Callback,
       onValidationRequired: onValidationRequiredCallback,
-      authType: this.context.config.getContentGeneratorConfig()?.authType,
-      retryFetchErrors: this.context.config.getRetryFetchErrors(),
+      authType: this.config.getContentGeneratorConfig()?.authType,
+      retryFetchErrors: this.config.getRetryFetchErrors(),
       signal: abortSignal,
-      maxAttempts:
-        availabilityMaxAttempts ?? this.context.config.getMaxAttempts(),
+      maxAttempts: availabilityMaxAttempts ?? this.config.getMaxAttempts(),
       getAvailabilityContext,
       onRetry: (attempt, error, delayMs) => {
         coreEvents.emitRetryAttempt({
           attempt,
-          maxAttempts:
-            availabilityMaxAttempts ?? this.context.config.getMaxAttempts(),
+          maxAttempts: availabilityMaxAttempts ?? this.config.getMaxAttempts(),
           delayMs,
           error: error instanceof Error ? error.message : String(error),
           model: lastModelToUse,
@@ -745,11 +687,13 @@ export class GeminiChat {
    * @return History contents alternating between user and model for the entire
    * chat session.
    */
-  getHistory(curated: boolean = false): readonly Content[] {
+  getHistory(curated: boolean = false): Content[] {
     const history = curated
       ? extractCuratedHistory(this.history)
       : this.history;
-    return [...history];
+    // Deep copy the history to avoid mutating the history outside of the
+    // chat session.
+    return structuredClone(history);
   }
 
   /**
@@ -766,8 +710,8 @@ export class GeminiChat {
     this.history.push(content);
   }
 
-  setHistory(history: readonly Content[]): void {
-    this.history = [...history];
+  setHistory(history: Content[]): void {
+    this.history = history;
     this.lastPromptTokenCount = estimateTokenCountSync(
       this.history.flatMap((c) => c.parts || []),
     );
@@ -794,9 +738,7 @@ export class GeminiChat {
   // To ensure our requests validate, the first function call in every model
   // turn within the active loop must have a `thoughtSignature` property.
   // If we do not do this, we will get back 400 errors from the API.
-  ensureActiveLoopHasThoughtSignatures(
-    requestContents: readonly Content[],
-  ): readonly Content[] {
+  ensureActiveLoopHasThoughtSignatures(requestContents: Content[]): Content[] {
     // First, find the start of the active loop by finding the last user turn
     // with a text message, i.e. that is not a function response.
     let activeLoopStartIndex = -1;
@@ -853,7 +795,7 @@ export class GeminiChat {
       isSchemaDepthError(error.message) ||
       isInvalidArgumentError(error.message)
     ) {
-      const tools = this.context.toolRegistry.getAllTools();
+      const tools = this.config.getToolRegistry().getAllTools();
       const cyclicSchemaTools: string[] = [];
       for (const tool of tools) {
         if (
@@ -920,7 +862,7 @@ export class GeminiChat {
         }
       }
 
-      const hookSystem = this.context.config.getHookSystem();
+      const hookSystem = this.config.getHookSystem();
       if (originalRequest && chunk && hookSystem) {
         const hookResult = await hookSystem.fireAfterModelEvent(
           originalRequest,
@@ -1045,14 +987,12 @@ export class GeminiChat {
 
       return {
         id: call.request.callId,
-        name: call.request.originalRequestName ?? call.request.name,
-        args: call.request.originalRequestArgs ?? call.request.args,
+        name: call.request.name,
+        args: call.request.args,
         result: call.response?.responseParts || null,
         status: call.status,
         timestamp: new Date().toISOString(),
         resultDisplay,
-        description:
-          'invocation' in call ? call.invocation?.getDescription() : undefined,
       };
     });
 

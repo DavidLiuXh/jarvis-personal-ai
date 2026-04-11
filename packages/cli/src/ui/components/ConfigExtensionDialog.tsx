@@ -210,7 +210,7 @@ export const ConfigExtensionDialog: React.FC<ConfigExtensionDialogProps> = ({
   useKeypress(
     (key: Key) => {
       if (state.type === 'ASK_CONFIRMATION') {
-        if (key.name === 'y' || key.name === 'enter') {
+        if (key.name === 'y' || key.name === 'return') {
           state.resolve(true);
           return true;
         }
@@ -220,7 +220,7 @@ export const ConfigExtensionDialog: React.FC<ConfigExtensionDialogProps> = ({
         }
       }
       if (state.type === 'DONE' || state.type === 'ERROR') {
-        if (key.name === 'enter' || key.name === 'escape') {
+        if (key.name === 'return' || key.name === 'escape') {
           onClose();
           return true;
         }

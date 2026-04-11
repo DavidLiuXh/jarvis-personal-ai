@@ -14,9 +14,8 @@ import { clearCachedCredentialFile } from '@google/gemini-cli-core';
 import { SettingScope } from '../../config/settings.js';
 
 const authLoginCommand: SlashCommand = {
-  name: 'signin',
-  altNames: ['login'],
-  description: 'Sign in or change the authentication method',
+  name: 'login',
+  description: 'Login or change the auth method',
   kind: CommandKind.BUILT_IN,
   autoExecute: true,
   action: (_context, _args): OpenDialogActionReturn => ({
@@ -26,9 +25,8 @@ const authLoginCommand: SlashCommand = {
 };
 
 const authLogoutCommand: SlashCommand = {
-  name: 'signout',
-  altNames: ['logout'],
-  description: 'Sign out and clear all cached credentials',
+  name: 'logout',
+  description: 'Log out and clear all cached credentials',
   kind: CommandKind.BUILT_IN,
   action: async (context, _args): Promise<LogoutActionReturn> => {
     await clearCachedCredentialFile();
@@ -39,7 +37,7 @@ const authLogoutCommand: SlashCommand = {
       undefined,
     );
     // Strip thoughts from history instead of clearing completely
-    context.services.agentContext?.geminiClient.stripThoughtsFromHistory();
+    context.services.config?.getGeminiClient()?.stripThoughtsFromHistory();
     // Return logout action to signal explicit state change
     return {
       type: 'logout',

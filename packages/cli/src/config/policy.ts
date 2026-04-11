@@ -53,7 +53,6 @@ export async function createPolicyEngineConfig(
   settings: Settings,
   approvalMode: ApprovalMode,
   workspacePoliciesDir?: string,
-  interactive: boolean = true,
 ): Promise<PolicyEngineConfig> {
   // Explicitly construct PolicySettings from Settings to ensure type safety
   // and avoid accidental leakage of other settings properties.
@@ -62,19 +61,10 @@ export async function createPolicyEngineConfig(
     tools: settings.tools,
     mcpServers: settings.mcpServers,
     policyPaths: settings.policyPaths,
-    adminPolicyPaths: settings.adminPolicyPaths,
     workspacePoliciesDir,
-    disableAlwaysAllow:
-      settings.security?.disableAlwaysAllow ||
-      settings.admin?.secureModeEnabled,
   };
 
-  return createCorePolicyEngineConfig(
-    policySettings,
-    approvalMode,
-    undefined,
-    interactive,
-  );
+  return createCorePolicyEngineConfig(policySettings, approvalMode);
 }
 
 export function createPolicyUpdater(

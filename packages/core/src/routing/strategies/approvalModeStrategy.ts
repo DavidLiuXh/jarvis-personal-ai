@@ -6,10 +6,12 @@
 
 import type { Config } from '../../config/config.js';
 import {
+  DEFAULT_GEMINI_MODEL,
+  DEFAULT_GEMINI_FLASH_MODEL,
+  PREVIEW_GEMINI_MODEL,
+  PREVIEW_GEMINI_FLASH_MODEL,
   isAutoModel,
-  resolveClassifierModel,
-  GEMINI_MODEL_ALIAS_FLASH,
-  GEMINI_MODEL_ALIAS_PRO,
+  isPreviewModel,
 } from '../../config/models.js';
 import type { BaseLlmClient } from '../../core/baseLlmClient.js';
 import { ApprovalMode } from '../../policy/types.js';
@@ -36,7 +38,7 @@ export class ApprovalModeStrategy implements RoutingStrategy {
     const model = context.requestedModel ?? config.getModel();
 
     // This strategy only applies to "auto" models.
-    if (!isAutoModel(model, config)) {
+    if (!isAutoModel(model)) {
       return null;
     }
 
@@ -48,19 +50,11 @@ export class ApprovalModeStrategy implements RoutingStrategy {
     const approvalMode = config.getApprovalMode();
     const approvedPlanPath = config.getApprovedPlanPath();
 
-    const [useGemini3_1, useCustomToolModel] = await Promise.all([
-      config.getGemini31Launched(),
-      config.getUseCustomToolModel(),
-    ]);
+    const isPreview = isPreviewModel(model);
 
     // 1. Planning Phase: If ApprovalMode === PLAN, explicitly route to the Pro model.
     if (approvalMode === ApprovalMode.PLAN) {
-      const proModel = resolveClassifierModel(
-        model,
-        GEMINI_MODEL_ALIAS_PRO,
-        useGemini3_1,
-        useCustomToolModel,
-      );
+      const proModel = isPreview ? PREVIEW_GEMINI_MODEL : DEFAULT_GEMINI_MODEL;
       return {
         model: proModel,
         metadata: {
@@ -71,12 +65,9 @@ export class ApprovalModeStrategy implements RoutingStrategy {
       };
     } else if (approvedPlanPath) {
       // 2. Implementation Phase: If ApprovalMode !== PLAN AND an approved plan path is set, prefer the Flash model.
-      const flashModel = resolveClassifierModel(
-        model,
-        GEMINI_MODEL_ALIAS_FLASH,
-        useGemini3_1,
-        useCustomToolModel,
-      );
+      const flashModel = isPreview
+        ? PREVIEW_GEMINI_FLASH_MODEL
+        : DEFAULT_GEMINI_FLASH_MODEL;
       return {
         model: flashModel,
         metadata: {

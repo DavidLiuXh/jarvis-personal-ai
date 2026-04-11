@@ -4,6 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+import type { Config } from '../config/config.js';
 import type { HookPlanner, HookEventContext } from './hookPlanner.js';
 import type { HookRunner } from './hookRunner.js';
 import type { HookAggregator, AggregatedHookResult } from './hookAggregator.js';
@@ -39,13 +40,12 @@ import { logHookCall } from '../telemetry/loggers.js';
 import { HookCallEvent } from '../telemetry/types.js';
 import { debugLogger } from '../utils/debugLogger.js';
 import { coreEvents } from '../utils/events.js';
-import type { AgentLoopContext } from '../config/agent-loop-context.js';
 
 /**
  * Hook event bus that coordinates hook execution across the system
  */
 export class HookEventHandler {
-  private readonly context: AgentLoopContext;
+  private readonly config: Config;
   private readonly hookPlanner: HookPlanner;
   private readonly hookRunner: HookRunner;
   private readonly hookAggregator: HookAggregator;
@@ -58,12 +58,12 @@ export class HookEventHandler {
   private readonly reportedFailures = new WeakMap<object, Set<string>>();
 
   constructor(
-    context: AgentLoopContext,
+    config: Config,
     hookPlanner: HookPlanner,
     hookRunner: HookRunner,
     hookAggregator: HookAggregator,
   ) {
-    this.context = context;
+    this.config = config;
     this.hookPlanner = hookPlanner;
     this.hookRunner = hookRunner;
     this.hookAggregator = hookAggregator;
@@ -303,7 +303,6 @@ export class HookEventHandler {
         coreEvents.emitHookStart({
           hookName: this.getHookName(config),
           eventName,
-          source: config.source,
           hookIndex: index + 1,
           totalHooks: plan.hookConfigs.length,
         });
@@ -371,14 +370,15 @@ export class HookEventHandler {
   private createBaseInput(eventName: HookEventName): HookInput {
     // Get the transcript path from the ChatRecordingService if available
     const transcriptPath =
-      this.context.geminiClient
+      this.config
+        .getGeminiClient()
         ?.getChatRecordingService()
         ?.getConversationFilePath() ?? '';
 
     return {
-      session_id: this.context.config.getSessionId(),
+      session_id: this.config.getSessionId(),
       transcript_path: transcriptPath,
-      cwd: this.context.config.getWorkingDir(),
+      cwd: this.config.getWorkingDir(),
       hook_event_name: eventName,
       timestamp: new Date().toISOString(),
     };
@@ -457,16 +457,7 @@ export class HookEventHandler {
         result.error?.message,
       );
 
-      logHookCall(this.context.config, hookCallEvent);
-
-      // Emit structured system message event for UI display
-      if (result.output?.systemMessage && result.outputFormat === 'json') {
-        coreEvents.emitHookSystemMessage({
-          hookName,
-          eventName,
-          message: result.output.systemMessage,
-        });
-      }
+      logHookCall(this.config, hookCallEvent);
     }
 
     // Log individual errors

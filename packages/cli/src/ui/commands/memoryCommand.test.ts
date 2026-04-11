@@ -4,7 +4,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { vi, describe, it, expect, beforeEach, type Mock } from 'vitest';
+import type { Mock } from 'vitest';
+import { vi, describe, it, expect, beforeEach } from 'vitest';
 import { memoryCommand } from './memoryCommand.js';
 import type { SlashCommand, CommandContext } from './types.js';
 import { createMockCommandContext } from '../../test-utils/mockCommandContext.js';
@@ -38,13 +39,13 @@ vi.mock('@google/gemini-cli-core', async (importOriginal) => {
         return {
           type: 'message',
           messageType: 'info',
-          content: `Memory reloaded successfully. Loaded ${memoryContent.length} characters from ${fileCount} file(s).`,
+          content: `Memory refreshed successfully. Loaded ${memoryContent.length} characters from ${fileCount} file(s).`,
         };
       }
       return {
         type: 'message',
         messageType: 'info',
-        content: 'Memory reloaded successfully.',
+        content: 'Memory refreshed successfully.',
       };
     }),
     showMemory: vi.fn(),
@@ -62,7 +63,7 @@ describe('memoryCommand', () => {
   let mockContext: CommandContext;
 
   const getSubCommand = (
-    name: 'show' | 'add' | 'reload' | 'list',
+    name: 'show' | 'add' | 'refresh' | 'list',
   ): SlashCommand => {
     const subCommand = memoryCommand.subCommands?.find(
       (cmd) => cmd.name === name,
@@ -102,12 +103,10 @@ describe('memoryCommand', () => {
 
       mockContext = createMockCommandContext({
         services: {
-          agentContext: {
-            config: {
-              getUserMemory: mockGetUserMemory,
-              getGeminiMdFileCount: mockGetGeminiMdFileCount,
-              getExtensionLoader: () => new SimpleExtensionLoader([]),
-            },
+          config: {
+            getUserMemory: mockGetUserMemory,
+            getGeminiMdFileCount: mockGetGeminiMdFileCount,
+            getExtensionLoader: () => new SimpleExtensionLoader([]),
           },
         },
       });
@@ -207,15 +206,15 @@ describe('memoryCommand', () => {
     });
   });
 
-  describe('/memory reload', () => {
-    let reloadCommand: SlashCommand;
+  describe('/memory refresh', () => {
+    let refreshCommand: SlashCommand;
     let mockSetUserMemory: Mock;
     let mockSetGeminiMdFileCount: Mock;
     let mockSetGeminiMdFilePaths: Mock;
     let mockContextManagerRefresh: Mock;
 
     beforeEach(() => {
-      reloadCommand = getSubCommand('reload');
+      refreshCommand = getSubCommand('refresh');
       mockSetUserMemory = vi.fn();
       mockSetGeminiMdFileCount = vi.fn();
       mockSetGeminiMdFilePaths = vi.fn();
@@ -252,7 +251,7 @@ describe('memoryCommand', () => {
 
       mockContext = createMockCommandContext({
         services: {
-          agentContext: { config: mockConfig },
+          config: mockConfig,
           settings: {
             merged: {
               memoryDiscoveryMaxDirs: 1000,
@@ -267,17 +266,17 @@ describe('memoryCommand', () => {
     });
 
     it('should use ContextManager.refresh when JIT is enabled', async () => {
-      if (!reloadCommand.action) throw new Error('Command has no action');
+      if (!refreshCommand.action) throw new Error('Command has no action');
 
       // Enable JIT in mock config
-      const config = mockContext.services.agentContext?.config;
+      const config = mockContext.services.config;
       if (!config) throw new Error('Config is undefined');
 
       vi.mocked(config.isJitContextEnabled).mockReturnValue(true);
       vi.mocked(config.getUserMemory).mockReturnValue('JIT Memory Content');
       vi.mocked(config.getGeminiMdFileCount).mockReturnValue(3);
 
-      await reloadCommand.action(mockContext, '');
+      await refreshCommand.action(mockContext, '');
 
       expect(mockContextManagerRefresh).toHaveBeenCalledOnce();
       expect(mockRefreshServerHierarchicalMemory).not.toHaveBeenCalled();
@@ -285,29 +284,29 @@ describe('memoryCommand', () => {
       expect(mockContext.ui.addItem).toHaveBeenCalledWith(
         {
           type: MessageType.INFO,
-          text: 'Memory reloaded successfully. Loaded 18 characters from 3 file(s).',
+          text: 'Memory refreshed successfully. Loaded 18 characters from 3 file(s).',
         },
         expect.any(Number),
       );
     });
 
-    it('should display success message when memory is reloaded with content (Legacy)', async () => {
-      if (!reloadCommand.action) throw new Error('Command has no action');
+    it('should display success message when memory is refreshed with content (Legacy)', async () => {
+      if (!refreshCommand.action) throw new Error('Command has no action');
 
       const successMessage = {
         type: 'message',
         messageType: MessageType.INFO,
         content:
-          'Memory reloaded successfully. Loaded 18 characters from 2 file(s).',
+          'Memory refreshed successfully. Loaded 18 characters from 2 file(s).',
       };
       mockRefreshMemory.mockResolvedValue(successMessage);
 
-      await reloadCommand.action(mockContext, '');
+      await refreshCommand.action(mockContext, '');
 
       expect(mockContext.ui.addItem).toHaveBeenCalledWith(
         {
           type: MessageType.INFO,
-          text: 'Reloading memory from source files...',
+          text: 'Refreshing memory from source files...',
         },
         expect.any(Number),
       );
@@ -317,42 +316,42 @@ describe('memoryCommand', () => {
       expect(mockContext.ui.addItem).toHaveBeenCalledWith(
         {
           type: MessageType.INFO,
-          text: 'Memory reloaded successfully. Loaded 18 characters from 2 file(s).',
+          text: 'Memory refreshed successfully. Loaded 18 characters from 2 file(s).',
         },
         expect.any(Number),
       );
     });
 
-    it('should display success message when memory is reloaded with no content', async () => {
-      if (!reloadCommand.action) throw new Error('Command has no action');
+    it('should display success message when memory is refreshed with no content', async () => {
+      if (!refreshCommand.action) throw new Error('Command has no action');
 
       const successMessage = {
         type: 'message',
         messageType: MessageType.INFO,
-        content: 'Memory reloaded successfully. No memory content found.',
+        content: 'Memory refreshed successfully. No memory content found.',
       };
       mockRefreshMemory.mockResolvedValue(successMessage);
 
-      await reloadCommand.action(mockContext, '');
+      await refreshCommand.action(mockContext, '');
 
       expect(mockRefreshMemory).toHaveBeenCalledOnce();
 
       expect(mockContext.ui.addItem).toHaveBeenCalledWith(
         {
           type: MessageType.INFO,
-          text: 'Memory reloaded successfully. No memory content found.',
+          text: 'Memory refreshed successfully. No memory content found.',
         },
         expect.any(Number),
       );
     });
 
-    it('should display an error message if reloading fails', async () => {
-      if (!reloadCommand.action) throw new Error('Command has no action');
+    it('should display an error message if refreshing fails', async () => {
+      if (!refreshCommand.action) throw new Error('Command has no action');
 
       const error = new Error('Failed to read memory files.');
       mockRefreshMemory.mockRejectedValue(error);
 
-      await reloadCommand.action(mockContext, '');
+      await refreshCommand.action(mockContext, '');
 
       expect(mockRefreshMemory).toHaveBeenCalledOnce();
       expect(mockSetUserMemory).not.toHaveBeenCalled();
@@ -362,27 +361,27 @@ describe('memoryCommand', () => {
       expect(mockContext.ui.addItem).toHaveBeenCalledWith(
         {
           type: MessageType.ERROR,
-          text: `Error reloading memory: ${error.message}`,
+          text: `Error refreshing memory: ${error.message}`,
         },
         expect.any(Number),
       );
     });
 
     it('should not throw if config service is unavailable', async () => {
-      if (!reloadCommand.action) throw new Error('Command has no action');
+      if (!refreshCommand.action) throw new Error('Command has no action');
 
       const nullConfigContext = createMockCommandContext({
-        services: { agentContext: null },
+        services: { config: null },
       });
 
       await expect(
-        reloadCommand.action(nullConfigContext, ''),
+        refreshCommand.action(nullConfigContext, ''),
       ).resolves.toBeUndefined();
 
       expect(nullConfigContext.ui.addItem).toHaveBeenCalledWith(
         {
           type: MessageType.INFO,
-          text: 'Reloading memory from source files...',
+          text: 'Refreshing memory from source files...',
         },
         expect.any(Number),
       );
@@ -415,10 +414,8 @@ describe('memoryCommand', () => {
       });
       mockContext = createMockCommandContext({
         services: {
-          agentContext: {
-            config: {
-              getGeminiMdFilePaths: mockGetGeminiMdfilePaths,
-            },
+          config: {
+            getGeminiMdFilePaths: mockGetGeminiMdfilePaths,
           },
         },
       });
@@ -455,80 +452,6 @@ describe('memoryCommand', () => {
         },
         expect.any(Number),
       );
-    });
-  });
-
-  describe('/memory inbox', () => {
-    let inboxCommand: SlashCommand;
-
-    beforeEach(() => {
-      inboxCommand = memoryCommand.subCommands!.find(
-        (cmd) => cmd.name === 'inbox',
-      )!;
-      expect(inboxCommand).toBeDefined();
-    });
-
-    it('should return custom_dialog when config is available and flag is enabled', () => {
-      if (!inboxCommand.action) throw new Error('Command has no action');
-
-      const mockConfig = {
-        reloadSkills: vi.fn(),
-        isMemoryManagerEnabled: vi.fn().mockReturnValue(true),
-      };
-      const context = createMockCommandContext({
-        services: {
-          agentContext: { config: mockConfig },
-        },
-        ui: {
-          removeComponent: vi.fn(),
-          reloadCommands: vi.fn(),
-        },
-      });
-
-      const result = inboxCommand.action(context, '');
-
-      expect(result).toHaveProperty('type', 'custom_dialog');
-      expect(result).toHaveProperty('component');
-    });
-
-    it('should return info message when memory manager is disabled', () => {
-      if (!inboxCommand.action) throw new Error('Command has no action');
-
-      const mockConfig = {
-        isMemoryManagerEnabled: vi.fn().mockReturnValue(false),
-      };
-      const context = createMockCommandContext({
-        services: {
-          agentContext: { config: mockConfig },
-        },
-      });
-
-      const result = inboxCommand.action(context, '');
-
-      expect(result).toEqual({
-        type: 'message',
-        messageType: 'info',
-        content:
-          'The memory inbox requires the experimental memory manager. Enable it with: experimental.memoryManager = true in settings.',
-      });
-    });
-
-    it('should return error when config is not loaded', () => {
-      if (!inboxCommand.action) throw new Error('Command has no action');
-
-      const context = createMockCommandContext({
-        services: {
-          agentContext: null,
-        },
-      });
-
-      const result = inboxCommand.action(context, '');
-
-      expect(result).toEqual({
-        type: 'message',
-        messageType: 'error',
-        content: 'Config not loaded.',
-      });
     });
   });
 });

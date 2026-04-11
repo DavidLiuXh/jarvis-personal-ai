@@ -24,7 +24,7 @@ vi.mock('fs', async (importOriginal) => {
 });
 
 import { Storage } from './storage.js';
-import { GEMINI_DIR, homedir, resolveToRealPath } from '../utils/paths.js';
+import { GEMINI_DIR, homedir } from '../utils/paths.js';
 import { ProjectRegistry } from './projectRegistry.js';
 import { StorageMigration } from './storageMigration.js';
 
@@ -103,7 +103,7 @@ describe('Storage - Security', () => {
 });
 
 describe('Storage – additional helpers', () => {
-  const projectRoot = resolveToRealPath(path.resolve('/tmp/project'));
+  const projectRoot = '/tmp/project';
   const storage = new Storage(projectRoot);
 
   beforeEach(() => {
@@ -147,18 +147,6 @@ describe('Storage – additional helpers', () => {
     expect(storage.getProjectAgentsDir()).toBe(expected);
   });
 
-  it('getProjectMemoryDir returns ~/.gemini/tmp/<identifier>/memory', async () => {
-    await storage.initialize();
-    const expected = path.join(
-      os.homedir(),
-      GEMINI_DIR,
-      'tmp',
-      PROJECT_SLUG,
-      'memory',
-    );
-    expect(storage.getProjectMemoryDir()).toBe(expected);
-  });
-
   it('getMcpOAuthTokensPath returns ~/.gemini/mcp-oauth-tokens.json', () => {
     const expected = path.join(
       os.homedir(),
@@ -190,25 +178,6 @@ describe('Storage – additional helpers', () => {
     const tempDir = storageWithSession.getProjectTempDir();
     const expected = path.join(tempDir, sessionId, 'plans');
     expect(storageWithSession.getProjectTempPlansDir()).toBe(expected);
-  });
-
-  it('getProjectTempTrackerDir returns ~/.gemini/tmp/<identifier>/tracker when no sessionId is provided', async () => {
-    await storage.initialize();
-    const tempDir = storage.getProjectTempDir();
-    const expected = path.join(tempDir, 'tracker');
-    expect(storage.getProjectTempTrackerDir()).toBe(expected);
-  });
-
-  it('getProjectTempTrackerDir returns ~/.gemini/tmp/<identifier>/<sessionId>/tracker when sessionId is provided', async () => {
-    const sessionId = 'test-session-id';
-    const storageWithSession = new Storage(projectRoot, sessionId);
-    ProjectRegistry.prototype.getShortId = vi
-      .fn()
-      .mockReturnValue(PROJECT_SLUG);
-    await storageWithSession.initialize();
-    const tempDir = storageWithSession.getProjectTempDir();
-    const expected = path.join(tempDir, sessionId, 'tracker');
-    expect(storageWithSession.getProjectTempTrackerDir()).toBe(expected);
   });
 
   describe('Session and JSON Loading', () => {
@@ -308,9 +277,10 @@ describe('Storage – additional helpers', () => {
       },
       {
         name: 'custom absolute path outside throws',
-        customDir: path.resolve('/absolute/path/to/plans'),
+        customDir: '/absolute/path/to/plans',
         expected: '',
-        expectedError: `Custom plans directory '${path.resolve('/absolute/path/to/plans')}' resolves to '${path.resolve('/absolute/path/to/plans')}', which is outside the project root '${resolveToRealPath(projectRoot)}'.`,
+        expectedError:
+          "Custom plans directory '/absolute/path/to/plans' resolves to '/absolute/path/to/plans', which is outside the project root '/tmp/project'.",
       },
       {
         name: 'absolute path that happens to be inside project root',
@@ -336,7 +306,8 @@ describe('Storage – additional helpers', () => {
         name: 'escaping relative path throws',
         customDir: '../escaped-plans',
         expected: '',
-        expectedError: `Custom plans directory '../escaped-plans' resolves to '${resolveToRealPath(path.resolve(projectRoot, '../escaped-plans'))}', which is outside the project root '${resolveToRealPath(projectRoot)}'.`,
+        expectedError:
+          "Custom plans directory '../escaped-plans' resolves to '/tmp/escaped-plans', which is outside the project root '/tmp/project'.",
       },
       {
         name: 'hidden directory starting with ..',
@@ -349,14 +320,15 @@ describe('Storage – additional helpers', () => {
         setup: () => {
           vi.mocked(fs.realpathSync).mockImplementation((p: fs.PathLike) => {
             if (p.toString().includes('symlink-to-outside')) {
-              return path.resolve('/outside/project/root');
+              return '/outside/project/root';
             }
             return p.toString();
           });
           return () => vi.mocked(fs.realpathSync).mockRestore();
         },
         expected: '',
-        expectedError: `Custom plans directory 'symlink-to-outside' resolves to '${path.resolve('/outside/project/root')}', which is outside the project root '${resolveToRealPath(projectRoot)}'.`,
+        expectedError:
+          "Custom plans directory 'symlink-to-outside' resolves to '/outside/project/root', which is outside the project root '/tmp/project'.",
       },
     ];
 

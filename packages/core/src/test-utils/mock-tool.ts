@@ -14,9 +14,7 @@ import {
   Kind,
   type ToolCallConfirmationDetails,
   type ToolInvocation,
-  type ToolLiveOutput,
   type ToolResult,
-  type ExecuteOptions,
 } from '../tools/tools.js';
 import { createMockMessageBus } from './mock-message-bus.js';
 import type { MessageBus } from '../confirmation-bus/message-bus.js';
@@ -27,7 +25,6 @@ interface MockToolOptions {
   description?: string;
   canUpdateOutput?: boolean;
   isOutputMarkdown?: boolean;
-  kind?: Kind;
   shouldConfirmExecute?: (
     params: { [key: string]: unknown },
     signal: AbortSignal,
@@ -36,7 +33,6 @@ interface MockToolOptions {
     params: { [key: string]: unknown },
     signal?: AbortSignal,
     updateOutput?: (output: string) => void,
-    options?: ExecuteOptions,
   ) => Promise<ToolResult>;
   params?: object;
   messageBus?: MessageBus;
@@ -56,15 +52,13 @@ class MockToolInvocation extends BaseToolInvocation<
 
   execute(
     signal: AbortSignal,
-    updateOutput?: (output: ToolLiveOutput) => void,
-    options?: ExecuteOptions,
+    updateOutput?: (output: string) => void,
   ): Promise<ToolResult> {
-    return this.tool.execute(
-      this.params,
-      signal,
-      updateOutput as ((output: string) => void) | undefined,
-      options,
-    );
+    if (updateOutput) {
+      return this.tool.execute(this.params, signal, updateOutput);
+    } else {
+      return this.tool.execute(this.params);
+    }
   }
 
   override shouldConfirmExecute(
@@ -85,16 +79,14 @@ export class MockTool extends BaseDeclarativeTool<
   { [key: string]: unknown },
   ToolResult
 > {
-  readonly shouldConfirmExecute: (
+  shouldConfirmExecute: (
     params: { [key: string]: unknown },
     signal: AbortSignal,
   ) => Promise<ToolCallConfirmationDetails | false>;
-
-  readonly execute: (
+  execute: (
     params: { [key: string]: unknown },
     signal?: AbortSignal,
     updateOutput?: (output: string) => void,
-    options?: ExecuteOptions,
   ) => Promise<ToolResult>;
 
   constructor(options: MockToolOptions) {
@@ -102,7 +94,7 @@ export class MockTool extends BaseDeclarativeTool<
       options.name,
       options.displayName ?? options.name,
       options.description ?? options.name,
-      options.kind ?? Kind.Other,
+      Kind.Other,
       options.params,
       options.messageBus ?? createMockMessageBus(),
       options.isOutputMarkdown ?? false,
@@ -158,11 +150,7 @@ export class MockModifiableToolInvocation extends BaseToolInvocation<
     super(params, messageBus, tool.name, tool.displayName);
   }
 
-  async execute(
-    _signal: AbortSignal,
-    _updateOutput?: (output: ToolLiveOutput) => void,
-    _options?: ExecuteOptions,
-  ): Promise<ToolResult> {
+  async execute(_abortSignal: AbortSignal): Promise<ToolResult> {
     const result = this.tool.executeFn(this.params);
     return (
       result ?? {

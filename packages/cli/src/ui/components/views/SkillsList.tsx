@@ -8,7 +8,6 @@ import type React from 'react';
 import { Box, Text } from 'ink';
 import { theme } from '../../semantic-colors.js';
 import { type SkillDefinition } from '../../types.js';
-import { SKILLS_DOCS_URL } from '../../constants.js';
 
 interface SkillsListProps {
   skills: readonly SkillDefinition[];
@@ -87,13 +86,7 @@ export const SkillsList: React.FC<SkillsListProps> = ({
       )}
 
       {skills.length === 0 && (
-        <Box flexDirection="column">
-          <Text color={theme.text.primary}>No skills available.</Text>
-          <Box flexDirection="row">
-            <Text color={theme.text.primary}>Learn how to add skills: </Text>
-            <Text color={theme.text.link}>{SKILLS_DOCS_URL}</Text>
-          </Box>
-        </Box>
+        <Text color={theme.text.primary}> No skills available</Text>
       )}
     </Box>
   );

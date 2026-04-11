@@ -9,9 +9,9 @@ import {
   SessionEndReason,
   SessionStartSource,
   flushTelemetry,
-  resetBrowserSession,
 } from '@google/gemini-cli-core';
-import { CommandKind, type SlashCommand } from './types.js';
+import type { SlashCommand } from './types.js';
+import { CommandKind } from './types.js';
 import { MessageType } from '../types.js';
 import { randomUUID } from 'node:crypto';
 
@@ -21,8 +21,12 @@ export const clearCommand: SlashCommand = {
   kind: CommandKind.BUILT_IN,
   autoExecute: true,
   action: async (context, _args) => {
-    const geminiClient = context.services.agentContext?.geminiClient;
-    const config = context.services.agentContext?.config;
+    const geminiClient = context.services.config?.getGeminiClient();
+    const config = context.services.config;
+    const chatRecordingService = context.services.config
+      ?.getGeminiClient()
+      ?.getChat()
+      .getChatRecordingService();
 
     // Fire SessionEnd hook before clearing
     const hookSystem = config?.getHookSystem();
@@ -30,29 +34,23 @@ export const clearCommand: SlashCommand = {
       await hookSystem.fireSessionEndEvent(SessionEndReason.Clear);
     }
 
-    // Reset user steering hints
-    config?.injectionService.clear();
-
-    // Start a new conversation recording with a new session ID
-    // We MUST do this before calling resetChat() so the new ChatRecordingService
-    // initialized by GeminiChat picks up the new session ID.
-    let newSessionId: string | undefined;
-    if (config) {
-      newSessionId = randomUUID();
-      config.setSessionId(newSessionId);
-    }
-
     if (geminiClient) {
       context.ui.setDebugMessage('Clearing terminal and resetting chat.');
-
-      // Close persistent browser sessions before resetting chat
-      await resetBrowserSession();
-
       // If resetChat fails, the exception will propagate and halt the command,
       // which is the correct behavior to signal a failure to the user.
       await geminiClient.resetChat();
     } else {
       context.ui.setDebugMessage('Clearing terminal.');
+    }
+
+    // Reset user steering hints
+    config?.userHintService.clear();
+
+    // Start a new conversation recording with a new session ID
+    if (config && chatRecordingService) {
+      const newSessionId = randomUUID();
+      config.setSessionId(newSessionId);
+      chatRecordingService.initialize();
     }
 
     // Fire SessionStart hook after clearing
@@ -71,7 +69,7 @@ export const clearCommand: SlashCommand = {
       await flushTelemetry(config);
     }
 
-    uiTelemetryService.clear(newSessionId);
+    uiTelemetryService.setLastPromptTokenCount(0);
     context.ui.clear();
 
     if (result?.systemMessage) {

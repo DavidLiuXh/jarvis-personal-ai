@@ -24,16 +24,14 @@ import {
 } from '@google/genai';
 import * as codeAssist from './codeAssist.js';
 import type { CodeAssistServer } from './server.js';
-import type {
-  CompletedToolCall,
-  ToolCallResponseInfo,
-} from '../scheduler/types.js';
+import type { CompletedToolCall } from '../core/coreToolScheduler.js';
 import {
   ToolConfirmationOutcome,
   type AnyDeclarativeTool,
   type AnyToolInvocation,
 } from '../tools/tools.js';
 import type { Config } from '../config/config.js';
+import type { ToolCallResponseInfo } from '../scheduler/types.js';
 
 function createMockResponse(
   candidates: GenerateContentResponse['candidates'] = [],
@@ -94,7 +92,6 @@ describe('telemetry', () => {
         traceId,
         undefined,
         streamingLatency,
-        'trajectory-id',
       );
 
       expect(result).toEqual({
@@ -105,7 +102,6 @@ describe('telemetry', () => {
         streamingLatency,
         isAgentic: true,
         initiationMethod: InitiationMethod.COMMAND,
-        trajectoryId: 'trajectory-id',
       });
     });
 
@@ -128,7 +124,6 @@ describe('telemetry', () => {
         'trace-id',
         undefined,
         {},
-        'trajectory-id',
       );
       expect(result).toBeUndefined();
     });
@@ -145,7 +140,6 @@ describe('telemetry', () => {
         'trace-id',
         signal,
         {},
-        'trajectory-id',
       );
 
       expect(result?.status).toBe(ActionStatus.ACTION_STATUS_CANCELLED);
@@ -161,7 +155,6 @@ describe('telemetry', () => {
         'trace-id',
         undefined,
         {},
-        'trajectory-id',
       );
 
       expect(result?.status).toBe(ActionStatus.ACTION_STATUS_ERROR_UNKNOWN);
@@ -184,7 +177,6 @@ describe('telemetry', () => {
         'trace-id',
         undefined,
         {},
-        'trajectory-id',
       );
 
       expect(result?.status).toBe(ActionStatus.ACTION_STATUS_ERROR_UNKNOWN);
@@ -202,7 +194,6 @@ describe('telemetry', () => {
         'trace-id',
         undefined,
         {},
-        undefined,
       );
 
       expect(result?.status).toBe(ActionStatus.ACTION_STATUS_EMPTY);
@@ -223,13 +214,7 @@ describe('telemetry', () => {
         true,
         [{ name: 'replace', args: {} }],
       );
-      const result = createConversationOffered(
-        response,
-        'id',
-        undefined,
-        {},
-        undefined,
-      );
+      const result = createConversationOffered(response, 'id', undefined, {});
       expect(result?.includedCode).toBe(true);
     });
 
@@ -246,13 +231,7 @@ describe('telemetry', () => {
         true,
         [{ name: 'replace', args: {} }],
       );
-      const result = createConversationOffered(
-        response,
-        'id',
-        undefined,
-        {},
-        undefined,
-      );
+      const result = createConversationOffered(response, 'id', undefined, {});
       expect(result?.includedCode).toBe(false);
     });
   });
@@ -281,7 +260,6 @@ describe('telemetry', () => {
         response,
         streamingLatency,
         undefined,
-        undefined,
       );
 
       expect(serverMock.recordConversationOffered).toHaveBeenCalledWith(
@@ -304,7 +282,6 @@ describe('telemetry', () => {
         undefined,
         response,
         {},
-        undefined,
         undefined,
       );
 
@@ -362,7 +339,6 @@ describe('telemetry', () => {
           acceptedLines: '8',
           removedLines: '3',
           isAgentic: true,
-          initiationMethod: InitiationMethod.COMMAND,
         }),
       );
     });
@@ -399,7 +375,7 @@ describe('telemetry', () => {
 
       expect(mockServer.recordConversationInteraction).toHaveBeenCalledWith(
         expect.objectContaining({
-          language: 'typescript',
+          language: 'TypeScript',
         }),
       );
     });
@@ -432,7 +408,7 @@ describe('telemetry', () => {
 
       expect(mockServer.recordConversationInteraction).toHaveBeenCalledWith(
         expect.objectContaining({
-          language: 'python',
+          language: 'Python',
         }),
       );
     });

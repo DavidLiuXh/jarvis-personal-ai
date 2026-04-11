@@ -9,7 +9,6 @@ import {
   loadApiKey,
   saveApiKey,
   clearApiKey,
-  resetApiKeyCacheForTesting,
 } from './apiKeyCredentialStorage.js';
 
 const getCredentialsMock = vi.hoisted(() => vi.fn());
@@ -27,10 +26,9 @@ vi.mock('../mcp/token-storage/hybrid-token-storage.js', () => ({
 describe('ApiKeyCredentialStorage', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    resetApiKeyCacheForTesting();
   });
 
-  it('should load an API key and cache it', async () => {
+  it('should load an API key', async () => {
     getCredentialsMock.mockResolvedValue({
       serverName: 'default-api-key',
       token: {
@@ -40,39 +38,19 @@ describe('ApiKeyCredentialStorage', () => {
       updatedAt: Date.now(),
     });
 
-    const apiKey1 = await loadApiKey();
-    expect(apiKey1).toBe('test-key');
-    expect(getCredentialsMock).toHaveBeenCalledTimes(1);
-
-    const apiKey2 = await loadApiKey();
-    expect(apiKey2).toBe('test-key');
-    expect(getCredentialsMock).toHaveBeenCalledTimes(1); // Should be cached
+    const apiKey = await loadApiKey();
+    expect(apiKey).toBe('test-key');
+    expect(getCredentialsMock).toHaveBeenCalledWith('default-api-key');
   });
 
-  it('should return null if no API key is stored and cache it', async () => {
+  it('should return null if no API key is stored', async () => {
     getCredentialsMock.mockResolvedValue(null);
-    const apiKey1 = await loadApiKey();
-    expect(apiKey1).toBeNull();
-    expect(getCredentialsMock).toHaveBeenCalledTimes(1);
-
-    const apiKey2 = await loadApiKey();
-    expect(apiKey2).toBeNull();
-    expect(getCredentialsMock).toHaveBeenCalledTimes(1); // Should be cached
+    const apiKey = await loadApiKey();
+    expect(apiKey).toBeNull();
+    expect(getCredentialsMock).toHaveBeenCalledWith('default-api-key');
   });
 
-  it('should save an API key and clear cache', async () => {
-    getCredentialsMock.mockResolvedValue({
-      serverName: 'default-api-key',
-      token: {
-        accessToken: 'old-key',
-        tokenType: 'ApiKey',
-      },
-      updatedAt: Date.now(),
-    });
-
-    await loadApiKey();
-    expect(getCredentialsMock).toHaveBeenCalledTimes(1);
-
+  it('should save an API key', async () => {
     await saveApiKey('new-key');
     expect(setCredentialsMock).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -83,62 +61,28 @@ describe('ApiKeyCredentialStorage', () => {
         }),
       }),
     );
-
-    getCredentialsMock.mockResolvedValue({
-      serverName: 'default-api-key',
-      token: {
-        accessToken: 'new-key',
-        tokenType: 'ApiKey',
-      },
-      updatedAt: Date.now(),
-    });
-
-    await loadApiKey();
-    expect(getCredentialsMock).toHaveBeenCalledTimes(2); // Should have fetched again
   });
 
-  it('should clear an API key and clear cache', async () => {
-    getCredentialsMock.mockResolvedValue({
-      serverName: 'default-api-key',
-      token: {
-        accessToken: 'old-key',
-        tokenType: 'ApiKey',
-      },
-      updatedAt: Date.now(),
-    });
-
-    await loadApiKey();
-    expect(getCredentialsMock).toHaveBeenCalledTimes(1);
-
-    await clearApiKey();
-    expect(deleteCredentialsMock).toHaveBeenCalledWith('default-api-key');
-
-    getCredentialsMock.mockResolvedValue(null);
-    await loadApiKey();
-    expect(getCredentialsMock).toHaveBeenCalledTimes(2); // Should have fetched again
-  });
-
-  it('should clear an API key and cache when saving empty key', async () => {
+  it('should clear an API key when saving empty key', async () => {
     await saveApiKey('');
     expect(deleteCredentialsMock).toHaveBeenCalledWith('default-api-key');
     expect(setCredentialsMock).not.toHaveBeenCalled();
   });
 
-  it('should clear an API key and cache when saving null key', async () => {
+  it('should clear an API key when saving null key', async () => {
     await saveApiKey(null);
     expect(deleteCredentialsMock).toHaveBeenCalledWith('default-api-key');
     expect(setCredentialsMock).not.toHaveBeenCalled();
   });
 
-  it('should not throw when clearing an API key fails during saveApiKey', async () => {
-    deleteCredentialsMock.mockRejectedValueOnce(new Error('Failed to delete'));
-    await expect(saveApiKey('')).resolves.not.toThrow();
+  it('should clear an API key', async () => {
+    await clearApiKey();
     expect(deleteCredentialsMock).toHaveBeenCalledWith('default-api-key');
   });
 
-  it('should not throw when clearing an API key fails during clearApiKey', async () => {
+  it('should not throw when clearing an API key fails', async () => {
     deleteCredentialsMock.mockRejectedValueOnce(new Error('Failed to delete'));
-    await expect(clearApiKey()).resolves.not.toThrow();
+    await expect(saveApiKey('')).resolves.not.toThrow();
     expect(deleteCredentialsMock).toHaveBeenCalledWith('default-api-key');
   });
 });

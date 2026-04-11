@@ -23,7 +23,7 @@ function validateUrl(url: string): void {
 
   try {
     parsedUrl = new URL(url);
-  } catch {
+  } catch (_error) {
     throw new Error(`Invalid URL: ${url}`);
   }
 
