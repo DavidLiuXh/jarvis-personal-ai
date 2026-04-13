@@ -4,13 +4,17 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import fs from 'node:fs';
-import path from 'node:path';
-import cron from 'node-cron';
-import type { TaskConfig, TasksConfig, TriggeredTask } from './taskScheduler.js';
-import { parseNaturalTimeToCron } from './cronParser.js';
+import fs from "node:fs";
+import path from "node:path";
+import cron from "node-cron";
+import type {
+  TaskConfig,
+  TasksConfig,
+  TriggeredTask,
+} from "./taskScheduler.js";
+import { parseNaturalTimeToCron } from "./cronParser.js";
 
-const TASKS_FILENAME = 'tasks.json';
+const TASKS_FILENAME = "tasks.json";
 
 const HELP = `
 📅 Task commands:
@@ -37,40 +41,47 @@ Usage example:
 `.trim();
 
 function generateId(prompt: string): string {
-  return prompt
-    .toLowerCase()
-    .replace(/[^a-z0-9\u4e00-\u9fff]+/g, '-')
-    .replace(/^-+|-+$/g, '')
-    .slice(0, 24) + '-' + Date.now().toString(36).slice(-4);
+  return (
+    prompt
+      .toLowerCase()
+      .replace(/[^a-z0-9\u4e00-\u9fff]+/g, "-")
+      .replace(/^-+|-+$/g, "")
+      .slice(0, 24) +
+    "-" +
+    Date.now().toString(36).slice(-4)
+  );
 }
 
 /** Parse quoted tokens and --flag value pairs from a command string. */
-function parseArgs(input: string): { positional: string[]; flags: Record<string, string> } {
+function parseArgs(input: string): {
+  positional: string[];
+  flags: Record<string, string>;
+} {
   const positional: string[] = [];
   const flags: Record<string, string> = {};
 
   // Tokenise: quoted strings, --flag, bare words
   const tokenRegex = /"([^"]+)"|'([^']+)'|--(\w+)|(\S+)/g;
-  const tokens: Array<{ type: 'quoted' | 'flag' | 'bare'; value: string }> = [];
+  const tokens: Array<{ type: "quoted" | "flag" | "bare"; value: string }> = [];
   let m: RegExpExecArray | null;
   while ((m = tokenRegex.exec(input)) !== null) {
-    if (m[1] !== undefined) tokens.push({ type: 'quoted', value: m[1] });
-    else if (m[2] !== undefined) tokens.push({ type: 'quoted', value: m[2] });
-    else if (m[3] !== undefined) tokens.push({ type: 'flag', value: m[3] });
-    else if (m[4] !== undefined) tokens.push({ type: 'bare', value: m[4] });
+    if (m[1] !== undefined) tokens.push({ type: "quoted", value: m[1] });
+    else if (m[2] !== undefined) tokens.push({ type: "quoted", value: m[2] });
+    else if (m[3] !== undefined) tokens.push({ type: "flag", value: m[3] });
+    else if (m[4] !== undefined) tokens.push({ type: "bare", value: m[4] });
   }
 
   let i = 0;
   while (i < tokens.length) {
     const tok = tokens[i];
-    if (tok.type === 'flag') {
+    if (tok.type === "flag") {
       // Next token (quoted or bare) is the flag value
       const next = tokens[i + 1];
-      if (next && next.type !== 'flag') {
+      if (next && next.type !== "flag") {
         flags[tok.value] = next.value;
         i += 2;
       } else {
-        flags[tok.value] = '';
+        flags[tok.value] = "";
         i++;
       }
     } else {
@@ -86,27 +97,41 @@ function parseArgs(input: string): { positional: string[]; flags: Record<string,
  */
 export class TaskCommandHandler {
   constructor(
-    private jarvisHome: string,
-    private reload: () => void,
+    private taskScheduler: TaskScheduler,
     private runNow: (task: TriggeredTask) => Promise<void>,
   ) {}
 
   public async handle(input: string): Promise<string> {
     const trimmed = input.trim();
-    if (!trimmed.startsWith('!task')) return '';
+    if (!trimmed.startsWith("!task")) return "";
 
-    const body = trimmed.slice('!task'.length).trim();
+    const body = trimmed.slice("!task".length).trim();
     const [subcommand, ...rest] = body.split(/\s+/);
 
     switch (subcommand?.toLowerCase()) {
-      case 'list': return this.list();
-      case 'add':  return this.add(body.slice('add'.length).trim());
-      case 'update': return this.update(rest[0], body.slice('update'.length).trim().slice(rest[0]?.length ?? 0).trim());
-      case 'enable': return this.setEnabled(rest[0], true);
-      case 'disable': return this.setEnabled(rest[0], false);
-      case 'delete': return this.delete(rest[0]);
-      case 'run': return this.run(rest[0]);
-      default: return `Unknown subcommand "${subcommand}".\n\n${HELP}`;
+      case "list":
+        return this.list();
+      case "add":
+        return this.add(body.slice("add".length).trim());
+      case "update":
+        return this.update(
+          rest[0],
+          body
+            .slice("update".length)
+            .trim()
+            .slice(rest[0]?.length ?? 0)
+            .trim(),
+        );
+      case "enable":
+        return this.setEnabled(rest[0], true);
+      case "disable":
+        return this.setEnabled(rest[0], false);
+      case "delete":
+        return this.delete(rest[0]);
+      case "run":
+        return this.run(rest[0]);
+      default:
+        return `Unknown subcommand "${subcommand}".\n\n${HELP}`;
     }
   }
 
@@ -115,53 +140,65 @@ export class TaskCommandHandler {
    * action: 'list' | 'add' | 'update' | 'enable' | 'disable' | 'delete' | 'run'
    * args: tool call arguments from the LLM
    */
-  public async handleTool(action: string, args: Record<string, unknown>): Promise<string> {
+  public async handleTool(
+    action: string,
+    args: Record<string, unknown>,
+  ): Promise<string> {
     switch (action) {
-      case 'list': return this.list();
-      case 'add': {
+      case "list":
+        return this.list();
+      case "add": {
         const cron = args.cron as string;
         const prompt = args.prompt as string;
         const channel = args.channel as string | undefined;
         const chatId = args.chat_id as string | undefined;
         const flags = [
-          channel ? `--channel ${channel}` : '',
-          chatId ? `--chat ${chatId}` : '',
-        ].filter(Boolean).join(' ');
+          channel ? `--channel ${channel}` : "",
+          chatId ? `--chat ${chatId}` : "",
+        ]
+          .filter(Boolean)
+          .join(" ");
         return this.add(`"${cron}" "${prompt}" ${flags}`.trim());
       }
-      case 'update': {
+      case "update": {
         const id = args.id as string;
         const flags = [
-          args.cron ? `--cron "${args.cron}"` : '',
-          args.prompt ? `--prompt "${args.prompt}"` : '',
-          args.channel ? `--channel ${args.channel}` : '',
-          args.chat_id ? `--chat ${args.chat_id}` : '',
-        ].filter(Boolean).join(' ');
+          args.cron ? `--cron "${args.cron}"` : "",
+          args.prompt ? `--prompt "${args.prompt}"` : "",
+          args.channel ? `--channel ${args.channel}` : "",
+          args.chat_id ? `--chat ${args.chat_id}` : "",
+        ]
+          .filter(Boolean)
+          .join(" ");
         return this.update(id, flags);
       }
-      case 'enable': return this.setEnabled(args.id as string, true);
-      case 'disable': return this.setEnabled(args.id as string, false);
-      case 'toggle': return this.setEnabled(args.id as string, args.enabled as boolean);
-      case 'delete': return this.delete(args.id as string);
-      case 'run': return this.run(args.id as string);
-      default: return `Unknown task action: ${action}`;
+      case "enable":
+        return this.setEnabled(args.id as string, true);
+      case "disable":
+        return this.setEnabled(args.id as string, false);
+      case "toggle":
+        return this.setEnabled(args.id as string, args.enabled as boolean);
+      case "delete":
+        return this.delete(args.id as string);
+      case "run":
+        return this.run(args.id as string);
+      default:
+        return `Unknown task action: ${action}`;
     }
   }
 
   // ---------------------------------------------------------------------------
 
   private list(): string {
-    const config = this.readConfig();
-    if (!config || config.tasks.length === 0) {
-      return '📋 No tasks configured.\n\n' + HELP;
+    const tasks = this.taskScheduler.getTasks();
+    if (tasks.length === 0) {
+      return "📋 No tasks configured.\n\n" + HELP;
     }
-    const lines = config.tasks.map(t => {
-      const status = t.enabled ? '✅' : '⏸';
-      const channel = t.channel ?? config.defaultChannel;
-      const chat = t.chatId ?? config.defaultChatId;
-      return `${status} [${t.id}]\n   cron: ${t.cron}\n   prompt: ${t.prompt}\n   → ${channel}:${chat}`;
+    const lines = tasks.map((t) => {
+      const status = t.enabled ? "✅" : "⏸";
+      return `${status} [${t.id}]\n   cron: ${t.cron}\n   prompt: ${t.prompt}`;
     });
-    return `📋 Tasks (${config.tasks.length}):\n\n${lines.join('\n\n')}`;
+    return `📋 Tasks (${tasks.length}):\n\n${lines.join("\n\n")}`;
   }
 
   private resolveCron(input: string): { cron: string } | { error: string } {
@@ -169,7 +206,9 @@ export class TaskCommandHandler {
     const parsed = parseNaturalTimeToCron(input);
     if (parsed) return { cron: parsed };
     if (cron.validate(input)) return { cron: input };
-    return { error: `❌ Invalid cron expression or unrecognized time expression: "${input}"\nExamples: "0 8 * * *", "每天早上8点", "weekdays at 9am"` };
+    return {
+      error: `❌ Invalid cron expression or unrecognized time expression: "${input}"\nExamples: "0 8 * * *", "每天早上8点", "weekdays at 9am"`,
+    };
   }
 
   private add(argsStr: string): string {
@@ -180,14 +219,8 @@ export class TaskCommandHandler {
       return `Missing arguments.\n\n${HELP}`;
     }
     const cronResult = this.resolveCron(cronInput);
-    if ('error' in cronResult) return cronResult.error;
+    if ("error" in cronResult) return cronResult.error;
     const cronExpr = cronResult.cron;
-
-    const config = this.readConfig() ?? {
-      defaultChannel: 'feishu',
-      defaultChatId: '',
-      tasks: [],
-    };
 
     const newTask: TaskConfig = {
       id: generateId(prompt),
@@ -198,111 +231,86 @@ export class TaskCommandHandler {
       ...(flags.chat ? { chatId: flags.chat } : {}),
     };
 
-    config.tasks.push(newTask);
-    this.writeConfig(config);
-    this.reload();
+    this.taskScheduler.addTask(newTask);
 
     return `✅ Task added and scheduled:\n  id: ${newTask.id}\n  cron: ${cronExpr}\n  prompt: ${prompt}`;
   }
 
   private update(id: string, argsStr: string): string {
-    if (!id) return `Missing task id.\nUsage: !task update <id> [--cron ...] [--prompt ...] [--channel ...] [--chat ...]`;
+    if (!id)
+      return `Missing task id.\nUsage: !task update <id> [--cron ...] [--prompt ...] [--channel ...] [--chat ...]`;
 
-    const config = this.readConfig();
-    const task = config?.tasks.find(t => t.id === id);
-    if (!task) return `❌ Task "${id}" not found. Use !task list to see available tasks.`;
+    const tasks = this.taskScheduler.getTasks();
+    const task = tasks.find((t) => t.id === id);
+    if (!task)
+      return `❌ Task "${id}" not found. Use !task list to see available tasks.`;
 
     const { flags } = parseArgs(argsStr);
-    const changes: string[] = [];
+    const updates: Partial<TaskConfig> = {};
 
     if (flags.cron) {
       const cronResult = this.resolveCron(flags.cron);
-      if ('error' in cronResult) return cronResult.error;
-      task.cron = cronResult.cron;
-      changes.push(`cron → ${task.cron}`);
+      if ("error" in cronResult) return cronResult.error;
+      updates.cron = cronResult.cron;
     }
     if (flags.prompt) {
-      task.prompt = flags.prompt;
-      changes.push(`prompt → ${task.prompt}`);
+      updates.prompt = flags.prompt;
     }
     if (flags.channel) {
-      task.channel = flags.channel;
-      changes.push(`channel → ${task.channel}`);
+      updates.channel = flags.channel;
     }
     if (flags.chat) {
-      task.chatId = flags.chat;
-      changes.push(`chatId → ${task.chatId}`);
+      updates.chatId = flags.chat;
     }
 
-    if (changes.length === 0) {
+    if (Object.keys(updates).length === 0) {
       return `No changes specified.\nUsage: !task update <id> [--cron ...] [--prompt ...] [--channel ...] [--chat ...]`;
     }
 
-    this.writeConfig(config!);
-    this.reload();
-    return `✅ Task updated: ${id}\n  ${changes.join('\n  ')}`;
+    this.taskScheduler.updateTask(id, updates);
+    return `✅ Task updated: ${id}`;
   }
 
   private setEnabled(id: string, enabled: boolean): string {
-    if (!id) return `Missing task id.\nUsage: !task ${enabled ? 'enable' : 'disable'} <id>`;
+    if (!id)
+      return `Missing task id.\nUsage: !task ${enabled ? "enable" : "disable"} <id>`;
 
-    const config = this.readConfig();
-    const task = config?.tasks.find(t => t.id === id);
-    if (!task) return `❌ Task "${id}" not found. Use !task list to see available tasks.`;
+    const tasks = this.taskScheduler.getTasks();
+    const task = tasks.find((t) => t.id === id);
+    if (!task)
+      return `❌ Task "${id}" not found. Use !task list to see available tasks.`;
 
-    task.enabled = enabled;
-    this.writeConfig(config!);
-    this.reload();
-
-    return `${enabled ? '✅ Task enabled' : '⏸ Task disabled'}: ${id}`;
+    this.taskScheduler.updateTask(id, { enabled });
+    return `${enabled ? "✅ Task enabled" : "⏸ Task disabled"}: ${id}`;
   }
 
   private delete(id: string): string {
     if (!id) return `Missing task id.\nUsage: !task delete <id>`;
 
-    const config = this.readConfig();
-    const idx = config?.tasks.findIndex(t => t.id === id) ?? -1;
-    if (idx === -1) return `❌ Task "${id}" not found. Use !task list to see available tasks.`;
+    const tasks = this.taskScheduler.getTasks();
+    const idx = tasks.findIndex((t) => t.id === id) ?? -1;
+    if (idx === -1)
+      return `❌ Task "${id}" not found. Use !task list to see available tasks.`;
 
-    config!.tasks.splice(idx, 1);
-    this.writeConfig(config!);
-    this.reload();
-
+    this.taskScheduler.deleteTask(id);
     return `🗑️ Task deleted: ${id}`;
   }
 
   private async run(id: string): Promise<string> {
     if (!id) return `Missing task id.\nUsage: !task run <id>`;
 
-    const config = this.readConfig();
-    const task = config?.tasks.find(t => t.id === id);
-    if (!task) return `❌ Task "${id}" not found. Use !task list to see available tasks.`;
+    const tasks = this.taskScheduler.getTasks();
+    const task = tasks.find((t) => t.id === id);
+    if (!task)
+      return `❌ Task "${id}" not found. Use !task list to see available tasks.`;
 
     const triggered: TriggeredTask = {
       ...task,
-      channel: task.channel ?? config!.defaultChannel,
-      chatId: task.chatId ?? config!.defaultChatId,
+      channel: task.channel ?? "feishu", // Fallback or use a proper default
+      chatId: task.chatId ?? "",
     };
 
     void this.runNow(triggered);
-    return `⚡ Task "${id}" triggered immediately. Result will be pushed to ${triggered.channel}:${triggered.chatId}`;
-  }
-
-  // ---------------------------------------------------------------------------
-
-  private readConfig(): TasksConfig | null {
-    const filePath = path.join(this.jarvisHome, TASKS_FILENAME);
-    try {
-      if (!fs.existsSync(filePath)) return null;
-      return JSON.parse(fs.readFileSync(filePath, 'utf8')) as TasksConfig;
-    } catch (_e) { return null; }
-  }
-
-  private writeConfig(config: TasksConfig): void {
-    const filePath = path.join(this.jarvisHome, TASKS_FILENAME);
-    if (!fs.existsSync(this.jarvisHome)) {
-      fs.mkdirSync(this.jarvisHome, { recursive: true });
-    }
-    fs.writeFileSync(filePath, JSON.stringify(config, null, 2));
+    return `⚡ Task "${id}" triggered immediately.`;
   }
 }
