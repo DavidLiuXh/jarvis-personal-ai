@@ -4,9 +4,9 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import fs from 'node:fs';
-import path from 'node:path';
-import cron from 'node-cron';
+import fs from "node:fs";
+import path from "node:path";
+import cron from "node-cron";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -20,7 +20,7 @@ export type TaskConfig = {
   prompt: string;
   enabled: boolean;
   /** Task type: 'agent' (default) runs prompt via LLM; 'reflect' triggers memory reflection */
-  type?: 'agent' | 'reflect';
+  type?: "agent" | "reflect";
   /** Override default channel for this task */
   channel?: string;
   /** Override default chatId for this task */
@@ -44,7 +44,7 @@ export type TriggeredTask = TaskConfig & {
 
 type TriggerCallback = (task: TriggeredTask) => void;
 
-const TASKS_FILENAME = 'tasks.json';
+const TASKS_FILENAME = "tasks.json";
 
 // ---------------------------------------------------------------------------
 // TaskScheduler
@@ -66,11 +66,57 @@ export class TaskScheduler {
   private loadConfig(): TasksConfig | null {
     const filePath = path.join(this.jarvisHome, TASKS_FILENAME);
     try {
-      if (!fs.existsSync(filePath)) return null;
-      return JSON.parse(fs.readFileSync(filePath, 'utf8')) as TasksConfig;
+      let config: TasksConfig;
+      if (!fs.existsSync(filePath)) {
+        // Initialize with default reflection task if no config exists
+        config = {
+          defaultChannel: "wechat",
+          defaultChatId: "",
+          tasks: [this.getDefaultReflectionTask()],
+        };
+        this.saveConfig(config);
+      } else {
+        config = JSON.parse(fs.readFileSync(filePath, "utf8")) as TasksConfig;
+        // If tasks array is empty, add the default reflection task
+        if (!config.tasks || config.tasks.length === 0) {
+          config.tasks = [this.getDefaultReflectionTask()];
+          this.saveConfig(config);
+        }
+      }
+      return config;
     } catch (e: any) {
-      console.error(`⚠️ [TaskScheduler] Failed to load tasks.json: ${e.message}`);
+      console.error(
+        `⚠️ [TaskScheduler] Failed to load tasks.json: ${e.message}`,
+      );
       return null;
+    }
+  }
+
+  private getDefaultReflectionTask(): TaskConfig {
+    return {
+      id: "nightly-reflection",
+      cron: "0 22 * * *",
+      prompt:
+        "Analyze today's conversation and generate higher-order insights.",
+      enabled: true,
+      type: "reflect",
+    };
+  }
+
+  private saveConfig(config: TasksConfig): void {
+    const filePath = path.join(this.jarvisHome, TASKS_FILENAME);
+    try {
+      if (!fs.existsSync(this.jarvisHome)) {
+        fs.mkdirSync(this.jarvisHome, { recursive: true });
+      }
+      fs.writeFileSync(filePath, JSON.stringify(config, null, 2));
+      console.error(
+        "✅ [TaskScheduler] Default reflection task initialized and saved.",
+      );
+    } catch (e: any) {
+      console.error(
+        `⚠️ [TaskScheduler] Failed to save tasks.json: ${e.message}`,
+      );
     }
   }
 
@@ -82,15 +128,46 @@ export class TaskScheduler {
     this.triggerCallbacks.push(cb);
   }
 
+  public addTask(task: TaskConfig): void {
+    if (!this.config) {
+      this.config = { defaultChannel: "feishu", defaultChatId: "", tasks: [] };
+    }
+    this.config.tasks.push(task);
+    this.saveConfig(this.config);
+    this.reload();
+  }
+
+  public updateTask(id: string, updates: Partial<TaskConfig>): void {
+    if (!this.config) return;
+    const task = this.config.tasks.find((t) => t.id === id);
+    if (task) {
+      Object.assign(task, updates);
+      this.saveConfig(this.config);
+      this.reload();
+    }
+  }
+
+  public deleteTask(id: string): void {
+    if (!this.config) return;
+    const initialLength = this.config.tasks.length;
+    this.config.tasks = this.config.tasks.filter((t) => t.id !== id);
+    if (this.config.tasks.length !== initialLength) {
+      this.saveConfig(this.config);
+      this.reload();
+    }
+  }
+
   public start(): void {
     if (!this.config) return;
 
     const { defaultChannel, defaultChatId, tasks } = this.config;
-    const enabledTasks = tasks.filter(t => t.enabled);
+    const enabledTasks = tasks.filter((t) => t.enabled);
 
     for (const task of enabledTasks) {
       if (!cron.validate(task.cron)) {
-        console.error(`⚠️ [TaskScheduler] Invalid cron expression for task "${task.id}": ${task.cron}`);
+        console.error(
+          `⚠️ [TaskScheduler] Invalid cron expression for task "${task.id}": ${task.cron}`,
+        );
         continue;
       }
 
@@ -107,10 +184,14 @@ export class TaskScheduler {
       });
 
       this.jobs.push(job);
-      console.error(`✅ [TaskScheduler] Scheduled task "${task.id}" (${task.cron})`);
+      console.error(
+        `✅ [TaskScheduler] Scheduled task "${task.id}" (${task.cron})`,
+      );
     }
 
-    console.error(`📅 [TaskScheduler] ${enabledTasks.length} task(s) scheduled.`);
+    console.error(
+      `📅 [TaskScheduler] ${enabledTasks.length} task(s) scheduled.`,
+    );
   }
 
   public stop(): void {
