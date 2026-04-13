@@ -2,7 +2,10 @@
 
 [📄 中文文档](./README_cn.md)
 
-Jarvis is a deeply personalized AI assistant that learns who you are, remembers your history, and grows with you over time. Built on Gemini CLI, it connects to your life through WeChat and Feishu, acts proactively on your behalf, and becomes more attuned to you with every conversation.
+Jarvis is a deeply personalized AI assistant that learns who you are, remembers
+your history, and grows with you over time. Built on Gemini CLI, it connects to
+your life through WeChat and Feishu, acts proactively on your behalf, and
+becomes more attuned to you with every conversation.
 
 ---
 
@@ -10,27 +13,41 @@ Jarvis is a deeply personalized AI assistant that learns who you are, remembers 
 
 ### 🧠 It Remembers You
 
-Jarvis builds a living memory of who you are — your name, your habits, your preferences, your decisions. Every conversation is distilled into structured knowledge that shapes how Jarvis responds to you. Over time, it learns that you prefer concise answers, that you run three times a week, that you follow a core-satellite investment strategy. You never have to repeat yourself.
+Jarvis builds a living memory of who you are — your name, your habits, your
+preferences, your decisions. Every conversation is distilled into structured
+knowledge that shapes how Jarvis responds to you. Over time, it learns that you
+prefer concise answers, that you run three times a week, that you follow a
+core-satellite investment strategy. You never have to repeat yourself.
 
 ### 💬 It Lives Where You Do
 
-Talk to Jarvis through **WeChat** or **Feishu** — the apps already on your phone. No new interface to learn. Jarvis fits into your existing communication habits and responds wherever you are.
+Talk to Jarvis through **WeChat** or **Feishu** — the apps already on your
+phone. No new interface to learn. Jarvis fits into your existing communication
+habits and responds wherever you are.
 
 ### ⏰ It Works While You Sleep
 
-Set up scheduled tasks in plain language: *"Every weekday evening, summarize today's market and send it to me on WeChat."* Jarvis handles the rest — querying, analyzing, and delivering — automatically, on your schedule.
+Set up scheduled tasks in plain language: _"Every weekday evening, summarize
+today's market and send it to me on WeChat."_ Jarvis handles the rest —
+querying, analyzing, and delivering — automatically, on your schedule.
 
 ### 🔍 It Reflects and Grows
 
-Each night, Jarvis quietly reviews what it knows about you and synthesizes higher-level insights — patterns in your behavior, connections between your interests, observations that might help it serve you better. These reflections become part of how it understands you.
+Each night, Jarvis quietly reviews what it knows about you and synthesizes
+higher-level insights — patterns in your behavior, connections between your
+interests, observations that might help it serve you better. These reflections
+become part of how it understands you.
 
 ### 🎯 It Adapts to You
 
-Jarvis adjusts its communication style based on your background. It speaks technically with engineers, simply with everyone else. It follows your explicit preferences and infers your implicit ones.
+Jarvis adjusts its communication style based on your background. It speaks
+technically with engineers, simply with everyone else. It follows your explicit
+preferences and infers your implicit ones.
 
 ### 🛠️ It Can Be Extended
 
-Give Jarvis new capabilities by dropping scripts into a folder. Python, Bash, or AppleScript — if you can script it, Jarvis can do it.
+Give Jarvis new capabilities by dropping scripts into a folder. Python, Bash, or
+AppleScript — if you can script it, Jarvis can do it.
 
 ---
 
@@ -44,6 +61,7 @@ Give Jarvis new capabilities by dropping scripts into a folder. Python, Bash, or
 ### Authentication
 
 **Option A: Google Login (Recommended)**
+
 ```bash
 npx gemini login
 ```
@@ -51,6 +69,7 @@ npx gemini login
 **Option B: API Key**
 
 Add to `.env` in the project root:
+
 ```bash
 GOOGLE_API_KEY=your_api_key_here
 ```
@@ -58,8 +77,24 @@ GOOGLE_API_KEY=your_api_key_here
 ### Install & Run
 
 ```bash
+# Clone with submodules (required)
+git clone --recurse-submodules https://github.com/DavidLiuXh/jarvis-personal-ai.git
+cd jarvis-personal-ai
+
 npm install
-npx tsx packages/jarvis/src/index.ts
+npx tsx jarvis/src/index.ts
+```
+
+> If you already cloned without `--recurse-submodules`, run
+> `git submodule update --init --recursive` first.
+
+### Updating gemini-cli
+
+To pull the latest upstream gemini-cli changes:
+
+```bash
+git submodule update --remote gemini-cli
+npm install
 ```
 
 Open **[http://localhost:3000](http://localhost:3000)** to access the web UI.
@@ -71,6 +106,7 @@ Open **[http://localhost:3000](http://localhost:3000)** to access the web UI.
 ### WeChat
 
 Enable in `~/.gemini-jarvis/config.json`:
+
 ```json
 "wechat": {
   "enabled": true,
@@ -102,16 +138,19 @@ Manage tasks through natural language or the `!task` command:
 !task run task-id
 ```
 
-Or just tell Jarvis: *"Remind me every Monday morning to review my portfolio."*
+Or just tell Jarvis: _"Remind me every Monday morning to review my portfolio."_
 
 ---
 
 ## 📁 Data & Privacy
 
-All Jarvis data lives in `~/.gemini-jarvis/` — completely isolated from your regular Gemini CLI usage. Memory, chat history, settings, and task configurations are all stored locally.
+All Jarvis data lives in `~/.gemini-jarvis/` — completely isolated from your
+regular Gemini CLI usage. Memory, chat history, settings, and task
+configurations are all stored locally.
 
 ---
 
 ## 📜 License
 
-Apache-2.0 — inherited from [gemini-cli](https://github.com/google-gemini/gemini-cli)
+Apache-2.0 — inherited from
+[gemini-cli](https://github.com/google-gemini/gemini-cli)
