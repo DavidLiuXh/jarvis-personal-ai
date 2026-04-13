@@ -4,9 +4,9 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import fs from 'node:fs';
-import path from 'node:path';
-import os from 'node:os';
+import fs from "node:fs";
+import path from "node:path";
+import os from "node:os";
 
 export interface JarvisConfig {
   api: {
@@ -35,11 +35,13 @@ export interface JarvisConfig {
     retrievalLimit: number;
     consolidationThreshold: number;
     /** Dedup strategy for saveFact: 'jaccard' (local, no network) or 'embedding' (semantic, requires CLI auth). Default: 'jaccard'. */
-    dedupStrategy: 'jaccard' | 'embedding';
+    dedupStrategy: "jaccard" | "embedding";
     /** Strategy for selecting relevant facts to inject into system prompt. Default: 'jaccard'. */
-    factRelevanceStrategy: 'jaccard' | 'embedding';
+    factRelevanceStrategy: "jaccard" | "embedding";
     /** Max number of identity/specification facts to inject per turn (preference/behavior always injected). Default: 5. */
     factRelevanceLimit: number;
+    /** Number of semantically similar past conversations to pre-warm into context each turn. 0 = disabled. Default: 3. */
+    prewarmLimit: number;
   };
   security: {
     jailbreak: boolean;
@@ -68,8 +70,8 @@ export interface JarvisConfig {
   };
 }
 
-const JARVIS_HOME = path.join(os.homedir(), '.gemini-jarvis');
-const CONFIG_PATH = path.join(JARVIS_HOME, 'config.json');
+const JARVIS_HOME = path.join(os.homedir(), ".gemini-jarvis");
+const CONFIG_PATH = path.join(JARVIS_HOME, "config.json");
 
 export class ConfigManager {
   private static instance: ConfigManager;
@@ -93,54 +95,55 @@ export class ConfigManager {
 
     const defaults: JarvisConfig = {
       api: {
-        key: process.env.GOOGLE_API_KEY || process.env.GEMINI_API_KEY || '',
-        proxy: process.env.HTTPS_PROXY || process.env.https_proxy || ''
+        key: process.env.GOOGLE_API_KEY || process.env.GEMINI_API_KEY || "",
+        proxy: process.env.HTTPS_PROXY || process.env.https_proxy || "",
       },
       models: {
-        chat: 'auto',
-        embedding: 'models/gemini-embedding-001',
+        chat: "auto",
+        embedding: "models/gemini-embedding-001",
         embeddingDimension: 3072,
-        distillation: 'gemini-2.5-flash'
+        distillation: "gemini-2.5-flash",
       },
       network: {
         maxRetries: 3,
         cleanOrphanedTurnOnFailure: true,
       },
       server: {
-        port: Number(process.env.JARVIS_PORT) || 3000
+        port: Number(process.env.JARVIS_PORT) || 3000,
       },
       memory: {
         ingestionDelayMs: 800,
         retrievalLimit: 5,
         consolidationThreshold: 3,
-        dedupStrategy: 'jaccard' as const,
-        factRelevanceStrategy: 'jaccard' as const,
+        dedupStrategy: "jaccard" as const,
+        factRelevanceStrategy: "jaccard" as const,
         factRelevanceLimit: 5,
+        prewarmLimit: 3,
       },
       security: {
-        jailbreak: false
+        jailbreak: false,
       },
       feishu: {
         enabled: false,
-        appId: '',
-        appSecret: '',
-        showThoughts: false
+        appId: "",
+        appSecret: "",
+        showThoughts: false,
       },
       wechat: {
         enabled: false,
-        apiBaseUrl: 'https://ilinkai.weixin.qq.com'
+        apiBaseUrl: "https://ilinkai.weixin.qq.com",
       },
       session: {
         useGlobalSession: false,
-        globalSessionId: 'jarvis-global-master',
+        globalSessionId: "jarvis-global-master",
         resumeOnStart: true,
         recentTurnsOnResume: 20,
-      }
+      },
     };
 
     if (fs.existsSync(CONFIG_PATH)) {
       try {
-        const saved = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8'));
+        const saved = JSON.parse(fs.readFileSync(CONFIG_PATH, "utf8"));
         this.config = {
           ...defaults,
           ...saved,
@@ -152,10 +155,12 @@ export class ConfigManager {
           security: { ...defaults.security, ...saved.security },
           feishu: { ...defaults.feishu, ...saved.feishu },
           wechat: { ...defaults.wechat, ...saved.wechat },
-          session: { ...defaults.session, ...saved.session }
+          session: { ...defaults.session, ...saved.session },
         };
       } catch (e) {
-        console.error('[ConfigManager] Error parsing config.json, using defaults.');
+        console.error(
+          "[ConfigManager] Error parsing config.json, using defaults.",
+        );
         this.config = defaults;
       }
     } else {
@@ -168,7 +173,7 @@ export class ConfigManager {
     try {
       fs.writeFileSync(CONFIG_PATH, JSON.stringify(this.config, null, 2));
     } catch (e) {
-      console.error('[ConfigManager] Failed to save config:', e);
+      console.error("[ConfigManager] Failed to save config:", e);
     }
   }
 

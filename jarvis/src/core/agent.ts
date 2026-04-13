@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { EventEmitter } from 'node:events';
+import { EventEmitter } from "node:events";
 import {
   GeminiClient,
   debugLogger,
@@ -14,20 +14,24 @@ import {
   promptIdContext,
   LlmRole,
   type Part,
-} from '../../../gemini-cli/packages/core/src/index.js';
+} from "../../../gemini-cli/packages/core/src/index.js";
 
-import { JarvisEventType, type JarvisAgentOptions } from './types.js';
-import { type MemoryService } from './memory.js';
-import { DynamicToolRegistry } from './dynamicToolRegistry.js';
-import { SystemPromptBuilder, type FactRecord, type SkillInfo } from './systemPromptBuilder.js';
-import { BackgroundDistiller } from './backgroundDistiller.js';
-import { ToolRouter } from './toolRouter.js';
-import { AgentInitializer } from './agentInitializer.js';
-import { type TaskCommandHandler } from './taskCommandHandler.js';
-import { type SkillCommandHandler } from './skillCommandHandler.js';
-import { isFetchError, cleanOrphanedUserTurn } from './agentNetworkUtils.js';
-import { ConfigManager } from './configManager.js';
-import { type ChannelRegistry } from './channelRegistry.js';
+import { JarvisEventType, type JarvisAgentOptions } from "./types.js";
+import { type MemoryService } from "./memory.js";
+import { DynamicToolRegistry } from "./dynamicToolRegistry.js";
+import {
+  SystemPromptBuilder,
+  type FactRecord,
+  type SkillInfo,
+} from "./systemPromptBuilder.js";
+import { BackgroundDistiller } from "./backgroundDistiller.js";
+import { ToolRouter } from "./toolRouter.js";
+import { AgentInitializer } from "./agentInitializer.js";
+import { type TaskCommandHandler } from "./taskCommandHandler.js";
+import { type SkillCommandHandler } from "./skillCommandHandler.js";
+import { isFetchError, cleanOrphanedUserTurn } from "./agentNetworkUtils.js";
+import { ConfigManager } from "./configManager.js";
+import { type ChannelRegistry } from "./channelRegistry.js";
 
 /**
  * JARVIS 3.0: The Digital Lifeform Agent
@@ -78,16 +82,20 @@ export class JarvisAgent extends EventEmitter {
     const generateText = async (prompt: string): Promise<string> => {
       const generator = this.client.config.getContentGenerator();
       const response = await generator.generateContent(
-        { model: 'gemini-2.5-flash', contents: [{ role: 'user', parts: [{ text: prompt }] }] },
+        {
+          model: "gemini-2.5-flash",
+          contents: [{ role: "user", parts: [{ text: prompt }] }],
+        },
         `distill-${Date.now()}`,
         LlmRole.UTILITY_TOOL,
       );
-      return response.candidates?.[0]?.content?.parts?.[0]?.text ?? '';
+      return response.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
     };
 
     this.distiller = new BackgroundDistiller(
       generateText,
-      (category, content, importance) => this.memoryService.saveFact(category, content, importance),
+      (category, content, importance) =>
+        this.memoryService.saveFact(category, content, importance),
     );
 
     this.memoryService.setGenerateText(generateText);
@@ -117,13 +125,45 @@ export class JarvisAgent extends EventEmitter {
   }
 
   private async refreshContext(userPrompt: string) {
-    const facts = await this.memoryService.searchFacts(userPrompt) as FactRecord[];
-    const protocol = this.promptBuilder.buildFromFacts(facts, userPrompt, this.availableSkills);
-    const defaultInstruction = getCoreSystemPrompt(this.client.config, this.client.config.getUserMemory());
-    this.client.getChat().setSystemInstruction(defaultInstruction + '\n' + protocol);
+    const facts = (await this.memoryService.searchFacts(
+      userPrompt,
+    )) as FactRecord[];
+    const protocol = this.promptBuilder.buildFromFacts(
+      facts,
+      userPrompt,
+      this.availableSkills,
+    );
+    const defaultInstruction = getCoreSystemPrompt(
+      this.client.config,
+      this.client.config.getUserMemory(),
+    );
+
+    // vec_memories pre-warm: inject semantically similar past conversations
+    const prewarmLimit = this.jarvisConfig.memory.prewarmLimit ?? 3;
+    let prewarmSection = "";
+    if (prewarmLimit > 0) {
+      const similarMemories = await this.memoryService.search(
+        userPrompt,
+        prewarmLimit,
+      );
+      if (similarMemories.length > 0) {
+        prewarmSection =
+          "\n<relevant_past_conversations>\n" +
+          similarMemories.map((m, i) => `[Past ${i + 1}]: ${m}`).join("\n") +
+          "\n</relevant_past_conversations>";
+      }
+    }
+
+    this.client
+      .getChat()
+      .setSystemInstruction(
+        defaultInstruction + "\n" + protocol + prewarmSection,
+      );
 
     const history = this.client.getChat().getHistory();
-    console.error(`🔄 [Jarvis] System Prompt Refreshed. History Size: ${history.length} turns. Facts injected: ${facts.length}.`);
+    console.error(
+      `🔄 [Jarvis] System Prompt Refreshed. History Size: ${history.length} turns. Facts injected: ${facts.length}. Prewarmed memories: ${prewarmLimit > 0 ? (prewarmSection ? prewarmSection.split("[Past ").length - 1 : 0) : "disabled"}.`,
+    );
   }
 
   public setChannelRegistry(registry: ChannelRegistry): void {
@@ -154,25 +194,37 @@ export class JarvisAgent extends EventEmitter {
     this.skillCommandHandler = handler;
   }
 
-  public async processMessage(userPrompt: string, imageAttachment?: { data: Buffer; mimeType: string }) {
+  public async processMessage(
+    userPrompt: string,
+    imageAttachment?: { data: Buffer; mimeType: string },
+  ) {
     // Intercept !task commands — no LLM, no memory operations needed
-    if (userPrompt.trimStart().startsWith('!task') && this.taskCommandHandler) {
+    if (userPrompt.trimStart().startsWith("!task") && this.taskCommandHandler) {
       const result = await this.taskCommandHandler.handle(userPrompt);
-      this.emit(JarvisEventType.CONTENT, { type: JarvisEventType.CONTENT, value: result });
+      this.emit(JarvisEventType.CONTENT, {
+        type: JarvisEventType.CONTENT,
+        value: result,
+      });
       this.emit(JarvisEventType.DONE);
       return;
     }
 
     // Intercept !skill commands — no LLM, no memory operations needed
-    if (userPrompt.trimStart().startsWith('!skill') && this.skillCommandHandler) {
+    if (
+      userPrompt.trimStart().startsWith("!skill") &&
+      this.skillCommandHandler
+    ) {
       const result = await this.skillCommandHandler.handle(userPrompt);
-      this.emit(JarvisEventType.CONTENT, { type: JarvisEventType.CONTENT, value: result });
+      this.emit(JarvisEventType.CONTENT, {
+        type: JarvisEventType.CONTENT,
+        value: result,
+      });
       this.emit(JarvisEventType.DONE);
       return;
     }
 
     if (this.isProcessing) {
-      throw new Error('Mission in progress.');
+      throw new Error("Mission in progress.");
     }
 
     await this.initialize();
@@ -190,17 +242,18 @@ export class JarvisAgent extends EventEmitter {
           currentQueryParts.push({
             inlineData: {
               mimeType: imageAttachment.mimeType,
-              data: imageAttachment.data.toString('base64'),
+              data: imageAttachment.data.toString("base64"),
             },
           });
         }
 
-        let finalAssistantText = '';
+        let finalAssistantText = "";
         const allToolsCalled = new Set<string>();
 
         const networkConfig = this.jarvisConfig.network;
         const maxRetries = networkConfig?.maxRetries ?? 3;
-        const cleanOnFailure = networkConfig?.cleanOrphanedTurnOnFailure ?? true;
+        const cleanOnFailure =
+          networkConfig?.cleanOrphanedTurnOnFailure ?? true;
 
         while (true) {
           let retryCount = 0;
@@ -208,14 +261,22 @@ export class JarvisAgent extends EventEmitter {
 
           while (retryCount < maxRetries && !success) {
             try {
-              const responseStream = this.client.sendMessageStream(currentQueryParts, abortController.signal, pId);
+              const responseStream = this.client.sendMessageStream(
+                currentQueryParts,
+                abortController.signal,
+                pId,
+              );
               const toolCallRequests: any[] = [];
-              let turnTextAccumulated = '';
+              let turnTextAccumulated = "";
 
               for await (const event of responseStream) {
                 if (event.type === GeminiEventType.Content) {
                   const newText = event.value;
-                  if (turnTextAccumulated.includes(newText) && turnTextAccumulated.length > 0) continue;
+                  if (
+                    turnTextAccumulated.includes(newText) &&
+                    turnTextAccumulated.length > 0
+                  )
+                    continue;
                   turnTextAccumulated += newText;
                   finalAssistantText += newText;
                   this.emit(JarvisEventType.CONTENT, event);
@@ -230,7 +291,8 @@ export class JarvisAgent extends EventEmitter {
               }
 
               if (toolCallRequests.length > 0) {
-                for (const req of toolCallRequests) allToolsCalled.add(req.name);
+                for (const req of toolCallRequests)
+                  allToolsCalled.add(req.name);
                 currentQueryParts = await this.toolRouter.route(
                   toolCallRequests,
                   abortController.signal,
@@ -247,8 +309,10 @@ export class JarvisAgent extends EventEmitter {
               if (isFetchError(err) && retryCount < maxRetries - 1) {
                 retryCount++;
                 const delay = Math.pow(2, retryCount) * 1000;
-                console.error(`⚠️ [JarvisAgent] Network error (${err.message}). Retrying in ${delay}ms... (attempt ${retryCount}/${maxRetries - 1})`);
-                await new Promise(resolve => setTimeout(resolve, delay));
+                console.error(
+                  `⚠️ [JarvisAgent] Network error (${err.message}). Retrying in ${delay}ms... (attempt ${retryCount}/${maxRetries - 1})`,
+                );
+                await new Promise((resolve) => setTimeout(resolve, delay));
               } else {
                 // All retries exhausted — clean orphaned user turn if configured
                 if (cleanOnFailure) {
@@ -257,7 +321,9 @@ export class JarvisAgent extends EventEmitter {
                     const cleaned = cleanOrphanedUserTurn(chat.getHistory());
                     if (cleaned.length < chat.getHistory().length) {
                       chat.setHistory(cleaned);
-                      console.error(`🧹 [JarvisAgent] Cleaned orphaned user turn from history.`);
+                      console.error(
+                        `🧹 [JarvisAgent] Cleaned orphaned user turn from history.`,
+                      );
                     }
                   } catch (_cleanErr) {}
                 }
@@ -270,16 +336,21 @@ export class JarvisAgent extends EventEmitter {
 
         // Skip memory ops when the turn only involved task management tools —
         // task state is already persisted in tasks.json, no need to distill facts.
-        const onlyTaskTools = allToolsCalled.size > 0 &&
-          [...allToolsCalled].every(name => name.startsWith('task_'));
+        const onlyTaskTools =
+          allToolsCalled.size > 0 &&
+          [...allToolsCalled].every((name) => name.startsWith("task_"));
         if (!onlyTaskTools) {
-          this.memoryService.enqueue(this.sessionId, userPrompt, finalAssistantText);
+          this.memoryService.enqueue(
+            this.sessionId,
+            userPrompt,
+            finalAssistantText,
+          );
           void this.distiller.distill(userPrompt, finalAssistantText);
         }
       });
       this.emit(JarvisEventType.DONE);
     } catch (error) {
-      debugLogger.error('[JarvisAgent] Operational error:', error);
+      debugLogger.error("[JarvisAgent] Operational error:", error);
       this.emit(JarvisEventType.ERROR, error);
     } finally {
       this.isProcessing = false;
