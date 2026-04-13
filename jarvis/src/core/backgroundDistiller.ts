@@ -4,7 +4,11 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-export type SaveFactFn = (category: string, content: string, importance: number) => Promise<void>;
+export type SaveFactFn = (
+  category: string,
+  content: string,
+  importance: number,
+) => Promise<void>;
 
 /**
  * A function that sends a prompt to an LLM and returns the full text response.
@@ -30,6 +34,11 @@ export class BackgroundDistiller {
       const frozenPrompt = `
 Extract persistent facts from the USER INPUT ONLY. Do NOT extract facts from the assistant output.
 
+ENTITY ATTRIBUTION (CRITICAL):
+- Only extract facts where the subject is the USER (e.g., "User likes X") or the JARVIS SYSTEM/PROJECT (e.g., "Jarvis must use Y").
+- Do NOT extract facts about external entities, third-party projects, or topics being discussed conceptually (e.g., if user says "OpenClaw uses DNI", do NOT extract this as a fact about Jarvis or the user).
+- If the subject is an external product or another AI, IGNORE it.
+
 Source rule (CRITICAL):
 - Extract ONLY from: "User input" below
 - NOT from: the assistant's response, even if the assistant enumerates or summarizes user information
@@ -42,7 +51,7 @@ Category definitions (mutually exclusive):
 - preference: ONLY persistent, long-term response style preferences about FORMAT or STYLE — output format, tone, language, length. NOT personal traits, hobbies, or one-time/temporary instructions.
   Signs of persistence: "always", "every time", "from now on", "以后", "每次"
   Signs of one-time (IGNORE these): "this time", "just now", "for this response", "这次", "just say", test commands like "return exactly X"
-- specification: Technical decisions, project constraints, or system rules (e.g. "project uses TypeScript", "do not modify gemini-cli source")
+- specification: Technical decisions, project constraints, or system rules FOR THIS PROJECT (e.g. "this project uses TypeScript", "do not modify gemini-cli source"). Must be a rule the user wants JARVIS to follow.
 
 Rules:
 - Each fact belongs to exactly ONE category.
@@ -50,6 +59,7 @@ Rules:
 - identity = name/job/skill only. If unsure between identity/behavior, use behavior.
 - "preference" means response style only. User hobbies/interests → behavior, NOT preference.
 - Do not repeat the same information under different categories.
+- If a fact is about an external entity (like "OpenClaw"), ignore it.
 - Only extract facts that are genuinely new and worth remembering long-term.
 
 Respond ONLY with JSON: {"found": true, "facts": [{"category": "identity|behavior|preference|specification", "content": "..."}]}
@@ -64,7 +74,7 @@ Assistant output (context only, do NOT extract from this): ${assistantText}
       const match = fullText.match(/\{[\s\S]*\}/);
       if (!match) return;
 
-      const data = JSON.parse(match[0].replace(/\n/g, ' ')) as {
+      const data = JSON.parse(match[0].replace(/\n/g, " ")) as {
         found: boolean;
         facts?: Array<{ category: string; content: string }>;
       };
@@ -74,7 +84,7 @@ Assistant output (context only, do NOT extract from this): ${assistantText}
         }
       }
     } catch (e) {
-      console.error('[BackgroundDistiller] distill failed:', e);
+      console.error("[BackgroundDistiller] distill failed:", e);
     }
   }
 }
