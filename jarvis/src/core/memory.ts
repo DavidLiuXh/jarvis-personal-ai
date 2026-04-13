@@ -11,7 +11,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import * as genai from '@google/genai';
 import { HttpsProxyAgent } from 'https-proxy-agent';
-import { debugLogger } from '../../../core/src/index.js';
+import { debugLogger } from '../../../gemini-cli/packages/core/src/index.js';
 import { ConfigManager } from './configManager.js';
 
 export class MemoryService {

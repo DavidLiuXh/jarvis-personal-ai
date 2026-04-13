@@ -7,7 +7,7 @@
 import {
   recordToolCallInteractions,
   type Part,
-} from '../../../core/src/index.js';
+} from '../../../gemini-cli/packages/core/src/index.js';
 
 export type ToolCallRequest = {
   name: string;

@@ -6,7 +6,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import type { Content } from '../../../core/src/index.js';
+import type { Content } from '../../../gemini-cli/packages/core/src/index.js';
 import { buildHistoryFromMessages } from './resumeFromDisk.js';
 
 // ---------------------------------------------------------------------------

@@ -6,7 +6,9 @@
   },
   "type": "module",
   "workspaces": [
-    "packages/*"
+    "jarvis",
+    "gemini-cli/packages/core",
+    "gemini-cli/packages/cli"
   ],
   "private": "true",
   "repository": {
@@ -136,6 +138,7 @@
   "dependencies": {
     "@larksuiteoapi/node-sdk": "^1.60.0",
     "ink": "npm:@jrichman/ink@6.4.11",
+    "json-stable-stringify": "^1.3.0",
     "latest-version": "^9.0.0",
     "node-fetch-native": "^1.6.7",
     "proper-lockfile": "^4.1.2",

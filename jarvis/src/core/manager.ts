@@ -6,7 +6,7 @@
 
 import { JarvisAgent } from './agent.js';
 import { MemoryService } from './memory.js';
-import { debugLogger } from '../../../core/src/index.js';
+import { debugLogger } from '../../../gemini-cli/packages/core/src/index.js';
 import { ConfigManager } from './configManager.js';
 
 export class JarvisManager {

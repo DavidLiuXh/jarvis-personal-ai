@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { type Part } from '../../../core/src/index.js';
+import { type Part } from '../../../gemini-cli/packages/core/src/index.js';
 import { type MemoryService } from './memory.js';
 
 export enum JarvisEventType {

@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import type { Content } from '../../../core/src/index.js';
+import type { Content } from '../../../gemini-cli/packages/core/src/index.js';
 
 /**
  * Returns true for any network-level error that is worth retrying:

@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import type { Content, Part } from '../../../core/src/index.js';
+import type { Content, Part } from '../../../gemini-cli/packages/core/src/index.js';
 
 type MessageRecord = {
   type: string;

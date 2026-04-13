@@ -4,12 +4,14 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+/* eslint-disable @typescript-eslint/no-explicit-any */
+
 // --- 1. PRE-INITIALIZATION LAYER ---
 const SOURCE_ROOT = process.cwd();
 
 import dotenv from 'dotenv';
 import path from 'node:path';
-import { setGlobalDispatcher, ProxyAgent } from 'undici';
+// undici imported for side-effects (proxy support); individual exports unused here
 
 // Explicitly load .env from the source root
 dotenv.config({ path: path.join(SOURCE_ROOT, '.env') });
@@ -20,22 +22,26 @@ import { ConfigManager } from './core/configManager.js';
 const jarvisConfig = ConfigManager.getInstance().get();
 
 // --- 3. OPTIONAL GLOBAL POLICY JAILBREAK ---
-import { PolicyEngine } from '../../core/src/index.js';
+import { PolicyEngine } from '../../gemini-cli/packages/core/src/index.js';
 
 if (jarvisConfig.security.jailbreak) {
   /**
    * JARVIS ABSOLUTE PROTOCOL: GLOBAL AUTHORITY INJECTION
    * Triggered only if security.jailbreak is true in config.json
    */
-  // @ts-ignore
-  PolicyEngine.prototype.check = async function() {
+  // @ts-expect-error - overriding internal method for jailbreak mode
+  PolicyEngine.prototype.check = async function () {
     return { decision: 'allow' };
   };
-  // eslint-disable-next-line no-console
-  console.log('🔓 [Jarvis] GLOBAL JAILBREAK ACTIVE: Full system sovereignty granted.');
+   
+  console.log(
+    '🔓 [Jarvis] GLOBAL JAILBREAK ACTIVE: Full system sovereignty granted.',
+  );
 } else {
-  // eslint-disable-next-line no-console
-  console.log('🛡️ [Jarvis] SECURITY ACTIVE: Operating within standard core constraints.');
+   
+  console.log(
+    '🛡️ [Jarvis] SECURITY ACTIVE: Operating within standard core constraints.',
+  );
 }
 
 // --- 4. THE STABLE SANDBOX LAYER ---
@@ -51,12 +57,18 @@ process.chdir(JARVIS_RUNTIME);
 // ------------------------------------
 
 import { WebSocketServer, type WebSocket } from 'ws';
-import express, { type Request, type Response, type NextFunction } from 'express';
+import express, {
+  type Request,
+  type Response,
+  type NextFunction,
+} from 'express';
 import { createServer, type Server } from 'node:http';
 import { v4 as uuidv4 } from 'uuid';
-import { fileURLToPath } from 'node:url';
 
-import { debugLogger, AuthType } from '../../core/src/index.js';
+import {
+  debugLogger,
+  AuthType,
+} from '../../gemini-cli/packages/core/src/index.js';
 import { JarvisManager } from './core/manager.js';
 import { JarvisEventType, type JarvisIncomingMessage } from './core/types.js';
 import { FeishuChannel } from './core/channels/feishu.js';
@@ -70,12 +82,9 @@ import { SkillCommandHandler } from './core/skillCommandHandler.js';
 const JARVIS_HOME = path.join(os.homedir(), '.gemini-jarvis');
 
 // @ts-expect-error - Relative import
-import { loadCliConfig } from '../../cli/src/config/config.js';
+import { loadCliConfig } from '../../gemini-cli/packages/cli/src/config/config.js';
 // @ts-expect-error - Relative import
-import { loadSettings } from '../../cli/src/config/settings.js';
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+import { loadSettings } from '../../gemini-cli/packages/cli/src/config/settings.js';
 
 /**
  * Jarvis Persistent AI Assistant Server
@@ -101,11 +110,13 @@ class JarvisServer {
     this.setupWebSocket();
 
     if (jarvisConfig.feishu.enabled) {
-      console.error(`🔌 [Jarvis] Activating Feishu Swarm Link for AppID: ${jarvisConfig.feishu.appId}`);
+      console.error(
+        `🔌 [Jarvis] Activating Feishu Swarm Link for AppID: ${jarvisConfig.feishu.appId}`,
+      );
       this.feishuChannel = new FeishuChannel(
         jarvisConfig.feishu.appId,
         jarvisConfig.feishu.appSecret,
-        this.manager
+        this.manager,
       );
       void this.feishuChannel.start();
     }
@@ -116,7 +127,10 @@ class JarvisServer {
       void this.wechatChannel.start();
     }
 
-    const apiKey = jarvisConfig.api.key || process.env.GOOGLE_API_KEY || process.env.GEMINI_API_KEY;
+    const apiKey =
+      jarvisConfig.api.key ||
+      process.env.GOOGLE_API_KEY ||
+      process.env.GEMINI_API_KEY;
     if (apiKey) {
       this.manager.getMemoryService().startWithApiKey(apiKey);
     } else {
@@ -124,31 +138,47 @@ class JarvisServer {
     }
 
     // --- Proactive Task System ---
-    this.channelRegistry = new ChannelRegistry(jarvisConfig.tasks?.defaultChannel ?? 'feishu');
+    this.channelRegistry = new ChannelRegistry(
+      jarvisConfig.tasks?.defaultChannel ?? 'feishu',
+    );
 
     // Build reflect function using CLI-auth generateText (same pattern as agent.ts)
     const reflectFn = async () => {
-      const agent = await this.manager.getAgent(jarvisConfig.session?.globalSessionId ?? 'jarvis-global');
+      const agent = await this.manager.getAgent(
+        jarvisConfig.session?.globalSessionId ?? 'jarvis-global',
+      );
       // Access generateText via agent's initialized client
       const agentAny = agent as any;
       if (!agentAny.client?.config?.getContentGenerator) {
-        console.error('⚠️ [Jarvis] Reflect: agent not initialized yet, skipping.');
+        console.error(
+          '⚠️ [Jarvis] Reflect: agent not initialized yet, skipping.',
+        );
         return;
       }
       const generateText = async (prompt: string): Promise<string> => {
         const generator = agentAny.client.config.getContentGenerator();
-        const { LlmRole } = await import('../../core/src/index.js');
+        const { LlmRole } = await import(
+          '../../gemini-cli/packages/core/src/index.js'
+        );
         const response = await generator.generateContent(
-          { model: jarvisConfig.models.distillation, contents: [{ role: 'user', parts: [{ text: prompt }] }] },
+          {
+            model: jarvisConfig.models.distillation,
+            contents: [{ role: 'user', parts: [{ text: prompt }] }],
+          },
           `reflect-${Date.now()}`,
           LlmRole.UTILITY_SUMMARIZER,
         );
-        return (response as any).candidates?.[0]?.content?.parts?.[0]?.text ?? '';
+        return (
+          (response as any).candidates?.[0]?.content?.parts?.[0]?.text ?? ''
+        );
       };
       await this.manager.getMemoryService().reflect(generateText);
     };
 
-    this.taskRunner = new ProactiveTaskRunner((sessionId) => this.manager.getAgent(sessionId), reflectFn);
+    this.taskRunner = new ProactiveTaskRunner(
+      (sessionId) => this.manager.getAgent(sessionId),
+      reflectFn,
+    );
     this.taskScheduler = new TaskScheduler(JARVIS_HOME);
 
     // Register feishu adapter
@@ -165,14 +195,16 @@ class JarvisServer {
       const wechat = this.wechatChannel;
       this.channelRegistry.register('wechat', {
         push: (userId, text) => wechat.sendProactive(userId, text),
-        get defaultChatId() { return wechat.getDefaultUserId(); },
+        get defaultChatId() {
+          return wechat.getDefaultUserId();
+        },
       });
     }
 
     // WebSocket broadcast adapter (always registered)
     this.channelRegistry.register('websocket', {
       push: async (_chatId: string, text: string) => {
-        this.wss.clients.forEach(client => {
+        this.wss.clients.forEach((client) => {
           if ((client as WebSocket).readyState === 1) {
             client.send(JSON.stringify({ type: 'proactive', payload: text }));
           }
@@ -182,7 +214,9 @@ class JarvisServer {
 
     // Wire scheduler → runner → registry
     this.taskScheduler.onTrigger((task) => {
-      console.error(`⏰ [Jarvis] Proactive task "${task.id}" triggered → ${task.channel}:${task.chatId}`);
+      console.error(
+        `⏰ [Jarvis] Proactive task "${task.id}" triggered → ${task.channel}:${task.chatId}`,
+      );
       void this.taskRunner.run(task, this.channelRegistry);
     });
     this.taskScheduler.start();
@@ -193,16 +227,19 @@ class JarvisServer {
       () => this.taskScheduler.reload(),
       (task) => this.taskRunner.run(task, this.channelRegistry),
     );
-    const globalSessionId = jarvisConfig.session?.globalSessionId ?? 'jarvis-global';
-    void this.manager.getAgent(globalSessionId).then(agent => {
+    const globalSessionId =
+      jarvisConfig.session?.globalSessionId ?? 'jarvis-global';
+    void this.manager.getAgent(globalSessionId).then((agent) => {
       agent.setTaskCommandHandler(taskCommandHandler);
       agent.setChannelRegistry(this.channelRegistry);
 
       // Load skills and set up dynamic reload
-      void this.loadAvailableSkills().then(skills => {
+      void this.loadAvailableSkills().then((skills) => {
         agent.setAvailableSkills(skills);
         if (skills.length > 0) {
-          console.error(`📚 [Jarvis] ${skills.length} skill(s) loaded: ${skills.map(s => s.name).join(', ')}`);
+          console.error(
+            `📚 [Jarvis] ${skills.length} skill(s) loaded: ${skills.map((s) => s.name).join(', ')}`,
+          );
         }
 
         // Build reloadSkillManager fn using the agent's initialized config
@@ -210,13 +247,17 @@ class JarvisServer {
           const agentAny = agent as any;
           if (!agentAny.client?.config) return;
           try {
-            await agentAny.client.config.getSkillManager().discoverSkills(
-              agentAny.client.config.storage,
-              agentAny.client.config.getExtensions?.() ?? [],
-              agentAny.client.config.isTrustedFolder?.() ?? true,
-            );
+            await agentAny.client.config
+              .getSkillManager()
+              .discoverSkills(
+                agentAny.client.config.storage,
+                agentAny.client.config.getExtensions?.() ?? [],
+                agentAny.client.config.isTrustedFolder?.() ?? true,
+              );
           } catch (e: any) {
-            console.error(`⚠️ [Jarvis] skillManager reload failed: ${e.message}`);
+            console.error(
+              `⚠️ [Jarvis] skillManager reload failed: ${e.message}`,
+            );
           }
         };
 
@@ -231,7 +272,9 @@ class JarvisServer {
     });
   }
 
-  private async loadAvailableSkills(): Promise<Array<{ name: string; description: string }>> {
+  private async loadAvailableSkills(): Promise<
+    Array<{ name: string; description: string }>
+  > {
     const skillDirs = [
       path.join(os.homedir(), '.gemini', 'skills'),
       path.join(os.homedir(), '.agents', 'skills'),
@@ -246,11 +289,18 @@ class JarvisServer {
         try {
           const content = fs.readFileSync(skillFile, 'utf8');
           const nameMatch = content.match(/^name:\s*(.+)$/m);
-          const descMatch = content.match(/^description:\s*["']?(.+?)["']?\s*$/m);
+          const descMatch = content.match(
+            /^description:\s*["']?(.+?)["']?\s*$/m,
+          );
           if (nameMatch && descMatch) {
-            skills.push({ name: nameMatch[1].trim(), description: descMatch[1].trim() });
+            skills.push({
+              name: nameMatch[1].trim(),
+              description: descMatch[1].trim(),
+            });
           }
-        } catch (_e) {}
+        } catch {
+          /* skip unreadable skill file */
+        }
       }
     }
     return skills;
@@ -263,9 +313,12 @@ class JarvisServer {
         settings.merged,
         'startup-sync',
         { _: [], yolo: true },
-        { cwd: process.cwd() }
+        { cwd: path.join(os.homedir(), '.gemini-jarvis') },
       );
-      await config.refreshAuth(settings.merged.security.auth.selectedType || AuthType.LOGIN_WITH_GOOGLE);
+      await config.refreshAuth(
+        settings.merged.security.auth.selectedType ||
+          AuthType.LOGIN_WITH_GOOGLE,
+      );
       await config.initialize();
       this.manager.getMemoryService().setConfig(config);
     } catch (err) {
@@ -275,11 +328,11 @@ class JarvisServer {
 
   private setupRoutes() {
     this.app.get('/health', (_req: Request, res: Response) => {
-      res.json({ 
-        status: 'ok', 
-        branding: 'Jarvis', 
+      res.json({
+        status: 'ok',
+        branding: 'Jarvis',
         runtime: process.cwd(),
-        jailbreak: jarvisConfig.security.jailbreak
+        jailbreak: jarvisConfig.security.jailbreak,
       });
     });
 
@@ -301,9 +354,10 @@ class JarvisServer {
       const messageHandler = async (data: string) => {
         try {
           const message = JSON.parse(data.toString()) as JarvisIncomingMessage;
-          
+
           // 🌍 GLOBAL SESSION REDIRECTION (Applied to all message types)
-          let sessionId = ('sessionId' in message && message.sessionId) || connectionId;
+          let sessionId =
+            ('sessionId' in message && message.sessionId) || connectionId;
           if (jarvisConfig.session.useGlobalSession) {
             sessionId = jarvisConfig.session.globalSessionId;
           }
@@ -317,7 +371,12 @@ class JarvisServer {
           }
         } catch (error: any) {
           debugLogger.error('[JarvisServer] Protocol error:', error);
-          ws.send(JSON.stringify({ type: 'error', message: `Protocol error: ${error.message}` }));
+          ws.send(
+            JSON.stringify({
+              type: 'error',
+              message: `Protocol error: ${error.message}`,
+            }),
+          );
         }
       };
 
@@ -337,21 +396,25 @@ class JarvisServer {
 
     const onToolResponse = (data: any) => {
       if (ws.readyState === ws.OPEN) {
-        ws.send(JSON.stringify({
-          type: 'stream',
-          sessionId,
-          payload: { type: JarvisEventType.TOOL_CALL_RESPONSE, value: data }
-        }));
+        ws.send(
+          JSON.stringify({
+            type: 'stream',
+            sessionId,
+            payload: { type: JarvisEventType.TOOL_CALL_RESPONSE, value: data },
+          }),
+        );
       }
     };
 
     const onSubAgentActivity = (data: any) => {
       if (ws.readyState === ws.OPEN) {
-        ws.send(JSON.stringify({
-          type: 'stream',
-          sessionId,
-          payload: { type: JarvisEventType.SUBAGENT_ACTIVITY, value: data }
-        }));
+        ws.send(
+          JSON.stringify({
+            type: 'stream',
+            sessionId,
+            payload: { type: JarvisEventType.SUBAGENT_ACTIVITY, value: data },
+          }),
+        );
       }
     };
 
@@ -364,7 +427,13 @@ class JarvisServer {
 
     const onError = (err: any) => {
       if (ws.readyState === ws.OPEN) {
-        ws.send(JSON.stringify({ type: 'error', sessionId, message: err.message || 'Agent error' }));
+        ws.send(
+          JSON.stringify({
+            type: 'error',
+            sessionId,
+            message: err.message || 'Agent error',
+          }),
+        );
       }
       cleanup();
     };
@@ -390,33 +459,44 @@ class JarvisServer {
     try {
       const agent = await this.manager.getAgent(sessionId);
       const history = agent.getHistory();
-      
+
       const messages: any[] = [];
       for (const content of history) {
         let text = content.parts.map((p) => (p as any).text || '').join('');
         if (text.includes('<session_context>')) {
-          text = text.replace(/<session_context>[\s\S]*?<\/session_context>/g, '').trim();
+          text = text
+            .replace(/<session_context>[\s\S]*?<\/session_context>/g, '')
+            .trim();
         }
         if (text.trim()) {
-          messages.push({ role: content.role === 'user' ? 'user' : 'jarvis', content: text });
+          messages.push({
+            role: content.role === 'user' ? 'user' : 'jarvis',
+            content: text,
+          });
         }
       }
-      ws.send(JSON.stringify({ type: 'history', sessionId, payload: messages }));
+      ws.send(
+        JSON.stringify({ type: 'history', sessionId, payload: messages }),
+      );
       ws.send(JSON.stringify({ type: 'done', sessionId }));
-    } catch (error) {
-      ws.send(JSON.stringify({ type: 'error', message: 'Failed to restore session' }));
+    } catch {
+      ws.send(
+        JSON.stringify({ type: 'error', message: 'Failed to restore session' }),
+      );
     }
   }
 
   public start() {
     const port = jarvisConfig.server.port;
     this.server.listen(port, '0.0.0.0', () => {
-      // eslint-disable-next-line no-console
+       
       console.log(`\n🤖 Jarvis AI Assistant 3.0 (Personalized) is active!`);
-      // eslint-disable-next-line no-console
+       
       console.log(`📡 Health: http://localhost:${port}/health`);
-      // eslint-disable-next-line no-console
-      console.log(`🔌 Jailbreak Mode: ${jarvisConfig.security.jailbreak ? 'ENABLED (Unconstrained)' : 'DISABLED (Protected)'}\n`);
+       
+      console.log(
+        `🔌 Jailbreak Mode: ${jarvisConfig.security.jailbreak ? 'ENABLED (Unconstrained)' : 'DISABLED (Protected)'}\n`,
+      );
     });
   }
 
@@ -446,7 +526,7 @@ const shutdown = async () => {
     await server.stop();
     clearTimeout(forceExitTimeout);
     process.exit(0);
-  } catch (err) {
+  } catch {
     process.exit(1);
   }
 };

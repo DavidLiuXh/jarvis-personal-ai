@@ -7,7 +7,7 @@
 import * as lark from '@larksuiteoapi/node-sdk';
 import { JarvisManager } from '../manager.js';
 import { JarvisEventType } from '../types.js';
-import { debugLogger } from '../../../../core/src/index.js';
+import { debugLogger } from '../../../../gemini-cli/packages/core/src/index.js';
 import { ConfigManager } from '../configManager.js';
 
 export class FeishuChannel {

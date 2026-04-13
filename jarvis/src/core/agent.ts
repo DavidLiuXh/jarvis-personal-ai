@@ -14,7 +14,7 @@ import {
   promptIdContext,
   LlmRole,
   type Part,
-} from '../../../core/src/index.js';
+} from '../../../gemini-cli/packages/core/src/index.js';
 
 import { JarvisEventType, type JarvisAgentOptions } from './types.js';
 import { type MemoryService } from './memory.js';

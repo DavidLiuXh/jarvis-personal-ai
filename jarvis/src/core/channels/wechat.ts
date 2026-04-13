@@ -12,7 +12,7 @@ import qrcode from 'qrcode-terminal';
 import { fetch as undiciFetch, Agent } from 'undici';
 import { JarvisManager } from '../manager.js';
 import { JarvisEventType } from '../types.js';
-import { debugLogger } from '../../../../core/src/index.js';
+import { debugLogger } from '../../../../gemini-cli/packages/core/src/index.js';
 import { ConfigManager } from '../configManager.js';
 
 // Dispatcher that skips TLS verification — used only for WeChat's self-signed cert

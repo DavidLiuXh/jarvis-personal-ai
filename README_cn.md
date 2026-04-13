@@ -2,7 +2,8 @@
 
 [📄 English Version](./README.md)
 
-Jarvis 是一个深度个性化的 AI 助手。它了解你是谁，记住你的历史，并随着时间不断成长。基于 Gemini CLI 构建，通过微信和飞书融入你的日常生活，主动为你服务，在每一次对话中都变得更懂你。
+Jarvis 是一个深度个性化的 AI 助手。它了解你是谁，记住你的历史，并随着时间不断成长。基于 Gemini
+CLI 构建，通过微信和飞书融入你的日常生活，主动为你服务，在每一次对话中都变得更懂你。
 
 ---
 
@@ -18,7 +19,8 @@ Jarvis 会建立一份关于你的活的记忆——你的名字、你的习惯�
 
 ### ⏰ 它在你睡觉时工作
 
-用自然语言设置定时任务：*"每天工作日晚上，汇总今日市场行情发给我微信。"* Jarvis 自动处理一切——查询、分析、推送——按你的节奏，不需要你在场。
+用自然语言设置定时任务：_"每天工作日晚上，汇总今日市场行情发给我微信。"_
+Jarvis 自动处理一切——查询、分析、推送——按你的节奏，不需要你在场。
 
 ### 🔍 它反思与成长
 
@@ -44,6 +46,7 @@ Jarvis 根据你的背景调整沟通风格。与工程师说技术语言，与�
 ### 身份认证
 
 **方案 A：Google 账号登录（推荐）**
+
 ```bash
 npx gemini login
 ```
@@ -51,6 +54,7 @@ npx gemini login
 **方案 B：API Key**
 
 在项目根目录的 `.env` 文件中添加：
+
 ```bash
 GOOGLE_API_KEY=你的_API_KEY
 ```
@@ -58,8 +62,24 @@ GOOGLE_API_KEY=你的_API_KEY
 ### 安装与启动
 
 ```bash
+# 克隆项目（必须包含 submodule）
+git clone --recurse-submodules https://github.com/DavidLiuXh/jarvis-personal-ai.git
+cd jarvis-personal-ai
+
 npm install
-npx tsx packages/jarvis/src/index.ts
+npx tsx jarvis/src/index.ts
+```
+
+> 如果已经 clone 但忘了 `--recurse-submodules`，先执行
+> `git submodule update --init --recursive`。
+
+### 更新 gemini-cli
+
+拉取最新的上游 gemini-cli 变更：
+
+```bash
+git submodule update --remote gemini-cli
+npm install
 ```
 
 打开 **[http://localhost:3000](http://localhost:3000)** 访问 Web 界面。
@@ -71,6 +91,7 @@ npx tsx packages/jarvis/src/index.ts
 ### 微信
 
 在 `~/.gemini-jarvis/config.json` 中启用：
+
 ```json
 "wechat": {
   "enabled": true,
@@ -102,13 +123,14 @@ npx tsx packages/jarvis/src/index.ts
 !task run task-id
 ```
 
-或者直接告诉 Jarvis：*"每周一早上提醒我复盘投资组合。"*
+或者直接告诉 Jarvis：_"每周一早上提醒我复盘投资组合。"_
 
 ---
 
 ## 📁 数据与隐私
 
-Jarvis 的所有数据都存放在 `~/.gemini-jarvis/` 目录下——与你日常使用的 Gemini CLI 完全隔离。记忆、对话历史、配置和任务设置全部存储在本地。
+Jarvis 的所有数据都存放在 `~/.gemini-jarvis/` 目录下——与你日常使用的 Gemini
+CLI 完全隔离。记忆、对话历史、配置和任务设置全部存储在本地。
 
 ---
 
