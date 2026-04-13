@@ -77,9 +77,13 @@ export class TaskScheduler {
         this.saveConfig(config);
       } else {
         config = JSON.parse(fs.readFileSync(filePath, "utf8")) as TasksConfig;
-        // If tasks array is empty, add the default reflection task
-        if (!config.tasks || config.tasks.length === 0) {
-          config.tasks = [this.getDefaultReflectionTask()];
+        if (!config.tasks) config.tasks = [];
+        // Ensure nightly reflection task always exists (migration-safe)
+        const hasReflection = config.tasks.some(
+          (t) => t.id === "nightly-reflection",
+        );
+        if (!hasReflection) {
+          config.tasks.push(this.getDefaultReflectionTask());
           this.saveConfig(config);
         }
       }
