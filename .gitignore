@@ -57,6 +57,11 @@ gha-creds-*.json
 # Log files
 patch_output.log
 gemini-debug.log
+*.log
+jarvis.log
+
+# Generated reports
+market_report*.html
 
 .genkit
 .gemini-clipboard/
