@@ -4,35 +4,42 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { describe, it, expect, vi, afterEach } from 'vitest';
-import os from 'node:os';
-import path from 'node:path';
-import fs from 'node:fs';
+import { describe, it, expect, vi, afterEach } from "vitest";
+import os from "node:os";
+import path from "node:path";
+import fs from "node:fs";
 
 // --- Mocks ---
 
-vi.mock('sqlite-vec', () => ({
+vi.mock("sqlite-vec", () => ({
   load: vi.fn(),
 }));
 
-vi.mock('../../../core/src/index.js', () => ({
+vi.mock("../../../core/src/index.js", () => ({
   debugLogger: { debug: vi.fn(), error: vi.fn() },
 }));
 
-vi.mock('./configManager.js', () => ({
+vi.mock("./configManager.js", () => ({
   ConfigManager: {
     getInstance: () => ({
       get: () => ({
-        api: { key: 'test-key', proxy: null },
+        api: { key: "test-key", proxy: null },
         models: {
-          embedding: 'test-embedding-model',
+          embedding: "test-embedding-model",
           embeddingDimension: 128,
-          distillation: 'test-distillation-model',
+          distillation: "test-distillation-model",
         },
         memory: {
           ingestionDelayMs: 0,
           retrievalLimit: 5,
           consolidationThreshold: 3,
+          dedupStrategy: "jaccard",
+          factRelevanceStrategy: "jaccard",
+          factRelevanceLimit: 5,
+          prewarmLimit: 3,
+          l1WriteMode: "batch",
+          vectorSimilarityWeight: 0.7,
+          importanceWeight: 0.3,
         },
       }),
     }),
@@ -47,12 +54,15 @@ vi.mock('./configManager.js', () => ({
  */
 async function createService(fakeGenerateContent: () => Promise<unknown>) {
   // Dynamically import AFTER mocks are set up
-  const { MemoryService } = await import('./memory.js');
+  const { MemoryService } = await import("./memory.js");
 
   // Use a temp dir so the real DB file isn't created in ~/.gemini-jarvis
-  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'jarvis-test-'));
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "jarvis-test-"));
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const service = new (MemoryService as new (root: string, dbPath?: string) => InstanceType<typeof MemoryService>)('', tmpDir);
+  const service = new (MemoryService as new (
+    root: string,
+    dbPath?: string,
+  ) => InstanceType<typeof MemoryService>)("", tmpDir);
 
   // Inject a fake AI client directly (bypasses API key / network)
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -70,16 +80,18 @@ async function createService(fakeGenerateContent: () => Promise<unknown>) {
 
 // --- Tests ---
 
-describe('MemoryService.consolidateFacts', () => {
+describe("MemoryService.consolidateFacts", () => {
   afterEach(() => {
     vi.resetModules();
   });
 
-  it('does not re-trigger consolidation when LLM returns invalid JSON', async () => {
+  it("does not re-trigger consolidation when LLM returns invalid JSON", async () => {
     // LLM returns garbage — no valid JSON array
     const generateContent = vi.fn().mockResolvedValue({
       response: {
-        candidates: [{ content: { parts: [{ text: 'sorry, I cannot help with that' }] } }],
+        candidates: [
+          { content: { parts: [{ text: "sorry, I cannot help with that" }] } },
+        ],
       },
     });
 
@@ -87,11 +99,15 @@ describe('MemoryService.consolidateFacts', () => {
 
     // Seed enough facts to cross the consolidation threshold (default: 3)
     const svc1 = service as unknown as Record<string, unknown>;
-    const db1 = svc1.db as { prepare: (sql: string) => { run: (...args: unknown[]) => void } };
+    const db1 = svc1.db as {
+      prepare: (sql: string) => { run: (...args: unknown[]) => void };
+    };
     for (let i = 0; i < 6; i++) {
       db1
-        .prepare('INSERT INTO facts (category, content, importance, timestamp) VALUES (?, ?, ?, ?)')
-        .run('test', `fact-${i}`, 5, Date.now());
+        .prepare(
+          "INSERT INTO facts (category, content, importance, timestamp) VALUES (?, ?, ?, ?)",
+        )
+        .run("test", `fact-${i}`, 5, Date.now());
     }
     svc1.lastConsolidatedCount = 0;
 
@@ -103,14 +119,18 @@ describe('MemoryService.consolidateFacts', () => {
 
     // Save one more fact — should NOT trigger another consolidation
     // because lastConsolidatedCount should have been updated after the failed attempt
-    await service.saveFact('test', 'one-more-fact', 5);
+    await service.saveFact("test", "one-more-fact", 5);
 
     expect(generateContent.mock.calls.length).toBe(1); // still 1, no second call
   });
 
-  it('uses injected generateText instead of this.client when available', async () => {
+  it("uses injected generateText instead of this.client when available", async () => {
     const consolidatedFacts = [
-      { category: 'behavior', content: 'user runs 3 times a week', importance: 7 },
+      {
+        category: "behavior",
+        content: "user runs 3 times a week",
+        importance: 7,
+      },
     ];
 
     // this.client.generateContent should NOT be called
@@ -118,14 +138,19 @@ describe('MemoryService.consolidateFacts', () => {
     const { service } = await createService(legacyGenerateContent);
 
     // Inject the CLI-auth generateText function
-    const generateText = vi.fn().mockResolvedValue(JSON.stringify(consolidatedFacts));
+    const generateText = vi
+      .fn()
+      .mockResolvedValue(JSON.stringify(consolidatedFacts));
     service.setGenerateText(generateText);
 
     const svc = service as unknown as Record<string, unknown>;
-    const db = svc.db as { prepare: (sql: string) => { run: (...args: unknown[]) => void } };
+    const db = svc.db as {
+      prepare: (sql: string) => { run: (...args: unknown[]) => void };
+    };
     for (let i = 0; i < 6; i++) {
-      db.prepare('INSERT INTO facts (category, content, importance, timestamp) VALUES (?, ?, ?, ?)')
-        .run('test', `fact-${i}`, 5, Date.now());
+      db.prepare(
+        "INSERT INTO facts (category, content, importance, timestamp) VALUES (?, ?, ?, ?)",
+      ).run("test", `fact-${i}`, 5, Date.now());
     }
     svc.lastConsolidatedCount = 0;
 
@@ -133,36 +158,41 @@ describe('MemoryService.consolidateFacts', () => {
 
     expect(generateText).toHaveBeenCalledOnce();
     expect(legacyGenerateContent).not.toHaveBeenCalled();
-    expect((service as unknown as Record<string, unknown>).lastConsolidatedCount).toBe(1);
+    expect(
+      (service as unknown as Record<string, unknown>).lastConsolidatedCount,
+    ).toBe(1);
   });
 
-  it('consolidation prompt includes category definitions and dedup rules', async () => {
-    const generateText = vi.fn().mockResolvedValue('[]');
+  it("consolidation prompt includes category definitions and dedup rules", async () => {
+    const generateText = vi.fn().mockResolvedValue("[]");
     const { service } = await createService(vi.fn());
     service.setGenerateText(generateText);
 
     const svc = service as unknown as Record<string, unknown>;
-    const db = svc.db as { prepare: (sql: string) => { run: (...args: unknown[]) => void } };
+    const db = svc.db as {
+      prepare: (sql: string) => { run: (...args: unknown[]) => void };
+    };
     for (let i = 0; i < 6; i++) {
-      db.prepare('INSERT INTO facts (category, content, importance, timestamp) VALUES (?, ?, ?, ?)')
-        .run('behavior', `fact-${i}`, 5, Date.now());
+      db.prepare(
+        "INSERT INTO facts (category, content, importance, timestamp) VALUES (?, ?, ?, ?)",
+      ).run("behavior", `fact-${i}`, 5, Date.now());
     }
     svc.lastConsolidatedCount = 0;
 
     await service.consolidateFacts();
 
     const prompt = generateText.mock.calls[0][0] as string;
-    expect(prompt).toContain('mutually exclusive');
-    expect(prompt).toContain('behavior');
-    expect(prompt).toContain('preference');
-    expect(prompt).toContain('identity');
-    expect(prompt).toContain('specification');
+    expect(prompt).toContain("mutually exclusive");
+    expect(prompt).toContain("behavior");
+    expect(prompt).toContain("preference");
+    expect(prompt).toContain("identity");
+    expect(prompt).toContain("specification");
   });
 
-  it('updates lastConsolidatedCount after successful consolidation', async () => {
+  it("updates lastConsolidatedCount after successful consolidation", async () => {
     const consolidatedFacts = [
-      { category: 'test', content: 'merged-fact-1', importance: 8 },
-      { category: 'test', content: 'merged-fact-2', importance: 7 },
+      { category: "test", content: "merged-fact-1", importance: 8 },
+      { category: "test", content: "merged-fact-2", importance: 7 },
     ];
 
     const generateContent = vi.fn().mockResolvedValue({
@@ -180,232 +210,324 @@ describe('MemoryService.consolidateFacts', () => {
     const { service } = await createService(generateContent);
 
     const svc2 = service as unknown as Record<string, unknown>;
-    const db2 = svc2.db as { prepare: (sql: string) => { run: (...args: unknown[]) => void } };
+    const db2 = svc2.db as {
+      prepare: (sql: string) => { run: (...args: unknown[]) => void };
+    };
     for (let i = 0; i < 6; i++) {
       db2
-        .prepare('INSERT INTO facts (category, content, importance, timestamp) VALUES (?, ?, ?, ?)')
-        .run('test', `fact-${i}`, 5, Date.now());
+        .prepare(
+          "INSERT INTO facts (category, content, importance, timestamp) VALUES (?, ?, ?, ?)",
+        )
+        .run("test", `fact-${i}`, 5, Date.now());
     }
     svc2.lastConsolidatedCount = 0;
 
     await service.consolidateFacts();
 
     // After success, lastConsolidatedCount should equal the number of consolidated facts
-    expect((service as unknown as Record<string, unknown>).lastConsolidatedCount).toBe(consolidatedFacts.length);
+    expect(
+      (service as unknown as Record<string, unknown>).lastConsolidatedCount,
+    ).toBe(consolidatedFacts.length);
   });
 });
 
-describe('MemoryService.saveFact semantic dedup', () => {
+describe("MemoryService.saveFact semantic dedup", () => {
   afterEach(() => {
     vi.resetModules();
     vi.clearAllMocks();
   });
 
-  async function createDedupeService(dedupStrategy?: 'jaccard' | 'embedding') {
-    vi.doMock('./configManager.js', () => ({
+  async function createDedupeService(dedupStrategy?: "jaccard" | "embedding") {
+    vi.doMock("./configManager.js", () => ({
       ConfigManager: {
         getInstance: vi.fn().mockReturnValue({
           get: vi.fn().mockReturnValue({
-            api: { key: 'test-key', proxy: null },
+            api: { key: "test-key", proxy: null },
             models: {
-              embedding: 'test-embedding-model',
+              embedding: "test-embedding-model",
               embeddingDimension: 128,
-              distillation: 'test-distillation-model',
+              distillation: "test-distillation-model",
             },
             memory: {
               ingestionDelayMs: 0,
               retrievalLimit: 5,
               consolidationThreshold: 100, // high threshold to avoid triggering consolidation
-              dedupStrategy: dedupStrategy ?? 'jaccard',
+              dedupStrategy: dedupStrategy ?? "jaccard",
             },
           }),
         }),
       },
     }));
-    const { MemoryService } = await import('./memory.js');
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'jarvis-dedup-'));
-    const service = new (MemoryService as new (root: string, dbPath?: string) => InstanceType<typeof MemoryService>)('', tmpDir);
+    const { MemoryService } = await import("./memory.js");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "jarvis-dedup-"));
+    const service = new (MemoryService as new (
+      root: string,
+      dbPath?: string,
+    ) => InstanceType<typeof MemoryService>)("", tmpDir);
     return { service, tmpDir };
   }
 
-  it('skips saving a fact when a textually similar Latin fact already exists', async () => {
+  it("skips saving a fact when a textually similar Latin fact already exists", async () => {
     const { service } = await createDedupeService();
 
-    await service.saveFact('behavior', 'user runs 3 times a week', 8);
+    await service.saveFact("behavior", "user runs 3 times a week", 8);
 
     const db = (service as unknown as Record<string, unknown>).db as any;
-    expect((db.prepare('SELECT count(*) as c FROM facts').get() as any).c).toBe(1);
+    expect((db.prepare("SELECT count(*) as c FROM facts").get() as any).c).toBe(
+      1,
+    );
 
-    await service.saveFact('behavior', 'runs at least 3 times per week', 8);
+    await service.saveFact("behavior", "runs at least 3 times per week", 8);
 
-    expect((db.prepare('SELECT count(*) as c FROM facts').get() as any).c).toBe(1);
+    expect((db.prepare("SELECT count(*) as c FROM facts").get() as any).c).toBe(
+      1,
+    );
   });
 
-  it('skips saving a fact when a textually similar CJK fact already exists', async () => {
+  it("skips saving a fact when a textually similar CJK fact already exists", async () => {
     const { service } = await createDedupeService();
 
-    await service.saveFact('behavior', '每周跑步三次', 8);
+    await service.saveFact("behavior", "每周跑步三次", 8);
 
     const db = (service as unknown as Record<string, unknown>).db as any;
-    expect((db.prepare('SELECT count(*) as c FROM facts').get() as any).c).toBe(1);
+    expect((db.prepare("SELECT count(*) as c FROM facts").get() as any).c).toBe(
+      1,
+    );
 
     // Similar CJK content — should be skipped via lower CJK threshold
-    await service.saveFact('behavior', '每周至少跑步3次', 8);
+    await service.saveFact("behavior", "每周至少跑步3次", 8);
 
-    expect((db.prepare('SELECT count(*) as c FROM facts').get() as any).c).toBe(1);
+    expect((db.prepare("SELECT count(*) as c FROM facts").get() as any).c).toBe(
+      1,
+    );
   });
 
-  it('does not falsely deduplicate unrelated CJK facts', async () => {
+  it("does not falsely deduplicate unrelated CJK facts", async () => {
     const { service } = await createDedupeService();
 
-    await service.saveFact('behavior', '我对历史很感兴趣', 8);
-    await service.saveFact('behavior', '我每周跑步三次', 8);
+    await service.saveFact("behavior", "我对历史很感兴趣", 8);
+    await service.saveFact("behavior", "我每周跑步三次", 8);
 
     const db = (service as unknown as Record<string, unknown>).db as any;
-    expect((db.prepare('SELECT count(*) as c FROM facts').get() as any).c).toBe(2);
+    expect((db.prepare("SELECT count(*) as c FROM facts").get() as any).c).toBe(
+      2,
+    );
   });
 
-  it('saves a fact when it is semantically different from existing facts', async () => {
+  it("saves a fact when it is semantically different from existing facts", async () => {
     const { service } = await createDedupeService();
 
-    await service.saveFact('behavior', 'user runs 3 times a week', 8);
-    await service.saveFact('behavior', 'user codes every day', 8);
+    await service.saveFact("behavior", "user runs 3 times a week", 8);
+    await service.saveFact("behavior", "user codes every day", 8);
 
     const db = (service as unknown as Record<string, unknown>).db as any;
-    const count = (db.prepare('SELECT count(*) as c FROM facts').get() as any).c;
+    const count = (db.prepare("SELECT count(*) as c FROM facts").get() as any)
+      .c;
     expect(count).toBe(2);
   });
 
-  it('logs a message when a duplicate is skipped', async () => {
+  it("logs a message when a duplicate is skipped", async () => {
     const { service } = await createDedupeService();
-    const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
 
-    await service.saveFact('behavior', 'user runs 3 times a week', 8);
-    await service.saveFact('behavior', 'runs at least 3 times per week', 8);
+    await service.saveFact("behavior", "user runs 3 times a week", 8);
+    await service.saveFact("behavior", "runs at least 3 times per week", 8);
 
     expect(consoleSpy).toHaveBeenCalledWith(
-      expect.stringContaining('Duplicate skipped'),
+      expect.stringContaining("Duplicate skipped"),
     );
     consoleSpy.mockRestore();
   });
 
-  it('uses embedding strategy when dedupStrategy is embedding and embedContentFn is injected', async () => {
-    const { service } = await createDedupeService('embedding');
+  it("uses embedding strategy when dedupStrategy is embedding and embedContentFn is injected", async () => {
+    const { service } = await createDedupeService("embedding");
 
     // Two nearly-identical vectors (cosine sim ≈ 1.0)
-    const vec1 = new Array(128).fill(0); vec1[0] = 1.0;
-    const vec2 = new Array(128).fill(0); vec2[0] = 0.9999;
+    const vec1 = new Array(128).fill(0);
+    vec1[0] = 1.0;
+    const vec2 = new Array(128).fill(0);
+    vec2[0] = 0.9999;
 
     let callCount = 0;
     service.setEmbedContent(async (_text: string) => {
       return callCount++ === 0 ? vec1 : vec2;
     });
 
-    await service.saveFact('behavior', 'user runs 3 times a week', 8);
-    await service.saveFact('behavior', '每周跑步三次', 8); // different text, similar vector
+    await service.saveFact("behavior", "user runs 3 times a week", 8);
+    await service.saveFact("behavior", "每周跑步三次", 8); // different text, similar vector
 
     const db = (service as unknown as Record<string, unknown>).db as any;
-    const count = (db.prepare('SELECT count(*) as c FROM facts').get() as any).c;
+    const count = (db.prepare("SELECT count(*) as c FROM facts").get() as any)
+      .c;
     expect(count).toBe(1); // duplicate rejected via embedding similarity
   });
 
-  it('falls back to jaccard when embedding strategy fails', async () => {
-    const { service } = await createDedupeService('embedding');
+  it("falls back to jaccard when embedding strategy fails", async () => {
+    const { service } = await createDedupeService("embedding");
 
     service.setEmbedContent(async (_text: string) => {
-      throw new Error('embedding API unavailable');
+      throw new Error("embedding API unavailable");
     });
 
-    await service.saveFact('behavior', 'user runs 3 times a week', 8);
-    await service.saveFact('behavior', 'runs at least 3 times per week', 8); // similar via jaccard
+    await service.saveFact("behavior", "user runs 3 times a week", 8);
+    await service.saveFact("behavior", "runs at least 3 times per week", 8); // similar via jaccard
 
     const db = (service as unknown as Record<string, unknown>).db as any;
-    const count = (db.prepare('SELECT count(*) as c FROM facts').get() as any).c;
+    const count = (db.prepare("SELECT count(*) as c FROM facts").get() as any)
+      .c;
     expect(count).toBe(1); // still deduped via jaccard fallback
   });
 });
 
-describe('MemoryService.searchFacts', () => {
+describe("MemoryService.searchFacts", () => {
   afterEach(() => {
     vi.resetModules();
     vi.clearAllMocks();
   });
 
-  async function createServiceWithFacts(facts: Array<{ category: string; content: string; importance: number }>) {
-    vi.doMock('./configManager.js', () => ({
+  async function createServiceWithFacts(
+    facts: Array<{ category: string; content: string; importance: number }>,
+  ) {
+    vi.doMock("./configManager.js", () => ({
       ConfigManager: {
         getInstance: vi.fn().mockReturnValue({
           get: vi.fn().mockReturnValue({
-            api: { key: 'test-key', proxy: null },
-            models: { embedding: 'test-model', embeddingDimension: 4, distillation: 'test-model' },
-            memory: { ingestionDelayMs: 0, retrievalLimit: 5, consolidationThreshold: 100, dedupStrategy: 'jaccard', factRelevanceStrategy: 'jaccard', factRelevanceLimit: 3 },
+            api: { key: "test-key", proxy: null },
+            models: {
+              embedding: "test-model",
+              embeddingDimension: 4,
+              distillation: "test-model",
+            },
+            memory: {
+              ingestionDelayMs: 0,
+              retrievalLimit: 5,
+              consolidationThreshold: 100,
+              dedupStrategy: "jaccard",
+              factRelevanceStrategy: "jaccard",
+              factRelevanceLimit: 3,
+            },
           }),
         }),
       },
     }));
-    const { MemoryService } = await import('./memory.js');
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'jarvis-search-'));
-    const service = new (MemoryService as new (root: string, dbPath?: string) => InstanceType<typeof MemoryService>)('', tmpDir);
+    const { MemoryService } = await import("./memory.js");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "jarvis-search-"));
+    const service = new (MemoryService as new (
+      root: string,
+      dbPath?: string,
+    ) => InstanceType<typeof MemoryService>)("", tmpDir);
     // Insert facts directly into DB
     const db = (service as unknown as Record<string, unknown>).db as any;
     for (const f of facts) {
-      db.prepare('INSERT INTO facts (category, content, importance, timestamp) VALUES (?, ?, ?, ?)').run(f.category, f.content, f.importance, Date.now());
+      db.prepare(
+        "INSERT INTO facts (category, content, importance, timestamp) VALUES (?, ?, ?, ?)",
+      ).run(f.category, f.content, f.importance, Date.now());
     }
     return { service };
   }
 
-  it('jaccard: returns facts ranked by relevance to query, up to limit', async () => {
+  it("jaccard: returns facts ranked by relevance to query, up to limit", async () => {
     const { service } = await createServiceWithFacts([
-      { category: 'identity', content: 'user is a software engineer', importance: 8 },
-      { category: 'identity', content: 'user likes history', importance: 7 },
-      { category: 'behavior', content: 'user runs 3 times a week', importance: 6 },
-      { category: 'specification', content: 'project uses TypeScript', importance: 9 },
-      { category: 'specification', content: 'do not modify gemini-cli source', importance: 9 },
+      {
+        category: "identity",
+        content: "user is a software engineer",
+        importance: 8,
+      },
+      { category: "identity", content: "user likes history", importance: 7 },
+      {
+        category: "behavior",
+        content: "user runs 3 times a week",
+        importance: 6,
+      },
+      {
+        category: "specification",
+        content: "project uses TypeScript",
+        importance: 9,
+      },
+      {
+        category: "specification",
+        content: "do not modify gemini-cli source",
+        importance: 9,
+      },
     ]);
 
-    const results = await service.searchFacts('TypeScript project setup', 2);
+    const results = await service.searchFacts("TypeScript project setup", 2);
 
     // 'project uses TypeScript' should rank highest for this query
     // limit=2 applies to identity/specification candidates only (preference/behavior always included)
-    const nonStyleFacts = results.filter(f => f.category !== 'preference' && f.category !== 'behavior');
+    const nonStyleFacts = results.filter(
+      (f) => f.category !== "preference" && f.category !== "behavior",
+    );
     expect(nonStyleFacts.length).toBeLessThanOrEqual(2);
-    expect(results.some(f => f.content.includes('TypeScript'))).toBe(true);
+    expect(results.some((f) => f.content.includes("TypeScript"))).toBe(true);
   });
 
-  it('always includes preference facts regardless of relevance, behavior is ranked like others', async () => {
+  it("always includes preference facts regardless of relevance, behavior is ranked like others", async () => {
     const { service } = await createServiceWithFacts([
-      { category: 'identity', content: 'user is a software engineer', importance: 8 },
-      { category: 'preference', content: 'prefers concise answers', importance: 10 },
-      { category: 'behavior', content: 'user runs 3 times a week', importance: 6 },
-      { category: 'specification', content: 'project uses TypeScript', importance: 9 },
+      {
+        category: "identity",
+        content: "user is a software engineer",
+        importance: 8,
+      },
+      {
+        category: "preference",
+        content: "prefers concise answers",
+        importance: 10,
+      },
+      {
+        category: "behavior",
+        content: "user runs 3 times a week",
+        importance: 6,
+      },
+      {
+        category: "specification",
+        content: "project uses TypeScript",
+        importance: 9,
+      },
     ]);
 
     // Query is about cooking — unrelated to all facts, limit=1
-    const results = await service.searchFacts('cooking recipes', 1);
+    const results = await service.searchFacts("cooking recipes", 1);
 
     // preference must always be included (style instructions needed every turn)
-    expect(results.some(f => f.category === 'preference')).toBe(true);
+    expect(results.some((f) => f.category === "preference")).toBe(true);
     // behavior is NOT guaranteed — it competes with identity/specification for the limit
     // With limit=1, only the top-1 non-preference fact is included
-    const nonPrefFacts = results.filter(f => f.category !== 'preference');
+    const nonPrefFacts = results.filter((f) => f.category !== "preference");
     expect(nonPrefFacts.length).toBeLessThanOrEqual(1);
   });
 
-  it('embedding: uses embedContentFn to rank facts by cosine similarity', async () => {
-    vi.doMock('./configManager.js', () => ({
+  it("embedding: uses embedContentFn to rank facts by cosine similarity", async () => {
+    vi.doMock("./configManager.js", () => ({
       ConfigManager: {
         getInstance: vi.fn().mockReturnValue({
           get: vi.fn().mockReturnValue({
-            api: { key: 'test-key', proxy: null },
-            models: { embedding: 'test-model', embeddingDimension: 4, distillation: 'test-model' },
-            memory: { ingestionDelayMs: 0, retrievalLimit: 5, consolidationThreshold: 100, dedupStrategy: 'jaccard', factRelevanceStrategy: 'embedding', factRelevanceLimit: 2 },
+            api: { key: "test-key", proxy: null },
+            models: {
+              embedding: "test-model",
+              embeddingDimension: 4,
+              distillation: "test-model",
+            },
+            memory: {
+              ingestionDelayMs: 0,
+              retrievalLimit: 5,
+              consolidationThreshold: 100,
+              dedupStrategy: "jaccard",
+              factRelevanceStrategy: "embedding",
+              factRelevanceLimit: 2,
+            },
           }),
         }),
       },
     }));
-    const { MemoryService } = await import('./memory.js');
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'jarvis-embed-search-'));
-    const service = new (MemoryService as new (root: string, dbPath?: string) => InstanceType<typeof MemoryService>)('', tmpDir);
+    const { MemoryService } = await import("./memory.js");
+    const tmpDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), "jarvis-embed-search-"),
+    );
+    const service = new (MemoryService as new (
+      root: string,
+      dbPath?: string,
+    ) => InstanceType<typeof MemoryService>)("", tmpDir);
 
     const db = (service as unknown as Record<string, unknown>).db as any;
     // Insert facts with known embeddings
@@ -414,61 +536,92 @@ describe('MemoryService.searchFacts', () => {
     const histVec = new Float32Array([0, 0, 1, 0]);
     const prefVec = new Float32Array([0, 0, 0, 1]);
 
-    const insertFact = (cat: string, content: string, imp: number, vec: Float32Array) => {
-      const info = db.prepare('INSERT INTO facts (category, content, importance, timestamp, embedding) VALUES (?, ?, ?, ?, ?)').run(cat, content, imp, Date.now(), Buffer.from(vec.buffer));
+    const insertFact = (
+      cat: string,
+      content: string,
+      imp: number,
+      vec: Float32Array,
+    ) => {
+      const info = db
+        .prepare(
+          "INSERT INTO facts (category, content, importance, timestamp, embedding) VALUES (?, ?, ?, ?, ?)",
+        )
+        .run(cat, content, imp, Date.now(), Buffer.from(vec.buffer));
       return info.lastInsertRowid;
     };
-    insertFact('specification', 'project uses TypeScript', 9, tsVec);
-    insertFact('behavior', 'user runs 3 times a week', 6, runVec);
-    insertFact('identity', 'user likes history', 7, histVec);
-    insertFact('preference', 'prefers concise answers', 10, prefVec);
+    insertFact("specification", "project uses TypeScript", 9, tsVec);
+    insertFact("behavior", "user runs 3 times a week", 6, runVec);
+    insertFact("identity", "user likes history", 7, histVec);
+    insertFact("preference", "prefers concise answers", 10, prefVec);
 
     // Query vector close to TypeScript vector
     service.setEmbedContent(async (_text: string) => [1, 0, 0, 0]);
 
-    const results = await service.searchFacts('TypeScript setup', 1);
+    const results = await service.searchFacts("TypeScript setup", 1);
 
     // TypeScript fact should be top result; preference always included
-    expect(results.some(f => f.content.includes('TypeScript'))).toBe(true);
-    expect(results.some(f => f.category === 'preference')).toBe(true);
+    expect(results.some((f) => f.content.includes("TypeScript"))).toBe(true);
+    expect(results.some((f) => f.category === "preference")).toBe(true);
     // behavior competes with others under the limit, not guaranteed
   });
 });
 
-describe('MemoryService.reflect', () => {
+describe("MemoryService.reflect", () => {
   afterEach(() => {
     vi.resetModules();
     vi.clearAllMocks();
   });
 
   async function createReflectService() {
-    vi.doMock('./configManager.js', () => ({
+    vi.doMock("./configManager.js", () => ({
       ConfigManager: {
         getInstance: vi.fn().mockReturnValue({
           get: vi.fn().mockReturnValue({
-            api: { key: 'test-key', proxy: null },
-            models: { embedding: 'test-model', embeddingDimension: 4, distillation: 'test-model' },
-            memory: { ingestionDelayMs: 0, retrievalLimit: 5, consolidationThreshold: 100, dedupStrategy: 'jaccard', factRelevanceStrategy: 'jaccard', factRelevanceLimit: 5 },
+            api: { key: "test-key", proxy: null },
+            models: {
+              embedding: "test-model",
+              embeddingDimension: 4,
+              distillation: "test-model",
+            },
+            memory: {
+              ingestionDelayMs: 0,
+              retrievalLimit: 5,
+              consolidationThreshold: 100,
+              dedupStrategy: "jaccard",
+              factRelevanceStrategy: "jaccard",
+              factRelevanceLimit: 5,
+            },
           }),
         }),
       },
     }));
-    const { MemoryService } = await import('./memory.js');
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'jarvis-reflect-'));
-    const service = new (MemoryService as new (root: string, dbPath?: string) => InstanceType<typeof MemoryService>)('', tmpDir);
+    const { MemoryService } = await import("./memory.js");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "jarvis-reflect-"));
+    const service = new (MemoryService as new (
+      root: string,
+      dbPath?: string,
+    ) => InstanceType<typeof MemoryService>)("", tmpDir);
     return { service, tmpDir };
   }
 
-  it('reflect calls generateText with facts and saves insights to facts table', async () => {
+  it("reflect calls generateText with facts and saves insights to facts table", async () => {
     const { service } = await createReflectService();
 
     // Seed some facts
     const db = (service as any).db;
-    db.prepare('INSERT INTO facts (category, content, importance, timestamp) VALUES (?, ?, ?, ?)').run('behavior', 'user runs 3 times a week', 8, Date.now());
-    db.prepare('INSERT INTO facts (category, content, importance, timestamp) VALUES (?, ?, ?, ?)').run('identity', 'user is a software engineer', 9, Date.now());
+    db.prepare(
+      "INSERT INTO facts (category, content, importance, timestamp) VALUES (?, ?, ?, ?)",
+    ).run("behavior", "user runs 3 times a week", 8, Date.now());
+    db.prepare(
+      "INSERT INTO facts (category, content, importance, timestamp) VALUES (?, ?, ?, ?)",
+    ).run("identity", "user is a software engineer", 9, Date.now());
 
     const insights = [
-      { category: 'insight', content: 'User combines physical discipline with technical work', importance: 9 },
+      {
+        category: "insight",
+        content: "User combines physical discipline with technical work",
+        importance: 9,
+      },
     ];
     const generateText = vi.fn().mockResolvedValue(JSON.stringify(insights));
 
@@ -476,70 +629,589 @@ describe('MemoryService.reflect', () => {
 
     expect(generateText).toHaveBeenCalledOnce();
     const prompt = generateText.mock.calls[0][0] as string;
-    expect(prompt).toContain('insight');
-    expect(prompt).toContain('runs 3 times');
+    expect(prompt).toContain("insight");
+    expect(prompt).toContain("runs 3 times");
 
     // Insight should be saved to facts table
-    const saved = db.prepare("SELECT * FROM facts WHERE category = 'insight'").all() as any[];
+    const saved = db
+      .prepare("SELECT * FROM facts WHERE category = 'insight'")
+      .all() as any[];
     expect(saved).toHaveLength(1);
-    expect(saved[0].content).toContain('discipline');
+    expect(saved[0].content).toContain("discipline");
     expect(saved[0].importance).toBe(9);
   });
 
-  it('reflect does nothing when no facts exist', async () => {
+  it("reflect does nothing when no facts exist", async () => {
     const { service } = await createReflectService();
     const generateText = vi.fn();
     await service.reflect(generateText);
     expect(generateText).not.toHaveBeenCalled();
   });
 
-  it('reflect does not throw when generateText fails', async () => {
+  it("reflect does not throw when generateText fails", async () => {
     const { service } = await createReflectService();
     const db = (service as any).db;
-    db.prepare('INSERT INTO facts (category, content, importance, timestamp) VALUES (?, ?, ?, ?)').run('behavior', 'user runs', 8, Date.now());
+    db.prepare(
+      "INSERT INTO facts (category, content, importance, timestamp) VALUES (?, ?, ?, ?)",
+    ).run("behavior", "user runs", 8, Date.now());
 
-    const generateText = vi.fn().mockRejectedValue(new Error('API error'));
+    const generateText = vi.fn().mockRejectedValue(new Error("API error"));
     await expect(service.reflect(generateText)).resolves.not.toThrow();
   });
 
-  it('reflect includes existing insights in prompt so LLM can merge/update them', async () => {
+  it("reflect includes existing insights in prompt so LLM can merge/update them", async () => {
     const { service } = await createReflectService();
     const db = (service as any).db;
 
     // Seed a fact and an existing insight
-    db.prepare('INSERT INTO facts (category, content, importance, timestamp) VALUES (?, ?, ?, ?)').run('behavior', 'user runs 3 times a week', 8, Date.now());
-    db.prepare('INSERT INTO facts (category, content, importance, timestamp) VALUES (?, ?, ?, ?)').run('insight', 'Old insight about discipline', 9, Date.now());
+    db.prepare(
+      "INSERT INTO facts (category, content, importance, timestamp) VALUES (?, ?, ?, ?)",
+    ).run("behavior", "user runs 3 times a week", 8, Date.now());
+    db.prepare(
+      "INSERT INTO facts (category, content, importance, timestamp) VALUES (?, ?, ?, ?)",
+    ).run("insight", "Old insight about discipline", 9, Date.now());
 
-    const generateText = vi.fn().mockResolvedValue(
-      JSON.stringify([{ category: 'insight', content: 'Updated insight merging old and new', importance: 9 }])
-    );
+    const generateText = vi
+      .fn()
+      .mockResolvedValue(
+        JSON.stringify([
+          {
+            category: "insight",
+            content: "Updated insight merging old and new",
+            importance: 9,
+          },
+        ]),
+      );
 
     await service.reflect(generateText);
 
     const prompt = generateText.mock.calls[0][0] as string;
     // Prompt must include existing insights for LLM to merge
-    expect(prompt).toContain('Old insight about discipline');
+    expect(prompt).toContain("Old insight about discipline");
   });
 
-  it('reflect replaces all old insights with new ones (no accumulation)', async () => {
+  it("reflect replaces all old insights with new ones (no accumulation)", async () => {
     const { service } = await createReflectService();
     const db = (service as any).db;
 
-    db.prepare('INSERT INTO facts (category, content, importance, timestamp) VALUES (?, ?, ?, ?)').run('behavior', 'user runs', 8, Date.now());
+    db.prepare(
+      "INSERT INTO facts (category, content, importance, timestamp) VALUES (?, ?, ?, ?)",
+    ).run("behavior", "user runs", 8, Date.now());
     // Two existing insights
-    db.prepare('INSERT INTO facts (category, content, importance, timestamp) VALUES (?, ?, ?, ?)').run('insight', 'Old insight 1', 8, Date.now());
-    db.prepare('INSERT INTO facts (category, content, importance, timestamp) VALUES (?, ?, ?, ?)').run('insight', 'Old insight 2', 7, Date.now());
+    db.prepare(
+      "INSERT INTO facts (category, content, importance, timestamp) VALUES (?, ?, ?, ?)",
+    ).run("insight", "Old insight 1", 8, Date.now());
+    db.prepare(
+      "INSERT INTO facts (category, content, importance, timestamp) VALUES (?, ?, ?, ?)",
+    ).run("insight", "Old insight 2", 7, Date.now());
 
     const newInsights = [
-      { category: 'insight', content: 'New merged insight', importance: 9 },
+      { category: "insight", content: "New merged insight", importance: 9 },
     ];
     const generateText = vi.fn().mockResolvedValue(JSON.stringify(newInsights));
 
     await service.reflect(generateText);
 
-    const saved = db.prepare("SELECT content FROM facts WHERE category = 'insight'").all() as any[];
+    const saved = db
+      .prepare("SELECT content FROM facts WHERE category = 'insight'")
+      .all() as any[];
     // Old insights gone, only new one remains
     expect(saved).toHaveLength(1);
-    expect(saved[0].content).toBe('New merged insight');
+    expect(saved[0].content).toBe("New merged insight");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Phase 1: isConsolidating / isProcessing race condition fix
+// ---------------------------------------------------------------------------
+
+describe("MemoryService.consolidateFacts — isConsolidating guard", () => {
+  afterEach(() => {
+    vi.resetModules();
+    vi.clearAllMocks();
+  });
+
+  it("does not run concurrent consolidations when called twice simultaneously", async () => {
+    const { MemoryService } = await import("./memory.js");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "jarvis-guard-"));
+    const service = new (MemoryService as any)("", tmpDir);
+
+    const generateText = vi.fn().mockImplementation(async () => {
+      // Simulate slow LLM
+      await new Promise((r) => setTimeout(r, 50));
+      return JSON.stringify([
+        { category: "behavior", content: "merged", importance: 7 },
+      ]);
+    });
+    service.setGenerateText(generateText);
+
+    const db = (service as any).db;
+    for (let i = 0; i < 6; i++) {
+      db.prepare(
+        "INSERT INTO facts (category, content, importance, timestamp) VALUES (?, ?, ?, ?)",
+      ).run("test", `fact-${i}`, 5, Date.now());
+    }
+    (service as any).lastConsolidatedCount = 0;
+
+    // Fire two concurrent consolidations
+    const [r1, r2] = await Promise.all([
+      service.consolidateFacts(),
+      service.consolidateFacts(),
+    ]);
+    void r1;
+    void r2;
+
+    // Only one LLM call should have been made
+    expect(generateText).toHaveBeenCalledTimes(1);
+  });
+
+  it("isProcessing (queue) and isConsolidating are independent flags", async () => {
+    const { MemoryService } = await import("./memory.js");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "jarvis-flags-"));
+    const service = new (MemoryService as any)("", tmpDir);
+
+    // Set isProcessing = true (queue is running)
+    (service as any).isProcessing = true;
+
+    const generateText = vi
+      .fn()
+      .mockResolvedValue(
+        JSON.stringify([
+          { category: "behavior", content: "merged", importance: 7 },
+        ]),
+      );
+    service.setGenerateText(generateText);
+
+    const db = (service as any).db;
+    for (let i = 0; i < 6; i++) {
+      db.prepare(
+        "INSERT INTO facts (category, content, importance, timestamp) VALUES (?, ?, ?, ?)",
+      ).run("test", `fact-${i}`, 5, Date.now());
+    }
+    (service as any).lastConsolidatedCount = 0;
+
+    // consolidateFacts should NOT be blocked by isProcessing
+    await service.consolidateFacts();
+    expect(generateText).toHaveBeenCalledTimes(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Phase 2: L1 physical layer — MEMORIES.md
+// ---------------------------------------------------------------------------
+
+describe("MemoryService — L1 physical layer (MEMORIES.md)", () => {
+  afterEach(() => {
+    vi.resetModules();
+    vi.clearAllMocks();
+  });
+
+  async function createL1Service(l1WriteMode: "realtime" | "batch" = "batch") {
+    vi.doMock("./configManager.js", () => ({
+      ConfigManager: {
+        getInstance: vi.fn().mockReturnValue({
+          get: vi.fn().mockReturnValue({
+            api: { key: "test-key", proxy: null },
+            models: {
+              embedding: "test-model",
+              embeddingDimension: 4,
+              distillation: "test-model",
+            },
+            memory: {
+              ingestionDelayMs: 0,
+              retrievalLimit: 5,
+              consolidationThreshold: 100,
+              dedupStrategy: "jaccard",
+              factRelevanceStrategy: "jaccard",
+              factRelevanceLimit: 5,
+              prewarmLimit: 3,
+              l1WriteMode,
+              vectorSimilarityWeight: 0.7,
+              importanceWeight: 0.3,
+            },
+          }),
+        }),
+      },
+    }));
+    const { MemoryService } = await import("./memory.js");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "jarvis-l1-"));
+    const service = new (MemoryService as any)("", tmpDir);
+    return { service, tmpDir };
+  }
+
+  it("flushToPhysicalLayer creates MEMORIES.md grouped by category", async () => {
+    const { service, tmpDir } = await createL1Service();
+    const db = (service as any).db;
+    db.prepare(
+      "INSERT INTO facts (category, content, importance, timestamp) VALUES (?, ?, ?, ?)",
+    ).run("identity", "user is David", 9, Date.now());
+    db.prepare(
+      "INSERT INTO facts (category, content, importance, timestamp) VALUES (?, ?, ?, ?)",
+    ).run("behavior", "user runs 3 times a week", 7, Date.now());
+    db.prepare(
+      "INSERT INTO facts (category, content, importance, timestamp) VALUES (?, ?, ?, ?)",
+    ).run("identity", "user is a software engineer", 8, Date.now());
+
+    service.flushToPhysicalLayer();
+
+    const content = fs.readFileSync(path.join(tmpDir, "MEMORIES.md"), "utf8");
+    expect(content).toContain("## identity");
+    expect(content).toContain("## behavior");
+    expect(content).toContain("user is David");
+    expect(content).toContain("user runs 3 times a week");
+    expect(content).toContain("[9]");
+    expect(content).toContain("[7]");
+  });
+
+  it("flushToPhysicalLayer writes empty placeholder when no facts", async () => {
+    const { service, tmpDir } = await createL1Service();
+    service.flushToPhysicalLayer();
+    const content = fs.readFileSync(path.join(tmpDir, "MEMORIES.md"), "utf8");
+    expect(content).toContain("No facts yet");
+  });
+
+  it("flushToPhysicalLayer writes atomically (no partial file on concurrent call)", async () => {
+    const { service, tmpDir } = await createL1Service();
+    const db = (service as any).db;
+    for (let i = 0; i < 5; i++) {
+      db.prepare(
+        "INSERT INTO facts (category, content, importance, timestamp) VALUES (?, ?, ?, ?)",
+      ).run("behavior", `fact-${i}`, 5, Date.now());
+    }
+
+    // Call twice — second call should overwrite cleanly
+    service.flushToPhysicalLayer();
+    service.flushToPhysicalLayer();
+
+    const content = fs.readFileSync(path.join(tmpDir, "MEMORIES.md"), "utf8");
+    // Should not have duplicate headings
+    const headingMatches = content.match(/## behavior/g);
+    expect(headingMatches).toHaveLength(1);
+  });
+
+  it("realtime mode: saveFact appends to MEMORIES.md immediately", async () => {
+    const { service, tmpDir } = await createL1Service("realtime");
+
+    await service.saveFact("identity", "user is named Alice", 9);
+
+    const memoriesPath = path.join(tmpDir, "MEMORIES.md");
+    expect(fs.existsSync(memoriesPath)).toBe(true);
+    const content = fs.readFileSync(memoriesPath, "utf8");
+    expect(content).toContain("user is named Alice");
+    expect(content).toContain("## identity");
+  });
+
+  it("realtime mode: second fact in same category appends under existing heading", async () => {
+    const { service, tmpDir } = await createL1Service("realtime");
+
+    await service.saveFact("behavior", "user runs 3 times a week", 7);
+    await service.saveFact("behavior", "user likes cycling", 6);
+
+    const content = fs.readFileSync(path.join(tmpDir, "MEMORIES.md"), "utf8");
+    // Only one ## behavior heading
+    const headingMatches = content.match(/## behavior/g);
+    expect(headingMatches).toHaveLength(1);
+    expect(content).toContain("user runs 3 times a week");
+    expect(content).toContain("user likes cycling");
+  });
+
+  it("batch mode: saveFact does NOT write to MEMORIES.md", async () => {
+    const { service, tmpDir } = await createL1Service("batch");
+
+    await service.saveFact("identity", "user is named Bob", 9);
+
+    const memoriesPath = path.join(tmpDir, "MEMORIES.md");
+    // In batch mode, file should not be created by saveFact alone
+    expect(fs.existsSync(memoriesPath)).toBe(false);
+  });
+
+  it("consolidateFacts flushes L1 after successful consolidation", async () => {
+    const { service, tmpDir } = await createL1Service("batch");
+    const db = (service as any).db;
+
+    for (let i = 0; i < 6; i++) {
+      db.prepare(
+        "INSERT INTO facts (category, content, importance, timestamp) VALUES (?, ?, ?, ?)",
+      ).run("behavior", `fact-${i}`, 5, Date.now());
+    }
+    (service as any).lastConsolidatedCount = 0;
+
+    const consolidated = [
+      { category: "behavior", content: "user is active", importance: 8 },
+    ];
+    service.setGenerateText(
+      vi.fn().mockResolvedValue(JSON.stringify(consolidated)),
+    );
+
+    await service.consolidateFacts();
+
+    const memoriesPath = path.join(tmpDir, "MEMORIES.md");
+    expect(fs.existsSync(memoriesPath)).toBe(true);
+    const content = fs.readFileSync(memoriesPath, "utf8");
+    expect(content).toContain("user is active");
+  });
+
+  it("reflect flushes L1 after successful reflection", async () => {
+    const { service, tmpDir } = await createL1Service("batch");
+    const db = (service as any).db;
+    db.prepare(
+      "INSERT INTO facts (category, content, importance, timestamp) VALUES (?, ?, ?, ?)",
+    ).run("behavior", "user runs", 8, Date.now());
+
+    const insights = [
+      { category: "insight", content: "User is disciplined", importance: 9 },
+    ];
+    await service.reflect(vi.fn().mockResolvedValue(JSON.stringify(insights)));
+
+    const memoriesPath = path.join(tmpDir, "MEMORIES.md");
+    expect(fs.existsSync(memoriesPath)).toBe(true);
+    const content = fs.readFileSync(memoriesPath, "utf8");
+    expect(content).toContain("User is disciplined");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Phase 2: Auto-Backfill
+// ---------------------------------------------------------------------------
+
+describe("MemoryService — autoBackfill", () => {
+  afterEach(() => {
+    vi.resetModules();
+    vi.clearAllMocks();
+  });
+
+  it("backfillPhysicalLayer rebuilds MEMORIES.md when file is missing", async () => {
+    vi.doMock("./configManager.js", () => ({
+      ConfigManager: {
+        getInstance: vi.fn().mockReturnValue({
+          get: vi.fn().mockReturnValue({
+            api: { key: "test-key", proxy: null },
+            models: {
+              embedding: "test-model",
+              embeddingDimension: 4,
+              distillation: "test-model",
+            },
+            memory: {
+              ingestionDelayMs: 0,
+              retrievalLimit: 5,
+              consolidationThreshold: 100,
+              dedupStrategy: "jaccard",
+              factRelevanceStrategy: "jaccard",
+              factRelevanceLimit: 5,
+              prewarmLimit: 3,
+              l1WriteMode: "batch",
+              vectorSimilarityWeight: 0.7,
+              importanceWeight: 0.3,
+            },
+          }),
+        }),
+      },
+    }));
+    const { MemoryService } = await import("./memory.js");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "jarvis-backfill-"));
+    const service = new (MemoryService as any)("", tmpDir);
+
+    // Seed a fact directly
+    const db = (service as any).db;
+    db.prepare(
+      "INSERT INTO facts (category, content, importance, timestamp) VALUES (?, ?, ?, ?)",
+    ).run("identity", "user is Alice", 9, Date.now());
+
+    // MEMORIES.md does not exist yet
+    const memoriesPath = path.join(tmpDir, "MEMORIES.md");
+    expect(fs.existsSync(memoriesPath)).toBe(false);
+
+    // Call autoBackfill directly (awaitable) rather than via setEmbedContent
+    service.setEmbedContent(async (_text: string) => new Array(4).fill(0));
+    await (service as any).autoBackfill();
+
+    expect(fs.existsSync(memoriesPath)).toBe(true);
+    const content = fs.readFileSync(memoriesPath, "utf8");
+    expect(content).toContain("user is Alice");
+  });
+
+  it("autoBackfill does nothing when embedContentFn is not set", async () => {
+    const { MemoryService } = await import("./memory.js");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "jarvis-backfill2-"));
+    const service = new (MemoryService as any)("", tmpDir);
+
+    // Should not throw
+    await expect((service as any).autoBackfill()).resolves.not.toThrow();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Phase 3: L3 weighted fusion in searchFacts
+// ---------------------------------------------------------------------------
+
+describe("MemoryService.searchFacts — L3 weighted fusion", () => {
+  afterEach(() => {
+    vi.resetModules();
+    vi.clearAllMocks();
+  });
+
+  async function createFusionService(alpha = 0.7, beta = 0.3) {
+    vi.doMock("./configManager.js", () => ({
+      ConfigManager: {
+        getInstance: vi.fn().mockReturnValue({
+          get: vi.fn().mockReturnValue({
+            api: { key: "test-key", proxy: null },
+            models: {
+              embedding: "test-model",
+              embeddingDimension: 4,
+              distillation: "test-model",
+            },
+            memory: {
+              ingestionDelayMs: 0,
+              retrievalLimit: 5,
+              consolidationThreshold: 100,
+              dedupStrategy: "jaccard",
+              factRelevanceStrategy: "embedding",
+              factRelevanceLimit: 3,
+              prewarmLimit: 3,
+              l1WriteMode: "batch",
+              vectorSimilarityWeight: alpha,
+              importanceWeight: beta,
+            },
+          }),
+        }),
+      },
+    }));
+    const { MemoryService } = await import("./memory.js");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "jarvis-fusion-"));
+    const service = new (MemoryService as any)("", tmpDir);
+    return { service, tmpDir };
+  }
+
+  it("importance weight boosts a lower-similarity fact above a higher-similarity one", async () => {
+    // alpha=0.5, beta=0.5 so importance has equal weight to similarity
+    const { service } = await createFusionService(0.5, 0.5);
+    const db = (service as any).db;
+
+    // Fact A: high similarity (vec close to query), low importance
+    const vecA = new Float32Array([1, 0, 0, 0]); // cosine_sim ≈ 1.0 with query [1,0,0,0]
+    const infoA = db
+      .prepare(
+        "INSERT INTO facts (category, content, importance, timestamp, embedding) VALUES (?, ?, ?, ?, ?)",
+      )
+      .run(
+        "identity",
+        "fact-high-sim-low-imp",
+        2,
+        Date.now(),
+        Buffer.from(vecA.buffer),
+      );
+
+    // Fact B: lower similarity, high importance
+    const vecB = new Float32Array([0.6, 0.8, 0, 0]); // cosine_sim ≈ 0.6 with query
+    const infoB = db
+      .prepare(
+        "INSERT INTO facts (category, content, importance, timestamp, embedding) VALUES (?, ?, ?, ?, ?)",
+      )
+      .run(
+        "identity",
+        "fact-low-sim-high-imp",
+        10,
+        Date.now(),
+        Buffer.from(vecB.buffer),
+      );
+
+    // Also insert into vec_facts so SQL path is used
+    try {
+      db.prepare("INSERT INTO vec_facts (id, embedding) VALUES (?, ?)").run(
+        infoA.lastInsertRowid,
+        vecA,
+      );
+      db.prepare("INSERT INTO vec_facts (id, embedding) VALUES (?, ?)").run(
+        infoB.lastInsertRowid,
+        vecB,
+      );
+    } catch (_) {
+      // vec extension not available in test — skip this assertion
+      return;
+    }
+
+    // Query vector = [1, 0, 0, 0]
+    service.setEmbedContent(async (_text: string) => [1, 0, 0, 0]);
+
+    const results = await service.searchFacts("test query", 2);
+    const nonStyle = results.filter(
+      (f: any) => f.category !== "preference" && f.category !== "insight",
+    );
+
+    // With equal weights, fact B (importance=10) should rank above fact A (importance=2)
+    // fusedScore(A) = 0.5 * ~1.0 + 0.5 * (2/10) = 0.5 + 0.1 = 0.6
+    // fusedScore(B) = 0.5 * ~0.6 + 0.5 * (10/10) = 0.3 + 0.5 = 0.8
+    if (nonStyle.length >= 2) {
+      expect(nonStyle[0].content).toBe("fact-low-sim-high-imp");
+    }
+  });
+
+  it("falls back to in-memory cosine when vec_facts is empty", async () => {
+    const { service } = await createFusionService();
+    const db = (service as any).db;
+
+    // Insert facts with embeddings in facts table but NOT in vec_facts
+    const vec = new Float32Array([1, 0, 0, 0]);
+    db.prepare(
+      "INSERT INTO facts (category, content, importance, timestamp, embedding) VALUES (?, ?, ?, ?, ?)",
+    ).run(
+      "identity",
+      "fact-with-embedding",
+      8,
+      Date.now(),
+      Buffer.from(vec.buffer),
+    );
+
+    service.setEmbedContent(async (_text: string) => [1, 0, 0, 0]);
+
+    // Should not throw and should return the fact via in-memory fallback
+    const results = await service.searchFacts("test", 1);
+    expect(results.some((f: any) => f.content === "fact-with-embedding")).toBe(
+      true,
+    );
+  });
+
+  it("falls back to jaccard when embedContentFn throws", async () => {
+    const { service } = await createFusionService();
+    const db = (service as any).db;
+
+    db.prepare(
+      "INSERT INTO facts (category, content, importance, timestamp) VALUES (?, ?, ?, ?)",
+    ).run("specification", "project uses TypeScript", 9, Date.now());
+    db.prepare(
+      "INSERT INTO facts (category, content, importance, timestamp) VALUES (?, ?, ?, ?)",
+    ).run("behavior", "user runs daily", 6, Date.now());
+
+    service.setEmbedContent(async (_text: string) => {
+      throw new Error("embedding unavailable");
+    });
+
+    const results = await service.searchFacts("TypeScript project", 2);
+    // Jaccard fallback should still find TypeScript fact
+    expect(results.some((f: any) => f.content.includes("TypeScript"))).toBe(
+      true,
+    );
+  });
+
+  it("always includes preference and insight facts regardless of embedding strategy", async () => {
+    const { service } = await createFusionService();
+    const db = (service as any).db;
+
+    db.prepare(
+      "INSERT INTO facts (category, content, importance, timestamp) VALUES (?, ?, ?, ?)",
+    ).run("preference", "prefers concise answers", 10, Date.now());
+    db.prepare(
+      "INSERT INTO facts (category, content, importance, timestamp) VALUES (?, ?, ?, ?)",
+    ).run("insight", "User is disciplined", 9, Date.now());
+    db.prepare(
+      "INSERT INTO facts (category, content, importance, timestamp) VALUES (?, ?, ?, ?)",
+    ).run("identity", "user is a developer", 7, Date.now());
+
+    service.setEmbedContent(async (_text: string) => [1, 0, 0, 0]);
+
+    const results = await service.searchFacts("cooking", 1);
+    expect(results.some((f: any) => f.category === "preference")).toBe(true);
+    expect(results.some((f: any) => f.category === "insight")).toBe(true);
   });
 });

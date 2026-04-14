@@ -1026,8 +1026,13 @@ Respond ONLY with a JSON array:
    */
   public async autoBackfill(): Promise<void> {
     if (!this.embedContentFn) return;
+    // Run both steps independently — a vec_facts failure should not block L1 rebuild
     try {
       await this.backfillVecFacts();
+    } catch (e: any) {
+      console.error(`⚠️ [MemoryService] Auto-backfill failed: ${e.message}`);
+    }
+    try {
       this.backfillPhysicalLayer();
     } catch (e: any) {
       console.error(`⚠️ [MemoryService] Auto-backfill failed: ${e.message}`);
