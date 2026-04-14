@@ -334,7 +334,7 @@ class JarvisServer {
       });
     });
 
-    const uiPath = path.join(SOURCE_ROOT, "packages/jarvis/ui");
+    const uiPath = path.join(SOURCE_ROOT, "jarvis/ui");
     this.app.use(express.static(uiPath));
 
     this.app.use((req: Request, res: Response, next: NextFunction) => {
