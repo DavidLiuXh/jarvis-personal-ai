@@ -810,11 +810,13 @@ Respond ONLY with a JSON array:
     limit?: number,
   ): Promise<Array<{ category: string; content: string }>> {
     try {
+      // Single read: load all facts into memory once
       const allFacts = this.db
         .prepare(
-          "SELECT category, content, importance, embedding FROM facts ORDER BY importance DESC",
+          "SELECT id, category, content, importance, embedding FROM facts ORDER BY importance DESC",
         )
         .all() as Array<{
+        id: number;
         category: string;
         content: string;
         importance: number;
@@ -840,50 +842,46 @@ Respond ONLY with a JSON array:
           const alpha = this.jarvisConfig.memory.vectorSimilarityWeight ?? 0.7;
           const beta = this.jarvisConfig.memory.importanceWeight ?? 0.3;
 
-          // Use vec_facts SQL retrieval (fetch more than cap to allow re-ranking)
+          // Build id → fact map from the already-loaded memory (no second DB read)
+          const factById = new Map(candidateFacts.map((f) => [f.id, f]));
+
+          // vec_facts: only fetch id + distance (no JOIN needed)
           const fetchLimit = Math.max(cap * 3, 20);
-          const vecResults = this.db
+          const vecRows = this.db
             .prepare(
-              `
-            SELECT f.id, f.category, f.content, f.importance, v.distance
-            FROM facts f
-            JOIN vec_facts v ON f.id = v.id
-            WHERE v.embedding MATCH ?
-              AND f.category NOT IN ('preference', 'insight')
-            ORDER BY v.distance
-            LIMIT ?
-          `,
+              `SELECT id, distance FROM vec_facts
+               WHERE embedding MATCH ?
+               ORDER BY distance
+               LIMIT ?`,
             )
             .all(new Float32Array(queryVec), fetchLimit) as Array<{
             id: number;
-            category: string;
-            content: string;
-            importance: number;
             distance: number;
           }>;
 
-          if (vecResults.length > 0) {
-            // distance → cosineSim: for normalized embeddings, cosine_sim = 1 - (distance² / 2)
-            // For Gemini embeddings (normalized), this is accurate enough
-            ranked = vecResults
+          if (vecRows.length > 0) {
+            ranked = vecRows
               .map((r) => {
+                const fact = factById.get(r.id);
+                if (!fact) return null; // alwaysFacts excluded from candidateFacts
                 const cosineSim = Math.max(
                   0,
                   1 - (r.distance * r.distance) / 2,
                 );
                 const fusedScore =
-                  alpha * cosineSim + beta * (r.importance / 10);
+                  alpha * cosineSim + beta * (fact.importance / 10);
                 return {
-                  category: r.category,
-                  content: r.content,
+                  category: fact.category,
+                  content: fact.content,
                   score: fusedScore,
                 };
               })
+              .filter((r): r is NonNullable<typeof r> => r !== null)
               .sort((a, b) => b.score - a.score)
               .slice(0, cap)
               .map(({ category, content }) => ({ category, content }));
           } else {
-            // vec_facts empty (e.g. first run before backfill) — fall back to in-memory cosine
+            // vec_facts empty — fall back to in-memory cosine using already-loaded embeddings
             ranked = candidateFacts
               .map((f) => {
                 if (!f.embedding) return { ...f, score: 0 };
