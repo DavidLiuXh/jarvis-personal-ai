@@ -397,20 +397,126 @@ LLM 处理
 
 ---
 
-## 六、已实现 vs 未实现的 DNI 特性
+## 六、神经关联 / 知识图谱（Neural Link）
 
-| 特性                         | 状态 | 说明                              |
-| ---------------------------- | ---- | --------------------------------- |
-| L1 物理层（MEMORIES.md）     | ✅   | 写入 + 手动编辑自愈               |
-| L2 神经层（vec_facts）       | ✅   | 向量存储 + 自动 backfill          |
-| L3 动态权重（importance）    | ✅   | LLM 评分 + consolidation          |
-| L3 时间衰减                  | ✅   | 指数衰减，λ=0.1                   |
-| L3 访问频率记录              | ✅   | access_count 记录，未参与融合分数 |
-| 混合检索（BM25 + 向量）      | ✅   | FTS5 + RRF                        |
-| 本地 Ollama embedding        | ✅   | bge-m3 等模型                     |
-| 主体归属防火墙               | ✅   | distiller prompt 严格限制         |
-| 夜间反思任务                 | ✅   | 每日 22:00 自动执行               |
-| 神经关联/知识图谱            | ❌   | 规划中（实体识别 + 关联表）       |
-| 时间图谱（Graph 融合）       | ❌   | 规划中                            |
-| access_count 参与融合分数    | ❌   | 待评估（与 importance 重叠）      |
-| 自动遗忘（低访问 fact 删除） | ❌   | 规划中                            |
+### 6.1 设计目标
+
+facts 是孤立的知识点，无法表达它们之间的关联。神经关联通过三元组 `(subject, relation, object)` 建立实体间的显式逻辑链路，使 `searchFacts` 能沿关联链扩展上下文。
+
+### 6.2 数据库表结构
+
+```sql
+-- 实体表
+CREATE TABLE entities (
+  id    INTEGER PRIMARY KEY AUTOINCREMENT,
+  name  TEXT UNIQUE,
+  type  TEXT   -- person/project/technology/concept
+);
+
+-- 实体关联表
+CREATE TABLE entity_links (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  subject_id INTEGER REFERENCES entities(id),
+  relation   TEXT,      -- 关系类型（见下文）
+  object_id  INTEGER REFERENCES entities(id),
+  fact_id    INTEGER REFERENCES facts(id),  -- 来源 fact（NULL 为 sentinel 行）
+  timestamp  INTEGER
+);
+```
+
+**支持的关系类型：**
+
+| relation        | 含义     | 示例                                |
+| --------------- | -------- | ----------------------------------- |
+| `is_a`          | 实例关系 | David is_a software_engineer        |
+| `has_skill`     | 技能     | David has_skill embedding_debugging |
+| `works_on`      | 工作项目 | David works_on jarvis-personal-ai   |
+| `uses`          | 使用技术 | jarvis-personal-ai uses TypeScript  |
+| `interested_in` | 兴趣领域 | David interested_in investing       |
+| `has_habit`     | 习惯行为 | David has_habit running             |
+| `part_of`       | 组成关系 | DNI part_of jarvis-personal-ai      |
+
+**Sentinel 行**：`relation='processed'`，`subject_id=NULL`，`object_id=NULL`，`fact_id=<fact.id>`。用于标记该 fact 已被处理，防止 backfill 重复提取。
+
+### 6.3 实体提取（EntityExtractor）
+
+**文件**：`jarvis/src/core/entityExtractor.ts`
+
+支持两种 provider：
+
+- `ollama`：调用本地 Ollama `/api/generate` 接口（推荐，速度快，无网络依赖）
+- `gemini`：复用现有 `generateTextFn`（与 distillation 共用云端模型）
+
+**Prompt 设计要点：**
+
+- 输入是已提炼的 facts，不是原始对话（噪声更少）
+- 实体类型和关系类型均为有限集，防止 LLM 自由发挥导致不一致
+- 用户始终归一化为真实姓名（如已知），否则用 "user"
+- 只提取 facts 中明确存在的实体，不推断
+
+**配置项：**
+
+```json
+"entityExtraction": {
+  "enabled": false,
+  "provider": "ollama",
+  "baseUrl": "http://localhost:11434",
+  "model": "gemma4:e4b",
+  "timeoutMs": 30000
+}
+```
+
+### 6.4 提取时机
+
+| 时机             | 触发方               | 说明                                                  |
+| ---------------- | -------------------- | ----------------------------------------------------- |
+| 实时提取         | `saveFact()`         | 每条新 fact 写入后，`setImmediate` 异步触发单条提取   |
+| consolidation 后 | `consolidateFacts()` | 延迟 30 秒触发 `backfillEntityLinks()`，重建知识图谱  |
+| 启动时 backfill  | `autoBackfill()`     | 延迟 60 秒批量处理没有 sentinel 行的 facts，每批 5 条 |
+
+**延迟设计原因**：Ollama 模型响应较慢（gemma4:e4b 约 10-30 秒/次），延迟启动避免与用户首次交互竞争 event loop。
+
+### 6.5 图扩展（Graph Expansion）
+
+`searchFacts` 在返回 ranked facts 后，通过 `expandViaEntityLinks()` 沿关联链扩展：
+
+```sql
+SELECT DISTINCT el2.fact_id
+FROM entity_links el1
+JOIN entity_links el2
+  ON (el1.subject_id = el2.subject_id OR el1.object_id = el2.subject_id
+      OR el1.subject_id = el2.object_id OR el1.object_id = el2.object_id)
+WHERE el1.fact_id IN (SELECT value FROM json_each(?))
+  AND el2.fact_id IS NOT NULL
+  AND el2.fact_id NOT IN (SELECT value FROM json_each(?))
+LIMIT 3
+```
+
+**逻辑**：找到与已命中 facts 共享实体的其他 facts（最多 3 条），追加到返回结果末尾。
+
+**日志标识**：`🔗 [searchFacts] expanded(N): ...`
+
+### 6.6 并发保护
+
+- `isBackfillingEntities` 标志防止重复触发 backfill
+- `consolidateFacts` / `syncFromPhysicalLayerIfModified` 执行前先清空 `entity_links` 和 `entities`，避免外键约束失败
+
+---
+
+## 七、已实现 vs 未实现的 DNI 特性
+
+| 特性                         | 状态 | 说明                                    |
+| ---------------------------- | ---- | --------------------------------------- |
+| L1 物理层（MEMORIES.md）     | ✅   | 写入 + 手动编辑自愈                     |
+| L2 神经层（vec_facts）       | ✅   | 向量存储 + 自动 backfill                |
+| L3 动态权重（importance）    | ✅   | LLM 评分 + consolidation                |
+| L3 时间衰减                  | ✅   | 指数衰减，λ=0.1                         |
+| L3 访问频率记录              | ✅   | access_count 记录，未参与融合分数       |
+| 混合检索（BM25 + 向量）      | ✅   | FTS5 + RRF                              |
+| 本地 Ollama embedding        | ✅   | bge-m3 等模型                           |
+| 主体归属防火墙               | ✅   | distiller prompt 严格限制               |
+| 夜间反思任务                 | ✅   | 每日 22:00 自动执行                     |
+| 神经关联/知识图谱            | ✅   | EntityExtractor + entity_links + 图扩展 |
+| 时间图谱（Graph 融合）       | ❌   | 规划中                                  |
+| access_count 参与融合分数    | ❌   | 待评估（与 importance 重叠）            |
+| 自动遗忘（低访问 fact 删除） | ❌   | 规划中                                  |
