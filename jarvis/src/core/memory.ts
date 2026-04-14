@@ -1245,13 +1245,18 @@ Respond ONLY with a JSON array:
             ON (el1.subject_id = el2.subject_id OR el1.object_id = el2.subject_id
                 OR el1.subject_id = el2.object_id OR el1.object_id = el2.object_id)
           WHERE el1.fact_id IN (SELECT value FROM json_each(?))
+            AND el1.relation != 'processed'
             AND el2.fact_id IS NOT NULL
+            AND el2.relation != 'processed'
             AND el2.fact_id NOT IN (SELECT value FROM json_each(?))
           LIMIT ?
           `,
         )
         .all(idsJson, idsJson, maxExpand) as Array<{ fact_id: number }>;
 
+      console.error(
+        `🔗 [expandViaEntityLinks] rankedIds=${JSON.stringify(rankedIds)}, linkedFactIds=${JSON.stringify(linkedFactIds.map((r) => r.fact_id))}`,
+      );
       return linkedFactIds
         .map((r) => factById.get(r.fact_id))
         .filter((f): f is NonNullable<typeof f> => f !== undefined)
