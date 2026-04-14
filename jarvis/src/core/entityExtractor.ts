@@ -62,6 +62,7 @@ export class EntityExtractor {
     private generateTextFn: GenerateTextFn | null,
     private ollamaBaseUrl: string = "http://localhost:11434",
     private ollamaModel: string = "",
+    private timeoutMs: number = 30_000,
   ) {}
 
   async extract(
@@ -105,7 +106,7 @@ export class EntityExtractor {
     if (!this.ollamaModel)
       throw new Error("[EntityExtractor] ollamaModel is required");
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 10_000);
+    const timeout = setTimeout(() => controller.abort(), this.timeoutMs);
     let response: Response;
     try {
       response = await fetch(`${this.ollamaBaseUrl}/api/generate`, {

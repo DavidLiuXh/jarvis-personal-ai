@@ -46,6 +46,8 @@ export interface JarvisConfig {
     baseUrl?: string;
     /** Ollama model name, e.g. "gemma4:e4b". Only used when provider='ollama'. */
     model?: string;
+    /** Request timeout in milliseconds for Ollama calls. Default: 30000 (30s). */
+    timeoutMs?: number;
   };
   network: {
     /** Max retry attempts for network errors (fetch failed, ECONNRESET, etc.). Default: 3. */
