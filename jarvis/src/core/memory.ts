@@ -958,6 +958,29 @@ Respond ONLY with a JSON array:
     return path.join(this.memoryDir, "MEMORIES.md");
   }
 
+  private get metaFilePath(): string {
+    return path.join(this.memoryDir, "memory_meta.json");
+  }
+
+  private readMeta(): { lastFlushMtime?: number } {
+    try {
+      if (!fs.existsSync(this.metaFilePath)) return {};
+      return JSON.parse(fs.readFileSync(this.metaFilePath, "utf8"));
+    } catch {
+      return {};
+    }
+  }
+
+  private writeMeta(data: { lastFlushMtime?: number }): void {
+    try {
+      fs.writeFileSync(this.metaFilePath, JSON.stringify(data, null, 2));
+    } catch (e: any) {
+      console.error(
+        `⚠️ [MemoryService] Failed to write memory_meta.json: ${e.message}`,
+      );
+    }
+  }
+
   /**
    * Serialize a single fact to a Markdown line.
    * Format: `- [importance] content`
@@ -1019,6 +1042,9 @@ Respond ONLY with a JSON array:
       const tmpPath = this.memoriesFilePath + ".tmp";
       fs.writeFileSync(tmpPath, lines.join("\n"));
       fs.renameSync(tmpPath, this.memoriesFilePath);
+      // Record mtime so we can detect manual edits later
+      const mtime = fs.statSync(this.memoriesFilePath).mtimeMs;
+      this.writeMeta({ lastFlushMtime: mtime });
       debugLogger.debug(
         `[MemoryService] L1 flushed: ${allFacts.length} facts → MEMORIES.md`,
       );
@@ -1079,6 +1105,8 @@ Respond ONLY with a JSON array:
     if (!this.embedContentFn) return;
     // Rebuild vec tables if dimension changed (e.g. switching embedding provider)
     this.rebuildVecTablesIfDimensionMismatch();
+    // L1→L2 sync: if MEMORIES.md was manually edited, rebuild facts from it
+    const synced = this.syncFromPhysicalLayerIfModified();
     // Run both steps independently — a vec_facts failure should not block L1 rebuild
     try {
       await this.backfillVecFacts();
@@ -1086,9 +1114,107 @@ Respond ONLY with a JSON array:
       console.error(`⚠️ [MemoryService] Auto-backfill failed: ${e.message}`);
     }
     try {
-      this.backfillPhysicalLayer();
+      // Skip backfillPhysicalLayer if we just synced from L1 (avoid immediate overwrite)
+      if (!synced) this.backfillPhysicalLayer();
     } catch (e: any) {
       console.error(`⚠️ [MemoryService] Auto-backfill failed: ${e.message}`);
+    }
+  }
+
+  /**
+   * Parse MEMORIES.md into structured facts.
+   * Format per line: `- [importance] content`
+   * Sections: `## category`
+   */
+  private parseMemoriesMd(
+    content: string,
+  ): Array<{ category: string; content: string; importance: number }> {
+    const facts: Array<{
+      category: string;
+      content: string;
+      importance: number;
+    }> = [];
+    let currentCategory = "";
+    for (const line of content.split("\n")) {
+      const categoryMatch = line.match(/^##\s+(.+)$/);
+      if (categoryMatch) {
+        currentCategory = categoryMatch[1].trim().toLowerCase();
+        continue;
+      }
+      const factMatch = line.match(/^-\s+\[(\d+)\]\s+(.+)$/);
+      if (factMatch && currentCategory) {
+        const importance = parseInt(factMatch[1], 10);
+        const factContent = factMatch[2].trim();
+        if (factContent) {
+          facts.push({
+            category: currentCategory,
+            content: factContent,
+            importance,
+          });
+        }
+      }
+    }
+    return facts;
+  }
+
+  /**
+   * If MEMORIES.md has been modified since the last flush,
+   * rebuild the facts table from it (L1 → L2 sync).
+   * Returns true if sync was performed.
+   */
+  private syncFromPhysicalLayerIfModified(): boolean {
+    try {
+      if (!fs.existsSync(this.memoriesFilePath)) return false;
+
+      const currentMtime = fs.statSync(this.memoriesFilePath).mtimeMs;
+      const meta = this.readMeta();
+
+      // No recorded flush mtime means we never flushed — don't sync
+      if (!meta.lastFlushMtime) return false;
+
+      // If mtime matches last flush, user hasn't edited it
+      if (currentMtime <= meta.lastFlushMtime) return false;
+
+      console.error(
+        "📖 [MemoryService] MEMORIES.md modified since last flush — syncing L1 → L2...",
+      );
+
+      const mdContent = fs.readFileSync(this.memoriesFilePath, "utf8");
+      const parsedFacts = this.parseMemoriesMd(mdContent);
+
+      if (parsedFacts.length === 0) {
+        console.error(
+          "⚠️ [MemoryService] L1→L2 sync: no parseable facts found in MEMORIES.md, skipping.",
+        );
+        return false;
+      }
+
+      // Full replacement: clear facts + vec_facts, reinsert from MEMORIES.md
+      const rebuild = this.db.transaction(() => {
+        this.db.prepare("DELETE FROM facts").run();
+        try {
+          this.db.prepare("DELETE FROM vec_facts").run();
+        } catch (_) {}
+        for (const f of parsedFacts) {
+          this.db
+            .prepare(
+              "INSERT INTO facts (category, content, importance, timestamp) VALUES (?, ?, ?, ?)",
+            )
+            .run(f.category, f.content, f.importance, Date.now());
+        }
+      });
+      rebuild();
+
+      // Update meta mtime to reflect the sync (treat current file as "our" version now)
+      this.writeMeta({ lastFlushMtime: currentMtime });
+
+      console.error(
+        `✅ [MemoryService] L1→L2 sync complete: rebuilt ${parsedFacts.length} facts from MEMORIES.md. Embeddings will be regenerated.`,
+      );
+      return true;
+    } catch (e: any) {
+      console.error(`⚠️ [MemoryService] L1→L2 sync failed: ${e.message}`);
+      return false;
     }
   }
 
