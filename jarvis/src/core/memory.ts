@@ -149,9 +149,10 @@ export class MemoryService {
       this.generateTextFn,
       cfg.baseUrl ?? "http://localhost:11434",
       cfg.model ?? "",
+      cfg.timeoutMs ?? 30_000,
     );
     console.error(
-      `🔗 [MemoryService] EntityExtractor initialized (provider=${cfg.provider ?? "gemini"}${cfg.model ? ", model=" + cfg.model : ""})`,
+      `🔗 [MemoryService] EntityExtractor initialized (provider=${cfg.provider ?? "gemini"}${cfg.model ? ", model=" + cfg.model : ""}, timeout=${cfg.timeoutMs ?? 30_000}ms)`,
     );
   }
 
