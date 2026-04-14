@@ -100,22 +100,10 @@ export class JarvisAgent extends EventEmitter {
 
     this.memoryService.setGenerateText(generateText);
 
-    const embedContent = async (text: string): Promise<number[]> => {
-      const generator = this.client.config.getContentGenerator();
-      const model = this.client.config.getEmbeddingModel();
-      try {
-        const response = await generator.embedContent({
-          model,
-          contents: [text],
-        } as Parameters<typeof generator.embedContent>[0]);
-        const values = (response as any).embeddings?.[0]?.values ?? [];
-        if (values.length > 0) return values;
-        throw new Error("empty embedding response");
-      } catch (_cliErr) {
-        // Code Assist mode does not support embedContent — fall back to direct API key call
-        return this.memoryService.embedWithApiKey(text);
-      }
-    };
+    // Always use the API key path for embedding — Code Assist mode does not
+    // support embedContent, and the direct GoogleGenAI client is more reliable.
+    const embedContent = (text: string): Promise<number[]> =>
+      this.memoryService.embedWithApiKey(text);
     this.memoryService.setEmbedContent(embedContent);
 
     this.toolRouter = new ToolRouter(
