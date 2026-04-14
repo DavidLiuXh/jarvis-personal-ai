@@ -1063,9 +1063,7 @@ Respond ONLY with a JSON array:
       try {
         const vec = Array.from(new Float32Array(row.embedding.buffer));
         this.db
-          .prepare(
-            "INSERT OR IGNORE INTO vec_facts (id, embedding) VALUES (?, ?)",
-          )
+          .prepare("INSERT INTO vec_facts (id, embedding) VALUES (?, ?)")
           .run(row.id, new Float32Array(vec));
       } catch (_) {}
     }
@@ -1091,9 +1089,7 @@ Respond ONLY with a JSON array:
             .prepare("UPDATE facts SET embedding = ? WHERE id = ?")
             .run(buf, row.id);
           this.db
-            .prepare(
-              "INSERT OR IGNORE INTO vec_facts (id, embedding) VALUES (?, ?)",
-            )
+            .prepare("INSERT INTO vec_facts (id, embedding) VALUES (?, ?)")
             .run(row.id, new Float32Array(vec));
         } catch (_) {}
       }
