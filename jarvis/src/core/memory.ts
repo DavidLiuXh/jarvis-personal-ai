@@ -1155,6 +1155,19 @@ Respond ONLY with a JSON array:
     try {
       const links = await this.entityExtractor.extract(facts);
 
+      // Validate factId still exists (may have been deleted by consolidateFacts)
+      if (factId !== null) {
+        const stillExists = this.db
+          .prepare("SELECT id FROM facts WHERE id = ?")
+          .get(factId);
+        if (!stillExists) {
+          debugLogger.debug(
+            `[MemoryService] extractAndSaveEntities: fact ${factId} no longer exists, skipping`,
+          );
+          return;
+        }
+      }
+
       const insert = this.db.transaction(() => {
         for (const link of links) {
           const subjectId = this.getOrCreateEntity(
