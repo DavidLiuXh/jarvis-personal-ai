@@ -119,7 +119,7 @@ export class MemoryService {
       );
     const result = await this.client.models.embedContent({
       model: this.jarvisConfig.models.embedding,
-      content: { role: "user", parts: [{ text }] },
+      contents: [{ role: "user", parts: [{ text }] }],
     });
     const embeddings = result.embeddings || [result.embedding];
     return embeddings[0].values;
@@ -588,7 +588,7 @@ ${factsText}
       } else {
         const result = await this.client.models.embedContent({
           model: this.jarvisConfig.models.embedding,
-          content: { role: "user", parts: [{ text }] },
+          contents: [{ role: "user", parts: [{ text }] }],
         });
         const embeddings = result.embeddings || [result.embedding];
         vecValues = embeddings[0].values;
@@ -615,7 +615,7 @@ ${factsText}
       } else {
         const result = await this.client.models.embedContent({
           model: this.jarvisConfig.models.embedding,
-          content: { role: "user", parts: [{ text: query }] },
+          contents: [{ role: "user", parts: [{ text: query }] }],
         });
         const embeddings = result.embeddings || [result.embedding];
         queryVec = embeddings[0].values;
