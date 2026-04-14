@@ -108,6 +108,23 @@ export class MemoryService {
     void this.autoBackfill();
   }
 
+  /**
+   * Fallback embedding via direct API key client (used when CLI-auth
+   * ContentGenerator does not support embedContent, e.g. Code Assist mode).
+   */
+  public async embedWithApiKey(text: string): Promise<number[]> {
+    if (!this.client)
+      throw new Error(
+        "[MemoryService] No API key client available for embedding fallback",
+      );
+    const result = await this.client.models.embedContent({
+      model: this.jarvisConfig.models.embedding,
+      content: { role: "user", parts: [{ text }] },
+    });
+    const embeddings = result.embeddings || [result.embedding];
+    return embeddings[0].values;
+  }
+
   public startWithApiKey(apiKey: string) {
     if (this.client) return;
     try {

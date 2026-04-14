@@ -103,11 +103,18 @@ export class JarvisAgent extends EventEmitter {
     const embedContent = async (text: string): Promise<number[]> => {
       const generator = this.client.config.getContentGenerator();
       const model = this.client.config.getEmbeddingModel();
-      const response = await generator.embedContent({
-        model,
-        contents: [text],
-      } as Parameters<typeof generator.embedContent>[0]);
-      return (response as any).embeddings?.[0]?.values ?? [];
+      try {
+        const response = await generator.embedContent({
+          model,
+          contents: [text],
+        } as Parameters<typeof generator.embedContent>[0]);
+        const values = (response as any).embeddings?.[0]?.values ?? [];
+        if (values.length > 0) return values;
+        throw new Error("empty embedding response");
+      } catch (_cliErr) {
+        // Code Assist mode does not support embedContent — fall back to direct API key call
+        return this.memoryService.embedWithApiKey(text);
+      }
     };
     this.memoryService.setEmbedContent(embedContent);
 
