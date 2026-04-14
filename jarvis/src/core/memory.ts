@@ -114,6 +114,7 @@ export class MemoryService {
    */
   public async embedWithApiKey(text: string): Promise<number[]> {
     const provider = this.jarvisConfig.embeddingService?.provider ?? "google";
+    console.error(`[MemoryService] embedWithApiKey: provider=${provider}, config=${JSON.stringify(this.jarvisConfig.embeddingService)}`);
     if (provider === "ollama") {
       return this.embedWithOllama(text);
     }
