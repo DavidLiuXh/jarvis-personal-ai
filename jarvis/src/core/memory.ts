@@ -677,9 +677,10 @@ ${factsText}
         );
         // L1 batch flush after consolidation (always, regardless of l1WriteMode)
         this.flushToPhysicalLayer();
-        // Re-extract entity links for consolidated facts (async, non-blocking)
+        // Re-extract entity links for consolidated facts: delay 30s to avoid
+        // competing with ongoing conversation
         if (this.entityExtractor) {
-          void this.backfillEntityLinks();
+          setTimeout(() => void this.backfillEntityLinks(), 30_000);
         }
       } else {
         // LLM returned text but no valid JSON array — update baseline to avoid re-triggering immediately
@@ -1469,8 +1470,9 @@ Respond ONLY with a JSON array:
     } catch (e: any) {
       console.error(`⚠️ [MemoryService] Auto-backfill failed: ${e.message}`);
     }
-    // Backfill entity links for existing facts not yet processed (async, non-blocking)
-    void this.backfillEntityLinks();
+    // Backfill entity links: delay 60s after startup to avoid competing
+    // with the first user interaction (Ollama calls are slow)
+    setTimeout(() => void this.backfillEntityLinks(), 60_000);
   }
 
   /**
