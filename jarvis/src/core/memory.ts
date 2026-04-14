@@ -63,9 +63,17 @@ export class MemoryService {
       );
     `);
 
-    // Migration: add embedding column to existing facts tables
+    // Migrations
     try {
       this.db.exec("ALTER TABLE facts ADD COLUMN embedding BLOB");
+    } catch (_) {}
+    try {
+      this.db.exec("ALTER TABLE facts ADD COLUMN last_accessed INTEGER");
+    } catch (_) {}
+    try {
+      this.db.exec(
+        "ALTER TABLE facts ADD COLUMN access_count INTEGER DEFAULT 0",
+      );
     } catch (_) {}
 
     try {
@@ -506,6 +514,18 @@ ${factsText}
           importance: number;
         }>;
 
+        // Preserve access stats: build content → {last_accessed, access_count} map from old facts
+        const accessMap = new Map<
+          string,
+          { last_accessed: number | null; access_count: number }
+        >();
+        for (const old of allFacts) {
+          accessMap.set(old.content, {
+            last_accessed: (old as any).last_accessed ?? null,
+            access_count: (old as any).access_count ?? 0,
+          });
+        }
+
         // Batch-generate embeddings before entering the transaction (async work outside sync tx)
         const embeddings: Array<number[] | null> = [];
         if (this.embedContentFn) {
@@ -528,10 +548,14 @@ ${factsText}
           for (let i = 0; i < newFacts.length; i++) {
             const f = newFacts[i];
             const emb = embeddings[i];
+            // Best-effort: restore access stats if content matches an old fact
+            const access = accessMap.get(f.content);
+            const lastAccessed = access?.last_accessed ?? null;
+            const accessCount = access?.access_count ?? 0;
             if (emb) {
               const info = this.db
                 .prepare(
-                  "INSERT INTO facts (category, content, importance, timestamp, embedding) VALUES (?, ?, ?, ?, ?)",
+                  "INSERT INTO facts (category, content, importance, timestamp, embedding, last_accessed, access_count) VALUES (?, ?, ?, ?, ?, ?, ?)",
                 )
                 .run(
                   f.category,
@@ -539,6 +563,8 @@ ${factsText}
                   f.importance || 5,
                   Date.now(),
                   Buffer.from(new Float32Array(emb).buffer),
+                  lastAccessed,
+                  accessCount,
                 );
               try {
                 this.db
@@ -550,9 +576,16 @@ ${factsText}
             } else {
               this.db
                 .prepare(
-                  "INSERT INTO facts (category, content, importance, timestamp) VALUES (?, ?, ?, ?)",
+                  "INSERT INTO facts (category, content, importance, timestamp, last_accessed, access_count) VALUES (?, ?, ?, ?, ?, ?)",
                 )
-                .run(f.category, f.content, f.importance || 5, Date.now());
+                .run(
+                  f.category,
+                  f.content,
+                  f.importance || 5,
+                  Date.now(),
+                  lastAccessed,
+                  accessCount,
+                );
             }
           }
         });
@@ -813,7 +846,7 @@ Respond ONLY with a JSON array:
       // Single read: load all facts into memory once
       const allFacts = this.db
         .prepare(
-          "SELECT id, category, content, importance, embedding FROM facts ORDER BY importance DESC",
+          "SELECT id, category, content, importance, embedding, last_accessed, access_count FROM facts ORDER BY importance DESC",
         )
         .all() as Array<{
         id: number;
@@ -821,6 +854,8 @@ Respond ONLY with a JSON array:
         content: string;
         importance: number;
         embedding: Buffer | null;
+        last_accessed: number | null;
+        access_count: number | null;
       }>;
 
       const alwaysFacts = allFacts.filter((f) =>
@@ -859,18 +894,29 @@ Respond ONLY with a JSON array:
             distance: number;
           }>;
 
+          const gamma = this.jarvisConfig.memory.accessWeight ?? 0.1;
+          const lambda = this.jarvisConfig.memory.decayLambda ?? 0.1;
+          const nowMs = Date.now();
+
           if (vecRows.length > 0) {
-            ranked = vecRows
+            const scoredRows = vecRows
               .map((r) => {
                 const fact = factById.get(r.id);
-                if (!fact) return null; // alwaysFacts excluded from candidateFacts
+                if (!fact) return null;
                 const cosineSim = Math.max(
                   0,
                   1 - (r.distance * r.distance) / 2,
                 );
+                const daysSince = fact.last_accessed
+                  ? (nowMs - fact.last_accessed) / 86_400_000
+                  : 0;
+                const decay = Math.exp(-lambda * daysSince);
                 const fusedScore =
-                  alpha * cosineSim + beta * (fact.importance / 10);
+                  alpha * cosineSim +
+                  beta * (fact.importance / 10) +
+                  gamma * decay;
                 return {
+                  id: r.id,
                   category: fact.category,
                   content: fact.content,
                   score: fusedScore,
@@ -878,22 +924,42 @@ Respond ONLY with a JSON array:
               })
               .filter((r): r is NonNullable<typeof r> => r !== null)
               .sort((a, b) => b.score - a.score)
-              .slice(0, cap)
-              .map(({ category, content }) => ({ category, content }));
+              .slice(0, cap);
+
+            ranked = scoredRows.map(({ category, content }) => ({
+              category,
+              content,
+            }));
+
+            // Async update access stats for ranked facts (non-blocking)
+            const rankedIds = scoredRows.map((r) => r.id);
+            setImmediate(() => this.updateAccessStats(rankedIds, nowMs));
           } else {
             // vec_facts empty — fall back to in-memory cosine using already-loaded embeddings
-            ranked = candidateFacts
+            const scoredFallback = candidateFacts
               .map((f) => {
                 if (!f.embedding) return { ...f, score: 0 };
                 const vec = Array.from(new Float32Array(f.embedding.buffer));
                 const cosineSim = this.cosineSimilarity(queryVec, vec);
+                const daysSince = f.last_accessed
+                  ? (nowMs - f.last_accessed) / 86_400_000
+                  : 0;
+                const decay = Math.exp(-lambda * daysSince);
                 const fusedScore =
-                  alpha * cosineSim + beta * (f.importance / 10);
+                  alpha * cosineSim +
+                  beta * (f.importance / 10) +
+                  gamma * decay;
                 return { ...f, score: fusedScore };
               })
               .sort((a, b) => (b as any).score - (a as any).score)
-              .slice(0, cap)
-              .map(({ category, content }) => ({ category, content }));
+              .slice(0, cap);
+
+            ranked = scoredFallback.map(({ category, content }) => ({
+              category,
+              content,
+            }));
+            const fallbackIds = scoredFallback.map((f) => f.id);
+            setImmediate(() => this.updateAccessStats(fallbackIds, nowMs));
           }
         } catch (_e) {
           ranked = this.rankByJaccard(query, candidateFacts, cap);
@@ -915,6 +981,24 @@ Respond ONLY with a JSON array:
       return [...alwaysOut, ...ranked];
     } catch (e) {
       return this.getStructuredFacts();
+    }
+  }
+
+  /** Increment access_count and update last_accessed for the given fact ids. */
+  private updateAccessStats(ids: number[], nowMs: number): void {
+    if (ids.length === 0) return;
+    try {
+      const update = this.db.prepare(
+        "UPDATE facts SET last_accessed = ?, access_count = COALESCE(access_count, 0) + 1 WHERE id = ?",
+      );
+      const updateAll = this.db.transaction(() => {
+        for (const id of ids) update.run(nowMs, id);
+      });
+      updateAll();
+    } catch (e: any) {
+      debugLogger.debug(
+        `[MemoryService] updateAccessStats failed: ${e.message}`,
+      );
     }
   }
 

@@ -72,6 +72,17 @@ export interface JarvisConfig {
      * Default: 0.3
      */
     importanceWeight: number;
+    /**
+     * L3 weight for recency/access decay in fused ranking score.
+     * fusedScore = α·sim + β·(importance/10) + γ·decay(last_accessed)
+     * Default: 0.1
+     */
+    accessWeight: number;
+    /**
+     * Decay rate λ for time-based forgetting: decay = e^(-λ · days_since_accessed).
+     * Higher λ = faster forgetting. Default: 0.1 (~37% after 10 days, ~5% after 30 days).
+     */
+    decayLambda: number;
   };
   security: {
     jailbreak: boolean;
@@ -154,7 +165,9 @@ export class ConfigManager {
         prewarmLimit: 3,
         l1WriteMode: "batch" as const,
         vectorSimilarityWeight: 0.7,
-        importanceWeight: 0.3,
+        importanceWeight: 0.2,
+        accessWeight: 0.1,
+        decayLambda: 0.1,
       },
       security: {
         jailbreak: false,
