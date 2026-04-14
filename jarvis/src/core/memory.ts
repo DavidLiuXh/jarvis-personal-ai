@@ -477,8 +477,12 @@ export class MemoryService {
 
       // Async entity extraction for knowledge graph (non-blocking)
       if (this.entityExtractor) {
+        const factRow = this.db
+          .prepare("SELECT id FROM facts WHERE content = ? LIMIT 1")
+          .get(content) as { id: number } | undefined;
+        const factId = factRow?.id ?? null;
         setImmediate(() => {
-          void this.extractAndSaveEntities([{ category, content }]);
+          void this.extractAndSaveEntities([{ category, content }], factId);
         });
       }
 
@@ -1137,13 +1141,13 @@ Respond ONLY with a JSON array:
   /** Extract entities from facts and persist to entity_links. */
   private async extractAndSaveEntities(
     facts: Array<{ category: string; content: string }>,
+    factId: number | null = null,
   ): Promise<void> {
     if (!this.entityExtractor) return;
     try {
       const links = await this.entityExtractor.extract(facts);
-      if (links.length === 0) return;
 
-      const insert = this.db.transaction((links: EntityLink[]) => {
+      const insert = this.db.transaction(() => {
         for (const link of links) {
           const subjectId = this.getOrCreateEntity(
             link.subject,
@@ -1153,13 +1157,9 @@ Respond ONLY with a JSON array:
             link.object,
             link.object_type,
           );
-          // Avoid duplicate links
           const exists = this.db
             .prepare(
-              `
-            SELECT id FROM entity_links
-            WHERE subject_id = ? AND relation = ? AND object_id = ?
-          `,
+              "SELECT id FROM entity_links WHERE subject_id = ? AND relation = ? AND object_id = ?",
             )
             .get(subjectId, link.relation, objectId);
           if (!exists) {
@@ -1170,11 +1170,26 @@ Respond ONLY with a JSON array:
               .run(subjectId, link.relation, objectId, Date.now());
           }
         }
+        // Always mark the fact as processed via sentinel row (prevents backfill re-processing)
+        if (factId !== null) {
+          const alreadyMarked = this.db
+            .prepare("SELECT id FROM entity_links WHERE fact_id = ?")
+            .get(factId);
+          if (!alreadyMarked) {
+            this.db
+              .prepare(
+                'INSERT INTO entity_links (subject_id, relation, object_id, fact_id, timestamp) VALUES (0, "processed", 0, ?, ?)',
+              )
+              .run(factId, Date.now());
+          }
+        }
       });
-      insert(links);
-      console.error(
-        `🔗 [MemoryService] EntityLinks saved: ${links.length} relations`,
-      );
+      insert();
+      if (links.length > 0) {
+        console.error(
+          `🔗 [MemoryService] EntityLinks saved: ${links.length} relations`,
+        );
+      }
     } catch (e: any) {
       console.error(
         `⚠️ [MemoryService] extractAndSaveEntities failed: ${e.message}`,
