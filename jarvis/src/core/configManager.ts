@@ -33,6 +33,20 @@ export interface JarvisConfig {
     /** Ollama model name, e.g. "bge-m3". Only used when provider='ollama'. */
     model?: string;
   };
+  /**
+   * Entity extraction configuration for knowledge graph (Neural Link).
+   * Extracts entities and relations from facts to build entity_links.
+   */
+  entityExtraction: {
+    /** Enable entity extraction. Default: false. */
+    enabled: boolean;
+    /** 'ollama': use local Ollama model. 'gemini': reuse existing generateTextFn. */
+    provider: "ollama" | "gemini";
+    /** Ollama base URL. Only used when provider='ollama'. Default: "http://localhost:11434". */
+    baseUrl?: string;
+    /** Ollama model name, e.g. "gemma4:e4b". Only used when provider='ollama'. */
+    model?: string;
+  };
   network: {
     /** Max retry attempts for network errors (fetch failed, ECONNRESET, etc.). Default: 3. */
     maxRetries: number;
@@ -158,6 +172,10 @@ export class ConfigManager {
       embeddingService: {
         provider: "google" as const,
       },
+      entityExtraction: {
+        enabled: false,
+        provider: "gemini" as const,
+      },
       network: {
         maxRetries: 3,
         cleanOrphanedTurnOnFailure: true,
@@ -216,6 +234,10 @@ export class ConfigManager {
           embeddingService: {
             ...defaults.embeddingService,
             ...saved.embeddingService,
+          },
+          entityExtraction: {
+            ...defaults.entityExtraction,
+            ...saved.entityExtraction,
           },
           security: { ...defaults.security, ...saved.security },
           feishu: { ...defaults.feishu, ...saved.feishu },

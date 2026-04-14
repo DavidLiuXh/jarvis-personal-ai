@@ -13,6 +13,7 @@ import * as genai from "@google/genai";
 import { HttpsProxyAgent } from "https-proxy-agent";
 import { debugLogger } from "../../../gemini-cli/packages/core/src/index.js";
 import { ConfigManager } from "./configManager.js";
+import { EntityExtractor, type EntityLink } from "./entityExtractor.js";
 
 export class MemoryService {
   private db: Database.Database;
@@ -30,6 +31,7 @@ export class MemoryService {
   private generateTextFn: ((prompt: string) => Promise<string>) | null = null;
   private embedContentFn: ((text: string) => Promise<number[]>) | null = null;
   private memoryDir: string;
+  private entityExtractor: EntityExtractor | null = null;
 
   constructor(sourceRoot: string, dbPath?: string) {
     const memoryDir =
@@ -60,6 +62,23 @@ export class MemoryService {
       CREATE TABLE IF NOT EXISTS processed_files (
         filename TEXT PRIMARY KEY,
         last_mtime INTEGER
+      );
+    `);
+
+    // Knowledge graph tables
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS entities (
+        id    INTEGER PRIMARY KEY AUTOINCREMENT,
+        name  TEXT UNIQUE,
+        type  TEXT
+      );
+      CREATE TABLE IF NOT EXISTS entity_links (
+        id         INTEGER PRIMARY KEY AUTOINCREMENT,
+        subject_id INTEGER REFERENCES entities(id),
+        relation   TEXT,
+        object_id  INTEGER REFERENCES entities(id),
+        fact_id    INTEGER REFERENCES facts(id),
+        timestamp  INTEGER
       );
     `);
 
@@ -118,6 +137,21 @@ export class MemoryService {
   /** Inject a CLI-auth generateText function to replace the API-key-based client for LLM calls. */
   public setGenerateText(fn: (prompt: string) => Promise<string>) {
     this.generateTextFn = fn;
+    this.initEntityExtractor();
+  }
+
+  private initEntityExtractor(): void {
+    const cfg = this.jarvisConfig.entityExtraction;
+    if (!cfg?.enabled) return;
+    this.entityExtractor = new EntityExtractor(
+      cfg.provider ?? "gemini",
+      this.generateTextFn,
+      cfg.baseUrl ?? "http://localhost:11434",
+      cfg.model ?? "",
+    );
+    console.error(
+      `🔗 [MemoryService] EntityExtractor initialized (provider=${cfg.provider ?? "gemini"}${cfg.model ? ", model=" + cfg.model : ""})`,
+    );
   }
 
   /** Inject a CLI-auth embedContent function for semantic dedup. */
@@ -439,6 +473,13 @@ export class MemoryService {
       // L1 realtime write
       if ((this.jarvisConfig.memory.l1WriteMode ?? "batch") === "realtime") {
         this.appendToPhysicalLayer(category, content, importance);
+      }
+
+      // Async entity extraction for knowledge graph (non-blocking)
+      if (this.entityExtractor) {
+        setImmediate(() => {
+          void this.extractAndSaveEntities([{ category, content }]);
+        });
       }
 
       // Trigger consolidation when fact count exceeds threshold
@@ -1048,15 +1089,141 @@ Respond ONLY with a JSON array:
         category,
         content,
       }));
+
+      // Graph expansion: find related facts via entity_links
+      const rankedIds = ranked
+        .map((f) => {
+          for (const [id, fact] of factById) {
+            if (fact.content === f.content) return id;
+          }
+          return -1;
+        })
+        .filter((id) => id !== -1);
+      const expanded = this.expandViaEntityLinks(rankedIds, factById);
+
       console.error(
         `🧠 [searchFacts] always(${alwaysOut.length}): ${alwaysOut.map((f) => `[${f.category}] ${f.content.slice(0, 50)}`).join(" | ")}`,
       );
       console.error(
         `🧠 [searchFacts] ranked(${ranked.length}): ${ranked.map((f) => `[${f.category}] ${f.content.slice(0, 50)}`).join(" | ")}`,
       );
-      return [...alwaysOut, ...ranked];
+      if (expanded.length > 0) {
+        console.error(
+          `🔗 [searchFacts] expanded(${expanded.length}): ${expanded.map((f) => `[${f.category}] ${f.content.slice(0, 50)}`).join(" | ")}`,
+        );
+      }
+      return [...alwaysOut, ...ranked, ...expanded];
     } catch (e) {
       return this.getStructuredFacts();
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Knowledge Graph — Entity Extraction & Neural Link
+  // ---------------------------------------------------------------------------
+
+  /** Get or create an entity by name, return its id. */
+  private getOrCreateEntity(name: string, type: string): number {
+    const existing = this.db
+      .prepare("SELECT id FROM entities WHERE name = ?")
+      .get(name) as { id: number } | undefined;
+    if (existing) return existing.id;
+    const info = this.db
+      .prepare("INSERT INTO entities (name, type) VALUES (?, ?)")
+      .run(name, type);
+    return Number(info.lastInsertRowid);
+  }
+
+  /** Extract entities from facts and persist to entity_links. */
+  private async extractAndSaveEntities(
+    facts: Array<{ category: string; content: string }>,
+  ): Promise<void> {
+    if (!this.entityExtractor) return;
+    try {
+      const links = await this.entityExtractor.extract(facts);
+      if (links.length === 0) return;
+
+      const insert = this.db.transaction((links: EntityLink[]) => {
+        for (const link of links) {
+          const subjectId = this.getOrCreateEntity(
+            link.subject,
+            link.subject_type,
+          );
+          const objectId = this.getOrCreateEntity(
+            link.object,
+            link.object_type,
+          );
+          // Avoid duplicate links
+          const exists = this.db
+            .prepare(
+              `
+            SELECT id FROM entity_links
+            WHERE subject_id = ? AND relation = ? AND object_id = ?
+          `,
+            )
+            .get(subjectId, link.relation, objectId);
+          if (!exists) {
+            this.db
+              .prepare(
+                "INSERT INTO entity_links (subject_id, relation, object_id, timestamp) VALUES (?, ?, ?, ?)",
+              )
+              .run(subjectId, link.relation, objectId, Date.now());
+          }
+        }
+      });
+      insert(links);
+      console.error(
+        `🔗 [MemoryService] EntityLinks saved: ${links.length} relations`,
+      );
+    } catch (e: any) {
+      console.error(
+        `⚠️ [MemoryService] extractAndSaveEntities failed: ${e.message}`,
+      );
+    }
+  }
+
+  /**
+   * Given a set of ranked fact ids, expand via entity_links to find
+   * related facts not already in the result set.
+   * Returns additional facts to append (up to maxExpand).
+   */
+  private expandViaEntityLinks(
+    rankedIds: number[],
+    factById: Map<
+      number,
+      { category: string; content: string; importance: number }
+    >,
+    maxExpand: number = 3,
+  ): Array<{ category: string; content: string }> {
+    if (rankedIds.length === 0 || !this.jarvisConfig.entityExtraction?.enabled)
+      return [];
+    try {
+      const placeholders = rankedIds.map(() => "?").join(",");
+      // Find entity_links where the source fact is in ranked results
+      const linkedFactIds = this.db
+        .prepare(
+          `
+        SELECT DISTINCT el2.fact_id
+        FROM entity_links el1
+        JOIN entity_links el2
+          ON (el1.subject_id = el2.subject_id OR el1.object_id = el2.subject_id
+              OR el1.subject_id = el2.object_id OR el1.object_id = el2.object_id)
+        WHERE el1.fact_id IN (${placeholders})
+          AND el2.fact_id IS NOT NULL
+          AND el2.fact_id NOT IN (${placeholders})
+        LIMIT ?
+      `,
+        )
+        .all(...rankedIds, ...rankedIds, maxExpand) as Array<{
+        fact_id: number;
+      }>;
+
+      return linkedFactIds
+        .map((r) => factById.get(r.fact_id))
+        .filter((f): f is NonNullable<typeof f> => f !== undefined)
+        .map(({ category, content }) => ({ category, content }));
+    } catch (_e) {
+      return [];
     }
   }
 
