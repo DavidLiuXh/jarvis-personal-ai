@@ -104,15 +104,23 @@ export class EntityExtractor {
   private async callOllama(prompt: string): Promise<string> {
     if (!this.ollamaModel)
       throw new Error("[EntityExtractor] ollamaModel is required");
-    const response = await fetch(`${this.ollamaBaseUrl}/api/generate`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        model: this.ollamaModel,
-        prompt,
-        stream: false,
-      }),
-    });
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 30_000);
+    let response: Response;
+    try {
+      response = await fetch(`${this.ollamaBaseUrl}/api/generate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model: this.ollamaModel,
+          prompt,
+          stream: false,
+        }),
+        signal: controller.signal,
+      });
+    } finally {
+      clearTimeout(timeout);
+    }
     if (!response.ok) {
       throw new Error(
         `Ollama generate failed: ${response.status} ${await response.text()}`,

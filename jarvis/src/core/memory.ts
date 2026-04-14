@@ -1499,6 +1499,8 @@ Respond ONLY with a JSON array:
       const BATCH = 5;
       let total = 0;
       for (let i = 0; i < unprocessed.length; i += BATCH) {
+        // Yield to event loop between batches so main thread stays responsive
+        await new Promise((r) => setImmediate(r));
         const batch = unprocessed.slice(i, i + BATCH);
         const links = await this.entityExtractor.extract(
           batch.map((f) => ({ category: f.category, content: f.content })),
