@@ -114,7 +114,6 @@ export class MemoryService {
    */
   public async embedWithApiKey(text: string): Promise<number[]> {
     const provider = this.jarvisConfig.embeddingService?.provider ?? "google";
-    console.error(`[MemoryService] embedWithApiKey: provider=${provider}, config=${JSON.stringify(this.jarvisConfig.embeddingService)}`);
     if (provider === "ollama") {
       return this.embedWithOllama(text);
     }
@@ -1073,6 +1072,8 @@ Respond ONLY with a JSON array:
    */
   public async autoBackfill(): Promise<void> {
     if (!this.embedContentFn) return;
+    // Rebuild vec tables if dimension changed (e.g. switching embedding provider)
+    this.rebuildVecTablesIfDimensionMismatch();
     // Run both steps independently — a vec_facts failure should not block L1 rebuild
     try {
       await this.backfillVecFacts();
@@ -1083,6 +1084,65 @@ Respond ONLY with a JSON array:
       this.backfillPhysicalLayer();
     } catch (e: any) {
       console.error(`⚠️ [MemoryService] Auto-backfill failed: ${e.message}`);
+    }
+  }
+
+  /**
+   * Detects dimension mismatch between config and existing vec tables.
+   * If mismatched, drops and recreates both vec_memories and vec_facts,
+   * and clears all embeddings in facts/memories so backfill regenerates them.
+   */
+  private rebuildVecTablesIfDimensionMismatch(): void {
+    const expectedDim = this.jarvisConfig.models.embeddingDimension;
+    try {
+      // Probe actual dimension by checking vec table schema
+      const row = this.db
+        .prepare(
+          `SELECT sql FROM sqlite_master WHERE type='table' AND name='vec_facts'`,
+        )
+        .get() as { sql: string } | undefined;
+
+      if (!row) return; // table doesn't exist yet, will be created normally
+
+      const match = row.sql.match(/FLOAT\[(\d+)\]/);
+      if (!match) return;
+      const actualDim = parseInt(match[1], 10);
+
+      if (actualDim === expectedDim) return;
+
+      console.error(
+        `🔄 [MemoryService] Embedding dimension changed (${actualDim} → ${expectedDim}). Rebuilding vec tables...`,
+      );
+
+      // Drop and recreate vec tables with new dimension
+      try {
+        this.db.exec("DROP TABLE IF EXISTS vec_facts");
+      } catch (_) {}
+      try {
+        this.db.exec("DROP TABLE IF EXISTS vec_memories");
+      } catch (_) {}
+      this.db.exec(`
+        CREATE VIRTUAL TABLE IF NOT EXISTS vec_memories USING vec0(
+          id INTEGER PRIMARY KEY,
+          embedding FLOAT[${expectedDim}]
+        );
+        CREATE VIRTUAL TABLE IF NOT EXISTS vec_facts USING vec0(
+          id INTEGER PRIMARY KEY,
+          embedding FLOAT[${expectedDim}]
+        );
+      `);
+
+      // Clear stored embeddings so backfill regenerates them with the new dimension
+      this.db.prepare("UPDATE facts SET embedding = NULL").run();
+      this.db.prepare("DELETE FROM memories").run();
+
+      console.error(
+        `✅ [MemoryService] Vec tables rebuilt at ${expectedDim} dimensions. Embeddings will be regenerated.`,
+      );
+    } catch (e: any) {
+      console.error(
+        `⚠️ [MemoryService] rebuildVecTablesIfDimensionMismatch failed: ${e.message}`,
+      );
     }
   }
 
