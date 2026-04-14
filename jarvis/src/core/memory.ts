@@ -1103,7 +1103,8 @@ Respond ONLY with a JSON array:
             .run(row.id, new Float32Array(vec));
         } catch (e: any) {
           console.error(
-            `⚠️ [MemoryService] vec_facts insert (new embedding) failed for id=${row.id}: ${e.message}`,
+            `⚠️ [MemoryService] vec_facts insert (new embedding) failed for id=${row.id}:`,
+            e,
           );
         }
       }
