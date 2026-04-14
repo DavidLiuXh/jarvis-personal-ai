@@ -1090,7 +1090,14 @@ Respond ONLY with a JSON array:
         content,
       }));
 
-      // Graph expansion: find related facts via entity_links
+      console.error(
+        `🧠 [searchFacts] always(${alwaysOut.length}): ${alwaysOut.map((f) => `[${f.category}] ${f.content.slice(0, 50)}`).join(" | ")}`,
+      );
+      console.error(
+        `🧠 [searchFacts] ranked(${ranked.length}): ${ranked.map((f) => `[${f.category}] ${f.content.slice(0, 50)}`).join(" | ")}`,
+      );
+
+      // Graph expansion: find related facts via entity_links (after logging, non-blocking)
       const rankedIds = ranked
         .map((f) => {
           for (const [id, fact] of factById) {
@@ -1100,13 +1107,6 @@ Respond ONLY with a JSON array:
         })
         .filter((id) => id !== -1);
       const expanded = this.expandViaEntityLinks(rankedIds, factById);
-
-      console.error(
-        `🧠 [searchFacts] always(${alwaysOut.length}): ${alwaysOut.map((f) => `[${f.category}] ${f.content.slice(0, 50)}`).join(" | ")}`,
-      );
-      console.error(
-        `🧠 [searchFacts] ranked(${ranked.length}): ${ranked.map((f) => `[${f.category}] ${f.content.slice(0, 50)}`).join(" | ")}`,
-      );
       if (expanded.length > 0) {
         console.error(
           `🔗 [searchFacts] expanded(${expanded.length}): ${expanded.map((f) => `[${f.category}] ${f.content.slice(0, 50)}`).join(" | ")}`,
@@ -1198,31 +1198,32 @@ Respond ONLY with a JSON array:
     if (rankedIds.length === 0 || !this.jarvisConfig.entityExtraction?.enabled)
       return [];
     try {
-      const placeholders = rankedIds.map(() => "?").join(",");
-      // Find entity_links where the source fact is in ranked results
+      // Use json_each to avoid dynamic placeholder construction
+      const idsJson = JSON.stringify(rankedIds);
       const linkedFactIds = this.db
         .prepare(
           `
-        SELECT DISTINCT el2.fact_id
-        FROM entity_links el1
-        JOIN entity_links el2
-          ON (el1.subject_id = el2.subject_id OR el1.object_id = el2.subject_id
-              OR el1.subject_id = el2.object_id OR el1.object_id = el2.object_id)
-        WHERE el1.fact_id IN (${placeholders})
-          AND el2.fact_id IS NOT NULL
-          AND el2.fact_id NOT IN (${placeholders})
-        LIMIT ?
-      `,
+          SELECT DISTINCT el2.fact_id
+          FROM entity_links el1
+          JOIN entity_links el2
+            ON (el1.subject_id = el2.subject_id OR el1.object_id = el2.subject_id
+                OR el1.subject_id = el2.object_id OR el1.object_id = el2.object_id)
+          WHERE el1.fact_id IN (SELECT value FROM json_each(?))
+            AND el2.fact_id IS NOT NULL
+            AND el2.fact_id NOT IN (SELECT value FROM json_each(?))
+          LIMIT ?
+          `,
         )
-        .all(...rankedIds, ...rankedIds, maxExpand) as Array<{
-        fact_id: number;
-      }>;
+        .all(idsJson, idsJson, maxExpand) as Array<{ fact_id: number }>;
 
       return linkedFactIds
         .map((r) => factById.get(r.fact_id))
         .filter((f): f is NonNullable<typeof f> => f !== undefined)
         .map(({ category, content }) => ({ category, content }));
-    } catch (_e) {
+    } catch (e: any) {
+      console.error(
+        `⚠️ [MemoryService] expandViaEntityLinks failed: ${e.message}`,
+      );
       return [];
     }
   }
