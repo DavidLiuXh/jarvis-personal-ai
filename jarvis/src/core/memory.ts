@@ -602,7 +602,13 @@ ${factsText}
 
         // Atomically replace facts + vec_facts
         const runUpdate = this.db.transaction(() => {
-          // Clear all three tables to avoid id orphans
+          // Clear dependent tables first to avoid FK constraint failures
+          try {
+            this.db.prepare("DELETE FROM entity_links").run();
+          } catch (_) {}
+          try {
+            this.db.prepare("DELETE FROM entities").run();
+          } catch (_) {}
           this.db.prepare("DELETE FROM facts").run();
           try {
             this.db.prepare("DELETE FROM vec_facts").run();
@@ -1653,6 +1659,13 @@ Respond ONLY with a JSON array:
 
       // Full replacement: clear facts + vec_facts + facts_fts, reinsert from MEMORIES.md
       const rebuild = this.db.transaction(() => {
+        // Clear dependent tables first to avoid FK constraint failures
+        try {
+          this.db.prepare("DELETE FROM entity_links").run();
+        } catch (_) {}
+        try {
+          this.db.prepare("DELETE FROM entities").run();
+        } catch (_) {}
         this.db.prepare("DELETE FROM facts").run();
         try {
           this.db.prepare("DELETE FROM vec_facts").run();
