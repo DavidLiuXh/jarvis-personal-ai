@@ -902,10 +902,17 @@ Respond ONLY with a JSON array:
         ranked = this.rankByJaccard(query, candidateFacts, cap);
       }
 
-      return [
-        ...alwaysFacts.map(({ category, content }) => ({ category, content })),
-        ...ranked,
-      ];
+      const alwaysOut = alwaysFacts.map(({ category, content }) => ({
+        category,
+        content,
+      }));
+      console.error(
+        `🧠 [searchFacts] always(${alwaysOut.length}): ${alwaysOut.map((f) => `[${f.category}] ${f.content.slice(0, 50)}`).join(" | ")}`,
+      );
+      console.error(
+        `🧠 [searchFacts] ranked(${ranked.length}): ${ranked.map((f) => `[${f.category}] ${f.content.slice(0, 50)}`).join(" | ")}`,
+      );
+      return [...alwaysOut, ...ranked];
     } catch (e) {
       return this.getStructuredFacts();
     }
