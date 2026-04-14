@@ -69,9 +69,19 @@ export interface JarvisConfig {
     vectorSimilarityWeight: number;
     /**
      * L3 weight for fact importance in fused ranking score.
-     * Default: 0.3
+     * Default: 0.2
      */
     importanceWeight: number;
+    /**
+     * Enable hybrid search (BM25 + vector via RRF fusion).
+     * Only applies when factRelevanceStrategy = 'embedding'. Default: true.
+     */
+    hybridSearch: boolean;
+    /**
+     * RRF parameter k. Higher k reduces the impact of top ranks.
+     * Standard value is 60. Default: 60.
+     */
+    rrfK: number;
     /**
      * L3 weight for recency/access decay in fused ranking score.
      * fusedScore = α·sim + β·(importance/10) + γ·decay(last_accessed)
@@ -168,6 +178,8 @@ export class ConfigManager {
         importanceWeight: 0.2,
         accessWeight: 0.1,
         decayLambda: 0.1,
+        hybridSearch: true,
+        rrfK: 60,
       },
       security: {
         jailbreak: false,

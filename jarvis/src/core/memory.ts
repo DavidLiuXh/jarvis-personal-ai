@@ -63,6 +63,17 @@ export class MemoryService {
       );
     `);
 
+    // FTS5 virtual table for BM25 keyword search
+    try {
+      this.db.exec(`
+        CREATE VIRTUAL TABLE IF NOT EXISTS facts_fts USING fts5(
+          content,
+          fact_id UNINDEXED,
+          tokenize = 'unicode61'
+        );
+      `);
+    } catch (_) {}
+
     // Migrations
     try {
       this.db.exec("ALTER TABLE facts ADD COLUMN embedding BLOB");
@@ -386,6 +397,12 @@ export class MemoryService {
           .run(category, content, importance, Date.now());
         rowid = info.lastInsertRowid as bigint;
       }
+      // Sync to FTS5 for BM25 search
+      try {
+        this.db
+          .prepare("INSERT INTO facts_fts (content, fact_id) VALUES (?, ?)")
+          .run(content, Number(rowid));
+      } catch (_) {}
       return rowid;
     });
     return insertFact();
@@ -539,10 +556,13 @@ ${factsText}
 
         // Atomically replace facts + vec_facts
         const runUpdate = this.db.transaction(() => {
-          // Clear both tables first to avoid id orphans in vec_facts
+          // Clear all three tables to avoid id orphans
           this.db.prepare("DELETE FROM facts").run();
           try {
             this.db.prepare("DELETE FROM vec_facts").run();
+          } catch (_) {}
+          try {
+            this.db.prepare("DELETE FROM facts_fts").run();
           } catch (_) {}
 
           for (let i = 0; i < newFacts.length; i++) {
@@ -573,8 +593,15 @@ ${factsText}
                   )
                   .run(BigInt(info.lastInsertRowid), new Float32Array(emb));
               } catch (_) {}
+              try {
+                this.db
+                  .prepare(
+                    "INSERT INTO facts_fts (content, fact_id) VALUES (?, ?)",
+                  )
+                  .run(f.content, Number(info.lastInsertRowid));
+              } catch (_) {}
             } else {
-              this.db
+              const info2 = this.db
                 .prepare(
                   "INSERT INTO facts (category, content, importance, timestamp, last_accessed, access_count) VALUES (?, ?, ?, ?, ?, ?)",
                 )
@@ -586,6 +613,13 @@ ${factsText}
                   lastAccessed,
                   accessCount,
                 );
+              try {
+                this.db
+                  .prepare(
+                    "INSERT INTO facts_fts (content, fact_id) VALUES (?, ?)",
+                  )
+                  .run(f.content, Number(info2.lastInsertRowid));
+              } catch (_) {}
             }
           }
         });
@@ -793,7 +827,6 @@ Respond ONLY with a JSON array:
       // Atomically replace all old insights with new ones
       const replaceInsights = this.db.transaction(() => {
         this.db.prepare("DELETE FROM facts WHERE category = 'insight'").run();
-        // Also remove insight vectors from vec_facts (best-effort)
         try {
           this.db
             .prepare(
@@ -801,8 +834,15 @@ Respond ONLY with a JSON array:
             )
             .run();
         } catch (_) {}
-        for (const insight of validInsights) {
+        try {
           this.db
+            .prepare(
+              "DELETE FROM facts_fts WHERE fact_id NOT IN (SELECT id FROM facts)",
+            )
+            .run();
+        } catch (_) {}
+        for (const insight of validInsights) {
+          const info = this.db
             .prepare(
               "INSERT INTO facts (category, content, importance, timestamp) VALUES (?, ?, ?, ?)",
             )
@@ -812,6 +852,11 @@ Respond ONLY with a JSON array:
               insight.importance ?? 8,
               Date.now(),
             );
+          try {
+            this.db
+              .prepare("INSERT INTO facts_fts (content, fact_id) VALUES (?, ?)")
+              .run(insight.content, Number(info.lastInsertRowid));
+          } catch (_) {}
         }
       });
       replaceInsights();
@@ -896,25 +941,56 @@ Respond ONLY with a JSON array:
 
           const gamma = this.jarvisConfig.memory.accessWeight ?? 0.1;
           const lambda = this.jarvisConfig.memory.decayLambda ?? 0.1;
+          const hybridSearch = this.jarvisConfig.memory.hybridSearch ?? true;
+          const rrfK = this.jarvisConfig.memory.rrfK ?? 60;
           const nowMs = Date.now();
 
           if (vecRows.length > 0) {
+            // BM25 parallel search (best-effort)
+            const bm25RankMap = new Map<number, number>(); // fact_id → rank (1-based)
+            if (hybridSearch) {
+              try {
+                const ftsQuery = query
+                  .trim()
+                  .split(/\s+/)
+                  .filter(Boolean)
+                  .join(" OR ");
+                const bm25Rows = this.db
+                  .prepare(
+                    `
+                  SELECT fact_id, rank FROM facts_fts
+                  WHERE facts_fts MATCH ?
+                  ORDER BY rank
+                  LIMIT ?
+                `,
+                  )
+                  .all(ftsQuery, fetchLimit) as Array<{
+                  fact_id: number;
+                  rank: number;
+                }>;
+                bm25Rows.forEach((r, idx) =>
+                  bm25RankMap.set(r.fact_id, idx + 1),
+                );
+              } catch (_) {
+                /* FTS not available, skip */
+              }
+            }
+
+            // RRF fusion: rrfScore = 1/(k+rank_vec) + 1/(k+rank_bm25)
+            // Then add importance and decay on top
             const scoredRows = vecRows
-              .map((r) => {
+              .map((r, vecIdx) => {
                 const fact = factById.get(r.id);
                 if (!fact) return null;
-                const cosineSim = Math.max(
-                  0,
-                  1 - (r.distance * r.distance) / 2,
-                );
+                const vecRank = vecIdx + 1;
+                const bm25Rank = bm25RankMap.get(r.id) ?? fetchLimit + 1;
+                const rrfScore = 1 / (rrfK + vecRank) + 1 / (rrfK + bm25Rank);
                 const daysSince = fact.last_accessed
                   ? (nowMs - fact.last_accessed) / 86_400_000
                   : 0;
                 const decay = Math.exp(-lambda * daysSince);
                 const fusedScore =
-                  alpha * cosineSim +
-                  beta * (fact.importance / 10) +
-                  gamma * decay;
+                  rrfScore + beta * (fact.importance / 10) + gamma * decay;
                 return {
                   id: r.id,
                   category: fact.category,
@@ -1189,6 +1265,8 @@ Respond ONLY with a JSON array:
     if (!this.embedContentFn) return;
     // Rebuild vec tables if dimension changed (e.g. switching embedding provider)
     this.rebuildVecTablesIfDimensionMismatch();
+    // Backfill facts_fts for any facts not yet indexed
+    this.backfillFts();
     // L1→L2 sync: if MEMORIES.md was manually edited, rebuild facts from it
     const synced = this.syncFromPhysicalLayerIfModified();
     // Run both steps independently — a vec_facts failure should not block L1 rebuild
@@ -1273,18 +1351,26 @@ Respond ONLY with a JSON array:
         return false;
       }
 
-      // Full replacement: clear facts + vec_facts, reinsert from MEMORIES.md
+      // Full replacement: clear facts + vec_facts + facts_fts, reinsert from MEMORIES.md
       const rebuild = this.db.transaction(() => {
         this.db.prepare("DELETE FROM facts").run();
         try {
           this.db.prepare("DELETE FROM vec_facts").run();
         } catch (_) {}
+        try {
+          this.db.prepare("DELETE FROM facts_fts").run();
+        } catch (_) {}
         for (const f of parsedFacts) {
-          this.db
+          const info = this.db
             .prepare(
               "INSERT INTO facts (category, content, importance, timestamp) VALUES (?, ?, ?, ?)",
             )
             .run(f.category, f.content, f.importance, Date.now());
+          try {
+            this.db
+              .prepare("INSERT INTO facts_fts (content, fact_id) VALUES (?, ?)")
+              .run(f.content, Number(info.lastInsertRowid));
+          } catch (_) {}
         }
       });
       rebuild();
@@ -1449,6 +1535,33 @@ Respond ONLY with a JSON array:
   /**
    * If MEMORIES.md is missing or empty, rebuild it from SQLite.
    */
+  /** Sync any facts not yet in facts_fts into the FTS index. */
+  private backfillFts(): void {
+    try {
+      const missing = this.db
+        .prepare(
+          `
+        SELECT id, content FROM facts
+        WHERE id NOT IN (SELECT fact_id FROM facts_fts)
+      `,
+        )
+        .all() as Array<{ id: number; content: string }>;
+      if (missing.length === 0) return;
+      const insert = this.db.prepare(
+        "INSERT INTO facts_fts (content, fact_id) VALUES (?, ?)",
+      );
+      const insertAll = this.db.transaction(() => {
+        for (const row of missing) insert.run(row.content, row.id);
+      });
+      insertAll();
+      console.error(
+        `✅ [MemoryService] FTS backfill: indexed ${missing.length} facts into facts_fts`,
+      );
+    } catch (e: any) {
+      console.error(`⚠️ [MemoryService] FTS backfill failed: ${e.message}`);
+    }
+  }
+
   private backfillPhysicalLayer(): void {
     try {
       const missing = !fs.existsSync(this.memoriesFilePath);
