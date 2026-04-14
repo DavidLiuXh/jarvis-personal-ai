@@ -21,6 +21,18 @@ export interface JarvisConfig {
     embeddingDimension: number;
     distillation: string;
   };
+  /**
+   * Embedding service configuration.
+   * provider 'google': use Gemini API key (requires api.key).
+   * provider 'ollama': use local Ollama service (requires baseUrl and model).
+   */
+  embeddingService: {
+    provider: "google" | "ollama";
+    /** Ollama base URL, e.g. "http://localhost:11434". Only used when provider='ollama'. */
+    baseUrl?: string;
+    /** Ollama model name, e.g. "bge-m3". Only used when provider='ollama'. */
+    model?: string;
+  };
   network: {
     /** Max retry attempts for network errors (fetch failed, ECONNRESET, etc.). Default: 3. */
     maxRetries: number;
@@ -119,8 +131,11 @@ export class ConfigManager {
       models: {
         chat: "auto",
         embedding: "models/gemini-embedding-001",
-        embeddingDimension: 3072,
+        embeddingDimension: 1024,
         distillation: "gemini-2.5-flash",
+      },
+      embeddingService: {
+        provider: "google" as const,
       },
       network: {
         maxRetries: 3,
@@ -173,6 +188,10 @@ export class ConfigManager {
           network: { ...defaults.network, ...saved.network },
           server: { ...defaults.server, ...saved.server },
           memory: { ...defaults.memory, ...saved.memory },
+          embeddingService: {
+            ...defaults.embeddingService,
+            ...saved.embeddingService,
+          },
           security: { ...defaults.security, ...saved.security },
           feishu: { ...defaults.feishu, ...saved.feishu },
           wechat: { ...defaults.wechat, ...saved.wechat },

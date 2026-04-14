@@ -109,13 +109,21 @@ export class MemoryService {
   }
 
   /**
-   * Fallback embedding via direct API key client (used when CLI-auth
-   * ContentGenerator does not support embedContent, e.g. Code Assist mode).
+   * Unified embedding entry point — routes to Ollama or Google API
+   * based on embeddingService.provider config.
    */
   public async embedWithApiKey(text: string): Promise<number[]> {
+    const provider = this.jarvisConfig.embeddingService?.provider ?? "google";
+    if (provider === "ollama") {
+      return this.embedWithOllama(text);
+    }
+    return this.embedWithGoogle(text);
+  }
+
+  private async embedWithGoogle(text: string): Promise<number[]> {
     if (!this.client)
       throw new Error(
-        "[MemoryService] No API key client available for embedding fallback",
+        "[MemoryService] No API key client available for Google embedding",
       );
     const result = await this.client.models.embedContent({
       model: this.jarvisConfig.models.embedding,
@@ -123,6 +131,27 @@ export class MemoryService {
     });
     const embeddings = result.embeddings || [result.embedding];
     return embeddings[0].values;
+  }
+
+  private async embedWithOllama(text: string): Promise<number[]> {
+    const { baseUrl = "http://localhost:11434", model } =
+      this.jarvisConfig.embeddingService ?? {};
+    if (!model)
+      throw new Error(
+        "[MemoryService] embeddingService.model is required for Ollama provider",
+      );
+    const response = await fetch(`${baseUrl}/api/embed`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ model, input: text }),
+    });
+    if (!response.ok) {
+      throw new Error(
+        `[MemoryService] Ollama embed failed: ${response.status} ${await response.text()}`,
+      );
+    }
+    const data = (await response.json()) as { embeddings: number[][] };
+    return data.embeddings[0];
   }
 
   public startWithApiKey(apiKey: string) {
