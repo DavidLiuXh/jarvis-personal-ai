@@ -42,6 +42,13 @@ export interface JarvisConfig {
     factRelevanceLimit: number;
     /** Number of semantically similar past conversations to pre-warm into context each turn. 0 = disabled. Default: 3. */
     prewarmLimit: number;
+    /**
+     * L1 physical layer write mode for MEMORIES.md.
+     * 'realtime': append each fact immediately after saveFact (always up-to-date, may have minor redundancy).
+     * 'batch': full rewrite only after consolidateFacts or reflect (clean file, but lags between consolidations).
+     * Default: 'batch'.
+     */
+    l1WriteMode: "realtime" | "batch";
   };
   security: {
     jailbreak: boolean;
@@ -119,6 +126,7 @@ export class ConfigManager {
         factRelevanceStrategy: "jaccard" as const,
         factRelevanceLimit: 5,
         prewarmLimit: 3,
+        l1WriteMode: "batch" as const,
       },
       security: {
         jailbreak: false,

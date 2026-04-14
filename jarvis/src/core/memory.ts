@@ -29,10 +29,12 @@ export class MemoryService {
   private lastConsolidatedCount = 0;
   private generateTextFn: ((prompt: string) => Promise<string>) | null = null;
   private embedContentFn: ((text: string) => Promise<number[]>) | null = null;
+  private memoryDir: string;
 
   constructor(sourceRoot: string, dbPath?: string) {
     const memoryDir =
       dbPath ?? path.join(os.homedir(), ".gemini-jarvis", "memory");
+    this.memoryDir = memoryDir;
     if (!fs.existsSync(memoryDir)) {
       fs.mkdirSync(memoryDir, { recursive: true });
     }
@@ -102,6 +104,8 @@ export class MemoryService {
   /** Inject a CLI-auth embedContent function for semantic dedup. */
   public setEmbedContent(fn: (text: string) => Promise<number[]>) {
     this.embedContentFn = fn;
+    // Trigger auto-backfill after embedContent is available
+    void this.autoBackfill();
   }
 
   public startWithApiKey(apiKey: string) {
@@ -361,6 +365,11 @@ export class MemoryService {
         .get() as any;
       console.error(`🔥 [MemoryService] New fact distilled. Total: ${count.c}`);
 
+      // L1 realtime write
+      if ((this.jarvisConfig.memory.l1WriteMode ?? "batch") === "realtime") {
+        this.appendToPhysicalLayer(category, content, importance);
+      }
+
       // Trigger consolidation when fact count exceeds threshold
       if (
         count.c >
@@ -507,6 +516,8 @@ ${factsText}
         console.error(
           `✨ [Jarvis Reflection] Consolidation complete. Condensed ${allFacts.length} fragments into ${newFacts.length} core insights.`,
         );
+        // L1 batch flush after consolidation (always, regardless of l1WriteMode)
+        this.flushToPhysicalLayer();
       } else {
         // LLM returned text but no valid JSON array — update baseline to avoid re-triggering immediately
         this.lastConsolidatedCount = allFacts.length;
@@ -729,6 +740,8 @@ Respond ONLY with a JSON array:
       console.error(
         `💡 [MemoryService] Reflection complete: ${validInsights.length} insights (replaced ${existingInsights.length} old).`,
       );
+      // L1 batch flush after reflection
+      this.flushToPhysicalLayer();
     } catch (e: any) {
       console.error(`⚠️ [MemoryService] Reflection failed: ${e.message}`);
     }
@@ -833,6 +846,228 @@ Respond ONLY with a JSON array:
       return result.response.text();
     }
     throw new Error("[MemoryService] Empty response from model");
+  }
+
+  // ---------------------------------------------------------------------------
+  // L1 Physical Layer — MEMORIES.md
+  // ---------------------------------------------------------------------------
+
+  private get memoriesFilePath(): string {
+    return path.join(this.memoryDir, "MEMORIES.md");
+  }
+
+  /**
+   * Serialize a single fact to a Markdown line.
+   * Format: `- [importance] content`
+   */
+  private factToMarkdownLine(fact: {
+    content: string;
+    importance: number;
+  }): string {
+    return `- [${fact.importance}] ${fact.content}`;
+  }
+
+  /**
+   * Full rewrite of MEMORIES.md from the current facts table.
+   * Grouped by category, sorted by importance desc.
+   * Used in batch mode (after consolidateFacts / reflect).
+   */
+  public flushToPhysicalLayer(): void {
+    try {
+      const allFacts = this.db
+        .prepare(
+          "SELECT category, content, importance FROM facts ORDER BY category, importance DESC",
+        )
+        .all() as Array<{
+        category: string;
+        content: string;
+        importance: number;
+      }>;
+
+      if (allFacts.length === 0) {
+        fs.writeFileSync(
+          this.memoriesFilePath,
+          "# Jarvis Memory\n\n_(No facts yet)_\n",
+        );
+        return;
+      }
+
+      // Group by category
+      const byCategory = new Map<
+        string,
+        Array<{ content: string; importance: number }>
+      >();
+      for (const f of allFacts) {
+        if (!byCategory.has(f.category)) byCategory.set(f.category, []);
+        byCategory
+          .get(f.category)!
+          .push({ content: f.content, importance: f.importance });
+      }
+
+      const lines: string[] = ["# Jarvis Memory\n"];
+      for (const [category, facts] of byCategory) {
+        lines.push(`## ${category}\n`);
+        for (const f of facts) {
+          lines.push(this.factToMarkdownLine(f));
+        }
+        lines.push("");
+      }
+
+      // Write atomically via temp file
+      const tmpPath = this.memoriesFilePath + ".tmp";
+      fs.writeFileSync(tmpPath, lines.join("\n"));
+      fs.renameSync(tmpPath, this.memoriesFilePath);
+      debugLogger.debug(
+        `[MemoryService] L1 flushed: ${allFacts.length} facts → MEMORIES.md`,
+      );
+    } catch (e: any) {
+      console.error(`⚠️ [MemoryService] L1 flush failed: ${e.message}`);
+    }
+  }
+
+  /**
+   * Append a single fact line to MEMORIES.md (realtime mode).
+   * Creates the file and category heading if needed.
+   */
+  private appendToPhysicalLayer(
+    category: string,
+    content: string,
+    importance: number,
+  ): void {
+    try {
+      const line = this.factToMarkdownLine({ content, importance });
+      const heading = `## ${category}`;
+
+      if (!fs.existsSync(this.memoriesFilePath)) {
+        fs.writeFileSync(
+          this.memoriesFilePath,
+          `# Jarvis Memory\n\n${heading}\n\n${line}\n`,
+        );
+        return;
+      }
+
+      const existing = fs.readFileSync(this.memoriesFilePath, "utf8");
+      if (existing.includes(heading)) {
+        // Append after the last line of this category section
+        const updated = existing.replace(
+          new RegExp(`(${heading}[\\s\\S]*?)(\n## |$)`),
+          (_, section, next) => `${section}\n${line}${next}`,
+        );
+        fs.writeFileSync(this.memoriesFilePath, updated);
+      } else {
+        // Category not present yet — append new section
+        fs.appendFileSync(this.memoriesFilePath, `\n${heading}\n\n${line}\n`);
+      }
+    } catch (e: any) {
+      console.error(
+        `⚠️ [MemoryService] L1 realtime append failed: ${e.message}`,
+      );
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Auto-Backfill (L2 + L1 self-healing on startup)
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Checks for missing embeddings in vec_facts and missing MEMORIES.md,
+   * then heals them. Called automatically after embedContentFn is injected.
+   */
+  public async autoBackfill(): Promise<void> {
+    if (!this.embedContentFn) return;
+    try {
+      await this.backfillVecFacts();
+      this.backfillPhysicalLayer();
+    } catch (e: any) {
+      console.error(`⚠️ [MemoryService] Auto-backfill failed: ${e.message}`);
+    }
+  }
+
+  /**
+   * For any fact that has an embedding in facts.embedding but is missing
+   * from vec_facts, re-insert it. Also handles facts with no embedding yet
+   * by generating one (batched, 20 at a time).
+   */
+  private async backfillVecFacts(): Promise<void> {
+    if (!this.embedContentFn) return;
+
+    // Facts with embedding blob but missing from vec_facts
+    const missingInVec = this.db
+      .prepare(
+        `
+      SELECT f.id, f.content, f.embedding
+      FROM facts f
+      WHERE f.embedding IS NOT NULL
+        AND f.id NOT IN (SELECT id FROM vec_facts)
+    `,
+      )
+      .all() as Array<{ id: number; content: string; embedding: Buffer }>;
+
+    for (const row of missingInVec) {
+      try {
+        const vec = Array.from(new Float32Array(row.embedding.buffer));
+        this.db
+          .prepare(
+            "INSERT OR IGNORE INTO vec_facts (id, embedding) VALUES (?, ?)",
+          )
+          .run(row.id, new Float32Array(vec));
+      } catch (_) {}
+    }
+
+    // Facts with no embedding at all — generate in batches of 20
+    const noEmbedding = this.db
+      .prepare("SELECT id, content FROM facts WHERE embedding IS NULL")
+      .all() as Array<{ id: number; content: string }>;
+
+    if (noEmbedding.length === 0) return;
+
+    debugLogger.debug(
+      `[MemoryService] Auto-backfill: generating embeddings for ${noEmbedding.length} facts`,
+    );
+    const BATCH = 20;
+    for (let i = 0; i < noEmbedding.length; i += BATCH) {
+      const batch = noEmbedding.slice(i, i + BATCH);
+      for (const row of batch) {
+        try {
+          const vec = await this.embedContentFn(row.content);
+          const buf = Buffer.from(new Float32Array(vec).buffer);
+          this.db
+            .prepare("UPDATE facts SET embedding = ? WHERE id = ?")
+            .run(buf, row.id);
+          this.db
+            .prepare(
+              "INSERT OR IGNORE INTO vec_facts (id, embedding) VALUES (?, ?)",
+            )
+            .run(row.id, new Float32Array(vec));
+        } catch (_) {}
+      }
+    }
+
+    if (missingInVec.length > 0 || noEmbedding.length > 0) {
+      console.error(
+        `✅ [MemoryService] Auto-backfill: synced ${missingInVec.length + noEmbedding.length} facts into vec_facts`,
+      );
+    }
+  }
+
+  /**
+   * If MEMORIES.md is missing or empty, rebuild it from SQLite.
+   */
+  private backfillPhysicalLayer(): void {
+    try {
+      const missing = !fs.existsSync(this.memoriesFilePath);
+      const empty =
+        !missing &&
+        fs.readFileSync(this.memoriesFilePath, "utf8").trim().length < 20;
+      if (missing || empty) {
+        this.flushToPhysicalLayer();
+        console.error(
+          "✅ [MemoryService] Auto-backfill: MEMORIES.md rebuilt from SQLite",
+        );
+      }
+    } catch (e: any) {
+      console.error(`⚠️ [MemoryService] L1 backfill failed: ${e.message}`);
+    }
   }
 
   private async syncHistoricalSessions() {
