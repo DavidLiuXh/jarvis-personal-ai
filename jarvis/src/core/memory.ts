@@ -972,6 +972,7 @@ Respond ONLY with a JSON array:
         this.jarvisConfig.memory.factRelevanceStrategy ?? "jaccard";
 
       let ranked: Array<{ category: string; content: string }>;
+      let rankedIdsForGraph: number[] = [];
 
       if (strategy === "embedding" && this.embedContentFn) {
         try {
@@ -1066,6 +1067,7 @@ Respond ONLY with a JSON array:
 
             // Async update access stats for ranked facts (non-blocking)
             const rankedIds = scoredRows.map((r) => r.id);
+            rankedIdsForGraph = rankedIds;
             setImmediate(() => this.updateAccessStats(rankedIds, nowMs));
           } else {
             // vec_facts empty — fall back to in-memory cosine using already-loaded embeddings
@@ -1092,6 +1094,7 @@ Respond ONLY with a JSON array:
               content,
             }));
             const fallbackIds = scoredFallback.map((f) => f.id);
+            rankedIdsForGraph = fallbackIds;
             setImmediate(() => this.updateAccessStats(fallbackIds, nowMs));
           }
         } catch (_e) {
@@ -1113,16 +1116,8 @@ Respond ONLY with a JSON array:
         `🧠 [searchFacts] ranked(${ranked.length}): ${ranked.map((f) => `[${f.category}] ${f.content.slice(0, 50)}`).join(" | ")}`,
       );
 
-      // Graph expansion: find related facts via entity_links (after logging, non-blocking)
-      const rankedIds = ranked
-        .map((f) => {
-          for (const [id, fact] of factById) {
-            if (fact.content === f.content) return id;
-          }
-          return -1;
-        })
-        .filter((id) => id !== -1);
-      const expanded = this.expandViaEntityLinks(rankedIds, factById);
+      // Graph expansion: use ids collected during ranking (no content reverse-lookup needed)
+      const expanded = this.expandViaEntityLinks(rankedIdsForGraph, factById);
       if (expanded.length > 0) {
         console.error(
           `🔗 [searchFacts] expanded(${expanded.length}): ${expanded.map((f) => `[${f.category}] ${f.content.slice(0, 50)}`).join(" | ")}`,
@@ -1177,9 +1172,9 @@ Respond ONLY with a JSON array:
           if (!exists) {
             this.db
               .prepare(
-                "INSERT INTO entity_links (subject_id, relation, object_id, timestamp) VALUES (?, ?, ?, ?)",
+                "INSERT INTO entity_links (subject_id, relation, object_id, fact_id, timestamp) VALUES (?, ?, ?, ?, ?)",
               )
-              .run(subjectId, link.relation, objectId, Date.now());
+              .run(subjectId, link.relation, objectId, factId, Date.now());
           }
         }
         // Always mark the fact as processed via sentinel row (prevents backfill re-processing)
@@ -1517,7 +1512,9 @@ Respond ONLY with a JSON array:
           batch.map((f) => ({ category: f.category, content: f.content })),
         );
         if (links.length > 0) {
-          // Associate links with the batch facts (best-effort: no per-fact mapping)
+          // Associate links with the batch facts
+          // Use first fact id in batch as representative source (best-effort)
+          const batchFactId = batch[0]?.id ?? null;
           const insert = this.db.transaction(() => {
             for (const link of links) {
               const subjectId = this.getOrCreateEntity(
@@ -1530,17 +1527,21 @@ Respond ONLY with a JSON array:
               );
               const exists = this.db
                 .prepare(
-                  `
-                SELECT id FROM entity_links WHERE subject_id = ? AND relation = ? AND object_id = ?
-              `,
+                  "SELECT id FROM entity_links WHERE subject_id = ? AND relation = ? AND object_id = ?",
                 )
                 .get(subjectId, link.relation, objectId);
               if (!exists) {
                 this.db
                   .prepare(
-                    "INSERT INTO entity_links (subject_id, relation, object_id, timestamp) VALUES (?, ?, ?, ?)",
+                    "INSERT INTO entity_links (subject_id, relation, object_id, fact_id, timestamp) VALUES (?, ?, ?, ?, ?)",
                   )
-                  .run(subjectId, link.relation, objectId, Date.now());
+                  .run(
+                    subjectId,
+                    link.relation,
+                    objectId,
+                    batchFactId,
+                    Date.now(),
+                  );
               }
             }
             // Mark batch facts as processed by inserting a null-linked placeholder
