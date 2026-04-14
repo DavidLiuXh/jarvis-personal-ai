@@ -105,7 +105,7 @@ export class EntityExtractor {
     if (!this.ollamaModel)
       throw new Error("[EntityExtractor] ollamaModel is required");
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 30_000);
+    const timeout = setTimeout(() => controller.abort(), 10_000);
     let response: Response;
     try {
       response = await fetch(`${this.ollamaBaseUrl}/api/generate`, {

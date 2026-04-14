@@ -26,6 +26,7 @@ export class MemoryService {
   }[] = [];
   private isProcessing = false; // guards processQueue
   private isConsolidating = false; // guards consolidateFacts (separate to avoid竞态)
+  private isBackfillingEntities = false; // guards backfillEntityLinks
   private config: any;
   private lastConsolidatedCount = 0;
   private generateTextFn: ((prompt: string) => Promise<string>) | null = null;
@@ -1478,6 +1479,8 @@ Respond ONLY with a JSON array:
    */
   private async backfillEntityLinks(): Promise<void> {
     if (!this.entityExtractor) return;
+    if (this.isBackfillingEntities) return;
+    this.isBackfillingEntities = true;
     try {
       // Facts with no entity_links at all
       const unprocessed = this.db
@@ -1573,6 +1576,8 @@ Respond ONLY with a JSON array:
       );
     } catch (e: any) {
       console.error(`⚠️ [MemoryService] Entity backfill failed: ${e.message}`);
+    } finally {
+      this.isBackfillingEntities = false;
     }
   }
 
