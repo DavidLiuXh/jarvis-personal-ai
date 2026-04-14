@@ -366,7 +366,7 @@ export class MemoryService {
         try {
           this.db
             .prepare("INSERT INTO vec_facts (id, embedding) VALUES (?, ?)")
-            .run(rowid, new Float32Array(embedding));
+            .run(Number(rowid), new Float32Array(embedding));
         } catch (_vecErr) {
           /* vec extension may be unavailable */
         }
@@ -545,7 +545,7 @@ ${factsText}
                   .prepare(
                     "INSERT INTO vec_facts (id, embedding) VALUES (?, ?)",
                   )
-                  .run(info.lastInsertRowid, new Float32Array(emb));
+                  .run(Number(info.lastInsertRowid), new Float32Array(emb));
               } catch (_) {}
             } else {
               this.db
@@ -630,7 +630,7 @@ ${factsText}
       try {
         this.db
           .prepare("INSERT INTO vec_memories (id, embedding) VALUES (?, ?)")
-          .run(info.lastInsertRowid, new Float32Array(vecValues));
+          .run(Number(info.lastInsertRowid), new Float32Array(vecValues));
       } catch (_vecErr) {}
     } catch (e) {}
   }
@@ -1174,7 +1174,7 @@ Respond ONLY with a JSON array:
         const vec = Array.from(new Float32Array(row.embedding.buffer));
         this.db
           .prepare("INSERT INTO vec_facts (id, embedding) VALUES (?, ?)")
-          .run(row.id, new Float32Array(vec));
+          .run(Number(row.id), new Float32Array(vec));
       } catch (e: any) {
         console.error(
           `⚠️ [MemoryService] vec_facts insert (existing embedding) failed for id=${row.id}: ${e.message}`,
@@ -1207,7 +1207,7 @@ Respond ONLY with a JSON array:
             .run(buf, row.id);
           this.db
             .prepare("INSERT INTO vec_facts (id, embedding) VALUES (?, ?)")
-            .run(row.id, new Float32Array(vec));
+            .run(Number(row.id), new Float32Array(vec));
         } catch (e: any) {
           console.error(
             `⚠️ [MemoryService] vec_facts insert (new embedding) failed for id=${row.id}:`,
