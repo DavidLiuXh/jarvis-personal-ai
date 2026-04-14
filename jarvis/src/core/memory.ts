@@ -1048,6 +1048,9 @@ Respond ONLY with a JSON array:
     if (!this.embedContentFn) return;
 
     // Facts with embedding blob but missing from vec_facts
+    console.error(
+      `[MemoryService] backfillVecFacts: checking for missing vec_facts entries...`,
+    );
     const missingInVec = this.db
       .prepare(
         `
@@ -1065,7 +1068,11 @@ Respond ONLY with a JSON array:
         this.db
           .prepare("INSERT INTO vec_facts (id, embedding) VALUES (?, ?)")
           .run(row.id, new Float32Array(vec));
-      } catch (_) {}
+      } catch (e: any) {
+        console.error(
+          `⚠️ [MemoryService] vec_facts insert (existing embedding) failed for id=${row.id}: ${e.message}`,
+        );
+      }
     }
 
     // Facts with no embedding at all — generate in batches of 20
@@ -1073,6 +1080,9 @@ Respond ONLY with a JSON array:
       .prepare("SELECT id, content FROM facts WHERE embedding IS NULL")
       .all() as Array<{ id: number; content: string }>;
 
+    console.error(
+      `[MemoryService] backfillVecFacts: missingInVec=${missingInVec.length}, noEmbedding=${noEmbedding.length}`,
+    );
     if (noEmbedding.length === 0) return;
 
     debugLogger.debug(
@@ -1091,7 +1101,11 @@ Respond ONLY with a JSON array:
           this.db
             .prepare("INSERT INTO vec_facts (id, embedding) VALUES (?, ?)")
             .run(row.id, new Float32Array(vec));
-        } catch (_) {}
+        } catch (e: any) {
+          console.error(
+            `⚠️ [MemoryService] vec_facts insert (new embedding) failed for id=${row.id}: ${e.message}`,
+          );
+        }
       }
     }
 
