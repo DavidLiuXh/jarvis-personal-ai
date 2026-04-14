@@ -1182,7 +1182,7 @@ Respond ONLY with a JSON array:
           if (!alreadyMarked) {
             this.db
               .prepare(
-                "INSERT INTO entity_links (subject_id, relation, object_id, fact_id, timestamp) VALUES (0, 'processed', 0, ?, ?)",
+                "INSERT INTO entity_links (subject_id, relation, object_id, fact_id, timestamp) VALUES (NULL, 'processed', NULL, ?, ?)",
               )
               .run(factId, Date.now());
           }
@@ -1539,7 +1539,7 @@ Respond ONLY with a JSON array:
                 // Insert a sentinel row so this fact is not re-processed
                 this.db
                   .prepare(
-                    "INSERT INTO entity_links (subject_id, relation, object_id, fact_id, timestamp) VALUES (0, 'processed', 0, ?, ?)",
+                    "INSERT INTO entity_links (subject_id, relation, object_id, fact_id, timestamp) VALUES (NULL, 'processed', NULL, ?, ?)",
                   )
                   .run(f.id, Date.now());
               }
@@ -1557,7 +1557,7 @@ Respond ONLY with a JSON array:
               if (!alreadyMarked) {
                 this.db
                   .prepare(
-                    "INSERT INTO entity_links (subject_id, relation, object_id, fact_id, timestamp) VALUES (0, 'processed', 0, ?, ?)",
+                    "INSERT INTO entity_links (subject_id, relation, object_id, fact_id, timestamp) VALUES (NULL, 'processed', NULL, ?, ?)",
                   )
                   .run(f.id, Date.now());
               }
