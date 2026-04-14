@@ -1449,6 +1449,110 @@ Respond ONLY with a JSON array:
     } catch (e: any) {
       console.error(`⚠️ [MemoryService] Auto-backfill failed: ${e.message}`);
     }
+    // Backfill entity links for existing facts not yet processed (async, non-blocking)
+    void this.backfillEntityLinks();
+  }
+
+  /**
+   * For facts that have no entry in entity_links, run entity extraction in batches.
+   * Skips if entityExtractor is not initialized.
+   */
+  private async backfillEntityLinks(): Promise<void> {
+    if (!this.entityExtractor) return;
+    try {
+      // Facts with no entity_links at all
+      const unprocessed = this.db
+        .prepare(
+          `
+        SELECT id, category, content FROM facts
+        WHERE id NOT IN (SELECT DISTINCT fact_id FROM entity_links WHERE fact_id IS NOT NULL)
+      `,
+        )
+        .all() as Array<{ id: number; category: string; content: string }>;
+
+      if (unprocessed.length === 0) return;
+
+      console.error(
+        `🔗 [MemoryService] Entity backfill: processing ${unprocessed.length} facts...`,
+      );
+
+      // Process in batches of 5 to avoid overloading the local model
+      const BATCH = 5;
+      let total = 0;
+      for (let i = 0; i < unprocessed.length; i += BATCH) {
+        const batch = unprocessed.slice(i, i + BATCH);
+        const links = await this.entityExtractor.extract(
+          batch.map((f) => ({ category: f.category, content: f.content })),
+        );
+        if (links.length > 0) {
+          // Associate links with the batch facts (best-effort: no per-fact mapping)
+          const insert = this.db.transaction(() => {
+            for (const link of links) {
+              const subjectId = this.getOrCreateEntity(
+                link.subject,
+                link.subject_type,
+              );
+              const objectId = this.getOrCreateEntity(
+                link.object,
+                link.object_type,
+              );
+              const exists = this.db
+                .prepare(
+                  `
+                SELECT id FROM entity_links WHERE subject_id = ? AND relation = ? AND object_id = ?
+              `,
+                )
+                .get(subjectId, link.relation, objectId);
+              if (!exists) {
+                this.db
+                  .prepare(
+                    "INSERT INTO entity_links (subject_id, relation, object_id, timestamp) VALUES (?, ?, ?, ?)",
+                  )
+                  .run(subjectId, link.relation, objectId, Date.now());
+              }
+            }
+            // Mark batch facts as processed by inserting a null-linked placeholder
+            for (const f of batch) {
+              const alreadyMarked = this.db
+                .prepare("SELECT id FROM entity_links WHERE fact_id = ?")
+                .get(f.id);
+              if (!alreadyMarked) {
+                // Insert a sentinel row so this fact is not re-processed
+                this.db
+                  .prepare(
+                    'INSERT INTO entity_links (subject_id, relation, object_id, fact_id, timestamp) VALUES (0, "processed", 0, ?, ?)',
+                  )
+                  .run(f.id, Date.now());
+              }
+            }
+          });
+          insert();
+          total += links.length;
+        } else {
+          // No links found — still mark as processed
+          const markProcessed = this.db.transaction(() => {
+            for (const f of batch) {
+              const alreadyMarked = this.db
+                .prepare("SELECT id FROM entity_links WHERE fact_id = ?")
+                .get(f.id);
+              if (!alreadyMarked) {
+                this.db
+                  .prepare(
+                    'INSERT INTO entity_links (subject_id, relation, object_id, fact_id, timestamp) VALUES (0, "processed", 0, ?, ?)',
+                  )
+                  .run(f.id, Date.now());
+              }
+            }
+          });
+          markProcessed();
+        }
+      }
+      console.error(
+        `✅ [MemoryService] Entity backfill complete: ${total} relations extracted`,
+      );
+    } catch (e: any) {
+      console.error(`⚠️ [MemoryService] Entity backfill failed: ${e.message}`);
+    }
   }
 
   /**
