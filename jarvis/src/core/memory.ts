@@ -1190,7 +1190,14 @@ Respond ONLY with a JSON array:
     console.error(
       `[MemoryService] backfillVecFacts: missingInVec=${missingInVec.length}, noEmbedding=${noEmbedding.length}`,
     );
-    if (noEmbedding.length === 0) return;
+    if (noEmbedding.length === 0) {
+      if (missingInVec.length > 0) {
+        console.error(
+          `✅ [MemoryService] Auto-backfill: synced ${missingInVec.length} facts into vec_facts`,
+        );
+      }
+      return;
+    }
 
     debugLogger.debug(
       `[MemoryService] Auto-backfill: generating embeddings for ${noEmbedding.length} facts`,
