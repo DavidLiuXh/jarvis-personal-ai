@@ -676,6 +676,10 @@ ${factsText}
         );
         // L1 batch flush after consolidation (always, regardless of l1WriteMode)
         this.flushToPhysicalLayer();
+        // Re-extract entity links for consolidated facts (async, non-blocking)
+        if (this.entityExtractor) {
+          void this.backfillEntityLinks();
+        }
       } else {
         // LLM returned text but no valid JSON array — update baseline to avoid re-triggering immediately
         this.lastConsolidatedCount = allFacts.length;
