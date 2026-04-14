@@ -791,15 +791,66 @@ Respond ONLY with a JSON array:
       if (strategy === "embedding" && this.embedContentFn) {
         try {
           const queryVec = await this.embedContentFn(query);
-          ranked = candidateFacts
-            .map((f) => {
-              if (!f.embedding) return { ...f, score: 0 };
-              const vec = Array.from(new Float32Array(f.embedding.buffer));
-              return { ...f, score: this.cosineSimilarity(queryVec, vec) };
-            })
-            .sort((a, b) => (b as any).score - (a as any).score)
-            .slice(0, cap)
-            .map(({ category, content }) => ({ category, content }));
+          const alpha = this.jarvisConfig.memory.vectorSimilarityWeight ?? 0.7;
+          const beta = this.jarvisConfig.memory.importanceWeight ?? 0.3;
+
+          // Use vec_facts SQL retrieval (fetch more than cap to allow re-ranking)
+          const fetchLimit = Math.max(cap * 3, 20);
+          const vecResults = this.db
+            .prepare(
+              `
+            SELECT f.id, f.category, f.content, f.importance, v.distance
+            FROM facts f
+            JOIN vec_facts v ON f.id = v.id
+            WHERE v.embedding MATCH ?
+              AND f.category NOT IN ('preference', 'insight')
+            ORDER BY v.distance
+            LIMIT ?
+          `,
+            )
+            .all(new Float32Array(queryVec), fetchLimit) as Array<{
+            id: number;
+            category: string;
+            content: string;
+            importance: number;
+            distance: number;
+          }>;
+
+          if (vecResults.length > 0) {
+            // distance → cosineSim: for normalized embeddings, cosine_sim = 1 - (distance² / 2)
+            // For Gemini embeddings (normalized), this is accurate enough
+            ranked = vecResults
+              .map((r) => {
+                const cosineSim = Math.max(
+                  0,
+                  1 - (r.distance * r.distance) / 2,
+                );
+                const fusedScore =
+                  alpha * cosineSim + beta * (r.importance / 10);
+                return {
+                  category: r.category,
+                  content: r.content,
+                  score: fusedScore,
+                };
+              })
+              .sort((a, b) => b.score - a.score)
+              .slice(0, cap)
+              .map(({ category, content }) => ({ category, content }));
+          } else {
+            // vec_facts empty (e.g. first run before backfill) — fall back to in-memory cosine
+            ranked = candidateFacts
+              .map((f) => {
+                if (!f.embedding) return { ...f, score: 0 };
+                const vec = Array.from(new Float32Array(f.embedding.buffer));
+                const cosineSim = this.cosineSimilarity(queryVec, vec);
+                const fusedScore =
+                  alpha * cosineSim + beta * (f.importance / 10);
+                return { ...f, score: fusedScore };
+              })
+              .sort((a, b) => (b as any).score - (a as any).score)
+              .slice(0, cap)
+              .map(({ category, content }) => ({ category, content }));
+          }
         } catch (_e) {
           ranked = this.rankByJaccard(query, candidateFacts, cap);
         }

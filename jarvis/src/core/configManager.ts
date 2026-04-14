@@ -49,6 +49,17 @@ export interface JarvisConfig {
      * Default: 'batch'.
      */
     l1WriteMode: "realtime" | "batch";
+    /**
+     * L3 weight for vector similarity in fused ranking score.
+     * fusedScore = vectorSimilarityWeight * cosineSim + importanceWeight * (importance / 10)
+     * Default: 0.7
+     */
+    vectorSimilarityWeight: number;
+    /**
+     * L3 weight for fact importance in fused ranking score.
+     * Default: 0.3
+     */
+    importanceWeight: number;
   };
   security: {
     jailbreak: boolean;
@@ -127,6 +138,8 @@ export class ConfigManager {
         factRelevanceLimit: 5,
         prewarmLimit: 3,
         l1WriteMode: "batch" as const,
+        vectorSimilarityWeight: 0.7,
+        importanceWeight: 0.3,
       },
       security: {
         jailbreak: false,
