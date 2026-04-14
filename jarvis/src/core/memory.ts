@@ -1254,6 +1254,9 @@ Respond ONLY with a JSON array:
         )
         .all(idsJson, idsJson, maxExpand) as Array<{ fact_id: number }>;
 
+      console.error(
+        `🔗 [expandViaEntityLinks] rankedIds=${JSON.stringify(rankedIds)}, linkedFactIds=${JSON.stringify(linkedFactIds.map((r) => r.fact_id))}`,
+      );
       return linkedFactIds
         .map((r) => factById.get(r.fact_id))
         .filter((f): f is NonNullable<typeof f> => f !== undefined)
