@@ -972,6 +972,7 @@ Respond ONLY with a JSON array:
         this.jarvisConfig.memory.factRelevanceStrategy ?? "jaccard";
 
       let ranked: Array<{ category: string; content: string }>;
+      let rankedIdsForGraph: number[] = [];
 
       if (strategy === "embedding" && this.embedContentFn) {
         try {
@@ -1066,6 +1067,7 @@ Respond ONLY with a JSON array:
 
             // Async update access stats for ranked facts (non-blocking)
             const rankedIds = scoredRows.map((r) => r.id);
+            rankedIdsForGraph = rankedIds;
             setImmediate(() => this.updateAccessStats(rankedIds, nowMs));
           } else {
             // vec_facts empty — fall back to in-memory cosine using already-loaded embeddings
@@ -1092,6 +1094,7 @@ Respond ONLY with a JSON array:
               content,
             }));
             const fallbackIds = scoredFallback.map((f) => f.id);
+            rankedIdsForGraph = fallbackIds;
             setImmediate(() => this.updateAccessStats(fallbackIds, nowMs));
           }
         } catch (_e) {
@@ -1113,16 +1116,8 @@ Respond ONLY with a JSON array:
         `🧠 [searchFacts] ranked(${ranked.length}): ${ranked.map((f) => `[${f.category}] ${f.content.slice(0, 50)}`).join(" | ")}`,
       );
 
-      // Graph expansion: find related facts via entity_links (after logging, non-blocking)
-      const rankedIds = ranked
-        .map((f) => {
-          for (const [id, fact] of factById) {
-            if (fact.content === f.content) return id;
-          }
-          return -1;
-        })
-        .filter((id) => id !== -1);
-      const expanded = this.expandViaEntityLinks(rankedIds, factById);
+      // Graph expansion: use ids collected during ranking (no content reverse-lookup needed)
+      const expanded = this.expandViaEntityLinks(rankedIdsForGraph, factById);
       if (expanded.length > 0) {
         console.error(
           `🔗 [searchFacts] expanded(${expanded.length}): ${expanded.map((f) => `[${f.category}] ${f.content.slice(0, 50)}`).join(" | ")}`,
