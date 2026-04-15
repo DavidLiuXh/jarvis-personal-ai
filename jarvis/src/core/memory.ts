@@ -78,10 +78,44 @@ export class MemoryService {
         subject_id INTEGER REFERENCES entities(id),
         relation   TEXT,
         object_id  INTEGER REFERENCES entities(id),
-        fact_id    INTEGER REFERENCES facts(id),
+        fact_id    INTEGER REFERENCES facts(id) ON DELETE CASCADE,
         timestamp  INTEGER
       );
     `);
+
+    // Migration: rebuild entity_links with ON DELETE CASCADE on fact_id
+    // This prevents FOREIGN KEY constraint failures when facts are deleted
+    try {
+      const tableInfo = this.db
+        .prepare(
+          `SELECT sql FROM sqlite_master WHERE type='table' AND name='entity_links'`,
+        )
+        .get() as { sql: string } | undefined;
+      if (tableInfo && !tableInfo.sql.includes("ON DELETE CASCADE")) {
+        this.db.exec(`
+          PRAGMA foreign_keys = OFF;
+          CREATE TABLE entity_links_new (
+            id         INTEGER PRIMARY KEY AUTOINCREMENT,
+            subject_id INTEGER REFERENCES entities(id),
+            relation   TEXT,
+            object_id  INTEGER REFERENCES entities(id),
+            fact_id    INTEGER REFERENCES facts(id) ON DELETE CASCADE,
+            timestamp  INTEGER
+          );
+          INSERT INTO entity_links_new SELECT * FROM entity_links;
+          DROP TABLE entity_links;
+          ALTER TABLE entity_links_new RENAME TO entity_links;
+          PRAGMA foreign_keys = ON;
+        `);
+        debugLogger.debug(
+          "[MemoryService] entity_links migrated to ON DELETE CASCADE",
+        );
+      }
+    } catch (e: any) {
+      console.error(
+        `⚠️ [MemoryService] entity_links migration failed: ${e.message}`,
+      );
+    }
 
     // FTS5 virtual table for BM25 keyword search
     try {
@@ -953,6 +987,14 @@ Respond ONLY with a JSON array:
 
       // Atomically replace all old insights with new ones
       const replaceInsights = this.db.transaction(() => {
+        // Clear dependent tables first to avoid FK constraint failures
+        try {
+          this.db
+            .prepare(
+              "DELETE FROM entity_links WHERE fact_id IN (SELECT id FROM facts WHERE category = 'insight')",
+            )
+            .run();
+        } catch (_) {}
         this.db.prepare("DELETE FROM facts WHERE category = 'insight'").run();
         try {
           this.db
