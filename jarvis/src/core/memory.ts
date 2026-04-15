@@ -1085,15 +1085,15 @@ Respond ONLY with a JSON array:
 
       let ranked: Array<{ category: string; content: string }>;
       let rankedIdsForGraph: number[] = [];
+      // Build id → fact map from ALL facts so expandViaEntityLinks can resolve
+      // any linked fact_id including insight/preference categories
+      const factById = new Map(allFacts.map((f) => [f.id, f]));
 
       if (strategy === "embedding" && this.embedContentFn) {
         try {
           const queryVec = await this.embedContentFn(query);
           const alpha = this.jarvisConfig.memory.vectorSimilarityWeight ?? 0.7;
           const beta = this.jarvisConfig.memory.importanceWeight ?? 0.3;
-
-          // Build id → fact map from the already-loaded memory (no second DB read)
-          const factById = new Map(candidateFacts.map((f) => [f.id, f]));
 
           // vec_facts: only fetch id + distance (no JOIN needed)
           const fetchLimit = Math.max(cap * 3, 20);
@@ -1209,7 +1209,10 @@ Respond ONLY with a JSON array:
             rankedIdsForGraph = fallbackIds;
             setImmediate(() => this.updateAccessStats(fallbackIds, nowMs));
           }
-        } catch (_e) {
+        } catch (_e: any) {
+          console.error(
+            `⚠️ [searchFacts] embedding strategy failed, falling back to jaccard: ${_e?.message}`,
+          );
           ranked = this.rankByJaccard(query, candidateFacts, cap);
         }
       } else {
@@ -1228,15 +1231,24 @@ Respond ONLY with a JSON array:
         `🧠 [searchFacts] ranked(${ranked.length}): ${ranked.map((f) => `[${f.category}] ${f.content.slice(0, 50)}`).join(" | ")}`,
       );
 
-      // Graph expansion: use ids collected during ranking (no content reverse-lookup needed)
-      const expanded = this.expandViaEntityLinks(rankedIdsForGraph, factById);
+      // Graph expansion: use ids collected during ranking
+      // Filter out facts already in alwaysOut or ranked to avoid duplicates
+      const alreadyIncluded = new Set([
+        ...alwaysOut.map((f) => f.content),
+        ...ranked.map((f) => f.content),
+      ]);
+      const expanded = this.expandViaEntityLinks(
+        rankedIdsForGraph,
+        factById,
+      ).filter((f) => !alreadyIncluded.has(f.content));
       if (expanded.length > 0) {
         console.error(
           `🔗 [searchFacts] expanded(${expanded.length}): ${expanded.map((f) => `[${f.category}] ${f.content.slice(0, 50)}`).join(" | ")}`,
         );
       }
       return [...alwaysOut, ...ranked, ...expanded];
-    } catch (e) {
+    } catch (e: any) {
+      console.error(`⚠️ [searchFacts] outer catch: ${e?.message}`);
       return this.getStructuredFacts();
     }
   }
@@ -1366,12 +1378,20 @@ Respond ONLY with a JSON array:
         .all(idsJson, idsJson, maxExpand) as Array<{ fact_id: number }>;
 
       console.error(
-        `🔗 [expandViaEntityLinks] rankedIds=${JSON.stringify(rankedIds)}, linkedFactIds=${JSON.stringify(linkedFactIds.map((r) => r.fact_id))}`,
+        `🔗 [expandViaEntityLinks] rankedIds=${JSON.stringify(rankedIds)}, linkedFactIds=${JSON.stringify(linkedFactIds.map((r) => r.fact_id))}, factByIdSize=${factById.size}`,
       );
-      return linkedFactIds
-        .map((r) => factById.get(r.fact_id))
+      const expanded = linkedFactIds
+        .map((r) => {
+          const f = factById.get(r.fact_id);
+          if (!f)
+            console.error(
+              `🔗 [expandViaEntityLinks] fact_id=${r.fact_id} not in factById`,
+            );
+          return f;
+        })
         .filter((f): f is NonNullable<typeof f> => f !== undefined)
         .map(({ category, content }) => ({ category, content }));
+      return expanded;
     } catch (e: any) {
       console.error(
         `⚠️ [MemoryService] expandViaEntityLinks failed: ${e.message}`,
