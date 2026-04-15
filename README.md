@@ -101,6 +101,17 @@ Open **[http://localhost:3000](http://localhost:3000)** to access the web UI.
 
 ---
 
+## ⚙️ Configuration
+
+Jarvis is configured via `~/.gemini-jarvis/config.json`. The file is created automatically on first run with sensible defaults.
+
+For a full reference of all available options with descriptions, see:
+
+- [Configuration Reference (English)](docs/config-reference.md)
+- [配置参考文档（中文）](docs/config-reference_cn.md)
+
+---
+
 ## 🔗 Connecting Channels
 
 ### WeChat

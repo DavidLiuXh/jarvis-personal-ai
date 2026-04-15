@@ -86,6 +86,17 @@ npm install
 
 ---
 
+## ⚙️ 配置
+
+Jarvis 通过 `~/.gemini-jarvis/config.json` 进行配置，首次启动时会自动创建并填入默认值。
+
+完整配置项说明请参阅：
+
+- [配置参考文档（中文）](docs/config-reference_cn.md)
+- [Configuration Reference (English)](docs/config-reference.md)
+
+---
+
 ## 🔗 连接通讯渠道
 
 ### 微信

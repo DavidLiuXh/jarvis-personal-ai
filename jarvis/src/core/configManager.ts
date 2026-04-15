@@ -48,6 +48,12 @@ export interface JarvisConfig {
     model?: string;
     /** Request timeout in milliseconds for Ollama calls. Default: 30000 (30s). */
     timeoutMs?: number;
+    /**
+     * Number of facts per batch during backfill entity extraction.
+     * Smaller values improve per-fact success rate but increase total calls.
+     * Default: 1 (one fact per call for best accuracy).
+     */
+    batchSize?: number;
   };
   network: {
     /** Max retry attempts for network errors (fetch failed, ECONNRESET, etc.). Default: 3. */
@@ -175,7 +181,7 @@ export class ConfigManager {
         provider: "google" as const,
       },
       entityExtraction: {
-        enabled: false,
+        enabled: true,
         provider: "gemini" as const,
       },
       network: {
@@ -189,7 +195,7 @@ export class ConfigManager {
         ingestionDelayMs: 800,
         retrievalLimit: 5,
         consolidationThreshold: 3,
-        dedupStrategy: "jaccard" as const,
+        dedupStrategy: "embedding" as const,
         factRelevanceStrategy: "jaccard" as const,
         factRelevanceLimit: 5,
         prewarmLimit: 3,
@@ -218,7 +224,7 @@ export class ConfigManager {
         useGlobalSession: false,
         globalSessionId: "jarvis-global-master",
         resumeOnStart: true,
-        recentTurnsOnResume: 20,
+        recentTurnsOnResume: 3,
       },
     };
 
