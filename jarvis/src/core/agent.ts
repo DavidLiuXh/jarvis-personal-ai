@@ -154,9 +154,8 @@ export class JarvisAgent extends EventEmitter {
         defaultInstruction + "\n" + protocol + prewarmSection,
       );
 
-    const history = this.client.getChat().getHistory();
     console.error(
-      `🔄 [Jarvis] System Prompt Refreshed. History Size: ${history.length} turns. Facts injected: ${facts.length}. Prewarmed memories: ${prewarmLimit > 0 ? (prewarmSection ? prewarmSection.split("[Past ").length - 1 : 0) : "disabled"}.`,
+      `🔄 [Jarvis] System Prompt Refreshed. Facts injected: ${facts.length}. Prewarmed memories: ${prewarmLimit > 0 ? (prewarmSection ? prewarmSection.split("[Past ").length - 1 : 0) : "disabled"}.`,
     );
   }
 
