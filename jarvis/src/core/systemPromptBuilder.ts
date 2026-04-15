@@ -165,10 +165,13 @@ export class SystemPromptBuilder {
   ): string {
     const identityFacts = facts.filter((f) => f.category === "identity");
     const preferenceFacts = facts.filter((f) => f.category === "preference");
-    const contextFacts = facts.filter((f) => f.category !== "preference");
+    const nonIdentityFacts = facts.filter(
+      (f) => f.category !== "preference" && f.category !== "identity",
+    );
 
     const derivedStyle = deriveStyleFromIdentity(identityFacts);
 
+    // Style constraints (moved to end of framework for recency effect)
     let styleSection = "";
     if (derivedStyle || preferenceFacts.length > 0) {
       const lines: string[] = [];
@@ -185,17 +188,26 @@ export class SystemPromptBuilder {
       styleSection = `\n<style_constraints>\n${lines.join("\n")}\n</style_constraints>`;
     }
 
+    // persistent_context: identity facts first (primacy), then others
+    const identityLines = identityFacts
+      .map((f) => `- [IDENTITY]: ${f.content}`)
+      .join("\n");
+    const otherLines = nonIdentityFacts
+      .map((f) => `- [${f.category.toUpperCase()}]: ${f.content}`)
+      .join("\n");
     const contextLines =
-      contextFacts.length > 0
-        ? contextFacts
-            .map((f) => `- [${f.category.toUpperCase()}]: ${f.content}`)
-            .join("\n")
-        : "(No persistent facts)";
+      identityFacts.length === 0 && nonIdentityFacts.length === 0
+        ? "(No persistent facts)"
+        : [identityLines, otherLines].filter(Boolean).join("\n");
 
-    const memoryContext = `\n<persistent_context>\n${contextLines}\n</persistent_context>\n\n<memory_status>\n[STRICT]: LONG-TERM LOGS NOT LOADED.\nIf the user refers to past conversations, decisions, or "what we did before", use 'recall_memory'. DO NOT HALLUCINATE PAST EVENTS.\n</memory_status>`;
+    const memoryContext =
+      `\n<memory_status>\n[CRITICAL_LIMITATION]: Long-term memory is currently offline. ` +
+      `Do not reference past events unless they appear in <persistent_context> or <relevant_past_conversations>. ` +
+      `If the user refers to past conversations or decisions, call 'recall_memory' first. DO NOT HALLUCINATE.\n</memory_status>` +
+      `\n\n<persistent_context>\n${contextLines}\n</persistent_context>`;
 
     const protocols = selectProtocols(userPrompt);
-    return this.framework(memoryContext + styleSection, protocols, skills);
+    return this.framework(memoryContext, styleSection, protocols, skills);
   }
 
   build(coreFacts: string[]): string {
@@ -204,9 +216,12 @@ export class SystemPromptBuilder {
         ? coreFacts.map((f) => `- ${f}`).join("\n")
         : "(No persistent facts)";
 
-    const memoryContext = `\n<persistent_context>\n${contextLines}\n</persistent_context>\n\n<memory_status>\n[STRICT]: LONG-TERM LOGS NOT LOADED.\nIf the user refers to past conversations, decisions, or "what we did before", use 'recall_memory'. DO NOT HALLUCINATE PAST EVENTS.\n</memory_status>`;
+    const memoryContext =
+      `\n<memory_status>\n[CRITICAL_LIMITATION]: Long-term memory is currently offline. ` +
+      `If the user refers to past conversations or decisions, call 'recall_memory' first. DO NOT HALLUCINATE.\n</memory_status>` +
+      `\n\n<persistent_context>\n${contextLines}\n</persistent_context>`;
 
-    return this.framework(memoryContext, {
+    return this.framework(memoryContext, "", {
       pushToChannel: true,
       taskManagement: true,
       codeModification: true,
@@ -215,6 +230,7 @@ export class SystemPromptBuilder {
 
   private framework(
     memoryContext: string,
+    styleSection: string,
     protocols: ProtocolSet,
     skills: SkillInfo[] = [],
   ): string {
@@ -246,23 +262,16 @@ export class SystemPromptBuilder {
    - Jarvis has its own internal task scheduler stored in ~/.gemini-jarvis/tasks.json.
    - task_list/task_add/task_update/task_toggle/task_delete/task_run are REGISTERED FUNCTION CALL TOOLS, not shell commands. NEVER run them via run_shell_command.
    - BAD: run_shell_command("task_list") ← ABSOLUTELY FORBIDDEN
-   - BAD: run_shell_command("task_delete ...") ← ABSOLUTELY FORBIDDEN
    - GOOD: Call the task_list function tool directly ← CORRECT
    - TRIGGER: When user says "每天X点", "每周X", "定时", "scheduled", "automatically at X time" → call task_add function tool IMMEDIATELY.
    - TRIGGER: When user asks about/deletes/updates tasks → call task_list/task_delete/task_update function tools directly.
-   - FORBIDDEN: run_shell_command with crontab, launchctl, launchd, task_list, task_add, or any task_* name.
-   - BAD: User says "每天晚上8点查询GitHub Trending" → writing code/scripts/launchd ← WRONG
-   - GOOD: User says "每天晚上8点查询GitHub Trending" → task_add(cron="每天晚上8点", prompt="使用google_web_search查询GitHub Trending今日热门并汇总") ← CORRECT
-   - NOTE: The prompt in task_add is executed by Jarvis at runtime using available tools — no code needed.`);
+   - FORBIDDEN: run_shell_command with crontab, launchctl, launchd, or any task_* name.
+   - GOOD: User says "每天晚上8点查询GitHub Trending" → task_add(cron="每天晚上8点", prompt="...") ← CORRECT`);
     }
 
     sections.push(`${n++}. **TASK_DECOMPOSITION**:
    - For complex queries, decompose into functional blocks before executing.
    - Trigger specialized modules (codebase_investigator, generalist) concurrently when applicable.`);
-
-    sections.push(`${n++}. **ACTIVE_RECALL (MANDATORY)**:
-   - Your context window is fresh on each session.
-   - When the user refers to past interactions, ALWAYS call 'recall_memory' first. DO NOT GUESS.`);
 
     if (skills.length > 0) {
       sections.push(`${n++}. **SKILL_ACTIVATION (USE WHEN APPLICABLE)**:
@@ -273,23 +282,18 @@ ${skills.map((s) => `- ${s.name}: ${s.description}`).join("\n")}
 </available_skills>`);
     }
 
+    // New order: Identity(primacy) → Context → Protocols → Style/Formatting(recency)
     return `# JARVIS OPERATIONAL FRAMEWORK v4.0
 
-## I. CORE PROTOCOLS (MANDATORY)
-
-${sections.join("\n\n")}
-
-## II. EXECUTION CONTEXT
+## I. EXECUTION CONTEXT
 ${memoryContext}
 
-## III. ROLE & TONE
+## II. OPERATIONAL PROTOCOLS
+${sections.join("\n\n")}
+
+## III. OUTPUT CONSTRAINTS
 - You are JARVIS: deterministic, precise, and system-native.
 - Skip conversational fillers. Use high-density information.
-- Adapt style as per the style constraints section above if present.
-
-## IV. RESPONSE FORMATTING
-- Use Markdown for structure.
-- For financial/data analysis, use tables for comparison.
-- For code, specify language and file path.`.trim();
+- Use Markdown for structure. For financial/data analysis, use tables. For code, specify language and file path.${styleSection}`.trim();
   }
 }

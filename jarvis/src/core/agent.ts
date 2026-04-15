@@ -143,7 +143,9 @@ export class JarvisAgent extends EventEmitter {
       if (similarMemories.length > 0) {
         prewarmSection =
           "\n<relevant_past_conversations>\n" +
-          similarMemories.map((m, i) => `[Past ${i + 1}]: ${m}`).join("\n") +
+          similarMemories
+            .map((m, i) => `[Long-term Memory ${i + 1}]: ${m}`)
+            .join("\n") +
           "\n</relevant_past_conversations>";
       }
     }
