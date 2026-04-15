@@ -78,10 +78,44 @@ export class MemoryService {
         subject_id INTEGER REFERENCES entities(id),
         relation   TEXT,
         object_id  INTEGER REFERENCES entities(id),
-        fact_id    INTEGER REFERENCES facts(id),
+        fact_id    INTEGER REFERENCES facts(id) ON DELETE CASCADE,
         timestamp  INTEGER
       );
     `);
+
+    // Migration: rebuild entity_links with ON DELETE CASCADE on fact_id
+    // This prevents FOREIGN KEY constraint failures when facts are deleted
+    try {
+      const tableInfo = this.db
+        .prepare(
+          `SELECT sql FROM sqlite_master WHERE type='table' AND name='entity_links'`,
+        )
+        .get() as { sql: string } | undefined;
+      if (tableInfo && !tableInfo.sql.includes("ON DELETE CASCADE")) {
+        this.db.exec(`
+          PRAGMA foreign_keys = OFF;
+          CREATE TABLE entity_links_new (
+            id         INTEGER PRIMARY KEY AUTOINCREMENT,
+            subject_id INTEGER REFERENCES entities(id),
+            relation   TEXT,
+            object_id  INTEGER REFERENCES entities(id),
+            fact_id    INTEGER REFERENCES facts(id) ON DELETE CASCADE,
+            timestamp  INTEGER
+          );
+          INSERT INTO entity_links_new SELECT * FROM entity_links;
+          DROP TABLE entity_links;
+          ALTER TABLE entity_links_new RENAME TO entity_links;
+          PRAGMA foreign_keys = ON;
+        `);
+        debugLogger.debug(
+          "[MemoryService] entity_links migrated to ON DELETE CASCADE",
+        );
+      }
+    } catch (e: any) {
+      console.error(
+        `⚠️ [MemoryService] entity_links migration failed: ${e.message}`,
+      );
+    }
 
     // FTS5 virtual table for BM25 keyword search
     try {
@@ -742,7 +776,7 @@ ${factsText}
         // LLM returned text but no valid JSON array — update baseline to avoid re-triggering immediately
         this.lastConsolidatedCount = allFacts.length;
         console.error(
-          "⚠️ [Jarvis Reflection] No valid JSON array in response. Skipping consolidation.",
+          `⚠️ [Jarvis Reflection] No valid JSON array in consolidation response. Skipping. Preview: ${responseText.slice(0, 200)}`,
         );
       }
     } catch (e: any) {
@@ -878,7 +912,16 @@ ${factsText}
         importance: number;
       }>;
 
-      if (nonInsightFacts.length === 0) return;
+      if (nonInsightFacts.length === 0) {
+        console.error(
+          `💡 [MemoryService] Reflection skipped: no non-insight facts found.`,
+        );
+        return;
+      }
+
+      console.error(
+        `💡 [MemoryService] Reflection started: ${nonInsightFacts.length} facts → generating insights...`,
+      );
 
       const existingInsights = this.db
         .prepare(
@@ -919,20 +962,39 @@ Respond ONLY with a JSON array:
 
       const raw = await generateText(prompt);
       const match = raw.match(/\[[\s\S]*\]/);
-      if (!match) return;
+      if (!match) {
+        console.error(
+          `⚠️ [MemoryService] Reflection failed: no JSON array in model response. Response preview: ${raw.slice(0, 200)}`,
+        );
+        return;
+      }
 
       const newInsights = JSON.parse(match[0]) as Array<{
         category: string;
         content: string;
         importance: number;
       }>;
-      const validInsights = newInsights.filter(
-        (i) => i.category === "insight" && i.content,
-      );
-      if (validInsights.length === 0) return;
+      // Force category to 'insight' — small models often ignore the category constraint
+      const validInsights = newInsights
+        .filter((i) => i.content)
+        .map((i) => ({ ...i, category: "insight" }));
+      if (validInsights.length === 0) {
+        console.error(
+          `⚠️ [MemoryService] Reflection failed: model returned ${newInsights.length} items but none had valid content.`,
+        );
+        return;
+      }
 
       // Atomically replace all old insights with new ones
       const replaceInsights = this.db.transaction(() => {
+        // Clear dependent tables first to avoid FK constraint failures
+        try {
+          this.db
+            .prepare(
+              "DELETE FROM entity_links WHERE fact_id IN (SELECT id FROM facts WHERE category = 'insight')",
+            )
+            .run();
+        } catch (_) {}
         this.db.prepare("DELETE FROM facts WHERE category = 'insight'").run();
         try {
           this.db

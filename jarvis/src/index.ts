@@ -147,13 +147,20 @@ class JarvisServer {
         jarvisConfig.session?.globalSessionId ?? "jarvis-global",
       );
       const agentAny = agent as any;
-      if (!agentAny.client?.config?.getContentGenerator) {
+      const reflectionCfg = jarvisConfig.reflection;
+      const useOllama = reflectionCfg?.provider === "ollama";
+
+      if (!useOllama && !agentAny.client?.config?.getContentGenerator) {
         console.error(
-          "⚠️ [Jarvis] Reflect: agent not initialized yet, skipping.",
+          "⚠️ [Jarvis] Reflect: agent not initialized and Ollama not configured, skipping.",
         );
         return;
       }
+
       const cliGenerateText = async (prompt: string): Promise<string> => {
+        if (!agentAny.client?.config?.getContentGenerator) {
+          throw new Error("ContentGenerator not available");
+        }
         const generator = agentAny.client.config.getContentGenerator();
         const { LlmRole } = await import(
           "../../gemini-cli/packages/core/src/index.js"
