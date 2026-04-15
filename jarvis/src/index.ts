@@ -148,9 +148,7 @@ class JarvisServer {
       );
       const agentAny = agent as any;
       const reflectionCfg = jarvisConfig.reflection;
-      const useOllama = reflectionCfg?.provider === 'ollama';
-
-      console.error(`🔮 [Jarvis] reflectFn: provider=${reflectionCfg?.provider ?? 'gemini'}, hasContentGenerator=${!!agentAny.client?.config?.getContentGenerator}`);
+      const useOllama = reflectionCfg?.provider === "ollama";
 
       if (!useOllama && !agentAny.client?.config?.getContentGenerator) {
         console.error(
@@ -161,7 +159,7 @@ class JarvisServer {
 
       const cliGenerateText = async (prompt: string): Promise<string> => {
         if (!agentAny.client?.config?.getContentGenerator) {
-          throw new Error('ContentGenerator not available');
+          throw new Error("ContentGenerator not available");
         }
         const generator = agentAny.client.config.getContentGenerator();
         const { LlmRole } = await import(

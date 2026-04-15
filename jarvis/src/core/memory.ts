@@ -867,7 +867,6 @@ ${factsText}
   public async reflect(
     generateText: (prompt: string) => Promise<string>,
   ): Promise<void> {
-    console.error(`🔮 [MemoryService] reflect() called`);
     try {
       const nonInsightFacts = this.db
         .prepare(
@@ -879,7 +878,6 @@ ${factsText}
         importance: number;
       }>;
 
-      console.error(`🔮 [MemoryService] reflect(): nonInsightFacts=${nonInsightFacts.length}`);
       if (nonInsightFacts.length === 0) return;
 
       const existingInsights = this.db
@@ -919,23 +917,19 @@ Respond ONLY with a JSON array:
 [{"category": "insight", "content": "...", "importance": 1-10}]
 `.trim();
 
-      console.error(`🔮 [MemoryService] reflect(): calling generateText...`);
       const raw = await generateText(prompt);
-      console.error(`🔮 [MemoryService] reflect(): raw response length=${raw.length}, preview=${raw.slice(0, 100)}`);
       const match = raw.match(/\[[\s\S]*\]/);
-      if (!match) {
-        console.error(`🔮 [MemoryService] reflect(): no JSON array found in response`);
-        return;
-      }
+      if (!match) return;
 
       const newInsights = JSON.parse(match[0]) as Array<{
         category: string;
         content: string;
         importance: number;
       }>;
-      const validInsights = newInsights.filter(
-        (i) => i.category === "insight" && i.content,
-      );
+      // Force category to 'insight' — small models often ignore the category constraint
+      const validInsights = newInsights
+        .filter((i) => i.content)
+        .map((i) => ({ ...i, category: "insight" }));
       if (validInsights.length === 0) return;
 
       // Atomically replace all old insights with new ones
