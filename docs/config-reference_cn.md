@@ -63,8 +63,8 @@
   // 对每条请求进行复杂度打分（1-100），自动选择 proModel 或 flashModel。
   // ─────────────────────────────────────────────
   "routing": {
-    // 启用本地模型路由。默认：false
-    "enabled": false,
+    // 启用本地模型路由。默认：true（设置 model 后生效）
+    "enabled": true,
 
     // Ollama 服务地址。默认："http://localhost:11434"
     "baseUrl": "http://localhost:11434",
@@ -94,9 +94,9 @@
   // Reflection — consolidateFacts 和夜间反思任务使用的模型
   // ─────────────────────────────────────────────
   "reflection": {
-    // "gemini"：使用现有 CLI 认证 / generateTextFn（默认）
-    // "ollama"：使用本地 Ollama 模型（离线可用，Code Assist 模式推荐）
-    "provider": "gemini",
+    // "gemini"：使用现有 CLI 认证 / generateTextFn
+    // "ollama"：使用本地 Ollama 模型（默认，离线可用）
+    "provider": "ollama",
 
     // Ollama 服务地址。仅 provider = "ollama" 时生效。
     "baseUrl": "http://localhost:11434",
