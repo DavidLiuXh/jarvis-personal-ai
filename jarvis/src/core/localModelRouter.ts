@@ -5,26 +5,31 @@
  */
 
 const CLASSIFIER_SYSTEM_PROMPT = `
-You are a specialized Task Routing AI. Your sole function is to analyze the user's request and assign a Complexity Score from 1 to 100.
+You are a task complexity analyst. Evaluate the user's request on two dimensions, then compute a weighted final score.
 
-# Complexity Rubric
-1-20: Trivial / Direct
-  - Simple questions, greetings, read-only lookups, single-step operations.
+# Dimension 1: Knowledge Depth (1-100)
+How much theoretical knowledge, domain expertise, or abstract reasoning is required?
 
-21-50: Standard / Routine
-  - Single-topic analysis, simple summaries, standard Q&A with moderate context.
+1-25 (Low): Basic fact retrieval, simple summaries, applying known formulas.
+26-50 (Medium): Integrating multiple concepts, simple logical reasoning, standard workflows.
+51-75 (High): Deep domain expertise, cross-disciplinary analysis, creative problem-solving.
+76-100 (Very High): Cross-domain knowledge fusion, highly abstract thinking, innovative system design.
 
-51-80: High Complexity / Analytical
-  - Multi-topic reasoning, financial analysis, debugging unknown issues,
-    feature implementation, understanding broader context.
+# Dimension 2: Operational Difficulty (1-100)
+How complex are the actual steps, tool usage, or execution required?
 
-81-100: Extreme / Strategic
-  - Architecture design, deep reasoning across many facts, highly ambiguous
-    requests, tasks requiring novel synthesis or strategic planning.
+1-25 (Low): Reading, copying, simple input — no multi-step execution needed.
+26-50 (Medium): Multi-step operations, using standard tools, following a defined process.
+51-75 (High): Skilled tool usage, process design, coordinating multiple components.
+76-100 (Very High): Algorithm design, system debugging, complex data processing, architectural decisions.
+
+# Final Score
+complexity_score = knowledge_score * 0.6 + operation_score * 0.4
+Round to the nearest integer.
 
 # Output Format
-Respond ONLY with a JSON object (no markdown, no explanation):
-{"complexity_reasoning": "<brief reason>", "complexity_score": <integer 1-100>}
+Respond ONLY with a JSON object (no markdown, no extra text):
+{"knowledge_score": <1-100>, "operation_score": <1-100>, "complexity_score": <1-100>, "complexity_reasoning": "<brief reason>"}
 `.trim();
 
 export type RoutingResult = {
@@ -129,6 +134,8 @@ export class LocalModelRouter {
 
       const parsed = JSON.parse(match[0]) as {
         complexity_score?: number;
+        knowledge_score?: number;
+        operation_score?: number;
         complexity_reasoning?: string;
       };
 
@@ -137,9 +144,16 @@ export class LocalModelRouter {
         throw new Error(`Invalid score: ${parsed.complexity_score}`);
       }
 
+      const knowledgeScore = parsed.knowledge_score ?? null;
+      const operationScore = parsed.operation_score ?? null;
+      const breakdown =
+        knowledgeScore !== null && operationScore !== null
+          ? ` [knowledge=${knowledgeScore}, operation=${operationScore}]`
+          : "";
+
       return {
         score,
-        reason: parsed.complexity_reasoning ?? "(no reason provided)",
+        reason: `${parsed.complexity_reasoning ?? "(no reason)"}${breakdown}`,
       };
     } finally {
       clearTimeout(timeout);
