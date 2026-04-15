@@ -48,6 +48,12 @@ export interface JarvisConfig {
     model?: string;
     /** Request timeout in milliseconds for Ollama calls. Default: 30000 (30s). */
     timeoutMs?: number;
+    /**
+     * Number of facts per batch during backfill entity extraction.
+     * Smaller values improve per-fact success rate but increase total calls.
+     * Default: 1 (one fact per call for best accuracy).
+     */
+    batchSize?: number;
   };
   network: {
     /** Max retry attempts for network errors (fetch failed, ECONNRESET, etc.). Default: 3. */

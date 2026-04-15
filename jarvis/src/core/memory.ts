@@ -1520,8 +1520,11 @@ Respond ONLY with a JSON array:
         `🔗 [MemoryService] Entity backfill: processing ${unprocessed.length} facts...`,
       );
 
-      // Process in batches of 5 to avoid overloading the local model
-      const BATCH = 5;
+      // Batch size from config (default 1 for best per-fact accuracy with small models)
+      const BATCH = Math.max(
+        1,
+        this.jarvisConfig.entityExtraction?.batchSize ?? 1,
+      );
       let total = 0;
       for (let i = 0; i < unprocessed.length; i += BATCH) {
         // Yield to event loop between batches so main thread stays responsive
