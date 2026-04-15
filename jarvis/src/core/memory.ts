@@ -919,9 +919,14 @@ Respond ONLY with a JSON array:
 [{"category": "insight", "content": "...", "importance": 1-10}]
 `.trim();
 
+      console.error(`🔮 [MemoryService] reflect(): calling generateText...`);
       const raw = await generateText(prompt);
+      console.error(`🔮 [MemoryService] reflect(): raw response length=${raw.length}, preview=${raw.slice(0, 100)}`);
       const match = raw.match(/\[[\s\S]*\]/);
-      if (!match) return;
+      if (!match) {
+        console.error(`🔮 [MemoryService] reflect(): no JSON array found in response`);
+        return;
+      }
 
       const newInsights = JSON.parse(match[0]) as Array<{
         category: string;
