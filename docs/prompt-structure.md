@@ -32,7 +32,7 @@
 
 ---
 
-## 二、精简前：使用 getCoreSystemPrompt()
+## 二、精简前：使用 getCoreSystemPrompt()（已废弃）
 
 **代码**（`agent.ts`）：
 
@@ -54,77 +54,57 @@ const defaultInstruction = getCoreSystemPrompt(
 │                                                             │
 │  # Core Mandates                                            │
 │    ## Security & System Integrity                           │
-│       - 凭证保护、不自动 commit                              │
-│    ## Context Efficiency                                    │
-│       - 详细搜索/读取策略 + <guidelines> + <examples>       │
-│    ## Engineering Standards                                 │
-│       - 代码规范、类型安全、测试要求、Directive/Inquiry 区分  │
-│       - 不得禁用 linter、不得随意 revert 等                  │
+│    ## Context Efficiency（详细规则 + examples）              │
+│    ## Engineering Standards（代码规范、测试要求等）           │
 │                                                             │
 │  # Available Sub-Agents                                     │
-│    - 列出所有可用子 Agent 及调用规则                         │
-│                                                             │
 │  # Agent Skills                                             │
-│    - Skill 列表及激活规则                                    │
-│                                                             │
-│  # Primary Workflows                                        │
-│    - 工具使用工作流（shell/read/edit/grep 详细规则）          │
-│    - 代码编辑工作流                                          │
-│    - Plan Mode 规则                                         │
-│                                                             │
-│  # Operational Guidelines                                   │
-│    ## Tone & Style                                          │
-│    ## Security and Safety Rules（Shell 命令解释）            │
-│    ## Tool Usage（并行、文件编辑冲突、确认协议）              │
-│    ## Interaction Details                                   │
-│                                                             │
+│  # Primary Workflows（工具使用、代码编辑、Plan Mode）         │
+│  # Operational Guidelines（Tone、Shell、Tool Usage）         │
 │  # Sandbox / Git                                            │
-│    - macOS Seatbelt 或容器沙箱规则                          │
-│    - Git 仓库相关规则                                        │
-│                                                             │
-│  GEMINI.md（userMemory，renderFinalShell 追加）             │
-│    - ~/.gemini/gemini.md（全局用户自定义指令）               │
-│    - 项目目录下的 GEMINI.md（项目级指令）                    │
+│  GEMINI.md（userMemory）                                    │
 │                                                             │
 │  估计 token 数：3000 - 5000 tokens                          │
 ├─────────────────────────────────────────────────────────────┤
 │  ② JARVIS OPERATIONAL FRAMEWORK v4.0                        │
-│     buildFromFacts() 生成                                   │
 │                                                             │
 │  ## I. CORE PROTOCOLS (MANDATORY)                           │
-│     1. TOOL_USE_ATOMICITY          ← 始终注入               │
-│     2. CODE_MODIFICATION_PROTOCOL  ← 含代码关键词时注入     │
-│     3. PUSH_TO_CHANNEL             ← 含推送关键词时注入     │
-│     4. TASK_MANAGEMENT             ← 含任务关键词时注入     │
-│     5. TASK_DECOMPOSITION          ← 始终注入               │
-│     6. ACTIVE_RECALL (MANDATORY)   ← 始终注入               │
-│     7. SKILL_ACTIVATION            ← 有可用 skill 时注入    │
+│     1. TOOL_USE_ATOMICITY                                   │
+│     2. CODE_MODIFICATION_PROTOCOL（含代码关键词时）          │
+│     3. PUSH_TO_CHANNEL（含推送关键词时）                     │
+│     4. TASK_MANAGEMENT（含任务关键词时）                     │
+│     5. TASK_DECOMPOSITION                                   │
+│     6. ACTIVE_RECALL (MANDATORY)                            │
+│     7. SKILL_ACTIVATION（有 skill 时）                      │
 │                                                             │
 │  ## II. EXECUTION CONTEXT                                   │
-│     <persistent_context>                                    │
-│       alwaysFacts（preference + insight）                   │
-│       ranked facts（top N，融合分数排序）                    │
-│       graph expanded facts（最多3条）                        │
-│     </persistent_context>                                   │
-│     <memory_status>                                         │
+│     <persistent_context>（facts，无排序优化）                │
+│     <memory_status>[STRICT]: LONG-TERM LOGS NOT LOADED      │
 │     <style_constraints>                                     │
 │                                                             │
 │  ## III. ROLE & TONE                                        │
 │  ## IV. RESPONSE FORMATTING                                 │
 │                                                             │
-│  估计 token 数：500 - 1500 tokens（随 facts 数量变化）       │
+│  估计 token 数：500 - 1500 tokens                           │
 ├─────────────────────────────────────────────────────────────┤
-│  ③ <relevant_past_conversations>                            │
-│     vec_memories 向量检索，最多 prewarmLimit 条（默认 3）    │
+│  ③ <relevant_past_conversations>（末尾，压住 Formatting）   │
+│     [Past 1]: User: ... \nAssistant: ...                    │
 │     估计 token 数：0 - 600 tokens                           │
 └─────────────────────────────────────────────────────────────┘
 
 总计估算：3500 - 7100 tokens / 轮
+
+问题：
+- Formatting 规则被 relevant_past_conversations 压到中间，近因效应失效
+- identity facts 散落在 persistent_context 中间，首因效应未利用
+- memory_status 标签弱（[STRICT]），LLM 容易忽略失忆状态
+- vec_memories 和 session history 格式相同，模型易混淆时间线
+- ACTIVE_RECALL 与 memory_status 内容重复
 ```
 
 ---
 
-## 三、精简后：使用 buildJarvisPreamble()
+## 三、当前版本：buildJarvisPreamble() + 注入顺序优化
 
 **代码**（`agent.ts`）：
 
@@ -141,68 +121,117 @@ const defaultInstruction = buildJarvisPreamble();
 │  "You are Jarvis, a deeply personalized AI assistant..."    │
 │                                                             │
 │  # Core Mandates                                            │
-│    ## Security & System Integrity                           │
-│       - 凭证保护、不自动 commit（保留原版）                   │
-│    ## Context Efficiency                                    │
-│       - 核心原则：并行工具调用，减少不必要轮次（精简版）      │
-│       - 去掉：详细 <guidelines>、<examples>                 │
-│    ## Tool Usage                                            │
-│       - 并行/顺序执行规则                                    │
-│       - 同文件不重复 edit                                    │
-│       - Shell 命令执行规则                                   │
-│       - 后台进程 / 非交互命令偏好                            │
-│       - 确认协议                                             │
-│    ## Memory                                                │
-│       - recall_memory：过去交互必须先召回（Jarvis 工具）     │
-│       - saveFact：自动提炼，无需手动保存                     │
-│    ## Tone & Style                                          │
-│       - 简洁直接，避免寒暄                                   │
-│       - GitHub-flavored Markdown                            │
-│       - 工具用于行动，文字用于沟通                           │
+│    ## Security & System Integrity（凭证保护、不自动 commit） │
+│    ## Context Efficiency（核心原则：并行、减少轮次）          │
+│    ## Tool Usage（并行/顺序、文件编辑冲突、Shell 规则、确认） │
+│    ## Memory（recall_memory / saveFact Jarvis 专属规则）     │
+│    ## Tone & Style（简洁、Markdown、工具用于行动）            │
+│                                                             │
+│  注：GEMINI.md 不再加载（Gemini CLI 全局配置与 Jarvis 无关） │
 │                                                             │
 │  估计 token 数：300 - 600 tokens                            │
 ├─────────────────────────────────────────────────────────────┤
-│  ② JARVIS OPERATIONAL FRAMEWORK v4.0（与精简前相同）        │
-│     估计 token 数：500 - 1500 tokens                        │
-├─────────────────────────────────────────────────────────────┤
-│  ③ <relevant_past_conversations>（与精简前相同）            │
-│     估计 token 数：0 - 600 tokens                           │
+│  ② JARVIS OPERATIONAL FRAMEWORK v4.0                        │
+│                                                             │
+│  ## I. EXECUTION CONTEXT（首因 — 开头奠定基调）             │
+│                                                             │
+│     <memory_status>                                         │
+│     [CRITICAL_LIMITATION]: Long-term memory is currently   │
+│     offline. Do not reference past events unless they       │
+│     appear in <persistent_context> or                       │
+│     <relevant_past_conversations>. Call 'recall_memory'     │
+│     first. DO NOT HALLUCINATE.                              │
+│     </memory_status>                                        │
+│                                                             │
+│     <persistent_context>                                    │
+│       [IDENTITY] facts（首因，排在最前）                    │
+│       [BEHAVIOR] / [SPECIFICATION] / [INSIGHT] facts        │
+│     </persistent_context>                                   │
+│                                                             │
+│     <relevant_past_conversations>                           │
+│       [Long-term Memory 1]: User: ... \nAssistant: ...      │
+│       [Long-term Memory 2]: ...                             │
+│     </relevant_past_conversations>                          │
+│                                                             │
+│  ## II. OPERATIONAL PROTOCOLS（动态注入）                   │
+│     1. TOOL_USE_ATOMICITY（始终）                           │
+│     2. CODE_MODIFICATION_PROTOCOL（含代码关键词时）          │
+│     3. PUSH_TO_CHANNEL（含推送关键词时）                     │
+│     4. TASK_MANAGEMENT（含任务关键词时）                     │
+│     5. TASK_DECOMPOSITION（始终）                           │
+│     6. SKILL_ACTIVATION（有 skill 时）                      │
+│     注：ACTIVE_RECALL 已合并入 memory_status，不再重复      │
+│                                                             │
+│  ## III. OUTPUT CONSTRAINTS（近因 — 末尾最后通牒）          │
+│     - Role & Tone（JARVIS: deterministic, precise）         │
+│     - Response Formatting（Markdown、表格、代码路径）        │
+│     - <style_constraints>（preference facts + 推断风格）    │
+│                                                             │
+│  估计 token 数：400 - 1200 tokens                           │
 └─────────────────────────────────────────────────────────────┘
 
-总计估算：900 - 2900 tokens / 轮
+总计估算：700 - 1800 tokens / 轮
 ```
 
 ---
 
-## 四、精简对比
+## 四、精简前后对比
 
-| 部分                            | 精简前                             | 精简后                                |
-| ------------------------------- | ---------------------------------- | ------------------------------------- |
-| 角色定义                        | "You are Gemini CLI..."            | "You are Jarvis..."                   |
-| Security                        | ✅ 完整保留                        | ✅ 完整保留                           |
-| Context Efficiency              | 详细规则 + examples（~500 tokens） | 核心原则（~50 tokens）                |
-| Engineering Standards           | ✅ 包含（~800 tokens）             | ❌ 去掉                               |
-| Sub-Agents                      | ✅ 包含                            | ❌ 去掉                               |
-| Primary Workflows               | ✅ 包含（~600 tokens）             | ❌ 去掉                               |
-| Tool Usage                      | ✅ 包含                            | ✅ 保留（精简）                       |
-| Shell 规则                      | ✅ 包含                            | ✅ 保留                               |
-| 记忆工具规则                    | Gemini CLI 原生（save_memory）     | Jarvis 专属（recall_memory/saveFact） |
-| Tone & Style                    | ✅ 包含                            | ✅ 保留                               |
-| Plan Mode / Task Tracker        | ✅ 包含                            | ❌ 去掉                               |
-| Sandbox / Git                   | ✅ 包含                            | ❌ 去掉                               |
-| GEMINI.md                       | ✅ 通过 renderFinalShell 追加      | ❌ 不再加载                           |
-| **估计 token（Preamble 部分）** | **3000 - 5000**                    | **300 - 600**                         |
-| **总 system prompt token**      | **3500 - 7100**                    | **800 - 2700**                        |
-| **节省**                        | —                                  | **~70%**                              |
+| 部分                     | 精简前                         | 当前版本                     |
+| ------------------------ | ------------------------------ | ---------------------------- |
+| 角色定义                 | "You are Gemini CLI..."        | "You are Jarvis..."          |
+| Security                 | ✅ 完整                        | ✅ 完整                      |
+| Context Efficiency       | 详细 + examples（~500 tokens） | 核心原则（~50 tokens）       |
+| Engineering Standards    | ✅（~800 tokens）              | ❌ 去掉                      |
+| Sub-Agents               | ✅                             | ❌ 去掉                      |
+| Primary Workflows        | ✅（~600 tokens）              | ❌ 去掉                      |
+| Tool Usage               | ✅                             | ✅ 精简保留                  |
+| Shell 规则               | ✅                             | ✅ 保留                      |
+| 记忆工具规则             | Gemini CLI（save_memory）      | Jarvis 专属（recall_memory） |
+| Tone & Style             | ✅                             | ✅ 保留                      |
+| Plan Mode / Task Tracker | ✅                             | ❌ 去掉                      |
+| Sandbox / Git            | ✅                             | ❌ 去掉                      |
+| GEMINI.md                | ✅ 加载                        | ❌ 不加载                    |
+| memory_status 标签       | `[STRICT]`                     | `[CRITICAL_LIMITATION]`      |
+| ACTIVE_RECALL 协议       | 单独一条                       | 合并入 memory_status         |
+| identity facts 位置      | 散落在 persistent_context      | 置顶（首因效应）             |
+| vec_memories 标签        | `[Past N]`                     | `[Long-term Memory N]`       |
+| Formatting 位置          | 中间（被 prewarm 压住）        | 末尾（近因效应）             |
+| **Preamble token**       | **3000 - 5000**                | **300 - 600**                |
+| **总 system prompt**     | **3500 - 7100**                | **700 - 1800**               |
+| **节省**                 | —                              | **~75%**                     |
 
 ---
 
-## 五、注意事项
+## 五、注入顺序设计原理
 
-1. **JARVIS OPERATIONAL FRAMEWORK 未变**：`buildFromFacts()` 生成的部分（protocols、facts 注入、role/tone、formatting）保持不变，`selectProtocols` 仍然根据用户输入关键词动态决定注入哪些协议。
+基于 LLM 注意力的 **U 型曲线（Lost in the Middle）**：
 
-2. **GEMINI.md 不再加载**：`buildJarvisPreamble()` 不接收 userMemory，`~/.gemini/gemini.md` 等 Gemini CLI 全局配置不再注入，避免引入与个人助手无关的指令。
+```
+注意力权重
+    ↑
+高  │█                                    █
+    │█                                    █
+    │ █                                  █
+低  │  █████████████████████████████████
+    └────────────────────────────────────→ 位置
+       开头（首因）                末尾（近因）
+```
 
-3. **代码编辑能力未丧失**：工具使用规则（edit、shell 等）保留，只是去掉了面向软件工程任务的详细工作流说明。LLM 仍然知道如何调用这些工具。
+| 位置           | 放什么                                                                   | 原因                                           |
+| -------------- | ------------------------------------------------------------------------ | ---------------------------------------------- |
+| 开头（首因）   | EXECUTION CONTEXT（memory_status + identity facts + persistent_context） | 奠定"我是谁、我知道什么、我失忆了什么"的基调   |
+| 中间（塌陷区） | relevant_past_conversations + protocols                                  | 数据填充，LLM 会读但注意力较低                 |
+| 末尾（近因）   | OUTPUT CONSTRAINTS（Role + Formatting + style）                          | 最后通牒，生成响应前看到的最后内容，遵循率最高 |
 
-4. **测试建议**：精简后需验证工具调用（特别是文件编辑）是否仍然正确，以及 recall_memory 是否在适当时机触发。
+---
+
+## 六、注意事项
+
+1. **JARVIS OPERATIONAL FRAMEWORK 每轮重建**：`buildFromFacts()` 在每次 `refreshContext()` 时调用，facts 和 prewarm 内容随查询变化，protocols 由 `selectProtocols(userPrompt)` 动态决定。
+
+2. **Conversation History 只在启动时注入一次**：`agentInitializer.resumeFromDisk()` 在启动时把 session summary + 最近 N 轮原始消息通过 `client.resumeChat()` 设置为初始历史，之后由 Gemini CLI 的 `ChatRecordingService` 自动追加新消息。
+
+3. **[Long-term Memory] vs Session History 区分**：`<relevant_past_conversations>` 里的内容标记为 `[Long-term Memory N]`，与 conversation history 里的当前 session 消息在格式上明确区分，减少模型时间线混淆。
+
+4. **ACTIVE_RECALL 不再单独出现**：recall_memory 的使用规则已合并到 `<memory_status>` 的 `[CRITICAL_LIMITATION]` 标签里，避免重复。
