@@ -38,7 +38,9 @@ Configuration file location: `~/.gemini-jarvis/config.json`
     // Ollama bge-m3: 1024
     "embeddingDimension": 1024,
 
-    // Model used for fact distillation, consolidation, and reflection.
+    // Model used for fact distillation (BackgroundDistiller).
+    // Also used for consolidateFacts/reflect when reflection.provider = "gemini".
+    // When reflection.provider = "ollama", this field is ignored for reflection.
     "distillation": "gemini-2.5-flash",
   },
 
@@ -70,6 +72,7 @@ Configuration file location: `~/.gemini-jarvis/config.json`
     "baseUrl": "http://localhost:11434",
 
     // Ollama model for complexity classification, e.g. "gemma4:e2b".
+    // Leave empty ("") to disable routing even when enabled = true.
     "model": "gemma4:e2b",
 
     // Complexity score threshold (1-100).
@@ -103,6 +106,7 @@ Configuration file location: `~/.gemini-jarvis/config.json`
     "baseUrl": "http://localhost:11434",
 
     // Ollama model name, e.g. "gemma4:e2b". Only used when provider = "ollama".
+    // If empty, falls back to gemini provider automatically.
     "model": "gemma4:e2b",
 
     // Timeout in milliseconds. Reflection prompts are long — use a generous value.
