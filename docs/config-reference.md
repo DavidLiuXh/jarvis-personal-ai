@@ -59,6 +59,39 @@ Configuration file location: `~/.gemini-jarvis/config.json`
   },
 
   // ─────────────────────────────────────────────
+  // Routing — local model routing via Ollama complexity classifier
+  // Classifies each request (1-100) and selects proModel or flashModel.
+  // ─────────────────────────────────────────────
+  "routing": {
+    // Enable local model routing. Default: false
+    "enabled": false,
+
+    // Ollama service URL. Default: "http://localhost:11434"
+    "baseUrl": "http://localhost:11434",
+
+    // Ollama model for complexity classification, e.g. "gemma4:e2b".
+    "model": "gemma4:e2b",
+
+    // Complexity score threshold (1-100).
+    // Score >= threshold → proModel; Score < threshold → flashModel.
+    // Default: 70
+    "threshold": 70,
+
+    // Model used for complex requests (score >= threshold). Default: "gemini-2.5-pro"
+    "proModel": "gemini-2.5-pro",
+
+    // Model used for simple requests (score < threshold). Default: "gemini-2.5-flash"
+    "flashModel": "gemini-2.5-flash",
+
+    // Timeout in milliseconds for the classification call. Default: 30000 (30s)
+    "timeoutMs": 30000,
+
+    // Number of recent conversation turns included in the classifier prompt
+    // for context-aware scoring (e.g. "continue the analysis"). Default: 5
+    "historyTurns": 5,
+  },
+
+  // ─────────────────────────────────────────────
   // Reflection — model for consolidateFacts and nightly reflect
   // ─────────────────────────────────────────────
   "reflection": {

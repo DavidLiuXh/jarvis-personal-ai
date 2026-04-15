@@ -59,6 +59,38 @@
   },
 
   // ─────────────────────────────────────────────
+  // Routing — 基于 Ollama 的本地模型路由
+  // 对每条请求进行复杂度打分（1-100），自动选择 proModel 或 flashModel。
+  // ─────────────────────────────────────────────
+  "routing": {
+    // 启用本地模型路由。默认：false
+    "enabled": false,
+
+    // Ollama 服务地址。默认："http://localhost:11434"
+    "baseUrl": "http://localhost:11434",
+
+    // 用于复杂度分类的 Ollama 模型，例如 "gemma4:e2b"。
+    "model": "gemma4:e2b",
+
+    // 复杂度分数阈值（1-100）。
+    // 分数 >= 阈值 → proModel；分数 < 阈值 → flashModel。默认：70
+    "threshold": 70,
+
+    // 复杂请求使用的模型（分数 >= 阈值）。默认："gemini-2.5-pro"
+    "proModel": "gemini-2.5-pro",
+
+    // 简单请求使用的模型（分数 < 阈值）。默认："gemini-2.5-flash"
+    "flashModel": "gemini-2.5-flash",
+
+    // 分类调用的超时时间（毫秒）。默认：30000（30秒）
+    "timeoutMs": 30000,
+
+    // 传入分类器 prompt 的最近对话轮数，用于上下文感知打分
+    // （例如"继续上面的分析"这类依赖上下文的请求）。默认：5
+    "historyTurns": 5,
+  },
+
+  // ─────────────────────────────────────────────
   // Reflection — consolidateFacts 和夜间反思任务使用的模型
   // ─────────────────────────────────────────────
   "reflection": {
