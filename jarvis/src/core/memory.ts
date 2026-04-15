@@ -742,7 +742,7 @@ ${factsText}
         // LLM returned text but no valid JSON array — update baseline to avoid re-triggering immediately
         this.lastConsolidatedCount = allFacts.length;
         console.error(
-          "⚠️ [Jarvis Reflection] No valid JSON array in response. Skipping consolidation.",
+          `⚠️ [Jarvis Reflection] No valid JSON array in consolidation response. Skipping. Preview: ${responseText.slice(0, 200)}`,
         );
       }
     } catch (e: any) {
@@ -878,7 +878,16 @@ ${factsText}
         importance: number;
       }>;
 
-      if (nonInsightFacts.length === 0) return;
+      if (nonInsightFacts.length === 0) {
+        console.error(
+          `💡 [MemoryService] Reflection skipped: no non-insight facts found.`,
+        );
+        return;
+      }
+
+      console.error(
+        `💡 [MemoryService] Reflection started: ${nonInsightFacts.length} facts → generating insights...`,
+      );
 
       const existingInsights = this.db
         .prepare(
@@ -919,7 +928,12 @@ Respond ONLY with a JSON array:
 
       const raw = await generateText(prompt);
       const match = raw.match(/\[[\s\S]*\]/);
-      if (!match) return;
+      if (!match) {
+        console.error(
+          `⚠️ [MemoryService] Reflection failed: no JSON array in model response. Response preview: ${raw.slice(0, 200)}`,
+        );
+        return;
+      }
 
       const newInsights = JSON.parse(match[0]) as Array<{
         category: string;
@@ -930,7 +944,12 @@ Respond ONLY with a JSON array:
       const validInsights = newInsights
         .filter((i) => i.content)
         .map((i) => ({ ...i, category: "insight" }));
-      if (validInsights.length === 0) return;
+      if (validInsights.length === 0) {
+        console.error(
+          `⚠️ [MemoryService] Reflection failed: model returned ${newInsights.length} items but none had valid content.`,
+        );
+        return;
+      }
 
       // Atomically replace all old insights with new ones
       const replaceInsights = this.db.transaction(() => {
