@@ -40,6 +40,11 @@ type ClassifyResult = {
   reason: string;
 };
 
+export type ConversationTurn = {
+  role: "user" | "assistant";
+  content: string;
+};
+
 export class LocalModelRouter {
   constructor(
     private baseUrl: string = "http://localhost:11434",
@@ -48,11 +53,15 @@ export class LocalModelRouter {
     private proModel: string = "gemini-2.5-pro",
     private flashModel: string = "gemini-2.5-flash",
     private timeoutMs: number = 30_000,
+    private historyTurns: number = 5,
   ) {}
 
-  async route(userPrompt: string): Promise<RoutingResult> {
+  async route(
+    userPrompt: string,
+    history: ConversationTurn[] = [],
+  ): Promise<RoutingResult> {
     try {
-      const { score, reason } = await this.classify(userPrompt);
+      const { score, reason } = await this.classify(userPrompt, history);
       const model = score >= this.threshold ? this.proModel : this.flashModel;
       return {
         model,
@@ -75,12 +84,27 @@ export class LocalModelRouter {
     }
   }
 
-  private async classify(prompt: string): Promise<ClassifyResult> {
+  private async classify(
+    prompt: string,
+    history: ConversationTurn[],
+  ): Promise<ClassifyResult> {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), this.timeoutMs);
 
     try {
-      const fullPrompt = `${CLASSIFIER_SYSTEM_PROMPT}\n\nUser request: ${prompt}`;
+      // Include recent history for context-aware classification
+      const recentTurns = history.slice(-this.historyTurns * 2); // each turn = user + assistant
+      const historySection =
+        recentTurns.length > 0
+          ? `\n# Recent Conversation Context\n${recentTurns
+              .map(
+                (t) =>
+                  `${t.role === "user" ? "User" : "Assistant"}: ${t.content.slice(0, 200)}`,
+              )
+              .join("\n")}\n`
+          : "";
+
+      const fullPrompt = `${CLASSIFIER_SYSTEM_PROMPT}${historySection}\nUser request: ${prompt}`;
       const response = await fetch(`${this.baseUrl}/api/generate`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },

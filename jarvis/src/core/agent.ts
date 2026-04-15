@@ -127,6 +127,7 @@ export class JarvisAgent extends EventEmitter {
         routingCfg.proModel ?? "gemini-2.5-pro",
         routingCfg.flashModel ?? "gemini-2.5-flash",
         routingCfg.timeoutMs ?? 30_000,
+        routingCfg.historyTurns ?? 5,
       );
       console.error(
         `🔀 [Jarvis] Local model router initialized (model=${routingCfg.model}, threshold=${routingCfg.threshold ?? 70})`,
@@ -249,7 +250,22 @@ export class JarvisAgent extends EventEmitter {
       await promptIdContext.run(pId, async () => {
         // Local model routing: classify complexity and set model before LLM call
         if (this.localModelRouter) {
-          const result = await this.localModelRouter.route(userPrompt);
+          // Build history from current chat for context-aware routing
+          const rawHistory = this.client.getChat().getHistory();
+          const history = rawHistory.flatMap((turn) => {
+            const content =
+              turn.parts?.map((p: any) => p.text ?? "").join("") ?? "";
+            if (!content.trim()) return [];
+            return [
+              {
+                role: (turn.role === "user" ? "user" : "assistant") as
+                  | "user"
+                  | "assistant",
+                content,
+              },
+            ];
+          });
+          const result = await this.localModelRouter.route(userPrompt, history);
           this.client.config.setModel(result.model);
           console.error(
             `🔀 [Jarvis] Local routing: ${result.decision} | reason="${result.classifierReason}" (source=${result.source})`,

@@ -52,6 +52,8 @@ export interface JarvisConfig {
     flashModel?: string;
     /** Timeout in milliseconds for the classification call. Default: 30000. */
     timeoutMs?: number;
+    /** Number of recent conversation turns to include for context. Default: 5. */
+    historyTurns?: number;
   };
   /**
    * Reflection (consolidateFacts + reflect) model configuration.
