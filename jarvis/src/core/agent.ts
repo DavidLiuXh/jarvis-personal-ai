@@ -32,6 +32,7 @@ import { type SkillCommandHandler } from "./skillCommandHandler.js";
 import { isFetchError, cleanOrphanedUserTurn } from "./agentNetworkUtils.js";
 import { ConfigManager } from "./configManager.js";
 import { type ChannelRegistry } from "./channelRegistry.js";
+import { LocalModelRouter } from "./localModelRouter.js";
 
 /**
  * JARVIS 3.0: The Digital Lifeform Agent
@@ -56,6 +57,7 @@ export class JarvisAgent extends EventEmitter {
   private skillCommandHandler?: SkillCommandHandler;
   private channelRegistry?: ChannelRegistry;
   private availableSkills: SkillInfo[] = [];
+  private localModelRouter: LocalModelRouter | null = null;
 
   constructor(options: JarvisAgentOptions) {
     super();
@@ -114,6 +116,23 @@ export class JarvisAgent extends EventEmitter {
       this.taskCommandHandler,
       this.channelRegistry,
     );
+
+    // Initialize local model router if configured
+    const routingCfg = this.jarvisConfig.routing;
+    if (routingCfg?.enabled && routingCfg.model) {
+      this.localModelRouter = new LocalModelRouter(
+        routingCfg.baseUrl ?? "http://localhost:11434",
+        routingCfg.model,
+        routingCfg.threshold ?? 70,
+        routingCfg.proModel ?? "gemini-2.5-pro",
+        routingCfg.flashModel ?? "gemini-2.5-flash",
+        routingCfg.timeoutMs ?? 30_000,
+        routingCfg.historyTurns ?? 5,
+      );
+      console.error(
+        `🔀 [Jarvis] Local model router initialized (model=${routingCfg.model}, threshold=${routingCfg.threshold ?? 70})`,
+      );
+    }
 
     this.initialized = true;
     debugLogger.debug(`[JarvisAgent] Lifeform Ready.`);
@@ -229,6 +248,30 @@ export class JarvisAgent extends EventEmitter {
       const pId = `jarvis-${this.sessionId}-${Date.now()}`;
 
       await promptIdContext.run(pId, async () => {
+        // Local model routing: classify complexity and set model before LLM call
+        if (this.localModelRouter) {
+          // Build history from current chat for context-aware routing
+          const rawHistory = this.client.getChat().getHistory();
+          const history = rawHistory.flatMap((turn) => {
+            const content =
+              turn.parts?.map((p: any) => p.text ?? "").join("") ?? "";
+            if (!content.trim()) return [];
+            return [
+              {
+                role: (turn.role === "user" ? "user" : "assistant") as
+                  | "user"
+                  | "assistant",
+                content,
+              },
+            ];
+          });
+          const result = await this.localModelRouter.route(userPrompt, history);
+          this.client.config.setModel(result.model);
+          console.error(
+            `🔀 [Jarvis] Local routing: ${result.decision} | reason="${result.classifierReason}" (source=${result.source})`,
+          );
+        }
+
         await this.refreshContext(userPrompt);
 
         const abortController = new AbortController();
