@@ -30,8 +30,14 @@ Respond ONLY with a JSON object (no markdown, no explanation):
 export type RoutingResult = {
   model: string;
   score: number;
-  reasoning: string;
+  classifierReason: string; // why the classifier assigned this score
+  decision: string; // score vs threshold conclusion
   source: "local-router/ollama" | "local-router/fallback";
+};
+
+type ClassifyResult = {
+  score: number;
+  reason: string;
 };
 
 export class LocalModelRouter {
@@ -46,29 +52,30 @@ export class LocalModelRouter {
 
   async route(userPrompt: string): Promise<RoutingResult> {
     try {
-      const score = await this.classify(userPrompt);
+      const { score, reason } = await this.classify(userPrompt);
       const model = score >= this.threshold ? this.proModel : this.flashModel;
       return {
         model,
         score,
-        reasoning:
+        classifierReason: reason,
+        decision:
           score >= this.threshold
             ? `Score ${score} >= threshold ${this.threshold} → ${this.proModel}`
             : `Score ${score} < threshold ${this.threshold} → ${this.flashModel}`,
         source: "local-router/ollama",
       };
     } catch (e: any) {
-      // On any failure, fall back to proModel to avoid degraded quality
       return {
         model: this.proModel,
         score: -1,
-        reasoning: `Classification failed (${e.message}), defaulting to ${this.proModel}`,
+        classifierReason: e.message,
+        decision: `Classification failed, defaulting to ${this.proModel}`,
         source: "local-router/fallback",
       };
     }
   }
 
-  private async classify(prompt: string): Promise<number> {
+  private async classify(prompt: string): Promise<ClassifyResult> {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), this.timeoutMs);
 
@@ -106,7 +113,10 @@ export class LocalModelRouter {
         throw new Error(`Invalid score: ${parsed.complexity_score}`);
       }
 
-      return score;
+      return {
+        score,
+        reason: parsed.complexity_reasoning ?? "(no reason provided)",
+      };
     } finally {
       clearTimeout(timeout);
     }

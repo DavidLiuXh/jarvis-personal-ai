@@ -252,7 +252,7 @@ export class JarvisAgent extends EventEmitter {
           const result = await this.localModelRouter.route(userPrompt);
           this.client.config.setModel(result.model);
           console.error(
-            `🔀 [Jarvis] Local routing: score=${result.score}, ${result.reasoning} (source=${result.source})`,
+            `🔀 [Jarvis] Local routing: ${result.decision} | reason="${result.classifierReason}" (source=${result.source})`,
           );
         }
 
