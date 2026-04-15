@@ -1085,15 +1085,14 @@ Respond ONLY with a JSON array:
 
       let ranked: Array<{ category: string; content: string }>;
       let rankedIdsForGraph: number[] = [];
+      // Build id → fact map once, shared by embedding path and expandViaEntityLinks
+      const factById = new Map(candidateFacts.map((f) => [f.id, f]));
 
       if (strategy === "embedding" && this.embedContentFn) {
         try {
           const queryVec = await this.embedContentFn(query);
           const alpha = this.jarvisConfig.memory.vectorSimilarityWeight ?? 0.7;
           const beta = this.jarvisConfig.memory.importanceWeight ?? 0.3;
-
-          // Build id → fact map from the already-loaded memory (no second DB read)
-          const factById = new Map(candidateFacts.map((f) => [f.id, f]));
 
           // vec_facts: only fetch id + distance (no JOIN needed)
           const fetchLimit = Math.max(cap * 3, 20);
@@ -1210,7 +1209,9 @@ Respond ONLY with a JSON array:
             setImmediate(() => this.updateAccessStats(fallbackIds, nowMs));
           }
         } catch (_e: any) {
-          console.error(`⚠️ [searchFacts] embedding strategy failed, falling back to jaccard: ${_e?.message}`);
+          console.error(
+            `⚠️ [searchFacts] embedding strategy failed, falling back to jaccard: ${_e?.message}`,
+          );
           ranked = this.rankByJaccard(query, candidateFacts, cap);
         }
       } else {
@@ -1237,7 +1238,8 @@ Respond ONLY with a JSON array:
         );
       }
       return [...alwaysOut, ...ranked, ...expanded];
-    } catch (e) {
+    } catch (e: any) {
+      console.error(`⚠️ [searchFacts] outer catch: ${e?.message}`);
       return this.getStructuredFacts();
     }
   }
@@ -1372,7 +1374,10 @@ Respond ONLY with a JSON array:
       const expanded = linkedFactIds
         .map((r) => {
           const f = factById.get(r.fact_id);
-          if (!f) console.error(`🔗 [expandViaEntityLinks] fact_id=${r.fact_id} not in factById`);
+          if (!f)
+            console.error(
+              `🔗 [expandViaEntityLinks] fact_id=${r.fact_id} not in factById`,
+            );
           return f;
         })
         .filter((f): f is NonNullable<typeof f> => f !== undefined)
