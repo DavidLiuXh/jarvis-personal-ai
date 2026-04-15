@@ -130,8 +130,8 @@ Configuration file location: `~/.gemini-jarvis/config.json`
     // Dedup strategy when saving a new fact:
     // "jaccard": local token overlap (fast, no network)
     // "embedding": semantic cosine similarity (requires embedding service)
-    // Default: "jaccard"
-    "dedupStrategy": "jaccard",
+    // Default: "embedding"
+    "dedupStrategy": "embedding",
 
     // Strategy for selecting relevant facts to inject into system prompt:
     // "jaccard": keyword overlap ranking
@@ -234,8 +234,8 @@ Configuration file location: `~/.gemini-jarvis/config.json`
     "resumeOnStart": true,
 
     // Number of recent raw message turns to include after the compressed summary.
-    // Higher = more context but more tokens per request. Default: 20
-    "recentTurnsOnResume": 20,
+    // Higher = more context but more tokens per request. Default: 3
+    "recentTurnsOnResume": 3,
   },
 
   // ─────────────────────────────────────────────

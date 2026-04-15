@@ -129,8 +129,8 @@
     // 保存新 fact 时的去重策略：
     // "jaccard"：本地词元重叠（快，无需网络）
     // "embedding"：语义余弦相似度（需要 embedding 服务）
-    // 默认："jaccard"
-    "dedupStrategy": "jaccard",
+    // 默认："embedding"
+    "dedupStrategy": "embedding",
 
     // 注入 system prompt 时的 facts 检索策略：
     // "jaccard"：关键词重叠排名
@@ -230,8 +230,8 @@
     "resumeOnStart": true,
 
     // 压缩摘要之后追加的原始消息轮数。
-    // 越大上下文越完整，但每次请求的 token 消耗越多。默认：20
-    "recentTurnsOnResume": 20,
+    // 越大上下文越完整，但每次请求的 token 消耗越多。默认：3
+    "recentTurnsOnResume": 3,
   },
 
   // ─────────────────────────────────────────────

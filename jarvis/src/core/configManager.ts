@@ -195,7 +195,7 @@ export class ConfigManager {
         ingestionDelayMs: 800,
         retrievalLimit: 5,
         consolidationThreshold: 3,
-        dedupStrategy: "jaccard" as const,
+        dedupStrategy: "embedding" as const,
         factRelevanceStrategy: "jaccard" as const,
         factRelevanceLimit: 5,
         prewarmLimit: 3,
@@ -224,7 +224,7 @@ export class ConfigManager {
         useGlobalSession: false,
         globalSessionId: "jarvis-global-master",
         resumeOnStart: true,
-        recentTurnsOnResume: 20,
+        recentTurnsOnResume: 3,
       },
     };
 
