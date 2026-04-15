@@ -38,7 +38,9 @@
     // Ollama bge-m3：1024
     "embeddingDimension": 1024,
 
-    // 用于事实提炼、合并和反思的模型。
+    // 用于事实提炼（BackgroundDistiller）的模型。
+    // 当 reflection.provider = "gemini" 时，也用于 consolidateFacts/reflect。
+    // 当 reflection.provider = "ollama" 时，此字段不影响反思任务。
     "distillation": "gemini-2.5-flash",
   },
 
@@ -70,6 +72,7 @@
     "baseUrl": "http://localhost:11434",
 
     // 用于复杂度分类的 Ollama 模型，例如 "gemma4:e2b"。
+    // 留空（""）时即使 enabled = true 路由也不会生效。
     "model": "gemma4:e2b",
 
     // 复杂度分数阈值（1-100）。
@@ -102,6 +105,7 @@
     "baseUrl": "http://localhost:11434",
 
     // Ollama 模型名称，例如 "gemma4:e2b"。仅 provider = "ollama" 时生效。
+    // 留空时自动 fallback 到 gemini provider。
     "model": "gemma4:e2b",
 
     // 超时时间（毫秒）。反思 prompt 较长，建议设置较大值。默认：120000（2分钟）
