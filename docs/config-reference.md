@@ -59,6 +59,25 @@ Configuration file location: `~/.gemini-jarvis/config.json`
   },
 
   // ─────────────────────────────────────────────
+  // Reflection — model for consolidateFacts and nightly reflect
+  // ─────────────────────────────────────────────
+  "reflection": {
+    // "gemini": use existing CLI auth / generateTextFn (default)
+    // "ollama": use local Ollama model (works offline, recommended if using Code Assist)
+    "provider": "gemini",
+
+    // Ollama service URL. Only used when provider = "ollama".
+    "baseUrl": "http://localhost:11434",
+
+    // Ollama model name, e.g. "gemma4:e2b". Only used when provider = "ollama".
+    "model": "gemma4:e2b",
+
+    // Timeout in milliseconds. Reflection prompts are long — use a generous value.
+    // Default: 120000 (2 minutes)
+    "timeoutMs": 120000,
+  },
+
+  // ─────────────────────────────────────────────
   // Entity Extraction — knowledge graph (Neural Link)
   // Extracts (subject, relation, object) triples from facts
   // to enable graph-based context expansion in searchFacts.
