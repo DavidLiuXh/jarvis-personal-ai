@@ -52,6 +52,25 @@ Jarvis adjusts its communication style based on your background. It speaks
 technically with engineers, simply with everyone else. It follows your explicit
 preferences and infers your implicit ones.
 
+### 🏠 It Runs Locally — Where You Want It To
+
+Jarvis is designed to work with local models wherever cloud APIs are unavailable,
+too slow, or simply unnecessary. Through [Ollama](https://ollama.com), you can
+run open-source models on your own machine and plug them into Jarvis's core
+pipelines:
+
+- **Smart Model Routing** — A small local classifier scores each request's
+  complexity (1–100) and automatically routes simple questions to a fast Flash
+  model and complex analysis to a Pro model. You save cost and latency without
+  sacrificing quality where it matters.
+- **Semantic Memory** — Vector embeddings for long-term memory are generated
+  locally using models like `bge-m3`, keeping your personal facts and
+  conversation history entirely on-device.
+- **Knowledge Graph** — Entity extraction that builds the graph of who you are
+  and what you work on runs on a local model, with no data leaving your machine.
+- **Nightly Reflection** — The consolidation and insight synthesis that happens
+  while you sleep can run on a local model, independent of any API quota.
+
 ### 🛠️ It Can Be Extended
 
 Give Jarvis new capabilities by dropping scripts into a folder. Python, Bash, or
