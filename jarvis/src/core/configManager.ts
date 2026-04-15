@@ -34,6 +34,20 @@ export interface JarvisConfig {
     model?: string;
   };
   /**
+   * Reflection (consolidateFacts + reflect) model configuration.
+   * provider 'gemini': use existing generateTextFn (default, requires CLI auth or api.key).
+   * provider 'ollama': use local Ollama model (works offline, no API key needed).
+   */
+  reflection: {
+    provider: "gemini" | "ollama";
+    /** Ollama base URL. Only used when provider='ollama'. Default: "http://localhost:11434". */
+    baseUrl?: string;
+    /** Ollama model name, e.g. "gemma4:e2b". Only used when provider='ollama'. */
+    model?: string;
+    /** Request timeout in milliseconds. Default: 120000 (2 min, reflection prompts are long). */
+    timeoutMs?: number;
+  };
+  /**
    * Entity extraction configuration for knowledge graph (Neural Link).
    * Extracts entities and relations from facts to build entity_links.
    */
@@ -180,6 +194,9 @@ export class ConfigManager {
       embeddingService: {
         provider: "google" as const,
       },
+      reflection: {
+        provider: "gemini" as const,
+      },
       entityExtraction: {
         enabled: true,
         provider: "gemini" as const,
@@ -242,6 +259,10 @@ export class ConfigManager {
           embeddingService: {
             ...defaults.embeddingService,
             ...saved.embeddingService,
+          },
+          reflection: {
+            ...defaults.reflection,
+            ...saved.reflection,
           },
           entityExtraction: {
             ...defaults.entityExtraction,

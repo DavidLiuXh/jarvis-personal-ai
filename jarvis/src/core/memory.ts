@@ -141,6 +141,51 @@ export class MemoryService {
     this.initEntityExtractor();
   }
 
+  /**
+   * Returns a generateText function for reflection (consolidateFacts/reflect).
+   * Routes to Ollama if reflection.provider = 'ollama', otherwise uses the injected fn.
+   */
+  public buildReflectionGenerateText(
+    fallbackFn: (prompt: string) => Promise<string>,
+  ): (prompt: string) => Promise<string> {
+    const cfg = this.jarvisConfig.reflection;
+    if (cfg?.provider === "ollama") {
+      const baseUrl = cfg.baseUrl ?? "http://localhost:11434";
+      const model = cfg.model ?? "";
+      const timeoutMs = cfg.timeoutMs ?? 120_000;
+      if (!model) {
+        console.error(
+          "⚠️ [MemoryService] reflection.model not set, falling back to gemini",
+        );
+        return fallbackFn;
+      }
+      return async (prompt: string): Promise<string> => {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), timeoutMs);
+        try {
+          const response = await fetch(`${baseUrl}/api/generate`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ model, prompt, stream: false }),
+            signal: controller.signal,
+          });
+          if (!response.ok) {
+            throw new Error(
+              `Ollama reflection failed: ${response.status} ${await response.text()}`,
+            );
+          }
+          const data = (await response.json()) as { response: string };
+          return data.response;
+        } finally {
+          clearTimeout(timeout);
+        }
+      };
+    }
+    return fallbackFn;
+  }
+
+  private _unused(fn: (prompt: string) => Promise<string>) {}
+
   private initEntityExtractor(): void {
     const cfg = this.jarvisConfig.entityExtraction;
     if (!cfg?.enabled) return;
@@ -547,8 +592,12 @@ ${factsText}
 `;
 
       let responseText = "";
-      if (this.generateTextFn) {
-        responseText = await this.generateTextFn(reflectionPrompt);
+      // Route to Ollama if reflection.provider = 'ollama', else use generateTextFn or API client
+      const consolidateGenerateFn = this.generateTextFn
+        ? this.buildReflectionGenerateText(this.generateTextFn)
+        : null;
+      if (consolidateGenerateFn) {
+        responseText = await consolidateGenerateFn(reflectionPrompt);
       } else {
         const result = await this.client.models.generateContent({
           model: this.jarvisConfig.models.distillation,

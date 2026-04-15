@@ -141,12 +141,11 @@ class JarvisServer {
       jarvisConfig.tasks?.defaultChannel ?? "feishu",
     );
 
-    // Build reflect function using CLI-auth generateText (same pattern as agent.ts)
+    // Build reflect function — routes to Ollama if reflection.provider = 'ollama'
     const reflectFn = async () => {
       const agent = await this.manager.getAgent(
         jarvisConfig.session?.globalSessionId ?? "jarvis-global",
       );
-      // Access generateText via agent's initialized client
       const agentAny = agent as any;
       if (!agentAny.client?.config?.getContentGenerator) {
         console.error(
@@ -154,7 +153,7 @@ class JarvisServer {
         );
         return;
       }
-      const generateText = async (prompt: string): Promise<string> => {
+      const cliGenerateText = async (prompt: string): Promise<string> => {
         const generator = agentAny.client.config.getContentGenerator();
         const { LlmRole } = await import(
           "../../gemini-cli/packages/core/src/index.js"
@@ -171,6 +170,10 @@ class JarvisServer {
           (response as any).candidates?.[0]?.content?.parts?.[0]?.text ?? ""
         );
       };
+      // Route through buildReflectionGenerateText to support Ollama provider
+      const generateText = this.manager
+        .getMemoryService()
+        .buildReflectionGenerateText(cliGenerateText);
       await this.manager.getMemoryService().reflect(generateText);
     };
 
