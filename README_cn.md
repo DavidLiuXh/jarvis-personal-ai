@@ -92,8 +92,7 @@ Jarvis 通过 `~/.gemini-jarvis/config.json` 进行配置，首次启动时会�
 
 完整配置项说明请参阅：
 
-- [配置参考文档（中文）](docs/config-reference_cn.md)
-- [Configuration Reference (English)](docs/config-reference.md)
+- [配置参考文档](docs/config-reference_cn.md)
 
 ---
 
