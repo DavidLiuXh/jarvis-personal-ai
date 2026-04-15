@@ -11,13 +11,21 @@ becomes more attuned to you with every conversation.
 
 ## ✨ What Makes Jarvis Different
 
-### 🧠 It Remembers You
+### 🧠 It Remembers You — With Depth
 
 Jarvis builds a living memory of who you are — your name, your habits, your
 preferences, your decisions. Every conversation is distilled into structured
 knowledge that shapes how Jarvis responds to you. Over time, it learns that you
 prefer concise answers, that you run three times a week, that you follow a
 core-satellite investment strategy. You never have to repeat yourself.
+
+The memory system has been significantly upgraded with a three-layer architecture
+(DNI — Dynamic Neural Index):
+
+- **Transparent & Correctable** — All facts are written to `~/.gemini-jarvis/memory/MEMORIES.md` in plain Markdown. Edit the file directly to correct any mistake; Jarvis rebuilds its internal knowledge from it on next startup.
+- **Hybrid Retrieval** — Each turn, relevant facts are found using a fusion of vector similarity and BM25 keyword search, re-ranked by importance and recency decay, so the most useful context always surfaces first.
+- **Knowledge Graph** — Entities and relationships extracted from your facts (e.g. _David → works_on → jarvis-personal-ai_) let Jarvis expand context along logical connections, not just keyword matches.
+- **Nightly Reflection** — Every evening at 22:00, Jarvis consolidates fragmented facts and synthesizes higher-order insights about patterns in your behavior and decisions.
 
 ### 💬 It Lives Where You Do
 
