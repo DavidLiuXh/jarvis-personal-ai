@@ -10,7 +10,6 @@ import {
   debugLogger,
   GeminiEventType,
   Scheduler,
-  getCoreSystemPrompt,
   promptIdContext,
   LlmRole,
   type Part,
@@ -21,6 +20,7 @@ import { type MemoryService } from "./memory.js";
 import { DynamicToolRegistry } from "./dynamicToolRegistry.js";
 import {
   SystemPromptBuilder,
+  buildJarvisPreamble,
   type FactRecord,
   type SkillInfo,
 } from "./systemPromptBuilder.js";
@@ -128,10 +128,9 @@ export class JarvisAgent extends EventEmitter {
       userPrompt,
       this.availableSkills,
     );
-    const defaultInstruction = getCoreSystemPrompt(
-      this.client.config,
-      this.client.config.getUserMemory(),
-    );
+    // Use Jarvis slim preamble — GEMINI.md (userMemory) intentionally excluded
+    // as it is Gemini CLI global config irrelevant to personal assistant use
+    const defaultInstruction = buildJarvisPreamble();
 
     // vec_memories pre-warm: inject semantically similar past conversations
     const prewarmLimit = this.jarvisConfig.memory.prewarmLimit ?? 3;
@@ -144,7 +143,9 @@ export class JarvisAgent extends EventEmitter {
       if (similarMemories.length > 0) {
         prewarmSection =
           "\n<relevant_past_conversations>\n" +
-          similarMemories.map((m, i) => `[Past ${i + 1}]: ${m}`).join("\n") +
+          similarMemories
+            .map((m, i) => `[Long-term Memory ${i + 1}]: ${m}`)
+            .join("\n") +
           "\n</relevant_past_conversations>";
       }
     }
@@ -155,9 +156,8 @@ export class JarvisAgent extends EventEmitter {
         defaultInstruction + "\n" + protocol + prewarmSection,
       );
 
-    const history = this.client.getChat().getHistory();
     console.error(
-      `🔄 [Jarvis] System Prompt Refreshed. History Size: ${history.length} turns. Facts injected: ${facts.length}. Prewarmed memories: ${prewarmLimit > 0 ? (prewarmSection ? prewarmSection.split("[Past ").length - 1 : 0) : "disabled"}.`,
+      `🔄 [Jarvis] System Prompt Refreshed. Facts injected: ${facts.length}. Prewarmed memories: ${prewarmLimit > 0 ? (prewarmSection ? prewarmSection.split("[Past ").length - 1 : 0) : "disabled"}.`,
     );
   }
 

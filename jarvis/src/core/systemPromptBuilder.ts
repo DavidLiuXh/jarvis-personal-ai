@@ -4,6 +4,50 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+/**
+ * Builds a slim preamble that replaces getCoreSystemPrompt().
+ * Retains only the parts relevant to Jarvis (personal assistant),
+ * dropping software-engineering-specific workflows and sub-agents.
+ *
+ * @param userMemory - content of GEMINI.md files (global + project), if any
+ */
+export function buildJarvisPreamble(_userMemory?: string): string {
+  const memorySection = "";
+
+  return `
+You are Jarvis, a deeply personalized AI assistant. Your primary goal is to help the user safely, effectively, and concisely.
+
+# Core Mandates
+
+## Security & System Integrity
+- **Credential Protection:** Never log, print, or commit secrets, API keys, or sensitive credentials. Rigorously protect \`.env\` files and system configuration.
+- **Source Control:** Do not stage or commit changes unless specifically requested by the user.
+
+## Context Efficiency
+- Minimize unnecessary turns. Execute multiple independent tool calls in parallel when feasible.
+- Prefer targeted searches over reading large files. Read the minimum required to avoid extra turns.
+
+## Tool Usage
+- **Parallelism & Sequencing:** Execute independent tool calls in parallel. If a tool depends on the output of a previous one, set \`wait_for_previous\` to \`true\`.
+- **File Editing Collisions:** Do NOT call the edit tool on the SAME file multiple times in a single turn. Perform multiple edits to the same file sequentially across turns.
+- **Command Execution:** Use the shell tool for running commands. Before executing commands that modify the file system or system state, briefly explain the command's purpose and impact.
+- **Background Processes:** To run a command in the background, set the \`is_background\` parameter to \`true\`.
+- **Interactive Commands:** Prefer non-interactive commands (e.g. \`git --no-pager\`) unless a persistent process is specifically required.
+- **Confirmation Protocol:** If a tool call is declined or cancelled, respect the decision immediately. Do not re-attempt unless the user explicitly directs you to.
+
+## Memory
+- **recall_memory:** When the user refers to past interactions, decisions, or preferences not visible in the current context, ALWAYS call \`recall_memory\` first. DO NOT guess or hallucinate past events.
+- **save_memory (Jarvis internal):** Facts, preferences, and workflows are automatically distilled from conversations. You do not need to manually save them unless the user explicitly asks you to "remember" something specific.
+
+## Tone & Style
+- Be concise and direct. Avoid conversational filler, preambles ("Okay, I will now..."), or postambles ("I have finished...").
+- Use GitHub-flavored Markdown. Responses are rendered in monospace.
+- Use tools for actions; text output only for communication.
+- Adapt style based on the user's background as described in the execution context below.
+${memorySection}
+`.trim();
+}
+
 export type FactRecord = {
   category: string;
   content: string;
@@ -15,26 +59,81 @@ export type SkillInfo = {
 };
 
 const TECHNICAL_IDENTITY_KEYWORDS = [
-  'engineer', 'engineering', 'coding', 'developer', 'programmer', 'software',
-  'architect', 'devops', 'data scientist', 'researcher', 'technical',
+  "engineer",
+  "engineering",
+  "coding",
+  "developer",
+  "programmer",
+  "software",
+  "architect",
+  "devops",
+  "data scientist",
+  "researcher",
+  "technical",
 ];
 
 function deriveStyleFromIdentity(identityFacts: FactRecord[]): string | null {
-  const combined = identityFacts.map(f => f.content.toLowerCase()).join(' ');
-  const isTechnical = TECHNICAL_IDENTITY_KEYWORDS.some(kw => combined.includes(kw));
+  const combined = identityFacts.map((f) => f.content.toLowerCase()).join(" ");
+  const isTechnical = TECHNICAL_IDENTITY_KEYWORDS.some((kw) =>
+    combined.includes(kw),
+  );
   if (isTechnical) {
-    return 'User is a technical professional (engineer/developer) — use technical language, assume coding knowledge, skip basic explanations unless asked.';
+    return "User is a technical professional (engineer/developer) — use technical language, assume coding knowledge, skip basic explanations unless asked.";
   }
   return null;
 }
 
-const PUSH_KEYWORDS = ['发到', '推送到', '推送', 'send to', 'push to', 'push', '微信', '飞书', 'wechat', 'feishu', 'share on'];
-const TASK_KEYWORDS = ['每天', '每周', '每月', '定时', '每隔', '任务', 'task', 'scheduled', 'cron', 'remind', '提醒', '自动', 'automatically', '每日'];
-const CODE_KEYWORDS = ['修改', '重写', '编辑', '代码', 'edit', 'modify', 'refactor', 'rewrite', 'file', '文件', 'function', '函数', 'class', '类', 'implement', '实现'];
+const PUSH_KEYWORDS = [
+  "发到",
+  "推送到",
+  "推送",
+  "send to",
+  "push to",
+  "push",
+  "微信",
+  "飞书",
+  "wechat",
+  "feishu",
+  "share on",
+];
+const TASK_KEYWORDS = [
+  "每天",
+  "每周",
+  "每月",
+  "定时",
+  "每隔",
+  "任务",
+  "task",
+  "scheduled",
+  "cron",
+  "remind",
+  "提醒",
+  "自动",
+  "automatically",
+  "每日",
+];
+const CODE_KEYWORDS = [
+  "修改",
+  "重写",
+  "编辑",
+  "代码",
+  "edit",
+  "modify",
+  "refactor",
+  "rewrite",
+  "file",
+  "文件",
+  "function",
+  "函数",
+  "class",
+  "类",
+  "implement",
+  "实现",
+];
 
 function matchesAny(text: string, keywords: string[]): boolean {
   const lower = text.toLowerCase();
-  return keywords.some(kw => lower.includes(kw));
+  return keywords.some((kw) => lower.includes(kw));
 }
 
 type ProtocolSet = {
@@ -45,7 +144,11 @@ type ProtocolSet = {
 
 function selectProtocols(userPrompt?: string): ProtocolSet {
   if (!userPrompt || !userPrompt.trim()) {
-    return { pushToChannel: true, taskManagement: true, codeModification: true };
+    return {
+      pushToChannel: true,
+      taskManagement: true,
+      codeModification: true,
+    };
   }
   return {
     pushToChannel: matchesAny(userPrompt, PUSH_KEYWORDS),
@@ -55,45 +158,82 @@ function selectProtocols(userPrompt?: string): ProtocolSet {
 }
 
 export class SystemPromptBuilder {
-  buildFromFacts(facts: FactRecord[], userPrompt?: string, skills: SkillInfo[] = []): string {
-    const identityFacts = facts.filter(f => f.category === 'identity');
-    const preferenceFacts = facts.filter(f => f.category === 'preference');
-    const contextFacts = facts.filter(f => f.category !== 'preference');
+  buildFromFacts(
+    facts: FactRecord[],
+    userPrompt?: string,
+    skills: SkillInfo[] = [],
+  ): string {
+    const identityFacts = facts.filter((f) => f.category === "identity");
+    const preferenceFacts = facts.filter((f) => f.category === "preference");
+    const nonIdentityFacts = facts.filter(
+      (f) => f.category !== "preference" && f.category !== "identity",
+    );
 
     const derivedStyle = deriveStyleFromIdentity(identityFacts);
 
-    let styleSection = '';
+    // Style constraints (moved to end of framework for recency effect)
+    let styleSection = "";
     if (derivedStyle || preferenceFacts.length > 0) {
       const lines: string[] = [];
       if (derivedStyle) lines.push(`- [DEFAULT]: ${derivedStyle}`);
       if (preferenceFacts.length > 0) {
-        if (derivedStyle) lines.push('  // [USER_PREFERENCE] overrides [DEFAULT] when they conflict:');
-        preferenceFacts.forEach(f => lines.push(`- [USER_PREFERENCE]: ${f.content}`));
+        if (derivedStyle)
+          lines.push(
+            "  // [USER_PREFERENCE] overrides [DEFAULT] when they conflict:",
+          );
+        preferenceFacts.forEach((f) =>
+          lines.push(`- [USER_PREFERENCE]: ${f.content}`),
+        );
       }
-      styleSection = `\n<style_constraints>\n${lines.join('\n')}\n</style_constraints>`;
+      styleSection = `\n<style_constraints>\n${lines.join("\n")}\n</style_constraints>`;
     }
 
-    const contextLines = contextFacts.length > 0
-      ? contextFacts.map(f => `- [${f.category.toUpperCase()}]: ${f.content}`).join('\n')
-      : '(No persistent facts)';
+    // persistent_context: identity facts first (primacy), then others
+    const identityLines = identityFacts
+      .map((f) => `- [IDENTITY]: ${f.content}`)
+      .join("\n");
+    const otherLines = nonIdentityFacts
+      .map((f) => `- [${f.category.toUpperCase()}]: ${f.content}`)
+      .join("\n");
+    const contextLines =
+      identityFacts.length === 0 && nonIdentityFacts.length === 0
+        ? "(No persistent facts)"
+        : [identityLines, otherLines].filter(Boolean).join("\n");
 
-    const memoryContext = `\n<persistent_context>\n${contextLines}\n</persistent_context>\n\n<memory_status>\n[STRICT]: LONG-TERM LOGS NOT LOADED.\nIf the user refers to past conversations, decisions, or "what we did before", use 'recall_memory'. DO NOT HALLUCINATE PAST EVENTS.\n</memory_status>`;
+    const memoryContext =
+      `\n<memory_status>\n[CRITICAL_LIMITATION]: Long-term memory is currently offline. ` +
+      `Do not reference past events unless they appear in <persistent_context> or <relevant_past_conversations>. ` +
+      `If the user refers to past conversations or decisions, call 'recall_memory' first. DO NOT HALLUCINATE.\n</memory_status>` +
+      `\n\n<persistent_context>\n${contextLines}\n</persistent_context>`;
 
     const protocols = selectProtocols(userPrompt);
-    return this.framework(memoryContext + styleSection, protocols, skills);
+    return this.framework(memoryContext, styleSection, protocols, skills);
   }
 
   build(coreFacts: string[]): string {
-    const contextLines = coreFacts.length > 0
-      ? coreFacts.map(f => `- ${f}`).join('\n')
-      : '(No persistent facts)';
+    const contextLines =
+      coreFacts.length > 0
+        ? coreFacts.map((f) => `- ${f}`).join("\n")
+        : "(No persistent facts)";
 
-    const memoryContext = `\n<persistent_context>\n${contextLines}\n</persistent_context>\n\n<memory_status>\n[STRICT]: LONG-TERM LOGS NOT LOADED.\nIf the user refers to past conversations, decisions, or "what we did before", use 'recall_memory'. DO NOT HALLUCINATE PAST EVENTS.\n</memory_status>`;
+    const memoryContext =
+      `\n<memory_status>\n[CRITICAL_LIMITATION]: Long-term memory is currently offline. ` +
+      `If the user refers to past conversations or decisions, call 'recall_memory' first. DO NOT HALLUCINATE.\n</memory_status>` +
+      `\n\n<persistent_context>\n${contextLines}\n</persistent_context>`;
 
-    return this.framework(memoryContext, { pushToChannel: true, taskManagement: true, codeModification: true });
+    return this.framework(memoryContext, "", {
+      pushToChannel: true,
+      taskManagement: true,
+      codeModification: true,
+    });
   }
 
-  private framework(memoryContext: string, protocols: ProtocolSet, skills: SkillInfo[] = []): string {
+  private framework(
+    memoryContext: string,
+    styleSection: string,
+    protocols: ProtocolSet,
+    skills: SkillInfo[] = [],
+  ): string {
     const sections: string[] = [];
     let n = 1;
 
@@ -122,50 +262,38 @@ export class SystemPromptBuilder {
    - Jarvis has its own internal task scheduler stored in ~/.gemini-jarvis/tasks.json.
    - task_list/task_add/task_update/task_toggle/task_delete/task_run are REGISTERED FUNCTION CALL TOOLS, not shell commands. NEVER run them via run_shell_command.
    - BAD: run_shell_command("task_list") ← ABSOLUTELY FORBIDDEN
-   - BAD: run_shell_command("task_delete ...") ← ABSOLUTELY FORBIDDEN
    - GOOD: Call the task_list function tool directly ← CORRECT
    - TRIGGER: When user says "每天X点", "每周X", "定时", "scheduled", "automatically at X time" → call task_add function tool IMMEDIATELY.
    - TRIGGER: When user asks about/deletes/updates tasks → call task_list/task_delete/task_update function tools directly.
-   - FORBIDDEN: run_shell_command with crontab, launchctl, launchd, task_list, task_add, or any task_* name.
-   - BAD: User says "每天晚上8点查询GitHub Trending" → writing code/scripts/launchd ← WRONG
-   - GOOD: User says "每天晚上8点查询GitHub Trending" → task_add(cron="每天晚上8点", prompt="使用google_web_search查询GitHub Trending今日热门并汇总") ← CORRECT
-   - NOTE: The prompt in task_add is executed by Jarvis at runtime using available tools — no code needed.`);
+   - FORBIDDEN: run_shell_command with crontab, launchctl, launchd, or any task_* name.
+   - GOOD: User says "每天晚上8点查询GitHub Trending" → task_add(cron="每天晚上8点", prompt="...") ← CORRECT`);
     }
 
     sections.push(`${n++}. **TASK_DECOMPOSITION**:
    - For complex queries, decompose into functional blocks before executing.
    - Trigger specialized modules (codebase_investigator, generalist) concurrently when applicable.`);
 
-    sections.push(`${n++}. **ACTIVE_RECALL (MANDATORY)**:
-   - Your context window is fresh on each session.
-   - When the user refers to past interactions, ALWAYS call 'recall_memory' first. DO NOT GUESS.`);
-
     if (skills.length > 0) {
       sections.push(`${n++}. **SKILL_ACTIVATION (USE WHEN APPLICABLE)**:
    - The following skills are available via activate_skill tool. Call activate_skill(name) when the user's request matches a skill's description.
    - After activation, follow the skill's instructions precisely.
 <available_skills>
-${skills.map(s => `- ${s.name}: ${s.description}`).join('\n')}
+${skills.map((s) => `- ${s.name}: ${s.description}`).join("\n")}
 </available_skills>`);
     }
 
+    // New order: Identity(primacy) → Context → Protocols → Style/Formatting(recency)
     return `# JARVIS OPERATIONAL FRAMEWORK v4.0
 
-## I. CORE PROTOCOLS (MANDATORY)
-
-${sections.join('\n\n')}
-
-## II. EXECUTION CONTEXT
+## I. EXECUTION CONTEXT
 ${memoryContext}
 
-## III. ROLE & TONE
+## II. OPERATIONAL PROTOCOLS
+${sections.join("\n\n")}
+
+## III. OUTPUT CONSTRAINTS
 - You are JARVIS: deterministic, precise, and system-native.
 - Skip conversational fillers. Use high-density information.
-- Adapt style as per the style constraints section above if present.
-
-## IV. RESPONSE FORMATTING
-- Use Markdown for structure.
-- For financial/data analysis, use tables for comparison.
-- For code, specify language and file path.`.trim();
+- Use Markdown for structure. For financial/data analysis, use tables. For code, specify language and file path.${styleSection}`.trim();
   }
 }
