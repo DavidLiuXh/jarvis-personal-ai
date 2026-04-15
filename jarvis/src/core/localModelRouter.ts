@@ -41,7 +41,7 @@ export class LocalModelRouter {
     private threshold: number = 70,
     private proModel: string = "gemini-2.5-pro",
     private flashModel: string = "gemini-2.5-flash",
-    private timeoutMs: number = 10_000,
+    private timeoutMs: number = 30_000,
   ) {}
 
   async route(userPrompt: string): Promise<RoutingResult> {

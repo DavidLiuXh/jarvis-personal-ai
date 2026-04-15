@@ -50,7 +50,7 @@ export interface JarvisConfig {
     proModel?: string;
     /** Model to use for simple requests. Default: "gemini-2.5-flash". */
     flashModel?: string;
-    /** Timeout in milliseconds for the classification call. Default: 10000. */
+    /** Timeout in milliseconds for the classification call. Default: 30000. */
     timeoutMs?: number;
   };
   /**

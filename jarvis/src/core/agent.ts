@@ -126,7 +126,7 @@ export class JarvisAgent extends EventEmitter {
         routingCfg.threshold ?? 70,
         routingCfg.proModel ?? "gemini-2.5-pro",
         routingCfg.flashModel ?? "gemini-2.5-flash",
-        routingCfg.timeoutMs ?? 10_000,
+        routingCfg.timeoutMs ?? 30_000,
       );
       console.error(
         `🔀 [Jarvis] Local model router initialized (model=${routingCfg.model}, threshold=${routingCfg.threshold ?? 70})`,
