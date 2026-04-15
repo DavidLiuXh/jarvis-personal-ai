@@ -11,10 +11,8 @@
  *
  * @param userMemory - content of GEMINI.md files (global + project), if any
  */
-export function buildJarvisPreamble(userMemory?: string): string {
-  const memorySection = userMemory?.trim()
-    ? `\n\n---\n\n${userMemory.trim()}`
-    : "";
+export function buildJarvisPreamble(_userMemory?: string): string {
+  const memorySection = "";
 
   return `
 You are Jarvis, a deeply personalized AI assistant. Your primary goal is to help the user safely, effectively, and concisely.

@@ -129,9 +129,7 @@ const defaultInstruction = getCoreSystemPrompt(
 **代码**（`agent.ts`）：
 
 ```typescript
-const userMemory = this.client.config.getUserMemory();
-const userMemoryStr = typeof userMemory === "string" ? userMemory : "";
-const defaultInstruction = buildJarvisPreamble(userMemoryStr);
+const defaultInstruction = buildJarvisPreamble();
 ```
 
 ### System Instruction 完整构成
@@ -162,9 +160,7 @@ const defaultInstruction = buildJarvisPreamble(userMemoryStr);
 │       - GitHub-flavored Markdown                            │
 │       - 工具用于行动，文字用于沟通                           │
 │                                                             │
-│  GEMINI.md（userMemory，直接追加在末尾）                    │
-│                                                             │
-│  估计 token 数：400 - 800 tokens                            │
+│  估计 token 数：300 - 600 tokens                            │
 ├─────────────────────────────────────────────────────────────┤
 │  ② JARVIS OPERATIONAL FRAMEWORK v4.0（与精简前相同）        │
 │     估计 token 数：500 - 1500 tokens                        │
@@ -194,9 +190,9 @@ const defaultInstruction = buildJarvisPreamble(userMemoryStr);
 | Tone & Style                    | ✅ 包含                            | ✅ 保留                               |
 | Plan Mode / Task Tracker        | ✅ 包含                            | ❌ 去掉                               |
 | Sandbox / Git                   | ✅ 包含                            | ❌ 去掉                               |
-| GEMINI.md                       | ✅ 通过 renderFinalShell 追加      | ✅ 直接追加                           |
-| **估计 token（Preamble 部分）** | **3000 - 5000**                    | **400 - 800**                         |
-| **总 system prompt token**      | **3500 - 7100**                    | **900 - 2900**                        |
+| GEMINI.md                       | ✅ 通过 renderFinalShell 追加      | ❌ 不再加载                           |
+| **估计 token（Preamble 部分）** | **3000 - 5000**                    | **300 - 600**                         |
+| **总 system prompt token**      | **3500 - 7100**                    | **800 - 2700**                        |
 | **节省**                        | —                                  | **~70%**                              |
 
 ---
@@ -205,7 +201,7 @@ const defaultInstruction = buildJarvisPreamble(userMemoryStr);
 
 1. **JARVIS OPERATIONAL FRAMEWORK 未变**：`buildFromFacts()` 生成的部分（protocols、facts 注入、role/tone、formatting）保持不变，`selectProtocols` 仍然根据用户输入关键词动态决定注入哪些协议。
 
-2. **GEMINI.md 仍然加载**：`buildJarvisPreamble(userMemoryStr)` 接收 userMemory 并追加在末尾，全局和项目级 GEMINI.md 内容不受影响。
+2. **GEMINI.md 不再加载**：`buildJarvisPreamble()` 不接收 userMemory，`~/.gemini/gemini.md` 等 Gemini CLI 全局配置不再注入，避免引入与个人助手无关的指令。
 
 3. **代码编辑能力未丧失**：工具使用规则（edit、shell 等）保留，只是去掉了面向软件工程任务的详细工作流说明。LLM 仍然知道如何调用这些工具。
 

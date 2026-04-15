@@ -128,14 +128,9 @@ export class JarvisAgent extends EventEmitter {
       userPrompt,
       this.availableSkills,
     );
-    // Use Jarvis slim preamble instead of full getCoreSystemPrompt()
-    // to avoid injecting software-engineering-specific rules irrelevant to personal assistant use
-    const userMemory = this.client.config.getUserMemory();
-    const userMemoryStr =
-      typeof userMemory === "string"
-        ? userMemory
-        : ((userMemory as any)?.toString?.() ?? "");
-    const defaultInstruction = buildJarvisPreamble(userMemoryStr);
+    // Use Jarvis slim preamble — GEMINI.md (userMemory) intentionally excluded
+    // as it is Gemini CLI global config irrelevant to personal assistant use
+    const defaultInstruction = buildJarvisPreamble();
 
     // vec_memories pre-warm: inject semantically similar past conversations
     const prewarmLimit = this.jarvisConfig.memory.prewarmLimit ?? 3;
