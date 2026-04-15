@@ -217,7 +217,7 @@ export class ConfigManager {
         provider: "google" as const,
       },
       reflection: {
-        provider: "gemini" as const,
+        provider: "ollama" as const,
       },
       entityExtraction: {
         enabled: true,
@@ -265,6 +265,10 @@ export class ConfigManager {
         resumeOnStart: true,
         recentTurnsOnResume: 3,
       },
+      routing: {
+        enabled: true,
+        model: "",
+      },
     };
 
     if (fs.existsSync(CONFIG_PATH)) {
@@ -294,6 +298,7 @@ export class ConfigManager {
           feishu: { ...defaults.feishu, ...saved.feishu },
           wechat: { ...defaults.wechat, ...saved.wechat },
           session: { ...defaults.session, ...saved.session },
+          routing: { ...defaults.routing, ...saved.routing },
         };
       } catch (e) {
         console.error(

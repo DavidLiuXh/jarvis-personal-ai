@@ -63,8 +63,8 @@ Configuration file location: `~/.gemini-jarvis/config.json`
   // Classifies each request (1-100) and selects proModel or flashModel.
   // ─────────────────────────────────────────────
   "routing": {
-    // Enable local model routing. Default: false
-    "enabled": false,
+    // Enable local model routing. Default: true (inactive until model is set)
+    "enabled": true,
 
     // Ollama service URL. Default: "http://localhost:11434"
     "baseUrl": "http://localhost:11434",
@@ -95,9 +95,9 @@ Configuration file location: `~/.gemini-jarvis/config.json`
   // Reflection — model for consolidateFacts and nightly reflect
   // ─────────────────────────────────────────────
   "reflection": {
-    // "gemini": use existing CLI auth / generateTextFn (default)
-    // "ollama": use local Ollama model (works offline, recommended if using Code Assist)
-    "provider": "gemini",
+    // "gemini": use existing CLI auth / generateTextFn
+    // "ollama": use local Ollama model (default, works offline)
+    "provider": "ollama",
 
     // Ollama service URL. Only used when provider = "ollama".
     "baseUrl": "http://localhost:11434",
