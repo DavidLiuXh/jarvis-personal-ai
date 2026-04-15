@@ -1366,12 +1366,17 @@ Respond ONLY with a JSON array:
         .all(idsJson, idsJson, maxExpand) as Array<{ fact_id: number }>;
 
       console.error(
-        `🔗 [expandViaEntityLinks] rankedIds=${JSON.stringify(rankedIds)}, linkedFactIds=${JSON.stringify(linkedFactIds.map((r) => r.fact_id))}`,
+        `🔗 [expandViaEntityLinks] rankedIds=${JSON.stringify(rankedIds)}, linkedFactIds=${JSON.stringify(linkedFactIds.map((r) => r.fact_id))}, factByIdSize=${factById.size}`,
       );
-      return linkedFactIds
-        .map((r) => factById.get(r.fact_id))
+      const expanded = linkedFactIds
+        .map((r) => {
+          const f = factById.get(r.fact_id);
+          if (!f) console.error(`🔗 [expandViaEntityLinks] fact_id=${r.fact_id} not in factById`);
+          return f;
+        })
         .filter((f): f is NonNullable<typeof f> => f !== undefined)
         .map(({ category, content }) => ({ category, content }));
+      return expanded;
     } catch (e: any) {
       console.error(
         `⚠️ [MemoryService] expandViaEntityLinks failed: ${e.message}`,
