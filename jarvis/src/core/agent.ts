@@ -10,7 +10,6 @@ import {
   debugLogger,
   GeminiEventType,
   Scheduler,
-  getCoreSystemPrompt,
   promptIdContext,
   LlmRole,
   type Part,
@@ -21,6 +20,7 @@ import { type MemoryService } from "./memory.js";
 import { DynamicToolRegistry } from "./dynamicToolRegistry.js";
 import {
   SystemPromptBuilder,
+  buildJarvisPreamble,
   type FactRecord,
   type SkillInfo,
 } from "./systemPromptBuilder.js";
@@ -128,10 +128,14 @@ export class JarvisAgent extends EventEmitter {
       userPrompt,
       this.availableSkills,
     );
-    const defaultInstruction = getCoreSystemPrompt(
-      this.client.config,
-      this.client.config.getUserMemory(),
-    );
+    // Use Jarvis slim preamble instead of full getCoreSystemPrompt()
+    // to avoid injecting software-engineering-specific rules irrelevant to personal assistant use
+    const userMemory = this.client.config.getUserMemory();
+    const userMemoryStr =
+      typeof userMemory === "string"
+        ? userMemory
+        : ((userMemory as any)?.toString?.() ?? "");
+    const defaultInstruction = buildJarvisPreamble(userMemoryStr);
 
     // vec_memories pre-warm: inject semantically similar past conversations
     const prewarmLimit = this.jarvisConfig.memory.prewarmLimit ?? 3;
