@@ -867,6 +867,7 @@ ${factsText}
   public async reflect(
     generateText: (prompt: string) => Promise<string>,
   ): Promise<void> {
+    console.error(`🔮 [MemoryService] reflect() called`);
     try {
       const nonInsightFacts = this.db
         .prepare(
@@ -878,6 +879,7 @@ ${factsText}
         importance: number;
       }>;
 
+      console.error(`🔮 [MemoryService] reflect(): nonInsightFacts=${nonInsightFacts.length}`);
       if (nonInsightFacts.length === 0) return;
 
       const existingInsights = this.db
