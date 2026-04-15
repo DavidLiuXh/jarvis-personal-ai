@@ -1085,8 +1085,9 @@ Respond ONLY with a JSON array:
 
       let ranked: Array<{ category: string; content: string }>;
       let rankedIdsForGraph: number[] = [];
-      // Build id → fact map once, shared by embedding path and expandViaEntityLinks
-      const factById = new Map(candidateFacts.map((f) => [f.id, f]));
+      // Build id → fact map from ALL facts so expandViaEntityLinks can resolve
+      // any linked fact_id including insight/preference categories
+      const factById = new Map(allFacts.map((f) => [f.id, f]));
 
       if (strategy === "embedding" && this.embedContentFn) {
         try {
@@ -1230,8 +1231,16 @@ Respond ONLY with a JSON array:
         `🧠 [searchFacts] ranked(${ranked.length}): ${ranked.map((f) => `[${f.category}] ${f.content.slice(0, 50)}`).join(" | ")}`,
       );
 
-      // Graph expansion: use ids collected during ranking (no content reverse-lookup needed)
-      const expanded = this.expandViaEntityLinks(rankedIdsForGraph, factById);
+      // Graph expansion: use ids collected during ranking
+      // Filter out facts already in alwaysOut or ranked to avoid duplicates
+      const alreadyIncluded = new Set([
+        ...alwaysOut.map((f) => f.content),
+        ...ranked.map((f) => f.content),
+      ]);
+      const expanded = this.expandViaEntityLinks(
+        rankedIdsForGraph,
+        factById,
+      ).filter((f) => !alreadyIncluded.has(f.content));
       if (expanded.length > 0) {
         console.error(
           `🔗 [searchFacts] expanded(${expanded.length}): ${expanded.map((f) => `[${f.category}] ${f.content.slice(0, 50)}`).join(" | ")}`,
