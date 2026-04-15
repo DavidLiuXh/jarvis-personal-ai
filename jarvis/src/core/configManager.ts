@@ -181,7 +181,7 @@ export class ConfigManager {
         provider: "google" as const,
       },
       entityExtraction: {
-        enabled: false,
+        enabled: true,
         provider: "gemini" as const,
       },
       network: {

@@ -64,8 +64,8 @@ Configuration file location: `~/.gemini-jarvis/config.json`
   // to enable graph-based context expansion in searchFacts.
   // ─────────────────────────────────────────────
   "entityExtraction": {
-    // Enable entity extraction. Default: false
-    "enabled": false,
+    // Enable entity extraction. Default: true
+    "enabled": true,
 
     // "ollama": use local Ollama model (recommended, fast, no internet)
     // "gemini": reuse the existing generateTextFn (shares distillation model)

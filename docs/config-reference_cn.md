@@ -64,8 +64,8 @@
   // 用于 searchFacts 时的图扩展，补充相关上下文。
   // ─────────────────────────────────────────────
   "entityExtraction": {
-    // 是否启用实体提取。默认：false
-    "enabled": false,
+    // 是否启用实体提取。默认：true
+    "enabled": true,
 
     // "ollama"：使用本地 Ollama 模型（推荐，速度快，无需联网）
     // "gemini"：复用现有 generateTextFn（与 distillation 共用模型）
