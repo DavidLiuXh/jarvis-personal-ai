@@ -34,6 +34,26 @@ export interface JarvisConfig {
     model?: string;
   };
   /**
+   * Local model routing: classify request complexity via Ollama,
+   * then select proModel or flashModel accordingly.
+   */
+  routing?: {
+    /** Enable local routing. Default: false. */
+    enabled: boolean;
+    /** Ollama base URL. Default: "http://localhost:11434". */
+    baseUrl?: string;
+    /** Ollama model for complexity classification, e.g. "gemma4:e2b". */
+    model: string;
+    /** Complexity score threshold (1-100). Score >= threshold → proModel. Default: 70. */
+    threshold?: number;
+    /** Model to use for complex requests. Default: "gemini-2.5-pro". */
+    proModel?: string;
+    /** Model to use for simple requests. Default: "gemini-2.5-flash". */
+    flashModel?: string;
+    /** Timeout in milliseconds for the classification call. Default: 10000. */
+    timeoutMs?: number;
+  };
+  /**
    * Reflection (consolidateFacts + reflect) model configuration.
    * provider 'gemini': use existing generateTextFn (default, requires CLI auth or api.key).
    * provider 'ollama': use local Ollama model (works offline, no API key needed).
