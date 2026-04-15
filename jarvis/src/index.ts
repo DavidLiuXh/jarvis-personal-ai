@@ -540,3 +540,43 @@ const shutdown = async () => {
 
 process.on("SIGINT", () => void shutdown());
 process.on("SIGTERM", () => void shutdown());
+
+// Guard against uncaught errors that would otherwise crash the process.
+// Common cause: AbortError from node-fetch when GeminiClient._recoverFromLoop()
+// aborts an in-flight request after ECONNRESET, emitting an unhandled 'error'
+// event on the readline Interface.
+process.on("uncaughtException", (err: Error) => {
+  const isAbortOrNetwork =
+    err.name === "AbortError" ||
+    (err as any).type === "aborted" ||
+    (err as any).code === "ECONNRESET" ||
+    (err as any).code === "ECONNREFUSED" ||
+    (err as any).code === "EPIPE";
+
+  if (isAbortOrNetwork) {
+    console.error(
+      `⚠️ [Jarvis] Swallowed non-fatal uncaught error (${err.name}/${(err as any).code ?? ""}): ${err.message}`,
+    );
+    // Process stays alive — the next user message will start a fresh turn
+  } else {
+    console.error(`💥 [Jarvis] Fatal uncaught exception:`, err);
+    void shutdown();
+  }
+});
+
+process.on("unhandledRejection", (reason: unknown) => {
+  const err = reason instanceof Error ? reason : new Error(String(reason));
+  const isAbortOrNetwork =
+    err.name === "AbortError" ||
+    (err as any).type === "aborted" ||
+    (err as any).code === "ECONNRESET" ||
+    (err as any).code === "ECONNREFUSED";
+
+  if (isAbortOrNetwork) {
+    console.error(
+      `⚠️ [Jarvis] Swallowed non-fatal unhandled rejection (${err.name}): ${err.message}`,
+    );
+  } else {
+    console.error(`💥 [Jarvis] Unhandled rejection:`, reason);
+  }
+});
