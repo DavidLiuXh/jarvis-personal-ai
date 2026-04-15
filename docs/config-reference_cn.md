@@ -59,6 +59,24 @@
   },
 
   // ─────────────────────────────────────────────
+  // Reflection — consolidateFacts 和夜间反思任务使用的模型
+  // ─────────────────────────────────────────────
+  "reflection": {
+    // "gemini"：使用现有 CLI 认证 / generateTextFn（默认）
+    // "ollama"：使用本地 Ollama 模型（离线可用，Code Assist 模式推荐）
+    "provider": "gemini",
+
+    // Ollama 服务地址。仅 provider = "ollama" 时生效。
+    "baseUrl": "http://localhost:11434",
+
+    // Ollama 模型名称，例如 "gemma4:e2b"。仅 provider = "ollama" 时生效。
+    "model": "gemma4:e2b",
+
+    // 超时时间（毫秒）。反思 prompt 较长，建议设置较大值。默认：120000（2分钟）
+    "timeoutMs": 120000,
+  },
+
+  // ─────────────────────────────────────────────
   // Entity Extraction — 知识图谱（神经关联）
   // 从 facts 中提取（主体, 关系, 客体）三元组，
   // 用于 searchFacts 时的图扩展，补充相关上下文。
