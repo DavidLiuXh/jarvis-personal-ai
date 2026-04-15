@@ -1209,7 +1209,8 @@ Respond ONLY with a JSON array:
             rankedIdsForGraph = fallbackIds;
             setImmediate(() => this.updateAccessStats(fallbackIds, nowMs));
           }
-        } catch (_e) {
+        } catch (_e: any) {
+          console.error(`⚠️ [searchFacts] embedding strategy failed, falling back to jaccard: ${_e?.message}`);
           ranked = this.rankByJaccard(query, candidateFacts, cap);
         }
       } else {
