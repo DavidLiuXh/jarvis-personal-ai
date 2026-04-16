@@ -176,7 +176,7 @@ export class JarvisAgent extends EventEmitter {
       );
 
     console.error(
-      `🔄 [Jarvis] System Prompt Refreshed. Facts injected: ${facts.length}. Prewarmed memories: ${prewarmLimit > 0 ? (prewarmSection ? prewarmSection.split("[Past ").length - 1 : 0) : "disabled"}.`,
+      `🔄 [Jarvis] System Prompt Refreshed. Facts injected: ${facts.length}. Prewarmed memories: ${prewarmLimit > 0 ? (prewarmSection ? prewarmSection.split("[Long-term Memory ").length - 1 : 0) : "disabled"}.`,
     );
   }
 
