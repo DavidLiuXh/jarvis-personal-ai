@@ -56,6 +56,26 @@ export interface JarvisConfig {
     historyTurns?: number;
   };
   /**
+   * Session summarizer configuration.
+   * Used by resumeFromDisk() to compress conversation history on startup.
+   */
+  summarizer?: {
+    /** 'gemini': use CLI auth generateText (default). 'ollama': use local Ollama. */
+    provider?: "gemini" | "ollama";
+    /** Ollama base URL. Default: "http://localhost:11434". */
+    baseUrl?: string;
+    /** Ollama model name. Summarization benefits from larger models, e.g. "gemma4:27b". */
+    model?: string;
+    /** Timeout per Ollama call in milliseconds. Default: 120000 (2 min). */
+    timeoutMs?: number;
+    /**
+     * Max messages per summarization chunk. When newMessages > chunkSize,
+     * they are processed in batches with rolling summary accumulation.
+     * 0 = no chunking (process all at once). Default: 100.
+     */
+    chunkSize?: number;
+  };
+  /**
    * Reflection (consolidateFacts + reflect) model configuration.
    * provider 'gemini': use existing generateTextFn (default, requires CLI auth or api.key).
    * provider 'ollama': use local Ollama model (works offline, no API key needed).
