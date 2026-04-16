@@ -61,6 +61,32 @@ Configuration file location: `~/.gemini-jarvis/config.json`
   },
 
   // ─────────────────────────────────────────────
+  // Summarizer — session history compression on startup
+  // ─────────────────────────────────────────────
+  "summarizer": {
+    // "gemini": use CLI auth generateText (default)
+    // "ollama": use local Ollama model (recommended when using Code Assist)
+    "provider": "ollama",
+
+    // Ollama service URL. Default: "http://localhost:11434"
+    "baseUrl": "http://localhost:11434",
+
+    // Ollama model. Summarization benefits from larger models, e.g. "gemma4:27b".
+    // If empty, falls back to gemini provider.
+    "model": "gemma4:27b",
+
+    // Timeout per Ollama call in milliseconds. Default: 120000 (2 min)
+    "timeoutMs": 120000,
+
+    // Max messages per summarization chunk.
+    // When new messages > chunkSize, they are processed in rolling batches:
+    //   chunk1 → summary1 → chunk2 + summary1 → summary2 → ...
+    // This keeps token count manageable for smaller models.
+    // 0 = no chunking (process all at once). Default: 100
+    "chunkSize": 100,
+  },
+
+  // ─────────────────────────────────────────────
   // Routing — local model routing via Ollama complexity classifier
   // Classifies each request (1-100) and selects proModel or flashModel.
   // ─────────────────────────────────────────────

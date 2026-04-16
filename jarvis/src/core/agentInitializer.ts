@@ -398,8 +398,10 @@ export class AgentInitializer {
       }
     });
 
-    // Build generateText using CLI-auth ContentGenerator (same pattern as agent.ts)
-    const generateText = async (prompt: string): Promise<string> => {
+    // Build generateText for session summarizer
+    // Routes to Ollama if summarizer.provider = 'ollama', else uses CLI-auth
+    const summarizerCfg = this.jarvisConfig.summarizer;
+    const cliGenerateText = async (prompt: string): Promise<string> => {
       const generator = client.config.getContentGenerator();
       const response = await generator.generateContent(
         {
@@ -412,6 +414,34 @@ export class AgentInitializer {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       return (response as any).candidates?.[0]?.content?.parts?.[0]?.text ?? "";
     };
+
+    let generateText: (prompt: string) => Promise<string>;
+    if (summarizerCfg?.provider === "ollama" && summarizerCfg.model) {
+      const baseUrl = summarizerCfg.baseUrl ?? "http://localhost:11434";
+      const model = summarizerCfg.model;
+      const timeoutMs = summarizerCfg.timeoutMs ?? 120_000;
+      generateText = async (prompt: string): Promise<string> => {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), timeoutMs);
+        try {
+          const response = await fetch(`${baseUrl}/api/generate`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ model, prompt, stream: false }),
+            signal: controller.signal,
+          });
+          if (!response.ok)
+            throw new Error(`Ollama summarizer failed: ${response.status}`);
+          const data = (await response.json()) as { response: string };
+          return data.response;
+        } finally {
+          clearTimeout(timeout);
+        }
+      };
+      console.error(`📝 [Jarvis] Session summarizer: Ollama (${model})`);
+    } else {
+      generateText = cliGenerateText;
+    }
 
     await this.resumeFromDisk(client, generateText);
 
@@ -485,14 +515,44 @@ export class AgentInitializer {
           `🧠 [Jarvis] Compressing session history (${newOrUpdatedFiles.length} new/updated files, ${newMessages.length} messages)...`,
         );
         try {
-          const newSummary = await buildIncrementalSummary(
-            newMessages,
-            summary || null,
-            generateText,
-            { maxRetries: 3, retryDelayMs: 2000 },
-          );
-          if (newSummary.trim().length > 0) {
-            summary = newSummary;
+          // Chunked summarization: process newMessages in batches for small models
+          const chunkSize = this.jarvisConfig.summarizer?.chunkSize ?? 100;
+          const chunks: SessionMessage[][] =
+            chunkSize > 0 && newMessages.length > chunkSize
+              ? Array.from(
+                  { length: Math.ceil(newMessages.length / chunkSize) },
+                  (_, i) =>
+                    newMessages.slice(i * chunkSize, (i + 1) * chunkSize),
+                )
+              : [newMessages];
+
+          if (chunks.length > 1) {
+            console.error(
+              `🧠 [Jarvis] Chunked summarization: ${newMessages.length} messages → ${chunks.length} chunks of ~${chunkSize}`,
+            );
+          }
+
+          let rollingSummary = summary || null;
+          for (let i = 0; i < chunks.length; i++) {
+            const chunk = chunks[i];
+            if (chunks.length > 1) {
+              console.error(
+                `🧠 [Jarvis] Summarizing chunk ${i + 1}/${chunks.length} (${chunk.length} messages)...`,
+              );
+            }
+            const newSummary = await buildIncrementalSummary(
+              chunk,
+              rollingSummary,
+              generateText,
+              { maxRetries: 3, retryDelayMs: 2000 },
+            );
+            if (newSummary.trim().length > 0) {
+              rollingSummary = newSummary;
+            }
+          }
+
+          if (rollingSummary && rollingSummary !== (summary || null)) {
+            summary = rollingSummary;
             const processedFileMtimes: Record<string, number> = {};
             for (const f of allFiles) processedFileMtimes[f.name] = f.mtime;
             saveSummaryState(memoryDir, {
@@ -501,7 +561,7 @@ export class AgentInitializer {
               updatedAt: Date.now(),
             });
             console.error(
-              `✅ [Jarvis] Session history compressed (${summary.length} chars).`,
+              `✅ [Jarvis] Session history compressed (${summary.length} chars, ${chunks.length} chunk(s)).`,
             );
           } else {
             console.error(
