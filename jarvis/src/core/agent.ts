@@ -166,6 +166,10 @@ export class JarvisAgent extends EventEmitter {
             .map((m, i) => `[Long-term Memory ${i + 1}]: ${m}`)
             .join("\n") +
           "\n</relevant_past_conversations>";
+        console.error(
+          `🧠 [prewarm] ${similarMemories.length} memories injected:\n` +
+          similarMemories.map((m, i) => `  [${i + 1}] ${m.slice(0, 120)}`).join("\n"),
+        );
       }
     }
 
@@ -176,7 +180,7 @@ export class JarvisAgent extends EventEmitter {
       );
 
     console.error(
-      `🔄 [Jarvis] System Prompt Refreshed. Facts injected: ${facts.length}. Prewarmed memories: ${prewarmLimit > 0 ? (prewarmSection ? prewarmSection.split("[Past ").length - 1 : 0) : "disabled"}.`,
+      `🔄 [Jarvis] System Prompt Refreshed. Facts injected: ${facts.length}. Prewarmed memories: ${prewarmLimit > 0 ? (prewarmSection ? prewarmSection.split("[Long-term Memory ").length - 1 : 0) : "disabled"}.`,
     );
   }
 

@@ -85,6 +85,21 @@
     // 适合小模型，避免单次 token 过多。
     // 0 = 不分段（一次处理全部）。默认：100
     "chunkSize": 100,
+
+    // 从新消息中提取原子记忆事件并存入 vec_memories。
+    // 事件是高信噪比的内容（决策、解决方案、关键事实），支持 RAG 检索。
+    // 默认：true
+    "extractEvents": true,
+
+    // 只处理最近 N 天的 session 文件用于摘要更新。
+    // 更早的历史由 facts/vec_memories 覆盖，不再进入摘要，防止摘要无限膨胀。
+    // 0 = 不限制（处理全部）。默认：0
+    "summaryWindowDays": 30,
+
+    // 摘要最大字符数。超过则触发再压缩。
+    // 防止摘要过长导致"中间信息丢失"问题。
+    // 0 = 不限制。默认：3000
+    "maxSummaryLength": 3000,
   },
 
   // ─────────────────────────────────────────────
@@ -223,9 +238,13 @@
     // preference 和 insight 类别始终注入，不受此限制。默认：5
     "factRelevanceLimit": 5,
 
-    // 每轮对话从 vec_memories 预热的相似历史对话条数。
+    // 每轮对话从 vec_memories 预热的相似记忆条数（events 优先于 conversation）。
     // 0 = 禁用。默认：3
     "prewarmLimit": 3,
+
+    // 是否将原始对话对（user+assistant）存入 vec_memories。
+    // 启用事件提取后，原始对话信噪比低，建议关闭。默认：false
+    "ingestConversations": false,
 
     // L1 物理层（MEMORIES.md）写入模式：
     // "realtime"：每次 saveFact 后立即追加（实时，可能有轻微冗余）

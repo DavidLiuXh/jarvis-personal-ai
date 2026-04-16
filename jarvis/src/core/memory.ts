@@ -130,6 +130,16 @@ export class MemoryService {
 
     // Migrations
     try {
+      this.db.exec(
+        "ALTER TABLE memories ADD COLUMN source TEXT DEFAULT 'conversation'",
+      );
+    } catch (_) {}
+    try {
+      this.db.exec(
+        "ALTER TABLE processed_files ADD COLUMN events_extracted INTEGER DEFAULT 0",
+      );
+    } catch (_) {}
+    try {
       this.db.exec("ALTER TABLE facts ADD COLUMN embedding BLOB");
     } catch (_) {}
     try {
@@ -816,6 +826,8 @@ ${factsText}
     userPrompt: string,
     assistantText: string,
   ) {
+    // Skip raw conversation ingestion if disabled (events provide higher signal)
+    if (!(this.jarvisConfig.memory.ingestConversations ?? false)) return;
     if (!this.embedContentFn && !this.client) return;
     try {
       const text = `User: ${userPrompt}\nAssistant: ${assistantText}`;
@@ -844,6 +856,7 @@ ${factsText}
   }
 
   public async search(query: string, limit: number = 5): Promise<string[]> {
+    if (!query?.trim()) return [];
     if (!this.embedContentFn && !this.client) return [];
     try {
       let queryVec: number[];
@@ -857,19 +870,122 @@ ${factsText}
         const embeddings = result.embeddings || [result.embedding];
         queryVec = embeddings[0].values;
       }
+
+      const fetchLimit = Math.max(limit * 4, 20);
+      const lambda = this.jarvisConfig.memory.decayLambda ?? 0.1;
+      const nowMs = Date.now();
+
+      // Fetch more candidates than needed, then re-rank with time decay for events
+      // vec0 KNN requires LIMIT directly on the vec_memories subquery
+      const rows = this.db
+        .prepare(
+          `SELECT m.text, m.source, m.timestamp, v.distance
+           FROM memories m
+           JOIN (
+             SELECT id, distance FROM vec_memories
+             WHERE embedding MATCH ?
+             ORDER BY distance
+             LIMIT ?
+           ) v ON m.id = v.id`,
+        )
+        .all(new Float32Array(queryVec), fetchLimit) as Array<{
+        text: string;
+        source: string;
+        timestamp: number;
+        distance: number;
+      }>;
+
+      // Score: events get time decay bonus; conversations get no bonus
+      // fusedScore = (1 - distance) + eventBonus * decay
+      const eventBonus = 0.3;
+      const scored = rows.map((r) => {
+        const simScore = Math.max(0, 1 - (r.distance * r.distance) / 2);
+        let score = simScore;
+        if (r.source === "event" && r.timestamp) {
+          const daysSince = (nowMs - r.timestamp) / 86_400_000;
+          const decay = Math.exp(-lambda * daysSince);
+          score += eventBonus * decay;
+        }
+        return { text: r.text, score };
+      });
+
+      scored.sort((a, b) => b.score - a.score);
+      const results = scored.slice(0, limit).map((r) => r.text);
+      console.error(`🔍 [search] rows=${rows.length}, scored=${scored.length}, returned=${results.length}`);
+      return results;
+    } catch (e: any) {
+      console.error(`⚠️ [search] failed: ${e?.message}`);
+      return [];
+    }
+  }
+
+  /**
+   * Write a list of extracted event strings into memories with source='event'.
+   * Each event is embedded and stored in vec_memories for semantic retrieval.
+   */
+  public async ingestEvents(events: string[]): Promise<void> {
+    if (!this.embedContentFn || events.length === 0) return;
+    let vecCount = 0;
+    for (const text of events) {
+      try {
+        const vec = await this.embedContentFn(text);
+        const info = this.db
+          .prepare(
+            "INSERT INTO memories (sessionId, text, timestamp, source) VALUES (?, ?, ?, 'event')",
+          )
+          .run("events", text, Date.now());
+        try {
+          this.db
+            .prepare("INSERT INTO vec_memories (id, embedding) VALUES (?, ?)")
+            .run(BigInt(info.lastInsertRowid), new Float32Array(vec));
+          vecCount++;
+        } catch (vecErr: any) {
+          console.error(`⚠️ [MemoryService] vec_memories insert failed for event: ${vecErr.message}`);
+        }
+      } catch (_e) {}
+    }
+    console.error(`📝 [MemoryService] ingestEvents: ${events.length} events → memories, ${vecCount} → vec_memories`);
+  }
+
+  /**
+   * Search vec_memories filtered by source type.
+   * source='event': only return extracted events (high signal)
+   * source='conversation': only return raw conversation pairs
+   * source=undefined: return all (current behavior)
+   */
+  public async searchBySource(
+    query: string,
+    limit: number = 5,
+    source?: "event" | "conversation",
+  ): Promise<string[]> {
+    if (!this.embedContentFn && !this.client) return [];
+    try {
+      let queryVec: number[];
+      if (this.embedContentFn) {
+        queryVec = await this.embedContentFn(query);
+      } else {
+        const result = await this.client.models.embedContent({
+          model: this.jarvisConfig.models.embedding,
+          contents: [{ role: "user", parts: [{ text: query }] }],
+        });
+        const embeddings = result.embeddings || [result.embedding];
+        queryVec = embeddings[0].values;
+      }
+      const sourceFilter = source ? `AND m.source = '${source}'` : "";
       const results = this.db
         .prepare(
-          `
-        SELECT m.text FROM memories m JOIN vec_memories v ON m.id = v.id
-        WHERE v.embedding MATCH ? ORDER BY v.distance LIMIT ?
-      `,
+          `SELECT m.text FROM memories m
+           JOIN (
+             SELECT id, distance FROM vec_memories
+             WHERE embedding MATCH ?
+             ORDER BY distance
+             LIMIT ?
+           ) v ON m.id = v.id
+           WHERE 1=1 ${sourceFilter}`,
         )
-        .all(
-          new Float32Array(queryVec),
-          limit || this.jarvisConfig.memory.retrievalLimit,
-        ) as any[];
-      return results.map((r) => r.text);
-    } catch (e) {
+        .all(new Float32Array(queryVec), limit) as any[];
+      return results.map((r: any) => r.text);
+    } catch (_e) {
       return [];
     }
   }
@@ -1152,6 +1268,9 @@ Respond ONLY with a JSON array:
               .map((r, vecIdx) => {
                 const fact = factById.get(r.id);
                 if (!fact) return null;
+                // Skip always-inject categories — they are already in alwaysOut
+                if (MemoryService.ALWAYS_INJECT_CATEGORIES.has(fact.category))
+                  return null;
                 const vecRank = vecIdx + 1;
                 const bm25Rank = bm25RankMap.get(r.id) ?? fetchLimit + 1;
                 const rrfScore = 1 / (rrfK + vecRank) + 1 / (rrfK + bm25Rank);
@@ -1624,6 +1743,9 @@ Respond ONLY with a JSON array:
     // Backfill entity links: delay 60s after startup to avoid competing
     // with the first user interaction (Ollama calls are slow)
     setTimeout(() => void this.backfillEntityLinks(), 60_000);
+    // Backfill session events: delay 90s (after entity backfill starts)
+    // to extract atomic events from historical sessions not yet processed
+    setTimeout(() => void this.backfillSessionEvents(), 90_000);
   }
 
   /**
@@ -2002,6 +2124,110 @@ Respond ONLY with a JSON array:
   /**
    * If MEMORIES.md is missing or empty, rebuild it from SQLite.
    */
+  /**
+   * Extract atomic memory events from historical session files that have not
+   * yet been processed. Uses the injected generateTextFn (summarizer model).
+   * Marks each file as processed in processed_files.events_extracted.
+   */
+  public async backfillSessionEvents(): Promise<void> {
+    if (!this.generateTextFn) return;
+    if (this.isBackfillingEntities) return; // reuse guard to avoid concurrent heavy ops
+
+    const chatsDir = path.join(
+      os.homedir(),
+      ".gemini-jarvis",
+      "storage",
+      "chats",
+    );
+    if (!fs.existsSync(chatsDir)) return;
+
+    const files = fs
+      .readdirSync(chatsDir)
+      .filter((f) => f.endsWith(".json") || f.endsWith(".jsonl"));
+
+    const pending = files.filter((file) => {
+      const row = this.db
+        .prepare(
+          "SELECT events_extracted FROM processed_files WHERE filename = ?",
+        )
+        .get(file) as { events_extracted: number } | undefined;
+      return !row || !row.events_extracted;
+    });
+
+    if (pending.length === 0) return;
+
+    console.error(
+      `📝 [MemoryService] Session events backfill: ${pending.length} files to process...`,
+    );
+
+    let totalEvents = 0;
+    for (const file of pending) {
+      // Yield between files to keep event loop responsive
+      await new Promise((r) => setImmediate(r));
+      try {
+        const filePath = path.join(chatsDir, file);
+        const messages = this.parseSessionMessages(filePath);
+        const convoText = messages
+          .filter((m) => m.type === "user" || m.type === "gemini")
+          .slice(-200)
+          .map(
+            (m) =>
+              `${m.type === "user" ? "User" : "Jarvis"}: ${String(m.content).slice(0, 300)}`,
+          )
+          .join("\n");
+
+        if (convoText.trim().length > 50) {
+          // Extract date from filename, e.g. session-2026-04-15T11-02-...
+          const dateMatch = file.match(/(\d{4}-\d{2}-\d{2})/);
+          const date = dateMatch
+            ? dateMatch[1]
+            : new Date().toISOString().slice(0, 10);
+
+          const prompt = `Extract 3-10 atomic memory events from the following conversation.
+Each event should be a single sentence describing a decision, solution, preference, or key fact.
+Format: one event per line, starting with [${date}].
+Only extract substantive items — ignore greetings, confirmations, and filler.
+
+Conversation:
+${convoText}
+
+Events:`;
+
+          const raw = await this.generateTextFn(prompt);
+          const events = raw
+            .split("\n")
+            .map((l) => l.trim())
+            .filter(
+              (l) => l.startsWith("[") && l.length > 20 && l.length < 300,
+            );
+
+          if (events.length > 0) {
+            await this.ingestEvents(events);
+            totalEvents += events.length;
+          }
+        }
+
+        // Mark as processed (upsert)
+        const filePath2 = path.join(chatsDir, file);
+        this.db
+          .prepare(
+            `INSERT INTO processed_files (filename, last_mtime, events_extracted)
+             VALUES (?, ?, 1)
+             ON CONFLICT(filename) DO UPDATE SET events_extracted = 1`,
+          )
+          .run(file, fs.statSync(filePath2).mtimeMs);
+      } catch (_e) {
+        /* skip unreadable files */
+      }
+    }
+
+    if (totalEvents > 0) {
+      console.error(
+        `✅ [MemoryService] Session events backfill complete: ${totalEvents} events from ${pending.length} files.`,
+      );
+    }
+  }
+
   /** Sync any facts not yet in facts_fts into the FTS index. */
   private backfillFts(): void {
     try {

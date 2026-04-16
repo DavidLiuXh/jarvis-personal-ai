@@ -85,6 +85,22 @@ Configuration file location: `~/.gemini-jarvis/config.json`
     // This keeps token count manageable for smaller models.
     // 0 = no chunking (process all at once). Default: 100
     "chunkSize": 100,
+
+    // Extract atomic memory events from new messages and store in vec_memories.
+    // Events are high-signal (decisions, solutions, key facts) and support RAG retrieval.
+    // Default: true
+    "extractEvents": true,
+
+    // Only process session files from the last N days for summary updates.
+    // Sessions older than this are covered by facts/vec_memories, not summary.
+    // This prevents summary from growing unboundedly.
+    // 0 = no limit (process all). Default: 0
+    "summaryWindowDays": 30,
+
+    // Max characters for the session summary. If exceeded, trigger re-compression.
+    // Prevents "Lost in the Middle" degradation from oversized summaries.
+    // 0 = no limit. Default: 3000
+    "maxSummaryLength": 3000,
   },
 
   // ─────────────────────────────────────────────
@@ -227,9 +243,14 @@ Configuration file location: `~/.gemini-jarvis/config.json`
     // Default: 5
     "factRelevanceLimit": 5,
 
-    // Number of semantically similar past conversations pre-warmed into context
-    // each turn via vec_memories. 0 = disabled. Default: 3
+    // Number of semantically similar memory items pre-warmed into context
+    // each turn via vec_memories (events prioritized over conversations). 0 = disabled. Default: 3
     "prewarmLimit": 3,
+
+    // Whether to store raw conversation pairs (user+assistant) in vec_memories.
+    // With events extraction enabled, raw conversations add low signal.
+    // Default: false
+    "ingestConversations": false,
 
     // L1 physical layer write mode for MEMORIES.md:
     // "realtime": append each fact immediately after saveFact (always up-to-date)

@@ -74,6 +74,22 @@ export interface JarvisConfig {
      * 0 = no chunking (process all at once). Default: 100.
      */
     chunkSize?: number;
+    /**
+     * Extract atomic memory events from new messages and store in vec_memories.
+     * Events are higher-signal than raw conversation pairs. Default: true.
+     */
+    extractEvents?: boolean;
+    /**
+     * Only process session files from the last N days for summary updates.
+     * Older sessions are covered by facts/vec_memories, not summary.
+     * 0 = no limit. Default: 0.
+     */
+    summaryWindowDays?: number;
+    /**
+     * Max characters for session summary. If exceeded, trigger re-compression.
+     * 0 = no limit. Default: 3000.
+     */
+    maxSummaryLength?: number;
   };
   /**
    * Reflection (consolidateFacts + reflect) model configuration.
@@ -132,6 +148,12 @@ export interface JarvisConfig {
     factRelevanceLimit: number;
     /** Number of semantically similar past conversations to pre-warm into context each turn. 0 = disabled. Default: 3. */
     prewarmLimit: number;
+    /**
+     * Whether to store raw conversation pairs (user+assistant) in vec_memories.
+     * With events extraction enabled, raw conversations add low signal.
+     * Default: false (only events are stored).
+     */
+    ingestConversations: boolean;
     /**
      * L1 physical layer write mode for MEMORIES.md.
      * 'realtime': append each fact immediately after saveFact (always up-to-date, may have minor redundancy).
@@ -258,6 +280,7 @@ export class ConfigManager {
         factRelevanceStrategy: "jaccard" as const,
         factRelevanceLimit: 5,
         prewarmLimit: 3,
+        ingestConversations: false,
         l1WriteMode: "batch" as const,
         vectorSimilarityWeight: 0.7,
         importanceWeight: 0.2,
