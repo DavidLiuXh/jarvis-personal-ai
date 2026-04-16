@@ -856,6 +856,7 @@ ${factsText}
   }
 
   public async search(query: string, limit: number = 5): Promise<string[]> {
+    if (!query?.trim()) return [];
     if (!this.embedContentFn && !this.client) return [];
     try {
       let queryVec: number[];

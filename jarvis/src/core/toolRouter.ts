@@ -167,13 +167,17 @@ export class ToolRouter {
         output = `Integrated into structured core: ${fact}`;
         console.error(`🛡️ [Jarvis] Memory Redirected: ${fact}`);
       } else if (req.name === 'recall_memory') {
-        const query = req.args.query as string;
+        const query = (req.args.query as string)?.trim() || '';
         const limit = (req.args.limit as number) || 5;
-        console.error(`🧠 [Jarvis] Active Recall initiated for: "${query}"`);
-        const memories = await this.memoryService.search(query, limit);
-        output = memories.length > 0
-          ? `LONG-TERM MEMORIES FOUND:\n${memories.map(m => `- ${m}`).join('\n')}\n\nINSTRUCTION: Now synthesize this history into your final answer.`
-          : `NO SPECIFIC MEMORIES FOUND for "${query}". Proceed with current knowledge.`;
+        if (!query) {
+          output = `recall_memory requires a non-empty query. Please provide keywords to search.`;
+        } else {
+          console.error(`🧠 [Jarvis] Active Recall initiated for: "${query}"`);
+          const memories = await this.memoryService.search(query, limit);
+          output = memories.length > 0
+            ? `LONG-TERM MEMORIES FOUND:\n${memories.map(m => `- ${m}`).join('\n')}\n\nINSTRUCTION: Now synthesize this history into your final answer.`
+            : `NO SPECIFIC MEMORIES FOUND for "${query}". Proceed with current knowledge.`;
+        }
       } else if (req.name.startsWith('task_')) {
         const action = req.name.slice('task_'.length);
         if (this.taskCommandHandler) {
