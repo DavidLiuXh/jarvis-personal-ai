@@ -2055,7 +2055,9 @@ Respond ONLY with a JSON array:
     );
     if (!fs.existsSync(chatsDir)) return;
 
-    const files = fs.readdirSync(chatsDir).filter((f) => f.endsWith(".json"));
+    const files = fs
+      .readdirSync(chatsDir)
+      .filter((f) => f.endsWith(".json") || f.endsWith(".jsonl"));
     for (const file of files) {
       const filePath = path.join(chatsDir, file);
       const stats = fs.statSync(filePath);

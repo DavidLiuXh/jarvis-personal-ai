@@ -4,9 +4,9 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import path from 'node:path';
-import fs from 'node:fs';
-import os from 'node:os';
+import path from "node:path";
+import fs from "node:fs";
+import os from "node:os";
 import {
   GeminiClient,
   debugLogger,
@@ -16,15 +16,15 @@ import {
   ApprovalMode,
   LlmRole,
   type ConversationRecord,
-} from '../../../gemini-cli/packages/core/src/index.js';
+} from "../../../gemini-cli/packages/core/src/index.js";
 
 // @ts-expect-error - Relative import
-import { loadCliConfig } from '../../../gemini-cli/packages/cli/src/config/config.js';
+import { loadCliConfig } from "../../../gemini-cli/packages/cli/src/config/config.js";
 // @ts-expect-error - Relative import
-import { loadSettings } from '../../../gemini-cli/packages/cli/src/config/settings.js';
+import { loadSettings } from "../../../gemini-cli/packages/cli/src/config/settings.js";
 // @ts-expect-error - Relative import
-import { type MemoryService } from './memory.js';
-import { ConfigManager } from './configManager.js';
+import { type MemoryService } from "./memory.js";
+import { ConfigManager } from "./configManager.js";
 import {
   loadSummaryState,
   saveSummaryState,
@@ -32,7 +32,7 @@ import {
   buildHistoryWithSummary,
   getNewOrUpdatedFiles,
   type SessionMessage,
-} from './sessionSummarizer.js';
+} from "./sessionSummarizer.js";
 
 type DynamicRegistryHandle = {
   getDynamicToolSchemas: () => unknown[];
@@ -84,7 +84,7 @@ export class AgentInitializer {
     if (!settings.merged.model) {
       settings.merged.model = {};
     }
-    if (this.jarvisConfig.models.chat !== 'auto') {
+    if (this.jarvisConfig.models.chat !== "auto") {
       // settings.model.name is the field that loadCliConfig reads to set config.model
       // (via argv.model || process.env.GEMINI_MODEL || settings.model?.name)
       // primaryModel was incorrect — it is only used for quota tracking, not routing
@@ -95,8 +95,8 @@ export class AgentInitializer {
     // II. CORE INITIALIZATION
     const jarvisStorageRoot = path.join(
       os.homedir(),
-      '.gemini-jarvis',
-      'storage',
+      ".gemini-jarvis",
+      "storage",
     );
     if (!fs.existsSync(jarvisStorageRoot)) {
       fs.mkdirSync(jarvisStorageRoot, { recursive: true });
@@ -107,7 +107,7 @@ export class AgentInitializer {
       this.sessionId,
       { _: [], yolo: true, interactive: true },
       {
-        cwd: path.join(os.homedir(), '.gemini-jarvis'),
+        cwd: path.join(os.homedir(), ".gemini-jarvis"),
         projectTmpDir: jarvisStorageRoot,
       },
     );
@@ -116,8 +116,8 @@ export class AgentInitializer {
       // @ts-expect-error - internal storage property
       config.storage.targetDir = path.join(
         os.homedir(),
-        '.gemini-jarvis',
-        'runtime',
+        ".gemini-jarvis",
+        "runtime",
       );
       // @ts-expect-error - internal storage property
       config.storage.getProjectTempDir = () => jarvisStorageRoot;
@@ -139,157 +139,157 @@ export class AgentInitializer {
     const registry = config.getToolRegistry();
 
     const recallMemoryTool = {
-      name: 'recall_memory',
+      name: "recall_memory",
       description:
-        'MANDATORY for retrieving any past interaction, technical decision, or user preference not in the current view.',
+        "MANDATORY for retrieving any past interaction, technical decision, or user preference not in the current view.",
       parameters: {
-        type: 'object',
+        type: "object",
         properties: {
           query: {
-            type: 'string',
-            description: 'Specific keywords to search in long-term memory.',
+            type: "string",
+            description: "Specific keywords to search in long-term memory.",
           },
-          limit: { type: 'number', description: 'Number of results (1-10).' },
+          limit: { type: "number", description: "Number of results (1-10)." },
         },
-        required: ['query'],
+        required: ["query"],
       },
       parallelizable: true,
     };
 
     const taskTools = [
       {
-        name: 'task_list',
+        name: "task_list",
         description:
           "ALWAYS use this tool when the user asks about scheduled tasks, cron jobs, or automated tasks in Jarvis. This lists Jarvis's own internal task scheduler (NOT system crontab). Do NOT use run_shell_command or crontab -l for this purpose.",
-        parameters: { type: 'object', properties: {}, required: [] },
+        parameters: { type: "object", properties: {}, required: [] },
         parallelizable: false,
       },
       {
-        name: 'task_add',
+        name: "task_add",
         description:
           'IMMEDIATELY call this when the user says things like "每天X点做Y", "每周X做Y", "定时查询/汇总/分析", "schedule", "remind me", "automatically do X at Y time". Do NOT write code or scripts — just create a scheduled task with task_add. The prompt parameter is what Jarvis will say/do when the task fires.',
         parameters: {
-          type: 'object',
+          type: "object",
           properties: {
             cron: {
-              type: 'string',
+              type: "string",
               description:
                 'Schedule: cron expression OR natural language like "每天晚上8点", "weekdays at 9am", "每周一早上10点".',
             },
             prompt: {
-              type: 'string',
+              type: "string",
               description:
                 'The instruction Jarvis will execute when the task fires. Jarvis can use google_web_search and other tools at runtime — no code needed. E.g. "使用google_web_search查询GitHub Trending今日热门项目并汇总" or "搜索今日美股行情并分析".',
             },
             channel: {
-              type: 'string',
+              type: "string",
               description:
                 'Output channel: feishu or wechat. ONLY set when user explicitly mentions pushing/sending/notifying to a channel (e.g. "发到飞书", "推送到微信"). Leave unset if user does not mention push.',
             },
             chat_id: {
-              type: 'string',
+              type: "string",
               description:
-                'Target chat/user ID. Optional — if omitted, the channel uses its default target (WeChat: logged-in user; Feishu: defaultChatId from config). Only set when user specifies a different target.',
+                "Target chat/user ID. Optional — if omitted, the channel uses its default target (WeChat: logged-in user; Feishu: defaultChatId from config). Only set when user specifies a different target.",
             },
           },
-          required: ['cron', 'prompt'],
+          required: ["cron", "prompt"],
         },
         parallelizable: false,
       },
       {
-        name: 'task_update',
+        name: "task_update",
         description:
           'Update an existing task in Jarvis\'s internal scheduler. Supports natural language for schedule (e.g. "每天早上8点", "weekdays at 9am").',
         parameters: {
-          type: 'object',
+          type: "object",
           properties: {
-            id: { type: 'string', description: 'Task ID from task_list.' },
+            id: { type: "string", description: "Task ID from task_list." },
             cron: {
-              type: 'string',
+              type: "string",
               description:
                 'New schedule: cron expression or natural language like "每天早上8点".',
             },
-            prompt: { type: 'string', description: 'New prompt for the task.' },
-            channel: { type: 'string', description: 'New output channel.' },
+            prompt: { type: "string", description: "New prompt for the task." },
+            channel: { type: "string", description: "New output channel." },
             chat_id: {
-              type: 'string',
-              description: 'New target chat/user ID.',
+              type: "string",
+              description: "New target chat/user ID.",
             },
           },
-          required: ['id'],
+          required: ["id"],
         },
         parallelizable: false,
       },
       {
-        name: 'task_toggle',
+        name: "task_toggle",
         description:
           "Enable or disable a task in Jarvis's internal scheduler by ID.",
         parameters: {
-          type: 'object',
+          type: "object",
           properties: {
-            id: { type: 'string', description: 'Task ID from task_list.' },
+            id: { type: "string", description: "Task ID from task_list." },
             enabled: {
-              type: 'boolean',
-              description: 'true to enable, false to disable.',
+              type: "boolean",
+              description: "true to enable, false to disable.",
             },
           },
-          required: ['id', 'enabled'],
+          required: ["id", "enabled"],
         },
         parallelizable: false,
       },
       {
-        name: 'task_delete',
+        name: "task_delete",
         description:
           "Permanently delete a task from Jarvis's internal scheduler by ID. Use task_list first to get the task ID.",
         parameters: {
-          type: 'object',
+          type: "object",
           properties: {
-            id: { type: 'string', description: 'Task ID from task_list.' },
+            id: { type: "string", description: "Task ID from task_list." },
           },
-          required: ['id'],
+          required: ["id"],
         },
         parallelizable: false,
       },
       {
-        name: 'task_run',
+        name: "task_run",
         description:
-          'Immediately trigger a Jarvis internal scheduled task once, without waiting for its cron schedule.',
+          "Immediately trigger a Jarvis internal scheduled task once, without waiting for its cron schedule.",
         parameters: {
-          type: 'object',
+          type: "object",
           properties: {
-            id: { type: 'string', description: 'Task ID from task_list.' },
+            id: { type: "string", description: "Task ID from task_list." },
           },
-          required: ['id'],
+          required: ["id"],
         },
         parallelizable: false,
       },
     ];
 
     const pushToChannelTool = {
-      name: 'push_to_channel',
+      name: "push_to_channel",
       description:
         'Push a message to WeChat or Feishu. Call this when user says "发到微信", "推送到飞书", "send to WeChat", "push to Feishu", or asks to share/send content to a messaging channel.',
       parameters: {
-        type: 'object',
+        type: "object",
         properties: {
-          channel: { type: 'string', description: '"wechat" or "feishu"' },
+          channel: { type: "string", description: '"wechat" or "feishu"' },
           content: {
-            type: 'string',
-            description: 'The message content to push.',
+            type: "string",
+            description: "The message content to push.",
           },
           chat_id: {
-            type: 'string',
+            type: "string",
             description:
-              'Optional target chat/user ID. Leave empty to use the default (logged-in user for WeChat, defaultChatId for Feishu).',
+              "Optional target chat/user ID. Leave empty to use the default (logged-in user for WeChat, defaultChatId for Feishu).",
           },
         },
-        required: ['channel', 'content'],
+        required: ["channel", "content"],
       },
       parallelizable: false,
     };
 
     // @ts-expect-error - addDiscoveredTool is not in public ToolRegistry types
-    if (typeof registry.addDiscoveredTool === 'function') {
+    if (typeof registry.addDiscoveredTool === "function") {
       // @ts-expect-error - addDiscoveredTool is not in public ToolRegistry types
       registry.addDiscoveredTool(recallMemoryTool);
       // @ts-expect-error - addDiscoveredTool is not in public ToolRegistry types
@@ -301,13 +301,13 @@ export class AgentInitializer {
     }
 
     const coreParallelTools = [
-      'run_shell_command',
-      'write_file',
-      'google_web_search',
-      'generalist',
-      'codebase_investigator',
-      'save_memory',
-      'recall_memory',
+      "run_shell_command",
+      "write_file",
+      "google_web_search",
+      "generalist",
+      "codebase_investigator",
+      "save_memory",
+      "recall_memory",
     ];
     for (const toolName of coreParallelTools) {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -328,7 +328,7 @@ export class AgentInitializer {
       const reg = config.getToolRegistry();
       for (const toolDef of evolvedTools) {
         // @ts-expect-error - addDiscoveredTool is not in public ToolRegistry types
-        if (typeof reg.addDiscoveredTool === 'function') {
+        if (typeof reg.addDiscoveredTool === "function") {
           // @ts-expect-error - addDiscoveredTool is not in public ToolRegistry types
           reg.addDiscoveredTool(toolDef);
         }
@@ -340,7 +340,7 @@ export class AgentInitializer {
     // IV. REAL-TIME ACTIVITY FEEDBACK
     const messageBus = config.getMessageBus();
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    messageBus.subscribe('tool-calls-update', (message: any) => {
+    messageBus.subscribe("tool-calls-update", (message: any) => {
       if (message.schedulerId !== ROOT_SCHEDULER_ID) {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const sanitizedToolCalls = message.toolCalls.map((tc: any) => {
@@ -362,13 +362,13 @@ export class AgentInitializer {
       const response = await generator.generateContent(
         {
           model: this.jarvisConfig.models.distillation,
-          contents: [{ role: 'user', parts: [{ text: prompt }] }],
+          contents: [{ role: "user", parts: [{ text: prompt }] }],
         },
         `summarize-${Date.now()}`,
         LlmRole.UTILITY_SUMMARIZER,
       );
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      return (response as any).candidates?.[0]?.content?.parts?.[0]?.text ?? '';
+      return (response as any).candidates?.[0]?.content?.parts?.[0]?.text ?? "";
     };
 
     await this.resumeFromDisk(client, generateText);
@@ -390,25 +390,26 @@ export class AgentInitializer {
   ): Promise<void> {
     if (!this.jarvisConfig.session?.resumeOnStart) {
       debugLogger.debug(
-        '[AgentInitializer] resumeOnStart=false, skipping history restore.',
+        "[AgentInitializer] resumeOnStart=false, skipping history restore.",
       );
       return;
     }
 
     const chatsDir = path.join(
       client.config.storage.getProjectTempDir(),
-      'chats',
+      "chats",
     );
-    const memoryDir = path.join(os.homedir(), '.gemini-jarvis', 'memory');
+    const memoryDir = path.join(os.homedir(), ".gemini-jarvis", "memory");
     const recentTurns = this.jarvisConfig.session?.recentTurnsOnResume ?? 20;
 
     try {
       if (!fs.existsSync(chatsDir)) return;
 
       // 1. Collect all session files sorted by mtime (oldest first)
+      // Support both .json (legacy) and .jsonl (current gemini-cli format)
       const allFiles = fs
         .readdirSync(chatsDir)
-        .filter((f) => f.endsWith('.json'))
+        .filter((f) => f.endsWith(".json") || f.endsWith(".jsonl"))
         .map((f) => ({
           name: f,
           mtime: fs.statSync(path.join(chatsDir, f)).mtimeMs,
@@ -428,7 +429,7 @@ export class AgentInitializer {
       for (const file of newOrUpdatedFiles) {
         try {
           const raw = JSON.parse(
-            fs.readFileSync(path.join(chatsDir, file.name), 'utf8'),
+            fs.readFileSync(path.join(chatsDir, file.name), "utf8"),
           );
           newMessages.push(...(raw.messages ?? []));
         } catch {
@@ -437,7 +438,7 @@ export class AgentInitializer {
       }
 
       // 5. Update structured context + summary incrementally
-      let summary = existingState?.summary ?? '';
+      let summary = existingState?.summary ?? "";
 
       if (newMessages.length > 0 && generateText) {
         console.error(
@@ -474,11 +475,11 @@ export class AgentInitializer {
         }
       } else if (newMessages.length > 0 && !generateText) {
         debugLogger.debug(
-          '[AgentInitializer] generateText unavailable, skipping history compression.',
+          "[AgentInitializer] generateText unavailable, skipping history compression.",
         );
       } else {
         debugLogger.debug(
-          '[AgentInitializer] No new session content, using existing summary.',
+          "[AgentInitializer] No new session content, using existing summary.",
         );
       }
 
@@ -493,7 +494,7 @@ export class AgentInitializer {
       for (const file of allFiles) {
         try {
           const raw = JSON.parse(
-            fs.readFileSync(path.join(chatsDir, file.name), 'utf8'),
+            fs.readFileSync(path.join(chatsDir, file.name), "utf8"),
           );
           allMessages.push(...(raw.messages ?? []));
         } catch {
@@ -508,7 +509,7 @@ export class AgentInitializer {
       // 8. Use the latest session file as the active recording target
       const latestFile = allFiles[allFiles.length - 1];
       const latestRecord = JSON.parse(
-        fs.readFileSync(path.join(chatsDir, latestFile.name), 'utf8'),
+        fs.readFileSync(path.join(chatsDir, latestFile.name), "utf8"),
       ) as ConversationRecord;
 
       await client.resumeChat(history, {
@@ -518,8 +519,8 @@ export class AgentInitializer {
 
       // 9. Stats log
       const totalMsgs = allMessages.length;
-      const userTurns = allMessages.filter((m) => m.type === 'user').length;
-      const modelTurns = allMessages.filter((m) => m.type === 'gemini').length;
+      const userTurns = allMessages.filter((m) => m.type === "user").length;
+      const modelTurns = allMessages.filter((m) => m.type === "gemini").length;
       const toolCalls = allMessages.reduce(
         (n, m) => n + (m.toolCalls?.length ?? 0),
         0,
@@ -529,15 +530,15 @@ export class AgentInitializer {
         .map((m) => m.timestamp)
         .filter(Boolean)
         .map((t) =>
-          typeof t === 'string' ? new Date(t as string).getTime() : Number(t),
+          typeof t === "string" ? new Date(t as string).getTime() : Number(t),
         )
         .filter((t) => !isNaN(t));
       const earliest = timestamps.length
         ? new Date(Math.min(...timestamps)).toLocaleString()
-        : 'unknown';
+        : "unknown";
       const latest = timestamps.length
         ? new Date(Math.max(...timestamps)).toLocaleString()
-        : 'unknown';
+        : "unknown";
 
       console.error(
         `📂 [Jarvis] Session restored: ${allFiles.length} session files, ${totalMsgs} total messages ` +
