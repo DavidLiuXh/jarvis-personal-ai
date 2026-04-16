@@ -1252,6 +1252,9 @@ Respond ONLY with a JSON array:
               .map((r, vecIdx) => {
                 const fact = factById.get(r.id);
                 if (!fact) return null;
+                // Skip always-inject categories — they are already in alwaysOut
+                if (MemoryService.ALWAYS_INJECT_CATEGORIES.has(fact.category))
+                  return null;
                 const vecRank = vecIdx + 1;
                 const bm25Rank = bm25RankMap.get(r.id) ?? fetchLimit + 1;
                 const rrfScore = 1 / (rrfK + vecRank) + 1 / (rrfK + bm25Rank);
