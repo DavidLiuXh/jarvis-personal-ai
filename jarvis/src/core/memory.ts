@@ -135,6 +135,11 @@ export class MemoryService {
       );
     } catch (_) {}
     try {
+      this.db.exec(
+        "ALTER TABLE processed_files ADD COLUMN events_extracted INTEGER DEFAULT 0",
+      );
+    } catch (_) {}
+    try {
       this.db.exec("ALTER TABLE facts ADD COLUMN embedding BLOB");
     } catch (_) {}
     try {
@@ -1693,6 +1698,9 @@ Respond ONLY with a JSON array:
     // Backfill entity links: delay 60s after startup to avoid competing
     // with the first user interaction (Ollama calls are slow)
     setTimeout(() => void this.backfillEntityLinks(), 60_000);
+    // Backfill session events: delay 90s (after entity backfill starts)
+    // to extract atomic events from historical sessions not yet processed
+    setTimeout(() => void this.backfillSessionEvents(), 90_000);
   }
 
   /**
@@ -2071,6 +2079,110 @@ Respond ONLY with a JSON array:
   /**
    * If MEMORIES.md is missing or empty, rebuild it from SQLite.
    */
+  /**
+   * Extract atomic memory events from historical session files that have not
+   * yet been processed. Uses the injected generateTextFn (summarizer model).
+   * Marks each file as processed in processed_files.events_extracted.
+   */
+  public async backfillSessionEvents(): Promise<void> {
+    if (!this.generateTextFn) return;
+    if (this.isBackfillingEntities) return; // reuse guard to avoid concurrent heavy ops
+
+    const chatsDir = path.join(
+      os.homedir(),
+      ".gemini-jarvis",
+      "storage",
+      "chats",
+    );
+    if (!fs.existsSync(chatsDir)) return;
+
+    const files = fs
+      .readdirSync(chatsDir)
+      .filter((f) => f.endsWith(".json") || f.endsWith(".jsonl"));
+
+    const pending = files.filter((file) => {
+      const row = this.db
+        .prepare(
+          "SELECT events_extracted FROM processed_files WHERE filename = ?",
+        )
+        .get(file) as { events_extracted: number } | undefined;
+      return !row || !row.events_extracted;
+    });
+
+    if (pending.length === 0) return;
+
+    console.error(
+      `📝 [MemoryService] Session events backfill: ${pending.length} files to process...`,
+    );
+
+    let totalEvents = 0;
+    for (const file of pending) {
+      // Yield between files to keep event loop responsive
+      await new Promise((r) => setImmediate(r));
+      try {
+        const filePath = path.join(chatsDir, file);
+        const messages = this.parseSessionMessages(filePath);
+        const convoText = messages
+          .filter((m) => m.type === "user" || m.type === "gemini")
+          .slice(-200)
+          .map(
+            (m) =>
+              `${m.type === "user" ? "User" : "Jarvis"}: ${String(m.content).slice(0, 300)}`,
+          )
+          .join("\n");
+
+        if (convoText.trim().length > 50) {
+          // Extract date from filename, e.g. session-2026-04-15T11-02-...
+          const dateMatch = file.match(/(\d{4}-\d{2}-\d{2})/);
+          const date = dateMatch
+            ? dateMatch[1]
+            : new Date().toISOString().slice(0, 10);
+
+          const prompt = `Extract 3-10 atomic memory events from the following conversation.
+Each event should be a single sentence describing a decision, solution, preference, or key fact.
+Format: one event per line, starting with [${date}].
+Only extract substantive items — ignore greetings, confirmations, and filler.
+
+Conversation:
+${convoText}
+
+Events:`;
+
+          const raw = await this.generateTextFn(prompt);
+          const events = raw
+            .split("\n")
+            .map((l) => l.trim())
+            .filter(
+              (l) => l.startsWith("[") && l.length > 20 && l.length < 300,
+            );
+
+          if (events.length > 0) {
+            await this.ingestEvents(events);
+            totalEvents += events.length;
+          }
+        }
+
+        // Mark as processed (upsert)
+        const filePath2 = path.join(chatsDir, file);
+        this.db
+          .prepare(
+            `INSERT INTO processed_files (filename, last_mtime, events_extracted)
+             VALUES (?, ?, 1)
+             ON CONFLICT(filename) DO UPDATE SET events_extracted = 1`,
+          )
+          .run(file, fs.statSync(filePath2).mtimeMs);
+      } catch (_e) {
+        /* skip unreadable files */
+      }
+    }
+
+    if (totalEvents > 0) {
+      console.error(
+        `✅ [MemoryService] Session events backfill complete: ${totalEvents} events from ${pending.length} files.`,
+      );
+    }
+  }
+
   /** Sync any facts not yet in facts_fts into the FTS index. */
   private backfillFts(): void {
     try {
