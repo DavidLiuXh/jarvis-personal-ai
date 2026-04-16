@@ -243,9 +243,14 @@ Configuration file location: `~/.gemini-jarvis/config.json`
     // Default: 5
     "factRelevanceLimit": 5,
 
-    // Number of semantically similar past conversations pre-warmed into context
-    // each turn via vec_memories. 0 = disabled. Default: 3
+    // Number of semantically similar memory items pre-warmed into context
+    // each turn via vec_memories (events prioritized over conversations). 0 = disabled. Default: 3
     "prewarmLimit": 3,
+
+    // Whether to store raw conversation pairs (user+assistant) in vec_memories.
+    // With events extraction enabled, raw conversations add low signal.
+    // Default: false
+    "ingestConversations": false,
 
     // L1 physical layer write mode for MEMORIES.md:
     // "realtime": append each fact immediately after saveFact (always up-to-date)

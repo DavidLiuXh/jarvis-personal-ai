@@ -149,6 +149,12 @@ export interface JarvisConfig {
     /** Number of semantically similar past conversations to pre-warm into context each turn. 0 = disabled. Default: 3. */
     prewarmLimit: number;
     /**
+     * Whether to store raw conversation pairs (user+assistant) in vec_memories.
+     * With events extraction enabled, raw conversations add low signal.
+     * Default: false (only events are stored).
+     */
+    ingestConversations: boolean;
+    /**
      * L1 physical layer write mode for MEMORIES.md.
      * 'realtime': append each fact immediately after saveFact (always up-to-date, may have minor redundancy).
      * 'batch': full rewrite only after consolidateFacts or reflect (clean file, but lags between consolidations).
@@ -274,6 +280,7 @@ export class ConfigManager {
         factRelevanceStrategy: "jaccard" as const,
         factRelevanceLimit: 5,
         prewarmLimit: 3,
+        ingestConversations: false,
         l1WriteMode: "batch" as const,
         vectorSimilarityWeight: 0.7,
         importanceWeight: 0.2,

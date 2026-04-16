@@ -826,6 +826,8 @@ ${factsText}
     userPrompt: string,
     assistantText: string,
   ) {
+    // Skip raw conversation ingestion if disabled (events provide higher signal)
+    if (!(this.jarvisConfig.memory.ingestConversations ?? false)) return;
     if (!this.embedContentFn && !this.client) return;
     try {
       const text = `User: ${userPrompt}\nAssistant: ${assistantText}`;
@@ -867,18 +869,42 @@ ${factsText}
         const embeddings = result.embeddings || [result.embedding];
         queryVec = embeddings[0].values;
       }
-      const results = this.db
+
+      const fetchLimit = Math.max(limit * 4, 20);
+      const lambda = this.jarvisConfig.memory.decayLambda ?? 0.1;
+      const nowMs = Date.now();
+
+      // Fetch more candidates than needed, then re-rank with time decay for events
+      const rows = this.db
         .prepare(
-          `
-        SELECT m.text FROM memories m JOIN vec_memories v ON m.id = v.id
-        WHERE v.embedding MATCH ? ORDER BY v.distance LIMIT ?
-      `,
+          `SELECT m.text, m.source, m.timestamp, v.distance
+           FROM memories m JOIN vec_memories v ON m.id = v.id
+           WHERE v.embedding MATCH ?
+           ORDER BY v.distance LIMIT ?`,
         )
-        .all(
-          new Float32Array(queryVec),
-          limit || this.jarvisConfig.memory.retrievalLimit,
-        ) as any[];
-      return results.map((r) => r.text);
+        .all(new Float32Array(queryVec), fetchLimit) as Array<{
+        text: string;
+        source: string;
+        timestamp: number;
+        distance: number;
+      }>;
+
+      // Score: events get time decay bonus; conversations get no bonus
+      // fusedScore = (1 - distance) + eventBonus * decay
+      const eventBonus = 0.3;
+      const scored = rows.map((r) => {
+        const simScore = Math.max(0, 1 - (r.distance * r.distance) / 2);
+        let score = simScore;
+        if (r.source === "event" && r.timestamp) {
+          const daysSince = (nowMs - r.timestamp) / 86_400_000;
+          const decay = Math.exp(-lambda * daysSince);
+          score += eventBonus * decay;
+        }
+        return { text: r.text, score };
+      });
+
+      scored.sort((a, b) => b.score - a.score);
+      return scored.slice(0, limit).map((r) => r.text);
     } catch (e) {
       return [];
     }
