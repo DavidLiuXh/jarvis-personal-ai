@@ -38,6 +38,48 @@ type DynamicRegistryHandle = {
   getDynamicToolSchemas: () => unknown[];
 };
 
+/**
+ * Parse a session file that may be either:
+ * - .json: single JSON object with a `messages` array
+ * - .jsonl: first line is session metadata, subsequent lines are individual messages
+ *
+ * Returns { messages, record } where record is the ConversationRecord metadata.
+ */
+function parseSessionFile(filePath: string): {
+  messages: SessionMessage[];
+  record: ConversationRecord;
+} {
+  const content = fs.readFileSync(filePath, "utf8");
+  const isJsonl = filePath.endsWith(".jsonl");
+
+  if (!isJsonl) {
+    // Legacy .json format: single object with messages array
+    const parsed = JSON.parse(content) as ConversationRecord & {
+      messages?: SessionMessage[];
+    };
+    return { messages: parsed.messages ?? [], record: parsed };
+  }
+
+  // .jsonl format: first line = metadata, rest = individual message objects
+  const lines = content.split("\n").filter((l) => l.trim());
+  if (lines.length === 0)
+    return { messages: [], record: {} as ConversationRecord };
+
+  const record = JSON.parse(lines[0]) as ConversationRecord;
+  const messages: SessionMessage[] = [];
+  for (let i = 1; i < lines.length; i++) {
+    try {
+      const msg = JSON.parse(lines[i]) as SessionMessage;
+      if (msg.type && msg.content !== undefined) {
+        messages.push(msg);
+      }
+    } catch {
+      /* skip malformed lines */
+    }
+  }
+  return { messages, record };
+}
+
 export type InitializeResult = {
   client: GeminiClient;
   scheduler: Scheduler;
@@ -428,10 +470,8 @@ export class AgentInitializer {
       const newMessages: SessionMessage[] = [];
       for (const file of newOrUpdatedFiles) {
         try {
-          const raw = JSON.parse(
-            fs.readFileSync(path.join(chatsDir, file.name), "utf8"),
-          );
-          newMessages.push(...(raw.messages ?? []));
+          const { messages } = parseSessionFile(path.join(chatsDir, file.name));
+          newMessages.push(...messages);
         } catch {
           /* skip unreadable file */
         }
@@ -493,10 +533,8 @@ export class AgentInitializer {
       const allMessages: SessionMessage[] = [];
       for (const file of allFiles) {
         try {
-          const raw = JSON.parse(
-            fs.readFileSync(path.join(chatsDir, file.name), "utf8"),
-          );
-          allMessages.push(...(raw.messages ?? []));
+          const { messages } = parseSessionFile(path.join(chatsDir, file.name));
+          allMessages.push(...messages);
         } catch {
           /* skip unreadable file */
         }
@@ -508,9 +546,9 @@ export class AgentInitializer {
 
       // 8. Use the latest session file as the active recording target
       const latestFile = allFiles[allFiles.length - 1];
-      const latestRecord = JSON.parse(
-        fs.readFileSync(path.join(chatsDir, latestFile.name), "utf8"),
-      ) as ConversationRecord;
+      const { record: latestRecord } = parseSessionFile(
+        path.join(chatsDir, latestFile.name),
+      );
 
       await client.resumeChat(history, {
         conversation: latestRecord,
