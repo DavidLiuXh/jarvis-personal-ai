@@ -875,12 +875,17 @@ ${factsText}
       const nowMs = Date.now();
 
       // Fetch more candidates than needed, then re-rank with time decay for events
+      // vec0 KNN requires LIMIT directly on the vec_memories subquery
       const rows = this.db
         .prepare(
           `SELECT m.text, m.source, m.timestamp, v.distance
-           FROM memories m JOIN vec_memories v ON m.id = v.id
-           WHERE v.embedding MATCH ?
-           ORDER BY v.distance LIMIT ?`,
+           FROM memories m
+           JOIN (
+             SELECT id, distance FROM vec_memories
+             WHERE embedding MATCH ?
+             ORDER BY distance
+             LIMIT ?
+           ) v ON m.id = v.id`,
         )
         .all(new Float32Array(queryVec), fetchLimit) as Array<{
         text: string;
@@ -968,9 +973,14 @@ ${factsText}
       const sourceFilter = source ? `AND m.source = '${source}'` : "";
       const results = this.db
         .prepare(
-          `SELECT m.text FROM memories m JOIN vec_memories v ON m.id = v.id
-           WHERE v.embedding MATCH ? ${sourceFilter}
-           ORDER BY v.distance LIMIT ?`,
+          `SELECT m.text FROM memories m
+           JOIN (
+             SELECT id, distance FROM vec_memories
+             WHERE embedding MATCH ?
+             ORDER BY distance
+             LIMIT ?
+           ) v ON m.id = v.id
+           WHERE 1=1 ${sourceFilter}`,
         )
         .all(new Float32Array(queryVec), limit) as any[];
       return results.map((r: any) => r.text);
