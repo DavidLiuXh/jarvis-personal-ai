@@ -916,6 +916,7 @@ ${factsText}
    */
   public async ingestEvents(events: string[]): Promise<void> {
     if (!this.embedContentFn || events.length === 0) return;
+    let vecCount = 0;
     for (const text of events) {
       try {
         const vec = await this.embedContentFn(text);
@@ -928,12 +929,14 @@ ${factsText}
           this.db
             .prepare("INSERT INTO vec_memories (id, embedding) VALUES (?, ?)")
             .run(BigInt(info.lastInsertRowid), new Float32Array(vec));
-        } catch (_vecErr) {}
+          vecCount++;
+        } catch (vecErr: any) {
+          console.error(`⚠️ [MemoryService] vec_memories insert failed for event: ${vecErr.message}`);
+        }
       } catch (_e) {}
     }
-    debugLogger.debug(
-      `[MemoryService] Ingested ${events.length} memory events`,
-    );
+    console.error(`📝 [MemoryService] ingestEvents: ${events.length} events → memories, ${vecCount} → vec_memories`);
+  }
   }
 
   /**
