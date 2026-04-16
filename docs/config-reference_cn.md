@@ -71,9 +71,10 @@
     // Ollama 服务地址。默认："http://localhost:11434"
     "baseUrl": "http://localhost:11434",
 
-    // Ollama 模型。摘要任务建议使用较大模型，例如 "gemma4:27b"。
+    // Ollama 摘要模型。默认："gemma4:e2b"。
+    // 较大模型（如 "gemma4:27b"）摘要质量更好但速度更慢。
     // 留空时自动 fallback 到 gemini。
-    "model": "gemma4:27b",
+    "model": "gemma4:e2b",
 
     // 每次 Ollama 调用的超时时间（毫秒）。默认：120000（2分钟）
     "timeoutMs": 120000,

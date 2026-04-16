@@ -71,9 +71,10 @@ Configuration file location: `~/.gemini-jarvis/config.json`
     // Ollama service URL. Default: "http://localhost:11434"
     "baseUrl": "http://localhost:11434",
 
-    // Ollama model. Summarization benefits from larger models, e.g. "gemma4:27b".
+    // Ollama model for summarization. Default: "gemma4:e2b".
+    // Larger models produce better summaries (e.g. "gemma4:27b") but are slower.
     // If empty, falls back to gemini provider.
-    "model": "gemma4:27b",
+    "model": "gemma4:e2b",
 
     // Timeout per Ollama call in milliseconds. Default: 120000 (2 min)
     "timeoutMs": 120000,
