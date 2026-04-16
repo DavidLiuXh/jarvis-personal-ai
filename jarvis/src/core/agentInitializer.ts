@@ -23,7 +23,7 @@ import { loadCliConfig } from "../../../gemini-cli/packages/cli/src/config/confi
 // @ts-expect-error - Relative import
 import { loadSettings } from "../../../gemini-cli/packages/cli/src/config/settings.js";
 // @ts-expect-error - Relative import
-import { type MemoryService } from "./memory.js";
+import { MemoryService } from "./memory.js";
 import { ConfigManager } from "./configManager.js";
 import {
   loadSummaryState,
@@ -443,7 +443,7 @@ export class AgentInitializer {
       generateText = cliGenerateText;
     }
 
-    await this.resumeFromDisk(client, generateText);
+    await this.resumeFromDisk(client, generateText, this.memoryService);
 
     const scheduler = new Scheduler({
       context: config,
@@ -456,9 +456,63 @@ export class AgentInitializer {
     return { client, scheduler };
   }
 
+  /**
+   * Extract atomic memory events from new messages and ingest into vec_memories.
+   * Events are high-signal summaries of decisions, solutions, and key facts.
+   * Runs async (fire-and-forget) to avoid blocking startup.
+   */
+  private async extractAndIngestEvents(
+    messages: SessionMessage[],
+    generateText: (prompt: string) => Promise<string>,
+    memoryService: MemoryService,
+  ): Promise<void> {
+    try {
+      // Sample up to 200 messages to keep prompt manageable
+      const sample = messages.slice(-200);
+      const convoText = sample
+        .filter((m) => m.type === "user" || m.type === "gemini")
+        .map(
+          (m) =>
+            `${m.type === "user" ? "User" : "Jarvis"}: ${String(m.content).slice(0, 300)}`,
+        )
+        .join("\n");
+
+      if (!convoText.trim()) return;
+
+      const today = new Date().toISOString().slice(0, 10);
+      const prompt = `Extract 3-10 atomic memory events from the following conversation.
+Each event should be a single sentence describing a decision, solution, preference, or key fact.
+Format: one event per line, starting with [${today}].
+Only extract substantive items — ignore greetings, confirmations, and filler.
+
+Conversation:
+${convoText}
+
+Events:`;
+
+      const raw = await generateText(prompt);
+      const events = raw
+        .split("\n")
+        .map((l) => l.trim())
+        .filter((l) => l.startsWith("[") && l.length > 20 && l.length < 300);
+
+      if (events.length === 0) return;
+
+      await memoryService.ingestEvents(events);
+      console.error(
+        `📝 [Jarvis] Extracted ${events.length} memory events from session history.`,
+      );
+    } catch (e: any) {
+      debugLogger.debug(
+        `[AgentInitializer] extractAndIngestEvents failed: ${e.message}`,
+      );
+    }
+  }
+
   private async resumeFromDisk(
     client: GeminiClient,
     generateText?: (prompt: string) => Promise<string>,
+    memoryService?: MemoryService,
   ): Promise<void> {
     if (!this.jarvisConfig.session?.resumeOnStart) {
       debugLogger.debug(
@@ -493,8 +547,32 @@ export class AgentInitializer {
       // 2. Load existing summary state
       const existingState = loadSummaryState(memoryDir);
 
-      // 3. Find new or updated files using mtime comparison
-      const newOrUpdatedFiles = getNewOrUpdatedFiles(allFiles, existingState);
+      // Apply summaryWindowDays: only process files within the window
+      const summaryWindowDays =
+        this.jarvisConfig.summarizer?.summaryWindowDays ?? 0;
+      const cutoffMs =
+        summaryWindowDays > 0 ? Date.now() - summaryWindowDays * 86_400_000 : 0;
+
+      // If existing summary is older than the window, reset it
+      if (
+        summaryWindowDays > 0 &&
+        existingState?.updatedAt &&
+        existingState.updatedAt < cutoffMs
+      ) {
+        console.error(
+          `🧠 [Jarvis] Summary older than ${summaryWindowDays} days — resetting for fresh window.`,
+        );
+        existingState = null;
+      }
+
+      const windowFiles =
+        cutoffMs > 0 ? allFiles.filter((f) => f.mtime >= cutoffMs) : allFiles;
+
+      // 3. Find new or updated files using mtime comparison (within window)
+      const newOrUpdatedFiles = getNewOrUpdatedFiles(
+        windowFiles,
+        existingState,
+      );
 
       // 4. Collect messages from new/updated files
       const newMessages: SessionMessage[] = [];
@@ -553,6 +631,34 @@ export class AgentInitializer {
 
           if (rollingSummary && rollingSummary !== (summary || null)) {
             summary = rollingSummary;
+
+            // maxSummaryLength: re-compress if summary exceeds limit
+            const maxLen =
+              this.jarvisConfig.summarizer?.maxSummaryLength ?? 3000;
+            if (maxLen > 0 && summary.length > maxLen) {
+              console.error(
+                `🧠 [Jarvis] Summary too long (${summary.length} > ${maxLen} chars) — re-compressing...`,
+              );
+              try {
+                const recompressed = await generateText(
+                  `The following is a session summary. Compress it to under ${maxLen} characters ` +
+                    `while preserving the most important facts, decisions, and context. ` +
+                    `Remove redundant details, greetings, and low-signal content.\n\n${summary}`,
+                );
+                if (
+                  recompressed.trim().length > 0 &&
+                  recompressed.length < summary.length
+                ) {
+                  summary = recompressed.trim();
+                  console.error(
+                    `✅ [Jarvis] Re-compressed to ${summary.length} chars.`,
+                  );
+                }
+              } catch (_e) {
+                /* keep original if re-compression fails */
+              }
+            }
+
             const processedFileMtimes: Record<string, number> = {};
             for (const f of allFiles) processedFileMtimes[f.name] = f.mtime;
             saveSummaryState(memoryDir, {
@@ -563,6 +669,17 @@ export class AgentInitializer {
             console.error(
               `✅ [Jarvis] Session history compressed (${summary.length} chars, ${chunks.length} chunk(s)).`,
             );
+
+            // extractEvents: extract atomic events and store in vec_memories
+            const extractEvents =
+              this.jarvisConfig.summarizer?.extractEvents ?? true;
+            if (extractEvents && newMessages.length > 0 && memoryService) {
+              void this.extractAndIngestEvents(
+                newMessages,
+                generateText,
+                memoryService,
+              );
+            }
           } else {
             console.error(
               `⚠️ [Jarvis] Compression returned empty — not persisting. Will retry next startup.`,

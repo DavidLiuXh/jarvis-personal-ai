@@ -130,6 +130,11 @@ export class MemoryService {
 
     // Migrations
     try {
+      this.db.exec(
+        "ALTER TABLE memories ADD COLUMN source TEXT DEFAULT 'conversation'",
+      );
+    } catch (_) {}
+    try {
       this.db.exec("ALTER TABLE facts ADD COLUMN embedding BLOB");
     } catch (_) {}
     try {
@@ -870,6 +875,70 @@ ${factsText}
         ) as any[];
       return results.map((r) => r.text);
     } catch (e) {
+      return [];
+    }
+  }
+
+  /**
+   * Write a list of extracted event strings into memories with source='event'.
+   * Each event is embedded and stored in vec_memories for semantic retrieval.
+   */
+  public async ingestEvents(events: string[]): Promise<void> {
+    if (!this.embedContentFn || events.length === 0) return;
+    for (const text of events) {
+      try {
+        const vec = await this.embedContentFn(text);
+        const info = this.db
+          .prepare(
+            "INSERT INTO memories (sessionId, text, timestamp, source) VALUES (?, ?, ?, 'event')",
+          )
+          .run("events", text, Date.now());
+        try {
+          this.db
+            .prepare("INSERT INTO vec_memories (id, embedding) VALUES (?, ?)")
+            .run(BigInt(info.lastInsertRowid), new Float32Array(vec));
+        } catch (_vecErr) {}
+      } catch (_e) {}
+    }
+    debugLogger.debug(
+      `[MemoryService] Ingested ${events.length} memory events`,
+    );
+  }
+
+  /**
+   * Search vec_memories filtered by source type.
+   * source='event': only return extracted events (high signal)
+   * source='conversation': only return raw conversation pairs
+   * source=undefined: return all (current behavior)
+   */
+  public async searchBySource(
+    query: string,
+    limit: number = 5,
+    source?: "event" | "conversation",
+  ): Promise<string[]> {
+    if (!this.embedContentFn && !this.client) return [];
+    try {
+      let queryVec: number[];
+      if (this.embedContentFn) {
+        queryVec = await this.embedContentFn(query);
+      } else {
+        const result = await this.client.models.embedContent({
+          model: this.jarvisConfig.models.embedding,
+          contents: [{ role: "user", parts: [{ text: query }] }],
+        });
+        const embeddings = result.embeddings || [result.embedding];
+        queryVec = embeddings[0].values;
+      }
+      const sourceFilter = source ? `AND m.source = '${source}'` : "";
+      const results = this.db
+        .prepare(
+          `SELECT m.text FROM memories m JOIN vec_memories v ON m.id = v.id
+           WHERE v.embedding MATCH ? ${sourceFilter}
+           ORDER BY v.distance LIMIT ?`,
+        )
+        .all(new Float32Array(queryVec), limit) as any[];
+      return results.map((r: any) => r.text);
+    } catch (_e) {
       return [];
     }
   }

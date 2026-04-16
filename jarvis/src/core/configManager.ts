@@ -74,6 +74,22 @@ export interface JarvisConfig {
      * 0 = no chunking (process all at once). Default: 100.
      */
     chunkSize?: number;
+    /**
+     * Extract atomic memory events from new messages and store in vec_memories.
+     * Events are higher-signal than raw conversation pairs. Default: true.
+     */
+    extractEvents?: boolean;
+    /**
+     * Only process session files from the last N days for summary updates.
+     * Older sessions are covered by facts/vec_memories, not summary.
+     * 0 = no limit. Default: 0.
+     */
+    summaryWindowDays?: number;
+    /**
+     * Max characters for session summary. If exceeded, trigger re-compression.
+     * 0 = no limit. Default: 3000.
+     */
+    maxSummaryLength?: number;
   };
   /**
    * Reflection (consolidateFacts + reflect) model configuration.
