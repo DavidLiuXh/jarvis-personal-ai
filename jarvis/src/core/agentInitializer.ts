@@ -670,14 +670,17 @@ Events:`;
               `✅ [Jarvis] Session history compressed (${summary.length} chars, ${chunks.length} chunk(s)).`,
             );
 
-            // extractEvents: extract atomic events and store in vec_memories
+            // extractEvents: delay 60s so embedContentFn is injected before ingestEvents runs
+            // (setEmbedContent is called later in initialize(), after resumeFromDisk)
             const extractEvents =
               this.jarvisConfig.summarizer?.extractEvents ?? true;
             if (extractEvents && newMessages.length > 0 && memoryService) {
-              void this.extractAndIngestEvents(
-                newMessages,
-                generateText,
-                memoryService,
+              const _msgs = newMessages;
+              const _gt = generateText;
+              const _ms = memoryService;
+              setTimeout(
+                () => void this.extractAndIngestEvents(_msgs, _gt, _ms),
+                60_000,
               );
             }
           } else {
