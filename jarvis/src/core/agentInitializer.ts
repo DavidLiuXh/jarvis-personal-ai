@@ -183,13 +183,18 @@ export class AgentInitializer {
     const recallMemoryTool = {
       name: "recall_memory",
       description:
-        "MANDATORY for retrieving any past interaction, technical decision, or user preference not in the current view.",
+        "MANDATORY for retrieving any past interaction, technical decision, or user preference not in the current view. " +
+        "The 'query' parameter MUST contain specific keywords extracted from the user's question — " +
+        "e.g. if user asks 'did I ask about Ollama?', set query='Ollama'; " +
+        "if user asks 'what was my investment strategy?', set query='investment strategy'. " +
+        "NEVER call this tool without a non-empty query.",
       parameters: {
         type: "object",
         properties: {
           query: {
             type: "string",
-            description: "Specific keywords to search in long-term memory.",
+            description:
+              "Specific keywords extracted from the user's question to search in long-term memory. Must be non-empty.",
           },
           limit: { type: "number", description: "Number of results (1-10)." },
         },
