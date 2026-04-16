@@ -937,7 +937,6 @@ ${factsText}
     }
     console.error(`📝 [MemoryService] ingestEvents: ${events.length} events → memories, ${vecCount} → vec_memories`);
   }
-  }
 
   /**
    * Search vec_memories filtered by source type.
