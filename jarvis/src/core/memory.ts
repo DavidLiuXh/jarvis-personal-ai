@@ -2046,6 +2046,47 @@ Respond ONLY with a JSON array:
     }
   }
 
+  /**
+   * Parse messages from a session file (.json or .jsonl).
+   * .json: single object with messages array
+   * .jsonl: first line = metadata, remaining lines = individual message objects
+   */
+  private parseSessionMessages(
+    filePath: string,
+  ): Array<{ type: string; content: string; toolCalls?: unknown[] }> {
+    const content = fs.readFileSync(filePath, "utf8");
+    if (!filePath.endsWith(".jsonl")) {
+      const parsed = JSON.parse(content) as {
+        messages?: Array<{ type: string; content: string }>;
+      };
+      return parsed.messages ?? [];
+    }
+    // .jsonl: skip first line (metadata), parse remaining lines as messages
+    const lines = content.split("\n").filter((l) => l.trim());
+    const messages: Array<{
+      type: string;
+      content: string;
+      toolCalls?: unknown[];
+    }> = [];
+    for (let i = 1; i < lines.length; i++) {
+      try {
+        const msg = JSON.parse(lines[i]) as {
+          type?: string;
+          content?: string;
+          toolCalls?: unknown[];
+        };
+        if (msg.type && msg.content !== undefined) {
+          messages.push(
+            msg as { type: string; content: string; toolCalls?: unknown[] },
+          );
+        }
+      } catch {
+        /* skip malformed lines */
+      }
+    }
+    return messages;
+  }
+
   private async syncHistoricalSessions() {
     const chatsDir = path.join(
       os.homedir(),
@@ -2070,8 +2111,7 @@ Respond ONLY with a JSON array:
           `[MemoryService] Syncing historical session: ${file}`,
         );
         try {
-          const content = JSON.parse(fs.readFileSync(filePath, "utf8"));
-          const messages = content.messages || [];
+          const messages = this.parseSessionMessages(filePath);
           for (let i = 0; i < messages.length; i += 2) {
             const userMsg = messages[i];
             const assistantMsg = messages[i + 1];
@@ -2082,7 +2122,7 @@ Respond ONLY with a JSON array:
               assistantMsg.type === "gemini"
             ) {
               this.enqueue(
-                file.replace(".json", ""),
+                file.replace(/\.(json|jsonl)$/, ""),
                 userMsg.content,
                 assistantMsg.content,
               );
