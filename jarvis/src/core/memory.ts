@@ -904,8 +904,11 @@ ${factsText}
       });
 
       scored.sort((a, b) => b.score - a.score);
-      return scored.slice(0, limit).map((r) => r.text);
-    } catch (e) {
+      const results = scored.slice(0, limit).map((r) => r.text);
+      console.error(`🔍 [search] rows=${rows.length}, scored=${scored.length}, returned=${results.length}`);
+      return results;
+    } catch (e: any) {
+      console.error(`⚠️ [search] failed: ${e?.message}`);
       return [];
     }
   }
