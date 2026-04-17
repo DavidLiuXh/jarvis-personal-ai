@@ -494,13 +494,24 @@ class JarvisServer {
     }
   }
 
-  public start() {
+  public async start() {
     const port = jarvisConfig.server.port;
+    const globalSessionId =
+      jarvisConfig.session?.globalSessionId ?? "jarvis-global";
+
+    // Warmup: initialize the global agent (triggers session summary, autoBackfill, etc.)
+    // This ensures Jarvis is fully ready before accepting user requests.
+    console.log(`\n⏳ [Jarvis] Initializing... (this may take a moment)`);
+    try {
+      const agent = await this.manager.getAgent(globalSessionId);
+      await (agent as any).initialize();
+    } catch (e: any) {
+      console.error(`⚠️ [Jarvis] Warmup failed: ${e.message}`);
+    }
+
     this.server.listen(port, "0.0.0.0", () => {
       console.log(`\n🤖 Jarvis AI Assistant 3.0 (Personalized) is active!`);
-
       console.log(`📡 Health: http://localhost:${port}/health`);
-
       console.log(
         `🔌 Jailbreak Mode: ${jarvisConfig.security.jailbreak ? "ENABLED (Unconstrained)" : "DISABLED (Protected)"}\n`,
       );
@@ -522,7 +533,7 @@ class JarvisServer {
 }
 
 const server = new JarvisServer();
-server.start();
+void server.start();
 
 let isShuttingDown = false;
 const shutdown = async () => {

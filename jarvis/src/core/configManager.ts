@@ -159,6 +159,12 @@ export interface JarvisConfig {
      */
     eventsExtractionInterval: number;
     /**
+     * Skip backfillSessionEvents() during startup warmup.
+     * Set to true for faster startup on low-end machines when events are not critical.
+     * Default: false (wait for all session files to be processed before serving).
+     */
+    skipStartupEventsBackfill: boolean;
+    /**
      * L1 physical layer write mode for MEMORIES.md.
      * 'realtime': append each fact immediately after saveFact (always up-to-date, may have minor redundancy).
      * 'batch': full rewrite only after consolidateFacts or reflect (clean file, but lags between consolidations).
@@ -290,6 +296,7 @@ export class ConfigManager {
         prewarmLimit: 3,
         ingestConversations: false,
         eventsExtractionInterval: 20,
+        skipStartupEventsBackfill: false,
         l1WriteMode: "batch" as const,
         vectorSimilarityWeight: 0.7,
         importanceWeight: 0.2,
