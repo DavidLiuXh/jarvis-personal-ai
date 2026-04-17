@@ -49,6 +49,8 @@ export interface JarvisConfig {
   routing?: {
     /** Enable local routing. Default: false. */
     enabled: boolean;
+    /** 'ollama': use local Ollama model (default). */
+    provider?: "ollama";
     /** Ollama model for complexity classification, e.g. "gemma4:e2b". */
     model: string;
     /** Complexity score threshold (1-100). Score >= threshold → proModel. Default: 70. */

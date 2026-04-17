@@ -110,8 +110,8 @@
     // 启用本地模型路由。默认：true（设置 model 后生效）
     "enabled": true,
 
-    // Ollama 服务地址。默认："http://localhost:11434"
-    "baseUrl": "http://localhost:11434",
+    // 目前仅支持 "ollama"。
+    "provider": "ollama",
 
     // 用于复杂度分类的 Ollama 模型，例如 "gemma4:e2b"。
     // 留空（""）时即使 enabled = true 路由也不会生效。
