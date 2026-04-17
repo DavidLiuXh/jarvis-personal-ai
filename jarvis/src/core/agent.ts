@@ -121,12 +121,14 @@ export class JarvisAgent extends EventEmitter {
     const routingCfg = this.jarvisConfig.routing;
     if (routingCfg?.enabled && routingCfg.model) {
       this.localModelRouter = new LocalModelRouter(
-        routingCfg.baseUrl ?? "http://localhost:11434",
+        this.jarvisConfig.ollama?.baseUrl ?? "http://localhost:11434",
         routingCfg.model,
         routingCfg.threshold ?? 70,
         routingCfg.proModel ?? "gemini-2.5-pro",
         routingCfg.flashModel ?? "gemini-2.5-flash",
-        routingCfg.timeoutMs ?? 30_000,
+        routingCfg.timeoutMs ??
+          this.jarvisConfig.ollama?.defaultTimeoutMs ??
+          30_000,
         routingCfg.historyTurns ?? 5,
       );
       console.error(
@@ -168,7 +170,9 @@ export class JarvisAgent extends EventEmitter {
           "\n</relevant_past_conversations>";
         console.error(
           `🧠 [prewarm] ${similarMemories.length} memories injected:\n` +
-          similarMemories.map((m, i) => `  [${i + 1}] ${m.slice(0, 120)}`).join("\n"),
+            similarMemories
+              .map((m, i) => `  [${i + 1}] ${m.slice(0, 120)}`)
+              .join("\n"),
         );
       }
     }

@@ -14,6 +14,7 @@ import { HttpsProxyAgent } from "https-proxy-agent";
 import { debugLogger } from "../../../gemini-cli/packages/core/src/index.js";
 import { ConfigManager } from "./configManager.js";
 import { EntityExtractor, type EntityLink } from "./entityExtractor.js";
+import { ollamaGenerate, ollamaEmbed } from "./ollamaClient.js";
 
 export class MemoryService {
   private db: Database.Database;
@@ -194,36 +195,18 @@ export class MemoryService {
   ): (prompt: string) => Promise<string> {
     const cfg = this.jarvisConfig.reflection;
     if (cfg?.provider === "ollama") {
-      const baseUrl = cfg.baseUrl ?? "http://localhost:11434";
       const model = cfg.model ?? "";
-      const timeoutMs = cfg.timeoutMs ?? 120_000;
       if (!model) {
         console.error(
           "⚠️ [MemoryService] reflection.model not set, falling back to gemini",
         );
         return fallbackFn;
       }
-      return async (prompt: string): Promise<string> => {
-        const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), timeoutMs);
-        try {
-          const response = await fetch(`${baseUrl}/api/generate`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ model, prompt, stream: false }),
-            signal: controller.signal,
-          });
-          if (!response.ok) {
-            throw new Error(
-              `Ollama reflection failed: ${response.status} ${await response.text()}`,
-            );
-          }
-          const data = (await response.json()) as { response: string };
-          return data.response;
-        } finally {
-          clearTimeout(timeout);
-        }
-      };
+      const baseUrl = this.jarvisConfig.ollama?.baseUrl;
+      const timeoutMs =
+        cfg.timeoutMs ?? this.jarvisConfig.ollama?.defaultTimeoutMs ?? 120_000;
+      return (prompt: string) =>
+        ollamaGenerate(model, prompt, { baseUrl, timeoutMs });
     }
     return fallbackFn;
   }
@@ -236,9 +219,9 @@ export class MemoryService {
     this.entityExtractor = new EntityExtractor(
       cfg.provider ?? "gemini",
       this.generateTextFn,
-      cfg.baseUrl ?? "http://localhost:11434",
+      this.jarvisConfig.ollama?.baseUrl ?? "http://localhost:11434",
       cfg.model ?? "",
-      cfg.timeoutMs ?? 30_000,
+      cfg.timeoutMs ?? this.jarvisConfig.ollama?.defaultTimeoutMs ?? 30_000,
     );
     console.error(
       `🔗 [MemoryService] EntityExtractor initialized (provider=${cfg.provider ?? "gemini"}${cfg.model ? ", model=" + cfg.model : ""}, timeout=${cfg.timeoutMs ?? 30_000}ms)`,
@@ -278,24 +261,14 @@ export class MemoryService {
   }
 
   private async embedWithOllama(text: string): Promise<number[]> {
-    const { baseUrl = "http://localhost:11434", model } =
-      this.jarvisConfig.embeddingService ?? {};
+    const { model } = this.jarvisConfig.embeddingService ?? {};
     if (!model)
       throw new Error(
         "[MemoryService] embeddingService.model is required for Ollama provider",
       );
-    const response = await fetch(`${baseUrl}/api/embed`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ model, input: text }),
-    });
-    if (!response.ok) {
-      throw new Error(
-        `[MemoryService] Ollama embed failed: ${response.status} ${await response.text()}`,
-      );
-    }
-    const data = (await response.json()) as { embeddings: number[][] };
-    return data.embeddings[0];
+    const baseUrl = this.jarvisConfig.ollama?.baseUrl;
+    const timeoutMs = this.jarvisConfig.ollama?.defaultTimeoutMs;
+    return ollamaEmbed(model, text, { baseUrl, timeoutMs });
   }
 
   public startWithApiKey(apiKey: string) {
@@ -911,7 +884,9 @@ ${factsText}
 
       scored.sort((a, b) => b.score - a.score);
       const results = scored.slice(0, limit).map((r) => r.text);
-      console.error(`🔍 [search] rows=${rows.length}, scored=${scored.length}, returned=${results.length}`);
+      console.error(
+        `🔍 [search] rows=${rows.length}, scored=${scored.length}, returned=${results.length}`,
+      );
       return results;
     } catch (e: any) {
       console.error(`⚠️ [search] failed: ${e?.message}`);
@@ -940,11 +915,15 @@ ${factsText}
             .run(BigInt(info.lastInsertRowid), new Float32Array(vec));
           vecCount++;
         } catch (vecErr: any) {
-          console.error(`⚠️ [MemoryService] vec_memories insert failed for event: ${vecErr.message}`);
+          console.error(
+            `⚠️ [MemoryService] vec_memories insert failed for event: ${vecErr.message}`,
+          );
         }
       } catch (_e) {}
     }
-    console.error(`📝 [MemoryService] ingestEvents: ${events.length} events → memories, ${vecCount} → vec_memories`);
+    console.error(
+      `📝 [MemoryService] ingestEvents: ${events.length} events → memories, ${vecCount} → vec_memories`,
+    );
   }
 
   /**

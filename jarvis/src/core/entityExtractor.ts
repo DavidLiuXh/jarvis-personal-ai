@@ -4,6 +4,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+import { ollamaGenerate } from "./ollamaClient.js";
+
 export type EntityLink = {
   subject: string;
   subject_type: "person" | "project" | "technology" | "concept";
@@ -79,7 +81,12 @@ export class EntityExtractor {
     try {
       let responseText: string;
       if (this.provider === "ollama") {
-        responseText = await this.callOllama(prompt);
+        if (!this.ollamaModel)
+          throw new Error("[EntityExtractor] ollamaModel is required");
+        responseText = await ollamaGenerate(this.ollamaModel, prompt, {
+          baseUrl: this.ollamaBaseUrl,
+          timeoutMs: this.timeoutMs,
+        });
       } else {
         if (!this.generateTextFn)
           throw new Error("generateTextFn not set for gemini provider");
@@ -100,34 +107,5 @@ export class EntityExtractor {
       console.error(`⚠️ [EntityExtractor] extract failed: ${e.message}`);
       return [];
     }
-  }
-
-  private async callOllama(prompt: string): Promise<string> {
-    if (!this.ollamaModel)
-      throw new Error("[EntityExtractor] ollamaModel is required");
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), this.timeoutMs);
-    let response: Response;
-    try {
-      response = await fetch(`${this.ollamaBaseUrl}/api/generate`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          model: this.ollamaModel,
-          prompt,
-          stream: false,
-        }),
-        signal: controller.signal,
-      });
-    } finally {
-      clearTimeout(timeout);
-    }
-    if (!response.ok) {
-      throw new Error(
-        `Ollama generate failed: ${response.status} ${await response.text()}`,
-      );
-    }
-    const data = (await response.json()) as { response: string };
-    return data.response;
   }
 }

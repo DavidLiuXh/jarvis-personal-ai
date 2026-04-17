@@ -25,6 +25,7 @@ import { loadSettings } from "../../../gemini-cli/packages/cli/src/config/settin
 // @ts-expect-error - Relative import
 import { MemoryService } from "./memory.js";
 import { ConfigManager } from "./configManager.js";
+import { ollamaGenerate } from "./ollamaClient.js";
 import {
   loadSummaryState,
   saveSummaryState,
@@ -422,27 +423,14 @@ export class AgentInitializer {
 
     let generateText: (prompt: string) => Promise<string>;
     if (summarizerCfg?.provider === "ollama" && summarizerCfg.model) {
-      const baseUrl = summarizerCfg.baseUrl ?? "http://localhost:11434";
       const model = summarizerCfg.model;
-      const timeoutMs = summarizerCfg.timeoutMs ?? 120_000;
-      generateText = async (prompt: string): Promise<string> => {
-        const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), timeoutMs);
-        try {
-          const response = await fetch(`${baseUrl}/api/generate`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ model, prompt, stream: false }),
-            signal: controller.signal,
-          });
-          if (!response.ok)
-            throw new Error(`Ollama summarizer failed: ${response.status}`);
-          const data = (await response.json()) as { response: string };
-          return data.response;
-        } finally {
-          clearTimeout(timeout);
-        }
-      };
+      const baseUrl = this.jarvisConfig.ollama?.baseUrl;
+      const timeoutMs =
+        summarizerCfg.timeoutMs ??
+        this.jarvisConfig.ollama?.defaultTimeoutMs ??
+        120_000;
+      generateText = (prompt: string) =>
+        ollamaGenerate(model, prompt, { baseUrl, timeoutMs });
       console.error(`📝 [Jarvis] Session summarizer: Ollama (${model})`);
     } else {
       generateText = cliGenerateText;
