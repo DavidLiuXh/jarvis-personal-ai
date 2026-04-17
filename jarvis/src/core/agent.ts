@@ -139,6 +139,10 @@ export class JarvisAgent extends EventEmitter {
 
     this.initialized = true;
     debugLogger.debug(`[JarvisAgent] Lifeform Ready.`);
+
+    // Wait for autoBackfill (including startup events backfill) to complete
+    // so Jarvis is fully ready before the HTTP server starts accepting requests
+    await this.memoryService.waitForBackfill();
   }
 
   private async refreshContext(userPrompt: string) {

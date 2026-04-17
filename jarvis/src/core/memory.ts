@@ -234,11 +234,20 @@ export class MemoryService {
     );
   }
 
+  private _backfillPromise: Promise<void> | null = null;
+
   /** Inject a CLI-auth embedContent function for semantic dedup. */
   public setEmbedContent(fn: (text: string) => Promise<number[]>) {
     this.embedContentFn = fn;
-    // Trigger auto-backfill after embedContent is available
-    void this.autoBackfill();
+    // Store the promise so callers can await full backfill completion
+    this._backfillPromise = this.autoBackfill();
+  }
+
+  /** Wait for the initial autoBackfill() to complete. */
+  public async waitForBackfill(): Promise<void> {
+    if (this._backfillPromise) {
+      await this._backfillPromise;
+    }
   }
 
   /**
