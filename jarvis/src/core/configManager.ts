@@ -22,14 +22,23 @@ export interface JarvisConfig {
     distillation: string;
   };
   /**
+   * Global Ollama service configuration.
+   * All Ollama-based features (embedding, routing, reflection, entity extraction, summarizer)
+   * use these as defaults. Individual features can override timeoutMs only.
+   */
+  ollama: {
+    /** Ollama service base URL. Default: "http://localhost:11434". */
+    baseUrl: string;
+    /** Default request timeout in milliseconds. Default: 30000. */
+    defaultTimeoutMs: number;
+  };
+  /**
    * Embedding service configuration.
    * provider 'google': use Gemini API key (requires api.key).
-   * provider 'ollama': use local Ollama service (requires baseUrl and model).
+   * provider 'ollama': use local Ollama service.
    */
   embeddingService: {
     provider: "google" | "ollama";
-    /** Ollama base URL, e.g. "http://localhost:11434". Only used when provider='ollama'. */
-    baseUrl?: string;
     /** Ollama model name, e.g. "bge-m3". Only used when provider='ollama'. */
     model?: string;
   };
@@ -40,8 +49,8 @@ export interface JarvisConfig {
   routing?: {
     /** Enable local routing. Default: false. */
     enabled: boolean;
-    /** Ollama base URL. Default: "http://localhost:11434". */
-    baseUrl?: string;
+    /** 'ollama': use local Ollama model (default). */
+    provider?: "ollama";
     /** Ollama model for complexity classification, e.g. "gemma4:e2b". */
     model: string;
     /** Complexity score threshold (1-100). Score >= threshold → proModel. Default: 70. */
@@ -50,7 +59,7 @@ export interface JarvisConfig {
     proModel?: string;
     /** Model to use for simple requests. Default: "gemini-2.5-flash". */
     flashModel?: string;
-    /** Timeout in milliseconds for the classification call. Default: 30000. */
+    /** Override global ollama.defaultTimeoutMs for classification calls. */
     timeoutMs?: number;
     /** Number of recent conversation turns to include for context. Default: 5. */
     historyTurns?: number;
@@ -62,11 +71,9 @@ export interface JarvisConfig {
   summarizer?: {
     /** 'gemini': use CLI auth generateText (default). 'ollama': use local Ollama. */
     provider?: "gemini" | "ollama";
-    /** Ollama base URL. Default: "http://localhost:11434". */
-    baseUrl?: string;
     /** Ollama model name. Summarization benefits from larger models, e.g. "gemma4:27b". */
     model?: string;
-    /** Timeout per Ollama call in milliseconds. Default: 120000 (2 min). */
+    /** Override global ollama.defaultTimeoutMs for summarization calls. Default: 120000. */
     timeoutMs?: number;
     /**
      * Max messages per summarization chunk. When newMessages > chunkSize,
@@ -98,11 +105,9 @@ export interface JarvisConfig {
    */
   reflection: {
     provider: "gemini" | "ollama";
-    /** Ollama base URL. Only used when provider='ollama'. Default: "http://localhost:11434". */
-    baseUrl?: string;
     /** Ollama model name, e.g. "gemma4:e2b". Only used when provider='ollama'. */
     model?: string;
-    /** Request timeout in milliseconds. Default: 120000 (2 min, reflection prompts are long). */
+    /** Override global ollama.defaultTimeoutMs. Default: 120000 (2 min). */
     timeoutMs?: number;
   };
   /**
@@ -110,15 +115,13 @@ export interface JarvisConfig {
    * Extracts entities and relations from facts to build entity_links.
    */
   entityExtraction: {
-    /** Enable entity extraction. Default: false. */
+    /** Enable entity extraction. Default: true. */
     enabled: boolean;
     /** 'ollama': use local Ollama model. 'gemini': reuse existing generateTextFn. */
     provider: "ollama" | "gemini";
-    /** Ollama base URL. Only used when provider='ollama'. Default: "http://localhost:11434". */
-    baseUrl?: string;
-    /** Ollama model name, e.g. "gemma4:e4b". Only used when provider='ollama'. */
+    /** Ollama model name, e.g. "gemma4:e2b". Only used when provider='ollama'. */
     model?: string;
-    /** Request timeout in milliseconds for Ollama calls. Default: 30000 (30s). */
+    /** Override global ollama.defaultTimeoutMs. Default: 30000. */
     timeoutMs?: number;
     /**
      * Number of facts per batch during backfill entity extraction.
@@ -255,6 +258,10 @@ export class ConfigManager {
         embeddingDimension: 1024,
         distillation: "gemini-2.5-flash",
       },
+      ollama: {
+        baseUrl: "http://localhost:11434",
+        defaultTimeoutMs: 30_000,
+      },
       embeddingService: {
         provider: "google" as const,
       },
@@ -325,6 +332,7 @@ export class ConfigManager {
           network: { ...defaults.network, ...saved.network },
           server: { ...defaults.server, ...saved.server },
           memory: { ...defaults.memory, ...saved.memory },
+          ollama: { ...defaults.ollama, ...saved.ollama },
           embeddingService: {
             ...defaults.embeddingService,
             ...saved.embeddingService,

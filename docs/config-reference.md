@@ -111,8 +111,8 @@ Configuration file location: `~/.gemini-jarvis/config.json`
     // Enable local model routing. Default: true (inactive until model is set)
     "enabled": true,
 
-    // Ollama service URL. Default: "http://localhost:11434"
-    "baseUrl": "http://localhost:11434",
+    // Currently only "ollama" is supported.
+    "provider": "ollama",
 
     // Ollama model for complexity classification, e.g. "gemma4:e2b".
     // Leave empty ("") to disable routing even when enabled = true.

@@ -4,6 +4,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+import { ollamaGenerate } from "./ollamaClient.js";
+
 const CLASSIFIER_SYSTEM_PROMPT = `
 You are a task complexity analyst. Evaluate the user's request on two dimensions, then compute a weighted final score.
 
@@ -93,70 +95,50 @@ export class LocalModelRouter {
     prompt: string,
     history: ConversationTurn[],
   ): Promise<ClassifyResult> {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), this.timeoutMs);
+    // Include recent history for context-aware classification
+    const recentTurns = history.slice(-this.historyTurns * 2);
+    const historySection =
+      recentTurns.length > 0
+        ? `\n# Recent Conversation Context\n${recentTurns
+            .map(
+              (t) =>
+                `${t.role === "user" ? "User" : "Assistant"}: ${t.content.slice(0, 200)}`,
+            )
+            .join("\n")}\n`
+        : "";
 
-    try {
-      // Include recent history for context-aware classification
-      const recentTurns = history.slice(-this.historyTurns * 2); // each turn = user + assistant
-      const historySection =
-        recentTurns.length > 0
-          ? `\n# Recent Conversation Context\n${recentTurns
-              .map(
-                (t) =>
-                  `${t.role === "user" ? "User" : "Assistant"}: ${t.content.slice(0, 200)}`,
-              )
-              .join("\n")}\n`
-          : "";
+    const fullPrompt = `${CLASSIFIER_SYSTEM_PROMPT}${historySection}\nUser request: ${prompt}`;
+    const raw = await ollamaGenerate(this.classifierModel, fullPrompt, {
+      baseUrl: this.baseUrl,
+      timeoutMs: this.timeoutMs,
+    });
 
-      const fullPrompt = `${CLASSIFIER_SYSTEM_PROMPT}${historySection}\nUser request: ${prompt}`;
-      const response = await fetch(`${this.baseUrl}/api/generate`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          model: this.classifierModel,
-          prompt: fullPrompt,
-          stream: false,
-        }),
-        signal: controller.signal,
-      });
+    // Extract JSON — model may wrap in markdown
+    const match = raw.match(/\{[\s\S]*?\}/);
+    if (!match) throw new Error("No JSON in classifier response");
 
-      if (!response.ok) {
-        throw new Error(`Ollama classify failed: ${response.status}`);
-      }
+    const parsed = JSON.parse(match[0]) as {
+      complexity_score?: number;
+      knowledge_score?: number;
+      operation_score?: number;
+      complexity_reasoning?: string;
+    };
 
-      const data = (await response.json()) as { response: string };
-      const raw = data.response;
-
-      // Extract JSON — model may wrap in markdown
-      const match = raw.match(/\{[\s\S]*?\}/);
-      if (!match) throw new Error("No JSON in classifier response");
-
-      const parsed = JSON.parse(match[0]) as {
-        complexity_score?: number;
-        knowledge_score?: number;
-        operation_score?: number;
-        complexity_reasoning?: string;
-      };
-
-      const score = Number(parsed.complexity_score);
-      if (isNaN(score) || score < 1 || score > 100) {
-        throw new Error(`Invalid score: ${parsed.complexity_score}`);
-      }
-
-      const knowledgeScore = parsed.knowledge_score ?? null;
-      const operationScore = parsed.operation_score ?? null;
-      const breakdown =
-        knowledgeScore !== null && operationScore !== null
-          ? ` [knowledge=${knowledgeScore}, operation=${operationScore}]`
-          : "";
-
-      return {
-        score,
-        reason: `${parsed.complexity_reasoning ?? "(no reason)"}${breakdown}`,
-      };
-    } finally {
-      clearTimeout(timeout);
+    const score = Number(parsed.complexity_score);
+    if (isNaN(score) || score < 1 || score > 100) {
+      throw new Error(`Invalid score: ${parsed.complexity_score}`);
     }
+
+    const knowledgeScore = parsed.knowledge_score ?? null;
+    const operationScore = parsed.operation_score ?? null;
+    const breakdown =
+      knowledgeScore !== null && operationScore !== null
+        ? ` [knowledge=${knowledgeScore}, operation=${operationScore}]`
+        : "";
+
+    return {
+      score,
+      reason: `${parsed.complexity_reasoning ?? "(no reason)"}${breakdown}`,
+    };
   }
 }
