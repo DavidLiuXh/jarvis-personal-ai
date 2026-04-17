@@ -141,6 +141,11 @@ export class MemoryService {
       );
     } catch (_) {}
     try {
+      this.db.exec(
+        "ALTER TABLE processed_files ADD COLUMN events_last_msg_time INTEGER DEFAULT 0",
+      );
+    } catch (_) {}
+    try {
       this.db.exec("ALTER TABLE facts ADD COLUMN embedding BLOB");
     } catch (_) {}
     try {
@@ -2104,13 +2109,16 @@ Respond ONLY with a JSON array:
    * If MEMORIES.md is missing or empty, rebuild it from SQLite.
    */
   /**
-   * Extract atomic memory events from historical session files that have not
-   * yet been processed. Uses the injected generateTextFn (summarizer model).
-   * Marks each file as processed in processed_files.events_extracted.
+   * Extract atomic memory events from session files using incremental tracking.
+   *
+   * State logic (processed_files):
+   * - events_extracted=0, events_last_msg_time=0 → never processed, full extraction
+   * - events_extracted=1, events_last_msg_time=0 → legacy: already done, skip
+   * - events_extracted=1, events_last_msg_time>0 → incremental: only new messages
    */
   public async backfillSessionEvents(): Promise<void> {
     if (!this.generateTextFn) return;
-    if (this.isBackfillingEntities) return; // reuse guard to avoid concurrent heavy ops
+    if (this.isBackfillingEntities) return;
 
     const chatsDir = path.join(
       os.homedir(),
@@ -2124,29 +2132,75 @@ Respond ONLY with a JSON array:
       .readdirSync(chatsDir)
       .filter((f) => f.endsWith(".json") || f.endsWith(".jsonl"));
 
-    const pending = files.filter((file) => {
+    // Determine which files need processing and their last processed timestamp
+    type FileState = {
+      file: string;
+      lastMsgTime: number; // 0 = never processed
+      isLegacyDone: boolean; // events_extracted=1 but events_last_msg_time=0
+    };
+
+    const candidates: FileState[] = [];
+    for (const file of files) {
       const row = this.db
         .prepare(
-          "SELECT events_extracted FROM processed_files WHERE filename = ?",
+          "SELECT events_extracted, events_last_msg_time FROM processed_files WHERE filename = ?",
         )
-        .get(file) as { events_extracted: number } | undefined;
-      return !row || !row.events_extracted;
-    });
+        .get(file) as
+        | { events_extracted: number; events_last_msg_time: number }
+        | undefined;
 
-    if (pending.length === 0) return;
+      if (!row) {
+        // Never seen this file
+        candidates.push({ file, lastMsgTime: 0, isLegacyDone: false });
+      } else if (row.events_extracted === 1 && !row.events_last_msg_time) {
+        // Legacy: already fully processed, skip
+        continue;
+      } else {
+        // New format: process incrementally
+        candidates.push({
+          file,
+          lastMsgTime: row.events_last_msg_time ?? 0,
+          isLegacyDone: false,
+        });
+      }
+    }
+
+    if (candidates.length === 0) return;
 
     console.error(
-      `📝 [MemoryService] Session events backfill: ${pending.length} files to process...`,
+      `📝 [MemoryService] Session events backfill: ${candidates.length} files to process...`,
     );
 
     let totalEvents = 0;
-    for (const file of pending) {
-      // Yield between files to keep event loop responsive
+    let totalFiles = 0;
+    for (const { file, lastMsgTime } of candidates) {
       await new Promise((r) => setImmediate(r));
       try {
         const filePath = path.join(chatsDir, file);
-        const messages = this.parseSessionMessages(filePath);
-        const convoText = messages
+        const allMessages = this.parseSessionMessages(filePath);
+
+        // Only process messages newer than lastMsgTime
+        const newMessages =
+          lastMsgTime > 0
+            ? allMessages.filter((m) => {
+                const ts =
+                  typeof m.timestamp === "string"
+                    ? new Date(m.timestamp).getTime()
+                    : Number(m.timestamp ?? 0);
+                return ts > lastMsgTime;
+              })
+            : allMessages;
+
+        if (newMessages.length === 0) {
+          // No new messages — mark as current (update events_last_msg_time if needed)
+          if (lastMsgTime === 0 && allMessages.length > 0) {
+            const lastTs = this.getLastMsgTime(allMessages);
+            this.upsertEventsState(file, filePath, lastTs);
+          }
+          continue;
+        }
+
+        const convoText = newMessages
           .filter((m) => m.type === "user" || m.type === "gemini")
           .slice(-200)
           .map(
@@ -2156,7 +2210,6 @@ Respond ONLY with a JSON array:
           .join("\n");
 
         if (convoText.trim().length > 50) {
-          // Extract date from filename, e.g. session-2026-04-15T11-02-...
           const dateMatch = file.match(/(\d{4}-\d{2}-\d{2})/);
           const date = dateMatch
             ? dateMatch[1]
@@ -2183,18 +2236,13 @@ Events:`;
           if (events.length > 0) {
             await this.ingestEvents(events);
             totalEvents += events.length;
+            totalFiles++;
           }
         }
 
-        // Mark as processed (upsert)
-        const filePath2 = path.join(chatsDir, file);
-        this.db
-          .prepare(
-            `INSERT INTO processed_files (filename, last_mtime, events_extracted)
-             VALUES (?, ?, 1)
-             ON CONFLICT(filename) DO UPDATE SET events_extracted = 1`,
-          )
-          .run(file, fs.statSync(filePath2).mtimeMs);
+        // Update state: mark processed up to the last message timestamp
+        const lastTs = this.getLastMsgTime(allMessages);
+        this.upsertEventsState(file, filePath, lastTs);
       } catch (_e) {
         /* skip unreadable files */
       }
@@ -2202,9 +2250,44 @@ Events:`;
 
     if (totalEvents > 0) {
       console.error(
-        `✅ [MemoryService] Session events backfill complete: ${totalEvents} events from ${pending.length} files.`,
+        `✅ [MemoryService] Session events backfill complete: ${totalEvents} events from ${totalFiles} files.`,
       );
     }
+  }
+
+  /** Get the timestamp of the last message in a list, or 0 if none have timestamps. */
+  private getLastMsgTime(
+    messages: Array<{ timestamp?: string | number }>,
+  ): number {
+    let last = 0;
+    for (const m of messages) {
+      if (!m.timestamp) continue;
+      const ts =
+        typeof m.timestamp === "string"
+          ? new Date(m.timestamp).getTime()
+          : Number(m.timestamp);
+      if (!isNaN(ts) && ts > last) last = ts;
+    }
+    return last;
+  }
+
+  /** Upsert processed_files with events_extracted=1 and events_last_msg_time. */
+  private upsertEventsState(
+    file: string,
+    filePath: string,
+    lastMsgTime: number,
+  ): void {
+    try {
+      this.db
+        .prepare(
+          `INSERT INTO processed_files (filename, last_mtime, events_extracted, events_last_msg_time)
+           VALUES (?, ?, 1, ?)
+           ON CONFLICT(filename) DO UPDATE SET
+             events_extracted = 1,
+             events_last_msg_time = ?`,
+        )
+        .run(file, fs.statSync(filePath).mtimeMs, lastMsgTime, lastMsgTime);
+    } catch (_e) {}
   }
 
   /** Sync any facts not yet in facts_fts into the FTS index. */
