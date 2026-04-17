@@ -397,13 +397,8 @@ export class JarvisAgent extends EventEmitter {
           // Trigger session events extraction every N turns (async, non-blocking)
           const interval =
             this.jarvisConfig.memory.eventsExtractionInterval ?? 20;
-          if (interval > 0) {
-            this.conversationTurnCount++;
-            console.error(`🔄 [Jarvis] Turn ${this.conversationTurnCount}/${interval} (events extraction interval)`);
-            if (this.conversationTurnCount % interval === 0) {
-              console.error(`📝 [Jarvis] Triggering session events extraction at turn ${this.conversationTurnCount}`);
-              setImmediate(() => void this.memoryService.backfillSessionEvents());
-            }
+          if (interval > 0 && ++this.conversationTurnCount % interval === 0) {
+            setImmediate(() => void this.memoryService.backfillSessionEvents());
           }
         }
       });
