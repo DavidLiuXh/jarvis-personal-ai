@@ -1722,9 +1722,9 @@ Respond ONLY with a JSON array:
     // Backfill entity links: delay 60s after startup to avoid competing
     // with the first user interaction (Ollama calls are slow)
     setTimeout(() => void this.backfillEntityLinks(), 60_000);
-    // Backfill session events: delay 90s (after entity backfill starts)
-    // to extract atomic events from historical sessions not yet processed
-    setTimeout(() => void this.backfillSessionEvents(), 90_000);
+    // Backfill session events: delay 60s (unified path for all session event extraction)
+    // backfillSessionEvents handles both historical and new sessions via processed_files tracking
+    setTimeout(() => void this.backfillSessionEvents(), 60_000);
   }
 
   /**
