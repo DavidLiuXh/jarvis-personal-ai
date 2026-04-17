@@ -86,11 +86,6 @@ Configuration file location: `~/.gemini-jarvis/config.json`
     // 0 = no chunking (process all at once). Default: 100
     "chunkSize": 100,
 
-    // Extract atomic memory events from new messages and store in vec_memories.
-    // Events are high-signal (decisions, solutions, key facts) and support RAG retrieval.
-    // Default: true
-    "extractEvents": true,
-
     // Only process session files from the last N days for summary updates.
     // Sessions older than this are covered by facts/vec_memories, not summary.
     // This prevents summary from growing unboundedly.

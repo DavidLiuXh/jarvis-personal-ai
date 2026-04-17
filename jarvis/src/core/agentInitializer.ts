@@ -436,7 +436,7 @@ export class AgentInitializer {
       generateText = cliGenerateText;
     }
 
-    await this.resumeFromDisk(client, generateText, this.memoryService);
+    await this.resumeFromDisk(client, generateText);
 
     const scheduler = new Scheduler({
       context: config,
@@ -449,63 +449,9 @@ export class AgentInitializer {
     return { client, scheduler };
   }
 
-  /**
-   * Extract atomic memory events from new messages and ingest into vec_memories.
-   * Events are high-signal summaries of decisions, solutions, and key facts.
-   * Runs async (fire-and-forget) to avoid blocking startup.
-   */
-  private async extractAndIngestEvents(
-    messages: SessionMessage[],
-    generateText: (prompt: string) => Promise<string>,
-    memoryService: MemoryService,
-  ): Promise<void> {
-    try {
-      // Sample up to 200 messages to keep prompt manageable
-      const sample = messages.slice(-200);
-      const convoText = sample
-        .filter((m) => m.type === "user" || m.type === "gemini")
-        .map(
-          (m) =>
-            `${m.type === "user" ? "User" : "Jarvis"}: ${String(m.content).slice(0, 300)}`,
-        )
-        .join("\n");
-
-      if (!convoText.trim()) return;
-
-      const today = new Date().toISOString().slice(0, 10);
-      const prompt = `Extract 3-10 atomic memory events from the following conversation.
-Each event should be a single sentence describing a decision, solution, preference, or key fact.
-Format: one event per line, starting with [${today}].
-Only extract substantive items — ignore greetings, confirmations, and filler.
-
-Conversation:
-${convoText}
-
-Events:`;
-
-      const raw = await generateText(prompt);
-      const events = raw
-        .split("\n")
-        .map((l) => l.trim())
-        .filter((l) => l.startsWith("[") && l.length > 20 && l.length < 300);
-
-      if (events.length === 0) return;
-
-      await memoryService.ingestEvents(events);
-      console.error(
-        `📝 [Jarvis] Extracted ${events.length} memory events from session history.`,
-      );
-    } catch (e: any) {
-      debugLogger.debug(
-        `[AgentInitializer] extractAndIngestEvents failed: ${e.message}`,
-      );
-    }
-  }
-
   private async resumeFromDisk(
     client: GeminiClient,
     generateText?: (prompt: string) => Promise<string>,
-    memoryService?: MemoryService,
   ): Promise<void> {
     if (!this.jarvisConfig.session?.resumeOnStart) {
       debugLogger.debug(
@@ -663,19 +609,8 @@ Events:`;
               `✅ [Jarvis] Session history compressed (${summary.length} chars, ${chunks.length} chunk(s)).`,
             );
 
-            // extractEvents: delay 60s so embedContentFn is injected before ingestEvents runs
-            // (setEmbedContent is called later in initialize(), after resumeFromDisk)
-            const extractEvents =
-              this.jarvisConfig.summarizer?.extractEvents ?? true;
-            if (extractEvents && newMessages.length > 0 && memoryService) {
-              const _msgs = newMessages;
-              const _gt = generateText;
-              const _ms = memoryService;
-              setTimeout(
-                () => void this.extractAndIngestEvents(_msgs, _gt, _ms),
-                60_000,
-              );
-            }
+            // Events extraction is handled by backfillSessionEvents() in autoBackfill()
+            // which runs 60s after startup with proper file-level state tracking.
           } else {
             console.error(
               `⚠️ [Jarvis] Compression returned empty — not persisting. Will retry next startup.`,

@@ -82,11 +82,6 @@ export interface JarvisConfig {
      */
     chunkSize?: number;
     /**
-     * Extract atomic memory events from new messages and store in vec_memories.
-     * Events are higher-signal than raw conversation pairs. Default: true.
-     */
-    extractEvents?: boolean;
-    /**
      * Only process session files from the last N days for summary updates.
      * Older sessions are covered by facts/vec_memories, not summary.
      * 0 = no limit. Default: 0.
