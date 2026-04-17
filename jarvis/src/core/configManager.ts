@@ -224,6 +224,17 @@ export interface JarvisConfig {
     resumeOnStart: boolean;
     /** Number of recent raw message turns to include after the summary. Default: 20. */
     recentTurnsOnResume: number;
+    /**
+     * Compress in-memory chat history when it exceeds this many turns.
+     * Older turns are summarized; only the most recent historyKeepRecentTurns are kept raw.
+     * 0 = disabled. Default: 30.
+     */
+    historyCompressionThreshold: number;
+    /**
+     * Number of recent turns to keep as raw messages after compression.
+     * Default: 5.
+     */
+    historyKeepRecentTurns: number;
   };
   tasks?: {
     /** Default channel for proactive task output. */
@@ -323,6 +334,8 @@ export class ConfigManager {
         globalSessionId: "jarvis-global-master",
         resumeOnStart: true,
         recentTurnsOnResume: 3,
+        historyCompressionThreshold: 30,
+        historyKeepRecentTurns: 5,
       },
       routing: {
         enabled: true,

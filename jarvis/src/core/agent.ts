@@ -32,6 +32,11 @@ import { type SkillCommandHandler } from "./skillCommandHandler.js";
 import { isFetchError, cleanOrphanedUserTurn } from "./agentNetworkUtils.js";
 import { ConfigManager } from "./configManager.js";
 import { type ChannelRegistry } from "./channelRegistry.js";
+import {
+  buildIncrementalSummary,
+  buildHistoryWithSummary,
+  type SessionMessage,
+} from "./sessionSummarizer.js";
 import { LocalModelRouter } from "./localModelRouter.js";
 
 /**
@@ -59,6 +64,8 @@ export class JarvisAgent extends EventEmitter {
   private availableSkills: SkillInfo[] = [];
   private localModelRouter: LocalModelRouter | null = null;
   private conversationTurnCount = 0;
+  private summarizerGenerateText: ((prompt: string) => Promise<string>) | null =
+    null;
 
   constructor(options: JarvisAgentOptions) {
     super();
@@ -137,12 +144,93 @@ export class JarvisAgent extends EventEmitter {
       );
     }
 
+    // Initialize summarizer generateText for history compression
+    // Uses summarizer.model (Ollama) if configured, falls back to CLI-auth
+    this.summarizerGenerateText =
+      this.memoryService.buildReflectionGenerateText(generateText);
+
     this.initialized = true;
     debugLogger.debug(`[JarvisAgent] Lifeform Ready.`);
 
     // Wait for autoBackfill (including startup events backfill) to complete
     // so Jarvis is fully ready before the HTTP server starts accepting requests
     await this.memoryService.waitForBackfill();
+  }
+
+  /**
+   * Compress in-memory chat history when it exceeds historyCompressionThreshold turns.
+   * Summarizes older turns and keeps only the most recent historyKeepRecentTurns raw.
+   */
+  private async compressHistoryIfNeeded(): Promise<void> {
+    if (!this.summarizerGenerateText || !this.client) return;
+
+    const threshold =
+      this.jarvisConfig.session?.historyCompressionThreshold ?? 30;
+    const keepRecent = this.jarvisConfig.session?.historyKeepRecentTurns ?? 5;
+    if (threshold === 0) return;
+
+    const history = this.client.getChat().getHistory();
+    // Each "turn" is a user+model pair = 2 entries
+    const turnCount = Math.floor(history.length / 2);
+    if (turnCount <= threshold) return;
+
+    try {
+      // Split: turns to compress vs turns to keep raw
+      const keepEntries = keepRecent * 2;
+      const toCompress = history.slice(0, history.length - keepEntries);
+      const toKeep = history.slice(history.length - keepEntries);
+
+      // Convert to SessionMessage format for buildIncrementalSummary
+      const messages: SessionMessage[] = toCompress
+        .map((turn) => {
+          const text = turn.parts?.map((p: any) => p.text ?? "").join("") ?? "";
+          if (!text.trim()) return null;
+          return {
+            type: turn.role === "user" ? "user" : "gemini",
+            content: text,
+          } as SessionMessage;
+        })
+        .filter((m): m is SessionMessage => m !== null);
+
+      if (messages.length === 0) return;
+
+      // Extract existing summary if history starts with one
+      let existingSummary: string | null = null;
+      const firstUserText =
+        toCompress[0]?.parts?.map((p: any) => p.text ?? "").join("") ?? "";
+      if (firstUserText.startsWith("[CONVERSATION HISTORY SUMMARY]")) {
+        existingSummary = firstUserText
+          .replace("[CONVERSATION HISTORY SUMMARY]\n", "")
+          .trim();
+      }
+
+      const newSummary = await buildIncrementalSummary(
+        messages,
+        existingSummary,
+        this.summarizerGenerateText,
+        { maxRetries: 2, retryDelayMs: 1000 },
+      );
+
+      if (!newSummary.trim()) return;
+
+      // Rebuild history: summary pair + recent raw turns
+      const compressedHistory = buildHistoryWithSummary(
+        newSummary,
+        toKeep
+          .map((turn) => ({
+            type: turn.role === "user" ? "user" : "gemini",
+            content: turn.parts?.map((p: any) => p.text ?? "").join("") ?? "",
+          }))
+          .filter((m) => m.content.trim()) as SessionMessage[],
+      );
+
+      this.client.getChat().setHistory(compressedHistory);
+      console.error(
+        `🗜️ [Jarvis] History compressed: ${turnCount} turns → summary + ${keepRecent} recent turns.`,
+      );
+    } catch (e: any) {
+      console.error(`⚠️ [Jarvis] History compression failed: ${e.message}`);
+    }
   }
 
   private async refreshContext(userPrompt: string) {
@@ -404,6 +492,9 @@ export class JarvisAgent extends EventEmitter {
           if (interval > 0 && ++this.conversationTurnCount % interval === 0) {
             setImmediate(() => void this.memoryService.backfillSessionEvents());
           }
+
+          // Compress in-memory chat history if it exceeds the threshold
+          setImmediate(() => void this.compressHistoryIfNeeded());
         }
       });
       this.emit(JarvisEventType.DONE);
