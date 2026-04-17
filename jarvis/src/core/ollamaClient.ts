@@ -4,8 +4,23 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+import { Agent, fetch as undiciFetch } from "undici";
+
 const DEFAULT_BASE_URL = "http://localhost:11434";
 const DEFAULT_TIMEOUT_MS = 30_000;
+
+/**
+ * undici Agent with extended timeouts for slow local Ollama instances.
+ * headersTimeout / bodyTimeout cover the server-side processing time,
+ * which can exceed 1 minute on low-end hardware.
+ */
+function makeAgent(timeoutMs: number): Agent {
+  return new Agent({
+    headersTimeout: timeoutMs,
+    bodyTimeout: timeoutMs,
+    connectTimeout: 60_000,
+  });
+}
 
 /**
  * Unified Ollama /api/generate call.
@@ -25,11 +40,13 @@ export async function ollamaGenerate(
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const response = await fetch(`${baseUrl}/api/generate`, {
+    const response = await undiciFetch(`${baseUrl}/api/generate`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ model, prompt, stream: false }),
       signal: controller.signal,
+      // @ts-expect-error - undici fetch dispatcher option
+      dispatcher: makeAgent(timeoutMs),
     });
     if (!response.ok) {
       throw new Error(
@@ -61,11 +78,13 @@ export async function ollamaEmbed(
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const response = await fetch(`${baseUrl}/api/embed`, {
+    const response = await undiciFetch(`${baseUrl}/api/embed`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ model, input }),
       signal: controller.signal,
+      // @ts-expect-error - undici fetch dispatcher option
+      dispatcher: makeAgent(timeoutMs),
     });
     if (!response.ok) {
       throw new Error(
