@@ -18,7 +18,7 @@ function makeAgent(timeoutMs: number): Agent {
   return new Agent({
     headersTimeout: timeoutMs,
     bodyTimeout: timeoutMs,
-    connectTimeout: 60_000,
+    connectTimeout: timeoutMs,
   });
 }
 
