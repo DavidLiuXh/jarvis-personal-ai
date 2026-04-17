@@ -182,8 +182,6 @@ class JarvisServer {
         .getMemoryService()
         .buildReflectionGenerateText(cliGenerateText);
       await this.manager.getMemoryService().reflect(generateText);
-      // After nightly reflection, process any new session events incrementally
-      void this.manager.getMemoryService().backfillSessionEvents();
     };
 
     this.taskRunner = new ProactiveTaskRunner(

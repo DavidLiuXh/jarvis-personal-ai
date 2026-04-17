@@ -58,6 +58,7 @@ export class JarvisAgent extends EventEmitter {
   private channelRegistry?: ChannelRegistry;
   private availableSkills: SkillInfo[] = [];
   private localModelRouter: LocalModelRouter | null = null;
+  private conversationTurnCount = 0;
 
   constructor(options: JarvisAgentOptions) {
     super();
@@ -392,6 +393,13 @@ export class JarvisAgent extends EventEmitter {
             finalAssistantText,
           );
           void this.distiller.distill(userPrompt, finalAssistantText);
+
+          // Trigger session events extraction every N turns (async, non-blocking)
+          const interval =
+            this.jarvisConfig.memory.eventsExtractionInterval ?? 20;
+          if (interval > 0 && ++this.conversationTurnCount % interval === 0) {
+            setImmediate(() => void this.memoryService.backfillSessionEvents());
+          }
         }
       });
       this.emit(JarvisEventType.DONE);

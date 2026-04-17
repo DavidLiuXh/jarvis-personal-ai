@@ -28,6 +28,7 @@ export class MemoryService {
   private isProcessing = false; // guards processQueue
   private isConsolidating = false; // guards consolidateFacts (separate to avoid竞态)
   private isBackfillingEntities = false; // guards backfillEntityLinks
+  private isBackfillingSessionEvents = false; // guards backfillSessionEvents
   private config: any;
   private lastConsolidatedCount = 0;
   private generateTextFn: ((prompt: string) => Promise<string>) | null = null;
@@ -2118,7 +2119,8 @@ Respond ONLY with a JSON array:
    */
   public async backfillSessionEvents(): Promise<void> {
     if (!this.generateTextFn) return;
-    if (this.isBackfillingEntities) return;
+    if (this.isBackfillingSessionEvents) return;
+    this.isBackfillingSessionEvents = true;
 
     const chatsDir = path.join(
       os.homedir(),
@@ -2253,6 +2255,7 @@ Events:`;
         `✅ [MemoryService] Session events backfill complete: ${totalEvents} events from ${totalFiles} files.`,
       );
     }
+    this.isBackfillingSessionEvents = false;
   }
 
   /** Get the timestamp of the last message in a list, or 0 if none have timestamps. */

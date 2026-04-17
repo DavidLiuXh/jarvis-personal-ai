@@ -241,6 +241,11 @@
     // 启用事件提取后，原始对话信噪比低，建议关闭。默认：false
     "ingestConversations": false,
 
+    // 每 N 轮对话触发一次 backfillSessionEvents()（异步，不阻塞交互）。
+    // 确保长期运行时当天的对话能及时提取为 events，无需重启。
+    // 0 = 禁用。默认：20
+    "eventsExtractionInterval": 20,
+
     // L1 物理层（MEMORIES.md）写入模式：
     // "realtime"：每次 saveFact 后立即追加（实时，可能有轻微冗余）
     // "batch"：仅在 consolidateFacts 或 reflect 后全量重写（文件更整洁）
