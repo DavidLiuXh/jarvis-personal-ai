@@ -246,6 +246,12 @@
     // 0 = 禁用。默认：20
     "eventsExtractionInterval": 20,
 
+    // 启动时跳过 backfillSessionEvents()，加快启动速度。
+    // false（默认）：等待所有 session 文件处理完成后再对外服务。
+    // true：跳过，适合配置较低的机器或不关心 events 覆盖率的场景。
+    // 默认：false
+    "skipStartupEventsBackfill": false,
+
     // L1 物理层（MEMORIES.md）写入模式：
     // "realtime"：每次 saveFact 后立即追加（实时，可能有轻微冗余）
     // "batch"：仅在 consolidateFacts 或 reflect 后全量重写（文件更整洁）

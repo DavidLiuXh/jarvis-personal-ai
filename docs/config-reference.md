@@ -252,6 +252,12 @@ Configuration file location: `~/.gemini-jarvis/config.json`
     // 0 = disabled. Default: 20
     "eventsExtractionInterval": 20,
 
+    // Skip backfillSessionEvents() during startup warmup for faster startup.
+    // When false (default), Jarvis waits for all session files to be processed before serving.
+    // Set to true on low-end machines when startup speed is more important than events coverage.
+    // Default: false
+    "skipStartupEventsBackfill": false,
+
     // L1 physical layer write mode for MEMORIES.md:
     // "realtime": append each fact immediately after saveFact (always up-to-date)
     // "batch": full rewrite only after consolidateFacts or reflect (cleaner file)

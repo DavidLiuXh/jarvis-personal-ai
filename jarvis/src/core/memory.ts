@@ -234,11 +234,20 @@ export class MemoryService {
     );
   }
 
+  private _backfillPromise: Promise<void> | null = null;
+
   /** Inject a CLI-auth embedContent function for semantic dedup. */
   public setEmbedContent(fn: (text: string) => Promise<number[]>) {
     this.embedContentFn = fn;
-    // Trigger auto-backfill after embedContent is available
-    void this.autoBackfill();
+    // Store the promise so callers can await full backfill completion
+    this._backfillPromise = this.autoBackfill();
+  }
+
+  /** Wait for the initial autoBackfill() to complete. */
+  public async waitForBackfill(): Promise<void> {
+    if (this._backfillPromise) {
+      await this._backfillPromise;
+    }
   }
 
   /**
@@ -1725,12 +1734,25 @@ Respond ONLY with a JSON array:
     } catch (e: any) {
       console.error(`⚠️ [MemoryService] Auto-backfill failed: ${e.message}`);
     }
-    // Backfill entity links: delay 60s after startup to avoid competing
-    // with the first user interaction (Ollama calls are slow)
+    // Backfill entity links: delay 60s to avoid competing with early user interactions
     setTimeout(() => void this.backfillEntityLinks(), 60_000);
-    // Backfill session events: delay 60s (unified path for all session event extraction)
-    // backfillSessionEvents handles both historical and new sessions via processed_files tracking
-    setTimeout(() => void this.backfillSessionEvents(), 60_000);
+
+    // Backfill session events: run synchronously during startup unless skipped
+    const skipEventsBackfill =
+      this.jarvisConfig.memory.skipStartupEventsBackfill ?? false;
+    if (skipEventsBackfill) {
+      console.error(
+        "⚡ [MemoryService] Skipping startup events backfill (skipStartupEventsBackfill=true).",
+      );
+    } else {
+      console.error(
+        "🔄 [MemoryService] Running startup events backfill — Jarvis will be ready when complete...",
+      );
+      await this.backfillSessionEvents();
+      console.error(
+        "✅ [MemoryService] Startup events backfill complete. Jarvis is ready.",
+      );
+    }
   }
 
   /**
