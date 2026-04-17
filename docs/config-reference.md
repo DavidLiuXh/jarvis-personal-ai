@@ -247,6 +247,11 @@ Configuration file location: `~/.gemini-jarvis/config.json`
     // Default: false
     "ingestConversations": false,
 
+    // Trigger backfillSessionEvents() every N conversation turns (async, non-blocking).
+    // Ensures current session events are extracted without requiring a restart.
+    // 0 = disabled. Default: 20
+    "eventsExtractionInterval": 20,
+
     // L1 physical layer write mode for MEMORIES.md:
     // "realtime": append each fact immediately after saveFact (always up-to-date)
     // "batch": full rewrite only after consolidateFacts or reflect (cleaner file)

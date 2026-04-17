@@ -153,6 +153,12 @@ export interface JarvisConfig {
      */
     ingestConversations: boolean;
     /**
+     * Trigger backfillSessionEvents() every N conversation turns (async, non-blocking).
+     * Ensures current session events are extracted without requiring a restart.
+     * 0 = disabled. Default: 20.
+     */
+    eventsExtractionInterval: number;
+    /**
      * L1 physical layer write mode for MEMORIES.md.
      * 'realtime': append each fact immediately after saveFact (always up-to-date, may have minor redundancy).
      * 'batch': full rewrite only after consolidateFacts or reflect (clean file, but lags between consolidations).
@@ -283,6 +289,7 @@ export class ConfigManager {
         factRelevanceLimit: 5,
         prewarmLimit: 3,
         ingestConversations: false,
+        eventsExtractionInterval: 20,
         l1WriteMode: "batch" as const,
         vectorSimilarityWeight: 0.7,
         importanceWeight: 0.2,
