@@ -346,6 +346,14 @@ Configuration file location: `~/.gemini-jarvis/config.json`
     // Number of recent raw message turns to include after the compressed summary.
     // Higher = more context but more tokens per request. Default: 3
     "recentTurnsOnResume": 3,
+
+    // Compress in-memory chat history when it exceeds this many turns.
+    // Uses summarizer.model; keeps only historyKeepRecentTurns raw turns.
+    // 0 = disabled. Default: 30
+    "historyCompressionThreshold": 30,
+
+    // Number of recent turns to keep as raw messages after compression. Default: 5
+    "historyKeepRecentTurns": 5,
   },
 
   // ─────────────────────────────────────────────

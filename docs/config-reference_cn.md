@@ -338,6 +338,14 @@
     // 压缩摘要之后追加的原始消息轮数。
     // 越大上下文越完整，但每次请求的 token 消耗越多。默认：3
     "recentTurnsOnResume": 3,
+
+    // 当内存中的对话历史超过此轮数时，自动压缩旧历史。
+    // 使用 summarizer.model 生成摘要，只保留最近 historyKeepRecentTurns 轮原始消息。
+    // 0 = 禁用。默认：30
+    "historyCompressionThreshold": 30,
+
+    // 压缩后保留的最近原始消息轮数。默认：5
+    "historyKeepRecentTurns": 5,
   },
 
   // ─────────────────────────────────────────────
