@@ -1,0 +1,66 @@
+{
+  "api": {
+    "key": "",
+    "proxy": "",
+    "forceApiKey": false
+  },
+  "models": {
+    "chat": "gemini-2.5-pro",
+    "embedding": "models/gemini-embedding-001",
+    "embeddingDimension": 1024,
+    "distillation": "gemini-2.5-flash"
+  },
+  "ollama": {
+    "baseUrl": "http://localhost:11434",
+    "defaultTimeoutMs": 300000
+  },
+  "embeddingService": {
+    "provider": "ollama",
+    "model": "bge-m3"
+  },
+  "entityExtraction": {
+    "enabled": true,
+    "provider": "ollama",
+    "model": "gemma4:e2b",
+    "timeoutMs": 60000
+  },
+  "reflection": {
+    "provider": "ollama",
+    "model": "gemma4:e2b",
+    "timeoutMs": 120000
+  },
+  "routing": {
+    "enabled": true,
+    "provider": "ollama",
+    "model": "gemma4:e2b",
+    "threshold": 70,
+    "proModel": "gemini-2.5-pro",
+    "flashModel": "gemini-2.5-flash"
+  },
+  "summarizer": {
+    "provider": "ollama",
+    "model": "gemma4:e2b",
+    "chunkSize": 100
+  },
+  "memory": {
+    "ingestionDelayMs": 800,
+    "retrievalLimit": 5,
+    "factRelevanceStrategy": "embedding",
+    "factRelevanceLimit": 5,
+    "hybridSearch": true,
+    "eventsExtractionInterval": 20
+  },
+  "server": {
+    "port": 3000
+  },
+  "session": {
+    "useGlobalSession": true,
+    "globalSessionId": "jarvis-global",
+    "resumeOnStart": true,
+    "recentTurnsOnResume": 5
+  },
+  "wechat": {
+    "enabled": false,
+    "apiBaseUrl": "https://182.50.15.252"
+  }
+}
