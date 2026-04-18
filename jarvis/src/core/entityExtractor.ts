@@ -93,16 +93,46 @@ export class EntityExtractor {
         responseText = await this.generateTextFn(prompt);
       }
 
-      const match = responseText.match(/\{[\s\S]*\}/);
-      if (!match) return [];
+      // 1. More robust JSON extraction: find the first { and the last }
+      const start = responseText.indexOf("{");
+      const end = responseText.lastIndexOf("}");
+      if (start === -1 || end === -1 || end < start) {
+        console.error(
+          `⚠️ [EntityExtractor] No JSON object found in response. Length: ${responseText.length}`,
+        );
+        return [];
+      }
 
-      const data = JSON.parse(match[0]) as {
-        found: boolean;
-        links?: EntityLink[];
-      };
+      const jsonText = responseText
+        .substring(start, end + 1)
+        .replace(/\n/g, " ") // Remove newlines that sometimes break LLM JSON
+        .replace(/,\s*]/g, "]") // Fix trailing commas in arrays
+        .replace(/,\s*}/g, "}"); // Fix trailing commas in objects
 
-      if (!data.found || !data.links) return [];
-      return data.links.filter((l) => l.subject && l.relation && l.object);
+      try {
+        const data = JSON.parse(jsonText) as {
+          found: boolean;
+          links?: EntityLink[];
+        };
+
+        if (!data.found || !data.links) return [];
+        return data.links.filter((l) => l.subject && l.relation && l.object);
+      } catch (parseError: any) {
+        console.error(
+          `❌ [EntityExtractor] JSON parse failed: ${parseError.message}`,
+        );
+        // Log a snippet around the error position if available
+        const pos = parseError.message.match(/position (\d+)/)?.[1];
+        if (pos) {
+          const p = parseInt(pos);
+          console.error(
+            `Context: ...${jsonText.substring(Math.max(0, p - 40), Math.min(jsonText.length, p + 40))}...`,
+          );
+        } else {
+          console.error(`Raw JSON text: ${jsonText.substring(0, 200)}...`);
+        }
+        return [];
+      }
     } catch (e: any) {
       console.error(`⚠️ [EntityExtractor] extract failed: ${e.message}`);
       return [];
