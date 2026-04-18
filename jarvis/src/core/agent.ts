@@ -160,18 +160,42 @@ export class JarvisAgent extends EventEmitter {
   /**
    * Compress in-memory chat history when it exceeds historyCompressionThreshold turns.
    * Summarizes older turns and keeps only the most recent historyKeepRecentTurns raw.
+   * Automatically scales the threshold for code-heavy conversations.
    */
   private async compressHistoryIfNeeded(): Promise<void> {
     if (!this.summarizerGenerateText || !this.client) return;
 
-    const threshold =
+    let threshold =
       this.jarvisConfig.session?.historyCompressionThreshold ?? 30;
     const keepRecent = this.jarvisConfig.session?.historyKeepRecentTurns ?? 5;
+    const multiplier =
+      this.jarvisConfig.session?.codeHeavyThresholdMultiplier ?? 2.0;
+
     if (threshold === 0) return;
 
     const history = this.client.getChat().getHistory();
     // Each "turn" is a user+model pair = 2 entries
-    const turnCount = Math.floor(history.length / 2);
+    const totalEntries = history.length;
+    const turnCount = Math.floor(totalEntries / 2);
+
+    // 🧠 DYNAMIC THRESHOLD: Detect if history contains significant code
+    let codeBlockCount = 0;
+    for (const entry of history) {
+      const text = entry.parts?.map((p: any) => p.text ?? "").join("") ?? "";
+      if (text.includes("```")) {
+        codeBlockCount++;
+      }
+    }
+    const codeDensity = codeBlockCount / (totalEntries || 1);
+    const isCodeHeavy = codeDensity > 0.15; // > 15% of messages have code
+
+    if (isCodeHeavy) {
+      threshold = Math.floor(threshold * multiplier);
+      debugLogger.debug(
+        `[Jarvis] Code-heavy context detected (density=${codeDensity.toFixed(2)}). Scaling threshold to ${threshold}.`,
+      );
+    }
+
     if (turnCount <= threshold) return;
 
     try {

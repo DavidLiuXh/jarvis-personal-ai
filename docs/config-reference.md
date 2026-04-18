@@ -4,7 +4,7 @@ Configuration file location: `~/.gemini-jarvis/config.json`
 
 ---
 
-```jsonc
+````jsonc
 {
   // ─────────────────────────────────────────────
   // API — Google / Gemini credentials
@@ -354,6 +354,11 @@ Configuration file location: `~/.gemini-jarvis/config.json`
 
     // Number of recent turns to keep as raw messages after compression. Default: 5
     "historyKeepRecentTurns": 5,
+
+    // When code density (messages with ```) is high (>15%), multiply
+    // historyCompressionThreshold by this factor to preserve context.
+    // Default: 2.0
+    "codeHeavyThresholdMultiplier": 2.0,
   },
 
   // ─────────────────────────────────────────────
@@ -367,4 +372,4 @@ Configuration file location: `~/.gemini-jarvis/config.json`
     "defaultChatId": "",
   },
 }
-```
+````

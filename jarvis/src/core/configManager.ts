@@ -235,6 +235,11 @@ export interface JarvisConfig {
      * Default: 5.
      */
     historyKeepRecentTurns: number;
+    /**
+     * When code density is high, multiply the threshold by this factor.
+     * Default: 2.0 (effectively 60 turns if threshold is 30).
+     */
+    codeHeavyThresholdMultiplier: number;
   };
   tasks?: {
     /** Default channel for proactive task output. */
@@ -336,6 +341,7 @@ export class ConfigManager {
         recentTurnsOnResume: 3,
         historyCompressionThreshold: 30,
         historyKeepRecentTurns: 5,
+        codeHeavyThresholdMultiplier: 2.0,
       },
       routing: {
         enabled: true,
