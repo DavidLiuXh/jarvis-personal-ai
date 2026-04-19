@@ -4,17 +4,17 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { type Part } from '../../../gemini-cli/packages/core/src/index.js';
-import { type MemoryService } from './memory.js';
+import { type Part } from "../../../gemini-cli/packages/core/src/index.js";
+import { type MemoryService } from "./memory.js";
 
 export enum JarvisEventType {
-  CONTENT = 'content',
-  THOUGHT = 'thought',
-  TOOL_CALL_REQUEST = 'tool_call_request',
-  TOOL_CALL_RESPONSE = 'tool_call_response',
-  SUBAGENT_ACTIVITY = 'subagent_activity',
-  DONE = 'done',
-  ERROR = 'error'
+  CONTENT = "content",
+  THOUGHT = "thought",
+  TOOL_CALL_REQUEST = "tool_call_request",
+  TOOL_CALL_RESPONSE = "tool_call_response",
+  SUBAGENT_ACTIVITY = "subagent_activity",
+  DONE = "done",
+  ERROR = "error",
 }
 
 export interface JarvisEvent {
@@ -31,21 +31,29 @@ export interface JarvisAgentOptions {
 }
 
 export interface JarvisChatMessage {
-  type: 'chat';
+  type: "chat";
   payload: string;
   sessionId?: string;
 }
 
 export interface JarvisPingMessage {
-  type: 'ping';
+  type: "ping";
 }
 
 export interface JarvisRestoreMessage {
-  type: 'restore';
+  type: "restore";
   sessionId: string;
+}
+
+export interface JarvisConfirmationMessage {
+  type: "confirmation";
+  id: string;
+  decision: "allow" | "deny";
+  sessionId?: string;
 }
 
 export type JarvisIncomingMessage =
   | JarvisChatMessage
   | JarvisPingMessage
-  | JarvisRestoreMessage;
+  | JarvisRestoreMessage
+  | JarvisConfirmationMessage;
