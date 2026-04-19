@@ -98,6 +98,11 @@ class JarvisServer {
   private taskRunner!: ProactiveTaskRunner;
   private feishuChannel?: FeishuChannel;
   private wechatChannel?: WechatChannel;
+  // Key: sessionId, Value: { id: confirmationId, message: string }
+  private pendingConfirmations = new Map<
+    string,
+    { id: string; message: string }
+  >();
 
   constructor() {
     this.app = express();
@@ -194,7 +199,17 @@ class JarvisServer {
     if (this.feishuChannel) {
       const feishu = this.feishuChannel;
       this.channelRegistry.register("feishu", {
-        push: (chatId, text) => feishu.sendProactive(chatId, text),
+        push: (chatId, text, type, meta) => {
+          if (type === "confirmation_request") {
+            const sid = `feishu-${chatId}`;
+            this.pendingConfirmations.set(sid, { id: meta.id, message: text });
+            return feishu.sendProactive(
+              chatId,
+              `⚠️ ${text}\n\nReply "YES" to allow, or "NO" to deny.`,
+            );
+          }
+          return feishu.sendProactive(chatId, text);
+        },
         defaultChatId: jarvisConfig.tasks?.defaultChatId || "",
       });
     }
@@ -203,7 +218,17 @@ class JarvisServer {
     if (this.wechatChannel) {
       const wechat = this.wechatChannel;
       this.channelRegistry.register("wechat", {
-        push: (userId, text) => wechat.sendProactive(userId, text),
+        push: (userId, text, type, meta) => {
+          if (type === "confirmation_request") {
+            const sid = `wechat-${userId}`;
+            this.pendingConfirmations.set(sid, { id: meta.id, message: text });
+            return wechat.sendProactive(
+              userId,
+              `⚠️ ${text}\n\nReply "YES" to allow, or "NO" to deny.`,
+            );
+          }
+          return wechat.sendProactive(userId, text);
+        },
         get defaultChatId() {
           return wechat.getDefaultUserId();
         },
@@ -240,6 +265,42 @@ class JarvisServer {
     void this.manager.getAgent(globalSessionId).then((agent) => {
       agent.setTaskCommandHandler(taskCommandHandler);
       agent.setChannelRegistry(this.channelRegistry);
+
+      // Listen for Confirmation Requests and route to the correct channel
+      agent.on(JarvisEventType.CONTENT, async (event) => {
+        if (event.type === "confirmation_request") {
+          const req = event.value;
+          // Format message for display
+          const message = `Security Confirmation Required: ${req.message}`;
+
+          // 1. WebSocket (always broadcast)
+          this.wss.clients.forEach((client) => {
+            if (client.readyState === ws.OPEN) {
+              client.send(
+                JSON.stringify({
+                  type: "stream",
+                  sessionId: globalSessionId,
+                  payload: event,
+                }),
+              );
+            }
+          });
+
+          // 2. Proactive Channels (Feishu/WeChat)
+          // We infer the channel from the session ID if it has a prefix
+          const [channel, ...rest] = globalSessionId.split("-");
+          const chatId = rest.join("-");
+          if (this.channelRegistry.isRegistered(channel)) {
+            await this.channelRegistry.pushSafe(
+              channel,
+              chatId,
+              req.message,
+              "confirmation_request",
+              req,
+            );
+          }
+        }
+      });
 
       // Load skills and set up dynamic reload
       void this.loadAvailableSkills().then((skills) => {
@@ -374,6 +435,9 @@ class JarvisServer {
             await this.handleChat(ws, sessionId, message.payload);
           } else if (message.type === "restore") {
             await this.handleRestore(ws, sessionId);
+          } else if (message.type === "confirmation") {
+            const agent = await this.manager.getAgent(sessionId);
+            agent.provideConfirmationResponse(message.id, message.decision);
           } else if (message.type === "ping") {
             ws.send(JSON.stringify({ type: "pong" }));
           }
@@ -395,6 +459,49 @@ class JarvisServer {
 
   private async handleChat(ws: WebSocket, sessionId: string, payload: string) {
     const agent = await this.manager.getAgent(sessionId);
+
+    // 🛡️ CONFIRMATION INTERCEPTION: Check if this user is replying to a pending security prompt
+    const pending = this.pendingConfirmations.get(sessionId);
+    if (pending) {
+      const text = payload.trim().toLowerCase();
+      const isAffirmative = ["yes", "y", "确定", "是", "允许", "1"].includes(
+        text,
+      );
+      const isNegative = ["no", "n", "取消", "否", "拒绝", "0"].includes(text);
+
+      if (isAffirmative || isNegative) {
+        const decision = isAffirmative ? "allow" : "deny";
+        console.error(
+          `🛡️ [Jarvis] Remote confirmation received for session ${sessionId}: ${decision}`,
+        );
+        agent.provideConfirmationResponse(pending.id, decision);
+        this.pendingConfirmations.delete(sessionId);
+
+        // Push feedback to the channel
+        const feedback =
+          decision === "allow"
+            ? "✅ Execution allowed."
+            : "❌ Execution denied.";
+        const [channel, ...rest] = sessionId.split("-");
+        const chatId = rest.join("-");
+        if (this.channelRegistry.isRegistered(channel)) {
+          void this.channelRegistry.pushSafe(channel, chatId, feedback);
+        }
+
+        // If it was a WebSocket request, also send back to UI
+        if (ws.readyState === ws.OPEN) {
+          ws.send(
+            JSON.stringify({
+              type: "stream",
+              sessionId,
+              payload: { type: "content", value: feedback },
+            }),
+          );
+          ws.send(JSON.stringify({ type: "done", sessionId }));
+        }
+        return;
+      }
+    }
 
     const onContent = (event: any) => {
       if (ws.readyState === ws.OPEN) {

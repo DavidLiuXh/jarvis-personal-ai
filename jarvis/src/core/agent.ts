@@ -445,6 +445,8 @@ export class JarvisAgent extends EventEmitter {
                   this.emit(JarvisEventType.CONTENT, event);
                 } else if (event.type === GeminiEventType.ToolCallRequest) {
                   toolCallRequests.push(event.value);
+                } else if (event.type === GeminiEventType.ConfirmationRequest) {
+                  this.emit(JarvisEventType.CONTENT, event);
                 } else if (event.type === GeminiEventType.Error) {
                   throw event.value.error;
                 } else if (event.type !== GeminiEventType.ModelInfo) {
@@ -533,5 +535,11 @@ export class JarvisAgent extends EventEmitter {
   public getHistory() {
     if (!this.client) return [];
     return this.client.getChat().getHistory();
+  }
+
+  public provideConfirmationResponse(id: string, decision: "allow" | "deny") {
+    if (this.client) {
+      this.client.config.messageBus.provideResponse(id, decision);
+    }
   }
 }
