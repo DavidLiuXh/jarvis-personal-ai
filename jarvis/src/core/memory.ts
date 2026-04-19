@@ -2180,16 +2180,27 @@ Respond ONLY with a JSON array:
         // Legacy: already fully processed, skip
         continue;
       } else {
-        // New format: process incrementally
-        candidates.push({
-          file,
-          lastMsgTime: row.events_last_msg_time ?? 0,
-          isLegacyDone: false,
-        });
+        // New format: process incrementally IF file has changed
+        const stats = fs.statSync(path.join(chatsDir, file));
+        const lastProcessedMtime =
+          (this as any).processedFileMtimes?.get(file) ?? 0;
+
+        // We only add to candidates if the file is newer than last message time
+        // OR if the file's mtime has changed since our last session-internal check
+        if (stats.mtimeMs > (row.events_last_msg_time ?? 0)) {
+          candidates.push({
+            file,
+            lastMsgTime: row.events_last_msg_time ?? 0,
+            isLegacyDone: false,
+          });
+        }
       }
     }
 
-    if (candidates.length === 0) return;
+    if (candidates.length === 0) {
+      this.isBackfillingSessionEvents = false;
+      return;
+    }
 
     console.error(
       `📝 [MemoryService] Session events backfill: ${candidates.length} files to process...`,
