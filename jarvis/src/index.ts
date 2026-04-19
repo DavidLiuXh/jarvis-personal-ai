@@ -489,7 +489,7 @@ class JarvisServer {
         }
 
         // If it was a WebSocket request, also send back to UI
-        if (ws.readyState === ws.OPEN) {
+        if (ws.readyState === WebSocket.OPEN) {
           ws.send(
             JSON.stringify({
               type: "stream",
@@ -504,13 +504,32 @@ class JarvisServer {
     }
 
     const onContent = (event: any) => {
-      if (ws.readyState === ws.OPEN) {
+      // 🛡️ AUTO-ROUTE confirmation requests to relevant channels
+      if (event.type === "confirmation_request") {
+        const [channel, ...rest] = sessionId.split("-");
+        const chatId = rest.join("-");
+        if (this.channelRegistry.isRegistered(channel)) {
+          this.pendingConfirmations.set(sessionId, {
+            id: event.value.id,
+            message: event.value.message,
+          });
+          void this.channelRegistry.pushSafe(
+            channel,
+            chatId,
+            event.value.message,
+            "confirmation_request",
+            event.value,
+          );
+        }
+      }
+
+      if (ws.readyState === WebSocket.OPEN) {
         ws.send(JSON.stringify({ type: "stream", sessionId, payload: event }));
       }
     };
 
     const onToolResponse = (data: any) => {
-      if (ws.readyState === ws.OPEN) {
+      if (ws.readyState === WebSocket.OPEN) {
         ws.send(
           JSON.stringify({
             type: "stream",
@@ -522,7 +541,7 @@ class JarvisServer {
     };
 
     const onSubAgentActivity = (data: any) => {
-      if (ws.readyState === ws.OPEN) {
+      if (ws.readyState === WebSocket.OPEN) {
         ws.send(
           JSON.stringify({
             type: "stream",
@@ -534,14 +553,14 @@ class JarvisServer {
     };
 
     const onDone = () => {
-      if (ws.readyState === ws.OPEN) {
+      if (ws.readyState === WebSocket.OPEN) {
         ws.send(JSON.stringify({ type: "done", sessionId }));
       }
       cleanup();
     };
 
     const onError = (err: any) => {
-      if (ws.readyState === ws.OPEN) {
+      if (ws.readyState === WebSocket.OPEN) {
         ws.send(
           JSON.stringify({
             type: "error",

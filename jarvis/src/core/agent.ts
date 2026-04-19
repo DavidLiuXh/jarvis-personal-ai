@@ -447,6 +447,10 @@ export class JarvisAgent extends EventEmitter {
                   toolCallRequests.push(event.value);
                 } else if (event.type === GeminiEventType.ConfirmationRequest) {
                   this.emit(JarvisEventType.CONTENT, event);
+                  // 🛡️ WAIT FOR USER: Block the loop until we get a response for this ID
+                  await new Promise<"allow" | "deny">((resolve) => {
+                    this.pendingConfirmResolvers.set(event.value.id, resolve);
+                  });
                 } else if (event.type === GeminiEventType.Error) {
                   throw event.value.error;
                 } else if (event.type !== GeminiEventType.ModelInfo) {
@@ -537,9 +541,21 @@ export class JarvisAgent extends EventEmitter {
     return this.client.getChat().getHistory();
   }
 
+  private pendingConfirmResolvers = new Map<
+    string,
+    (decision: "allow" | "deny") => void
+  >();
+
   public provideConfirmationResponse(id: string, decision: "allow" | "deny") {
     if (this.client) {
       this.client.config.messageBus.provideResponse(id, decision);
+
+      // Also resolve local promise if anyone is waiting
+      const resolver = this.pendingConfirmResolvers.get(id);
+      if (resolver) {
+        resolver(decision);
+        this.pendingConfirmResolvers.delete(id);
+      }
     }
   }
 }
