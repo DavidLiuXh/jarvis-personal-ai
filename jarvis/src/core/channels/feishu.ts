@@ -4,11 +4,11 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import * as lark from '@larksuiteoapi/node-sdk';
-import { JarvisManager } from '../manager.js';
-import { JarvisEventType } from '../types.js';
-import { debugLogger } from '../../../../gemini-cli/packages/core/src/index.js';
-import { ConfigManager } from '../configManager.js';
+import * as lark from "@larksuiteoapi/node-sdk";
+import { JarvisManager } from "../manager.js";
+import { JarvisEventType } from "../types.js";
+import { debugLogger } from "../../../../gemini-cli/packages/core/src/index.js";
+import { ConfigManager } from "../configManager.js";
 
 export class FeishuChannel {
   private client: lark.Client;
@@ -34,20 +34,22 @@ export class FeishuChannel {
   /** Proactively send a plain-text message to a chat without waiting for user input. */
   public async sendProactive(chatId: string, text: string): Promise<void> {
     await this.client.im.message.create({
-      params: { receive_id_type: 'chat_id' },
+      params: { receive_id_type: "chat_id" },
       data: {
         receive_id: chatId,
-        msg_type: 'text',
+        msg_type: "text",
         content: JSON.stringify({ text }),
       },
     });
   }
 
   public async start() {
-    console.error('\n📡 [Feishu] Swarm Link Booting (Industrial Resilience Mode)...');
-    
+    console.error(
+      "\n📡 [Feishu] Swarm Link Booting (Industrial Resilience Mode)...",
+    );
+
     const eventDispatcher = new lark.EventDispatcher({}).register({
-      'im.message.receive_v1': async (data) => {
+      "im.message.receive_v1": async (data) => {
         const { message } = data;
         const msgId = message.message_id;
         const createTime = parseInt(message.create_time);
@@ -58,15 +60,19 @@ export class FeishuChannel {
 
         const msgType = message.msg_type || (message as any).message_type;
         const chatId = message.chat_id;
-        
-        if (msgType === 'text') {
+
+        if (msgType === "text") {
           const content = JSON.parse(message.content).text;
           console.error(`📩 [Feishu] New Message: ${content}`);
           void this.handleUserMessage(chatId, content, `feishu-${chatId}`);
-        } 
-        else if (msgType === 'image') {
+        } else if (msgType === "image") {
           const imageKey = JSON.parse(message.content).image_key;
-          void this.handleImageMessage(chatId, imageKey, message.message_id, `feishu-${chatId}`);
+          void this.handleImageMessage(
+            chatId,
+            imageKey,
+            message.message_id,
+            `feishu-${chatId}`,
+          );
         }
 
         return {};
@@ -75,7 +81,7 @@ export class FeishuChannel {
 
     try {
       await this.wsClient.start({ eventDispatcher });
-      console.error('🚀 [Feishu] WebSocket Link Online. Swarm ready.');
+      console.error("🚀 [Feishu] WebSocket Link Online. Swarm ready.");
       this.startHeartbeat();
     } catch (err: any) {
       console.error(`❌ [Feishu] WebSocket critical failure: ${err.message}`);
@@ -97,12 +103,12 @@ export class FeishuChannel {
         await (this.client as any).bot.info.get();
         return true;
       }
-      
+
       // Level 3: Raw Request (Final Boss Fallback)
       // This is 100% path-safe as it doesn't use the client's dynamic properties
       const token = await this.client.tokenManager.getTenantAccessToken();
-      const res = await fetch('https://open.feishu.cn/open-apis/bot/v3/info', {
-        headers: { 'Authorization': `Bearer ${token}` }
+      const res = await fetch("https://open.feishu.cn/open-apis/bot/v3/info", {
+        headers: { Authorization: `Bearer ${token}` },
       });
       return res.ok;
     } catch (e) {
@@ -112,17 +118,19 @@ export class FeishuChannel {
 
   private startHeartbeat() {
     if (this.heartbeatTimer) clearInterval(this.heartbeatTimer);
-    
+
     this.heartbeatTimer = setInterval(async () => {
       const isHealthy = await this.pingFeishu();
-      if (isHealthy) {
-        debugLogger.debug('[FeishuChannel] Heartbeat pulse: Connection is alive.');
-      } else {
-        console.error('⚠️ [Feishu] Heartbeat detected a stale connection. Re-warming tokens...');
+      if (!isHealthy) {
+        console.error(
+          "⚠️ [Feishu] Heartbeat detected a stale connection. Re-warming tokens...",
+        );
         // Just getting the token again often fixes the state
-        try { await this.client.tokenManager.getTenantAccessToken(); } catch(e) {}
+        try {
+          await this.client.tokenManager.getTenantAccessToken();
+        } catch (e) {}
       }
-    }, 120000); 
+    }, 120000);
   }
 
   private async getResourceBuffer(response: any): Promise<Buffer> {
@@ -130,9 +138,10 @@ export class FeishuChannel {
     if (response instanceof ArrayBuffer) return Buffer.from(response);
     if (response.data) {
       if (Buffer.isBuffer(response.data)) return response.data;
-      if (response.data instanceof ArrayBuffer) return Buffer.from(response.data);
+      if (response.data instanceof ArrayBuffer)
+        return Buffer.from(response.data);
     }
-    if (typeof response.getReadableStream === 'function') {
+    if (typeof response.getReadableStream === "function") {
       const stream = response.getReadableStream();
       const chunks: Buffer[] = [];
       for await (const chunk of stream) {
@@ -143,39 +152,64 @@ export class FeishuChannel {
     throw new Error(`Unexpected Feishu resource format.`);
   }
 
-  private async handleImageMessage(chatId: string, imageKey: string, messageId: string, sessionId: string) {
+  private async handleImageMessage(
+    chatId: string,
+    imageKey: string,
+    messageId: string,
+    sessionId: string,
+  ) {
     try {
       const response = await this.client.im.messageResource.get({
         path: { message_id: messageId, file_key: imageKey },
-        params: { type: 'image' },
+        params: { type: "image" },
       });
       const buffer = await this.getResourceBuffer(response);
-      await this.handleUserMessage(chatId, "[Vision Request: Analyzing attached image]", sessionId, {
-        data: buffer,
-        mimeType: 'image/png'
-      });
+      await this.handleUserMessage(
+        chatId,
+        "[Vision Request: Analyzing attached image]",
+        sessionId,
+        {
+          data: buffer,
+          mimeType: "image/png",
+        },
+      );
     } catch (error: any) {
       console.error(`❌ [Feishu] Image processing failed: ${error.message}`);
     }
   }
 
-  private async handleUserMessage(chatId: string, prompt: string, sessionId: string, imageAttachment?: { data: Buffer, mimeType: string }) {
+  private async handleUserMessage(
+    chatId: string,
+    prompt: string,
+    sessionId: string,
+    imageAttachment?: { data: Buffer; mimeType: string },
+  ) {
     try {
       const agent = await this.manager.getAgent(sessionId);
-      let responseMessageId = '';
-      let accumulatedText = '';
+      let responseMessageId = "";
+      let accumulatedText = "";
 
       const resp = await this.client.im.message.create({
-        params: { receive_id_type: 'chat_id' },
+        params: { receive_id_type: "chat_id" },
         data: {
           receive_id: chatId,
-          msg_type: 'interactive',
-          content: JSON.stringify(this.buildCard(imageAttachment ? 'Jarvis is looking at your image...' : 'Jarvis is thinking...', '🤖 Jarvis Swarm')),
+          msg_type: "interactive",
+          content: JSON.stringify(
+            this.buildCard(
+              imageAttachment
+                ? "Jarvis is looking at your image..."
+                : "Jarvis is thinking...",
+              "🤖 Jarvis Swarm",
+            ),
+          ),
         },
       });
-      responseMessageId = resp.data?.message_id || '';
+      responseMessageId = resp.data?.message_id || "";
 
-      const updateCard = async (text: string, title: string = '🤖 Jarvis Swarm') => {
+      const updateCard = async (
+        text: string,
+        title: string = "🤖 Jarvis Swarm",
+      ) => {
         if (!responseMessageId) return;
         try {
           const jarvisConfig = ConfigManager.getInstance().get();
@@ -188,16 +222,20 @@ export class FeishuChannel {
 
       const contentHandler = (event: any) => {
         const jarvisConfig = ConfigManager.getInstance().get();
-        if (typeof event.value === 'string') {
+        if (typeof event.value === "string") {
           accumulatedText += event.value;
-        } else if (jarvisConfig.feishu.showThoughts && event.value && typeof event.value === 'object') {
+        } else if (
+          jarvisConfig.feishu.showThoughts &&
+          event.value &&
+          typeof event.value === "object"
+        ) {
           const thought = event.value;
           if (thought.subject || thought.description) {
-            accumulatedText += `\n> 💭 *${thought.subject || 'Thinking'}: ${thought.description || ''}*\n`;
+            accumulatedText += `\n> 💭 *${thought.subject || "Thinking"}: ${thought.description || ""}*\n`;
           }
         }
         if (accumulatedText.length % 30 === 0 || accumulatedText.length < 50) {
-           void updateCard(accumulatedText + ' ▌');
+          void updateCard(accumulatedText + " ▌");
         }
       };
 
@@ -217,10 +255,12 @@ export class FeishuChannel {
     return {
       config: { wide_screen_mode: true },
       header: {
-        title: { tag: 'plain_text', content: title },
-        template: 'blue',
+        title: { tag: "plain_text", content: title },
+        template: "blue",
       },
-      elements: [{ tag: 'div', text: { tag: 'lark_md', content: text || '...' } }],
+      elements: [
+        { tag: "div", text: { tag: "lark_md", content: text || "..." } },
+      ],
     };
   }
 }
