@@ -398,6 +398,12 @@
                 else if (msg.type === 'stream') {
                     const eventData = msg.payload;
                     
+                    // 🛡️ GLOBAL UI EVENTS (Do not create a message bubble)
+                    if (eventData.type === 'confirmation_request') {
+                        showConfirmation(eventData.value.id, eventData.value.message);
+                        return; // Exit early, no bubble needed
+                    }
+
                     if (!currentResponseEl) {
                         // NEW STREAM STARTED: Reset buffer to prevent duplication
                         currentMarkdownBuffer = '';
