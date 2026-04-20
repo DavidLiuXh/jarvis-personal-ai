@@ -168,12 +168,18 @@ export class JarvisAgent extends EventEmitter {
     const messageBus = this.client.config.getMessageBus();
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     messageBus.on(MessageBusType.TOOL_CALLS_UPDATE, (msg: any) => {
+      console.error(
+        `[JarvisAgent] TOOL_CALLS_UPDATE received, schedulerId=${msg.schedulerId}, statuses=${msg.toolCalls?.map((tc: any) => tc.status).join(",")}`,
+      );
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const waitingCall = msg.toolCalls?.find(
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         (tc: any) => tc.status === "awaiting_approval" && tc.correlationId,
       );
       if (waitingCall) {
+        console.error(
+          `[JarvisAgent] Confirmation required: correlationId=${waitingCall.correlationId}, tool=${waitingCall.request?.name}`,
+        );
         const details = waitingCall.confirmationDetails;
         const toolName =
           details?.title ?? waitingCall.request?.name ?? "unknown_tool";
