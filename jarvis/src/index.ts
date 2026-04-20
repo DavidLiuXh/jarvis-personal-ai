@@ -268,12 +268,8 @@ class JarvisServer {
 
       // Listen for Confirmation Requests and route to the correct channel
       agent.on(JarvisEventType.CONTENT, async (event) => {
-        if (event.type === "tool_call_confirmation") {
-          const confirmId = event.value.request?.callId ?? String(Date.now());
-          const toolName = event.value.request?.name ?? "unknown_tool";
-          const toolArgs = JSON.stringify(event.value.request?.args ?? {});
-          const message = `Tool "${toolName}" requires confirmation.\nArgs: ${toolArgs}`;
-          const normalizedPayload = { id: confirmId, message };
+        if (event.type === "confirmation_request") {
+          const { id, message } = event.value;
 
           // 1. WebSocket (always broadcast)
           this.wss.clients.forEach((client) => {
@@ -282,10 +278,7 @@ class JarvisServer {
                 JSON.stringify({
                   type: "stream",
                   sessionId: globalSessionId,
-                  payload: {
-                    type: "confirmation_request",
-                    value: normalizedPayload,
-                  },
+                  payload: event,
                 }),
               );
             }
@@ -300,7 +293,7 @@ class JarvisServer {
               chatId,
               message,
               "confirmation_request",
-              normalizedPayload,
+              { id, message },
             );
           }
         }
@@ -508,36 +501,25 @@ class JarvisServer {
     }
 
     const onContent = (event: any) => {
-      let payload = event;
-
-      // 🛡️ Normalize tool_call_confirmation → confirmation_request for all consumers
-      if (event.type === "tool_call_confirmation") {
-        const confirmId = event.value.request?.callId ?? String(Date.now());
-        const toolName = event.value.request?.name ?? "unknown_tool";
-        const toolArgs = JSON.stringify(event.value.request?.args ?? {});
-        const message = `Tool "${toolName}" requires confirmation.\nArgs: ${toolArgs}`;
-        payload = {
-          type: "confirmation_request",
-          value: { id: confirmId, message },
-        };
-
-        // Route to Feishu/WeChat if session has a channel prefix
+      // Route confirmation_request to Feishu/WeChat if session has a channel prefix
+      if (event.type === "confirmation_request") {
+        const { id, message } = event.value;
         const [channel, ...rest] = sessionId.split("-");
         const chatId = rest.join("-");
         if (this.channelRegistry.isRegistered(channel)) {
-          this.pendingConfirmations.set(sessionId, { id: confirmId, message });
+          this.pendingConfirmations.set(sessionId, { id, message });
           void this.channelRegistry.pushSafe(
             channel,
             chatId,
             message,
             "confirmation_request",
-            { id: confirmId, message },
+            { id, message },
           );
         }
       }
 
       if (ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({ type: "stream", sessionId, payload }));
+        ws.send(JSON.stringify({ type: "stream", sessionId, payload: event }));
       }
     };
 
