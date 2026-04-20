@@ -495,6 +495,9 @@ export class JarvisAgent extends EventEmitter {
                   this.emit(JarvisEventType.CONTENT, event);
                 } else if (event.type === GeminiEventType.ToolCallRequest) {
                   toolCallRequests.push(event.value);
+                  // Emit immediately so the web UI can show "Invoking..." before
+                  // the tool actually starts executing (which may take a long time).
+                  this.emit(JarvisEventType.CONTENT, event);
                 } else if (event.type === GeminiEventType.Error) {
                   throw event.value.error;
                 } else if (event.type !== GeminiEventType.ModelInfo) {

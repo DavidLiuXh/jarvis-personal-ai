@@ -116,6 +116,14 @@
             font-family: monospace;
             font-size: 0.85rem;
         }
+        .tool-executing {
+            border-color: var(--accent);
+            animation: pulse-border 1.5s ease-in-out infinite;
+        }
+        @keyframes pulse-border {
+            0%, 100% { border-color: var(--accent); opacity: 1; }
+            50% { border-color: var(--bg-hover); opacity: 0.6; }
+        }
         .tool-header {
             color: var(--success);
             font-weight: bold;
@@ -451,16 +459,29 @@
                     else if (eventData.type === 'tool_call_request') {
                         const tool = eventData.value;
                         const toolEl = document.createElement('div');
-                        toolEl.className = 'tool-container';
+                        toolEl.className = 'tool-container tool-executing';
                         toolEl.id = 'tool-' + tool.callId;
-                        toolEl.innerHTML = `<div class="tool-header">🛠️ Invoking ${tool.name}...</div><div class="tool-args" style="color: #64748b; font-size: 0.75rem; margin-bottom: 0.5rem;">Args: ${JSON.stringify(tool.args)}</div>`;
-                        currentResponseEl.insertBefore(toolEl, mdContainer);
+                        const argsStr = JSON.stringify(tool.args);
+                        toolEl.innerHTML = `<div class="tool-header">⏳ Executing ${tool.name}...</div><div class="tool-args" style="color: #64748b; font-size: 0.75rem; margin-bottom: 0.5rem;">${argsStr}</div>`;
+                        if (currentResponseEl) {
+                            currentResponseEl.insertBefore(toolEl, mdContainer);
+                        }
+                        chatWindow.scrollTop = chatWindow.scrollHeight;
                     }
                     else if (eventData.type === 'tool_call_response' || eventData.type === 'tool_call_finished') {
                         const toolResult = eventData.value;
-                        const toolEl = document.getElementById('tool-' + toolResult.callId) || currentResponseEl.querySelector('.tool-container:last-child');
-                        if (toolEl && !toolEl.querySelector('.tool-output')) {
-                            toolEl.innerHTML += `<div class="tool-header" style="color: var(--accent);">✅ Execution Complete</div><div class="tool-output">${toolResult.output || 'Success'}</div>`;
+                        const toolEl = document.getElementById('tool-' + toolResult.callId) || (currentResponseEl && currentResponseEl.querySelector('.tool-container:last-child'));
+                        if (toolEl) {
+                            toolEl.classList.remove('tool-executing');
+                            const header = toolEl.querySelector('.tool-header');
+                            if (header) header.textContent = '✅ ' + toolResult.name;
+                            if (!toolEl.querySelector('.tool-output')) {
+                                const out = document.createElement('div');
+                                out.className = 'tool-output';
+                                out.style.cssText = 'color: var(--accent); font-size: 0.75rem; margin-top: 0.25rem; max-height: 6rem; overflow-y: auto;';
+                                out.textContent = String(toolResult.output || 'Done').slice(0, 500);
+                                toolEl.appendChild(out);
+                            }
                         }
                     }
                     
