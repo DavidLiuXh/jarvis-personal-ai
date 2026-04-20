@@ -130,6 +130,10 @@ export interface JarvisConfig {
     maxRetries: number;
     /** Remove orphaned user turn from history after all retries fail. Default: true. */
     cleanOrphanedTurnOnFailure: boolean;
+    /** Max tool-call iterations per processMessage to prevent infinite loops. Default: 30. */
+    maxToolIterations: number;
+    /** Abort after this many consecutive all-failed tool rounds. Default: 3. */
+    maxConsecutiveToolFailures: number;
   };
   server: {
     port: number;
@@ -298,6 +302,8 @@ export class ConfigManager {
       network: {
         maxRetries: 3,
         cleanOrphanedTurnOnFailure: true,
+        maxToolIterations: 30,
+        maxConsecutiveToolFailures: 3,
       },
       server: {
         port: Number(process.env.JARVIS_PORT) || 3000,

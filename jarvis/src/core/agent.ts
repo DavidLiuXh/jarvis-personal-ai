@@ -461,6 +461,13 @@ export class JarvisAgent extends EventEmitter {
         const cleanOnFailure =
           networkConfig?.cleanOrphanedTurnOnFailure ?? true;
 
+        // 🛡️ Safety guards: prevent infinite loops and silent failure spirals
+        const MAX_TOOL_ITERATIONS = networkConfig?.maxToolIterations ?? 30;
+        const MAX_CONSECUTIVE_TOOL_FAILURES =
+          networkConfig?.maxConsecutiveToolFailures ?? 3;
+        let toolIterations = 0;
+        let consecutiveToolFailures = 0;
+
         while (true) {
           let retryCount = 0;
           let success = false;
@@ -497,13 +504,56 @@ export class JarvisAgent extends EventEmitter {
               }
 
               if (toolCallRequests.length > 0) {
+                // Guard: max tool iterations
+                toolIterations++;
+                if (toolIterations > MAX_TOOL_ITERATIONS) {
+                  const msg = `⚠️ [Jarvis] Task aborted: exceeded ${MAX_TOOL_ITERATIONS} tool call iterations. The task may be too complex or stuck in a loop.`;
+                  console.error(msg);
+                  this.emit(JarvisEventType.CONTENT, {
+                    type: GeminiEventType.Content,
+                    value: msg,
+                  });
+                  success = true;
+                  break;
+                }
+
                 for (const req of toolCallRequests)
                   allToolsCalled.add(req.name);
-                currentQueryParts = await this.toolRouter.route(
+                const responseParts = await this.toolRouter.route(
                   toolCallRequests,
                   abortController.signal,
                   (resp) => this.emit(JarvisEventType.TOOL_CALL_RESPONSE, resp),
                 );
+
+                // Guard: consecutive tool failures
+                const failCount = responseParts.filter((p: any) => {
+                  const r = p?.functionResponse?.response;
+                  return (
+                    r &&
+                    typeof r === "object" &&
+                    ("error" in r || r.status === "error")
+                  );
+                }).length;
+
+                if (failCount > 0 && failCount === toolCallRequests.length) {
+                  consecutiveToolFailures++;
+                  if (
+                    consecutiveToolFailures >= MAX_CONSECUTIVE_TOOL_FAILURES
+                  ) {
+                    const msg = `⚠️ [Jarvis] Task aborted: ${MAX_CONSECUTIVE_TOOL_FAILURES} consecutive tool call rounds all failed. Please check tool availability or rephrase the request.`;
+                    console.error(msg);
+                    this.emit(JarvisEventType.CONTENT, {
+                      type: GeminiEventType.Content,
+                      value: msg,
+                    });
+                    success = true;
+                    break;
+                  }
+                } else {
+                  consecutiveToolFailures = 0;
+                }
+
+                currentQueryParts = responseParts;
               } else {
                 success = true;
               }
