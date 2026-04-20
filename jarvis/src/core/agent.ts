@@ -166,20 +166,18 @@ export class JarvisAgent extends EventEmitter {
     // extract the correlationId and confirmationDetails, then emit to web UI.
     // provideConfirmationResponse() emits TOOL_CONFIRMATION_RESPONSE with that id.
     const messageBus = this.client.config.getMessageBus();
+    const emittedConfirmIds = new Set<string>();
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     messageBus.on(MessageBusType.TOOL_CALLS_UPDATE, (msg: any) => {
-      console.error(
-        `[JarvisAgent] TOOL_CALLS_UPDATE received, schedulerId=${msg.schedulerId}, statuses=${msg.toolCalls?.map((tc: any) => tc.status).join(",")}`,
-      );
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const waitingCall = msg.toolCalls?.find(
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         (tc: any) => tc.status === "awaiting_approval" && tc.correlationId,
       );
       if (waitingCall) {
-        console.error(
-          `[JarvisAgent] Confirmation required: correlationId=${waitingCall.correlationId}, tool=${waitingCall.request?.name}`,
-        );
+        const correlationId = waitingCall.correlationId as string;
+        if (emittedConfirmIds.has(correlationId)) return;
+        emittedConfirmIds.add(correlationId);
         const details = waitingCall.confirmationDetails;
         const toolName =
           details?.title ?? waitingCall.request?.name ?? "unknown_tool";
@@ -187,13 +185,9 @@ export class JarvisAgent extends EventEmitter {
         const message = details?.command
           ? `Confirm execution of: ${details.command}`
           : `Tool "${toolName}" requires confirmation.\nArgs: ${toolArgs}`;
-        const listenerCount = this.listenerCount(JarvisEventType.CONTENT);
-        console.error(
-          `[JarvisAgent] Emitting confirmation_request, CONTENT listener count=${listenerCount}`,
-        );
         this.emit(JarvisEventType.CONTENT, {
           type: "confirmation_request",
-          value: { id: waitingCall.correlationId, message },
+          value: { id: correlationId, message },
         });
       }
     });
