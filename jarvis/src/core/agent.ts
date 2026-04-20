@@ -187,6 +187,10 @@ export class JarvisAgent extends EventEmitter {
         const message = details?.command
           ? `Confirm execution of: ${details.command}`
           : `Tool "${toolName}" requires confirmation.\nArgs: ${toolArgs}`;
+        const listenerCount = this.listenerCount(JarvisEventType.CONTENT);
+        console.error(
+          `[JarvisAgent] Emitting confirmation_request, CONTENT listener count=${listenerCount}`,
+        );
         this.emit(JarvisEventType.CONTENT, {
           type: "confirmation_request",
           value: { id: waitingCall.correlationId, message },
