@@ -268,10 +268,12 @@ class JarvisServer {
 
       // Listen for Confirmation Requests and route to the correct channel
       agent.on(JarvisEventType.CONTENT, async (event) => {
-        if (event.type === "confirmation_request") {
-          const req = event.value;
-          // Format message for display
-          const message = `Security Confirmation Required: ${req.message}`;
+        if (event.type === "tool_call_confirmation") {
+          const confirmId = event.value.request?.callId ?? String(Date.now());
+          const toolName = event.value.request?.name ?? "unknown_tool";
+          const toolArgs = JSON.stringify(event.value.request?.args ?? {});
+          const message = `Tool "${toolName}" requires confirmation.\nArgs: ${toolArgs}`;
+          const normalizedPayload = { id: confirmId, message };
 
           // 1. WebSocket (always broadcast)
           this.wss.clients.forEach((client) => {
@@ -280,23 +282,25 @@ class JarvisServer {
                 JSON.stringify({
                   type: "stream",
                   sessionId: globalSessionId,
-                  payload: event,
+                  payload: {
+                    type: "confirmation_request",
+                    value: normalizedPayload,
+                  },
                 }),
               );
             }
           });
 
           // 2. Proactive Channels (Feishu/WeChat)
-          // We infer the channel from the session ID if it has a prefix
           const [channel, ...rest] = globalSessionId.split("-");
           const chatId = rest.join("-");
           if (this.channelRegistry.isRegistered(channel)) {
             await this.channelRegistry.pushSafe(
               channel,
               chatId,
-              req.message,
+              message,
               "confirmation_request",
-              req,
+              normalizedPayload,
             );
           }
         }
@@ -504,27 +508,36 @@ class JarvisServer {
     }
 
     const onContent = (event: any) => {
-      // 🛡️ AUTO-ROUTE confirmation requests to relevant channels
-      if (event.type === "confirmation_request") {
+      let payload = event;
+
+      // 🛡️ Normalize tool_call_confirmation → confirmation_request for all consumers
+      if (event.type === "tool_call_confirmation") {
+        const confirmId = event.value.request?.callId ?? String(Date.now());
+        const toolName = event.value.request?.name ?? "unknown_tool";
+        const toolArgs = JSON.stringify(event.value.request?.args ?? {});
+        const message = `Tool "${toolName}" requires confirmation.\nArgs: ${toolArgs}`;
+        payload = {
+          type: "confirmation_request",
+          value: { id: confirmId, message },
+        };
+
+        // Route to Feishu/WeChat if session has a channel prefix
         const [channel, ...rest] = sessionId.split("-");
         const chatId = rest.join("-");
         if (this.channelRegistry.isRegistered(channel)) {
-          this.pendingConfirmations.set(sessionId, {
-            id: event.value.id,
-            message: event.value.message,
-          });
+          this.pendingConfirmations.set(sessionId, { id: confirmId, message });
           void this.channelRegistry.pushSafe(
             channel,
             chatId,
-            event.value.message,
+            message,
             "confirmation_request",
-            event.value,
+            { id: confirmId, message },
           );
         }
       }
 
       if (ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({ type: "stream", sessionId, payload: event }));
+        ws.send(JSON.stringify({ type: "stream", sessionId, payload }));
       }
     };
 

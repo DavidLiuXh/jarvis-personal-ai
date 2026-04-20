@@ -463,7 +463,7 @@ export class JarvisAgent extends EventEmitter {
                         await confirmDetails.onConfirm(
                           decision === "allow"
                             ? ToolConfirmationOutcome.ProceedOnce
-                            : ToolConfirmationOutcome.Abort,
+                            : ToolConfirmationOutcome.Cancel,
                         );
                         resolve();
                       },
