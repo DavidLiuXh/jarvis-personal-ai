@@ -15,10 +15,7 @@ import {
   ToolConfirmationOutcome,
   type Part,
 } from "../../../gemini-cli/packages/core/src/index.js";
-import {
-  MessageBusType,
-  type ToolConfirmationRequest,
-} from "../../../gemini-cli/packages/core/src/confirmation-bus/types.js";
+import { MessageBusType } from "../../../gemini-cli/packages/core/src/confirmation-bus/types.js";
 
 import { JarvisEventType, type JarvisAgentOptions } from "./types.js";
 import { type MemoryService } from "./memory.js";
@@ -154,25 +151,42 @@ export class JarvisAgent extends EventEmitter {
     this.summarizerGenerateText =
       this.memoryService.buildReflectionGenerateText(generateText);
 
-    // 🛡️ Register messageBus listener for tool confirmation requests.
-    // When PolicyEngine returns ASK_USER, the scheduler publishes a
-    // TOOL_CONFIRMATION_REQUEST on the messageBus. We intercept it here,
-    // emit a normalized "confirmation_request" JarvisEvent so the web UI
-    // can display the confirmation dialog, and wait for the user's response
-    // via provideConfirmationResponse() which emits TOOL_CONFIRMATION_RESPONSE.
+    // 🛡️ Register messageBus listener for tool confirmation.
+    // The correct confirmation flow in gemini-cli:
+    //   1. PolicyEngine → ASK_USER → resolveConfirmation() called
+    //   2. resolveConfirmation() calls shouldConfirmExecute() → getMessageBusDecision()
+    //      which publishes TOOL_CONFIRMATION_REQUEST; Scheduler auto-responds with
+    //      requiresUserConfirmation=true → getMessageBusDecision returns 'ask_user'
+    //   3. resolveConfirmation() generates a NEW correlationId, calls
+    //      state.updateStatus(AwaitingApproval, { correlationId }) → TOOL_CALLS_UPDATE
+    //   4. resolveConfirmation() calls waitForConfirmation(messageBus, correlationId)
+    //      which listens for TOOL_CONFIRMATION_RESPONSE with that correlationId
+    //
+    // We must listen to TOOL_CALLS_UPDATE, detect AwaitingApproval status,
+    // extract the correlationId and confirmationDetails, then emit to web UI.
+    // provideConfirmationResponse() emits TOOL_CONFIRMATION_RESPONSE with that id.
     const messageBus = this.client.config.getMessageBus();
-    messageBus.on(
-      MessageBusType.TOOL_CONFIRMATION_REQUEST,
-      (msg: ToolConfirmationRequest) => {
-        const toolName = msg.toolCall?.name ?? "unknown_tool";
-        const toolArgs = JSON.stringify(msg.toolCall?.args ?? {});
-        const message = `Tool "${toolName}" requires confirmation.\nArgs: ${toolArgs}`;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    messageBus.on(MessageBusType.TOOL_CALLS_UPDATE, (msg: any) => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const waitingCall = msg.toolCalls?.find(
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        (tc: any) => tc.status === "awaiting_approval" && tc.correlationId,
+      );
+      if (waitingCall) {
+        const details = waitingCall.confirmationDetails;
+        const toolName =
+          details?.title ?? waitingCall.request?.name ?? "unknown_tool";
+        const toolArgs = JSON.stringify(waitingCall.request?.args ?? {});
+        const message = details?.command
+          ? `Confirm execution of: ${details.command}`
+          : `Tool "${toolName}" requires confirmation.\nArgs: ${toolArgs}`;
         this.emit(JarvisEventType.CONTENT, {
           type: "confirmation_request",
-          value: { id: msg.correlationId, message },
+          value: { id: waitingCall.correlationId, message },
         });
-      },
-    );
+      }
+    });
 
     this.initialized = true;
     debugLogger.debug(`[JarvisAgent] Lifeform Ready.`);
