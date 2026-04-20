@@ -17,6 +17,14 @@ export class FeishuChannel {
   private processedMessages = new Set<string>();
   private startTime = Date.now();
   private heartbeatTimer: NodeJS.Timeout | null = null;
+  // Key: sessionId, Value: { id: correlationId, message: string }
+  private pendingConfirmations = new Map<
+    string,
+    { id: string; message: string }
+  >();
+
+  private static AFFIRMATIVE = new Set(["yes", "y", "确定", "是", "允许", "1"]);
+  private static NEGATIVE = new Set(["no", "n", "取消", "否", "拒绝", "0"]);
 
   constructor(appId: string, appSecret: string, manager: JarvisManager) {
     const baseConfig = {
@@ -64,7 +72,27 @@ export class FeishuChannel {
         if (msgType === "text") {
           const content = JSON.parse(message.content).text;
           console.error(`📩 [Feishu] New Message: ${content}`);
-          void this.handleUserMessage(chatId, content, `feishu-${chatId}`);
+          const sessionId = `feishu-${chatId}`;
+          // 🛡️ Intercept YES/NO replies to pending confirmation prompts
+          const pending = this.pendingConfirmations.get(sessionId);
+          if (pending) {
+            const normalized = content.trim().toLowerCase();
+            const isAllow = FeishuChannel.AFFIRMATIVE.has(normalized);
+            const isDeny = FeishuChannel.NEGATIVE.has(normalized);
+            if (isAllow || isDeny) {
+              const decision = isAllow ? "allow" : "deny";
+              console.error(
+                `🛡️ [Feishu] Confirmation received for ${sessionId}: ${decision}`,
+              );
+              const agent = await this.manager.getAgent(sessionId);
+              agent.provideConfirmationResponse(pending.id, decision);
+              this.pendingConfirmations.delete(sessionId);
+              const feedback = isAllow ? "✅ 已允许执行。" : "❌ 已拒绝执行。";
+              await this.sendProactive(chatId, feedback);
+              return {};
+            }
+          }
+          void this.handleUserMessage(chatId, content, sessionId);
         } else if (msgType === "image") {
           const imageKey = JSON.parse(message.content).image_key;
           void this.handleImageMessage(
@@ -221,6 +249,11 @@ export class FeishuChannel {
       };
 
       const contentHandler = (event: any) => {
+        // Capture confirmation_request so we can intercept the user's reply
+        if (event.type === "confirmation_request") {
+          this.pendingConfirmations.set(sessionId, event.value);
+          return;
+        }
         const jarvisConfig = ConfigManager.getInstance().get();
         if (typeof event.value === "string") {
           accumulatedText += event.value;
