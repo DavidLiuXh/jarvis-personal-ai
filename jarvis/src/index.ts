@@ -508,6 +508,9 @@ class JarvisServer {
     }
 
     const onContent = (event: any) => {
+      console.error(
+        `[onContent] sessionId=${sessionId} event.type=${event.type} ws.readyState=${ws.readyState}`,
+      );
       let payload = event;
 
       // 🛡️ Normalize tool_call_confirmation → confirmation_request for all consumers
