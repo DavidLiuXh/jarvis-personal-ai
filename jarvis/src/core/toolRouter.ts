@@ -7,7 +7,7 @@
 import {
   recordToolCallInteractions,
   type Part,
-} from '../../../gemini-cli/packages/core/src/index.js';
+} from "../../../gemini-cli/packages/core/src/index.js";
 
 export type ToolCallRequest = {
   name: string;
@@ -23,8 +23,15 @@ export type ToolCallResponse = {
 };
 
 export type MemoryServiceHandle = {
-  saveFact: (category: string, content: string, importance: number) => Promise<void>;
+  saveFact: (
+    category: string,
+    content: string,
+    importance: number,
+  ) => Promise<void>;
   search: (query: string, limit: number) => Promise<string[]>;
+  searchFacts: (
+    query: string,
+  ) => Promise<Array<{ category: string; content: string }>>;
 };
 
 export type DynamicRegistryHandle = {
@@ -32,7 +39,10 @@ export type DynamicRegistryHandle = {
 };
 
 export type SchedulerHandle = {
-  schedule: (requests: ToolCallRequest[], signal: AbortSignal) => Promise<CompletedToolCall[]>;
+  schedule: (
+    requests: ToolCallRequest[],
+    signal: AbortSignal,
+  ) => Promise<CompletedToolCall[]>;
 };
 
 type CompletedToolCall = {
@@ -42,17 +52,30 @@ type CompletedToolCall = {
 };
 
 type ClientHandle = {
-  getChat: () => { getModel: () => string; recordCompletedToolCalls: (model: string, calls: CompletedToolCall[]) => void };
+  getChat: () => {
+    getModel: () => string;
+    recordCompletedToolCalls: (
+      model: string,
+      calls: CompletedToolCall[],
+    ) => void;
+  };
   getCurrentSequenceModel: () => string | null;
   config: { api?: { apiVersion?: string } };
 };
 
-const JARVIS_NATIVE_TOOLS = new Set(['save_memory', 'recall_memory', 'ask_user', 'push_to_channel']);
+const JARVIS_NATIVE_TOOLS = new Set([
+  "save_memory",
+  "recall_memory",
+  "ask_user",
+  "push_to_channel",
+]);
 
 function isNativeTool(name: string): boolean {
-  return name.startsWith('run_evolved_skill_') ||
-    name.startsWith('task_') ||
-    JARVIS_NATIVE_TOOLS.has(name);
+  return (
+    name.startsWith("run_evolved_skill_") ||
+    name.startsWith("task_") ||
+    JARVIS_NATIVE_TOOLS.has(name)
+  );
 }
 
 type ChannelRegistryHandle = {
@@ -71,36 +94,45 @@ type AskUserQuestion = {
  */
 function buildAskUserResponse(questions: AskUserQuestion[]): string {
   const parts: string[] = [
-    'SYSTEM: ask_user tool is not available in server mode. Auto-selecting recommended options.',
-    '',
+    "SYSTEM: ask_user tool is not available in server mode. Auto-selecting recommended options.",
+    "",
   ];
 
   for (const q of questions) {
     parts.push(`Question: ${q.question}`);
     if (q.options && q.options.length > 0) {
-      parts.push('Options:');
+      parts.push("Options:");
       q.options.forEach((opt, i) => {
-        const isRecommended = opt.description?.toLowerCase().includes('recommended');
-        const marker = isRecommended ? ' ← AUTO-SELECTED (recommended default)' : '';
-        parts.push(`  ${i + 1}. ${opt.label}${opt.description ? ` — ${opt.description}` : ''}${marker}`);
+        const isRecommended = opt.description
+          ?.toLowerCase()
+          .includes("recommended");
+        const marker = isRecommended
+          ? " ← AUTO-SELECTED (recommended default)"
+          : "";
+        parts.push(
+          `  ${i + 1}. ${opt.label}${opt.description ? ` — ${opt.description}` : ""}${marker}`,
+        );
       });
     }
-    parts.push('');
+    parts.push("");
   }
 
   parts.push(
-    'Instructions for your response:',
-    '1. Proceed with the AUTO-SELECTED option(s) above.',
-    '2. Inform the user of all available options and which one was auto-selected.',
-    '3. Tell the user they can change the selection by replying naturally',
+    "Instructions for your response:",
+    "1. Proceed with the AUTO-SELECTED option(s) above.",
+    "2. Inform the user of all available options and which one was auto-selected.",
+    "3. Tell the user they can change the selection by replying naturally",
     '   (e.g. "use option 2" or "use the global location").',
   );
 
-  return parts.join('\n');
+  return parts.join("\n");
 }
 
 type TaskCommandHandlerHandle = {
-  handleTool: (action: string, args: Record<string, unknown>) => Promise<string>;
+  handleTool: (
+    action: string,
+    args: Record<string, unknown>,
+  ) => Promise<string>;
 };
 
 /**
@@ -122,11 +154,55 @@ export class ToolRouter {
     signal: AbortSignal,
     onToolResponse: (response: ToolCallResponse) => void,
   ): Promise<Part[]> {
-    const nativeRequests = requests.filter(r => isNativeTool(r.name));
-    const standardRequests = requests.filter(r => !isNativeTool(r.name));
+    const nativeRequests = requests.filter((r) => isNativeTool(r.name));
+    // Inject Jarvis long-term memory into generalist/codebase_investigator requests
+    // so subagents have access to user preferences, past decisions, and context.
+    const standardRequests = await Promise.all(
+      requests
+        .filter((r) => !isNativeTool(r.name))
+        .map(async (r) => {
+          if (
+            (r.name === "generalist" || r.name === "codebase_investigator") &&
+            typeof r.args.request === "string"
+          ) {
+            const query = r.args.request;
+            const [facts, memories] = await Promise.all([
+              this.memoryService.searchFacts(query),
+              this.memoryService.search(query, 3),
+            ]);
+            const contextParts: string[] = [];
+            if (facts.length > 0) {
+              contextParts.push(
+                "<jarvis_memory>\n" +
+                  facts.map((f) => `[${f.category}] ${f.content}`).join("\n") +
+                  "\n</jarvis_memory>",
+              );
+            }
+            if (memories.length > 0) {
+              contextParts.push(
+                "<relevant_past_conversations>\n" +
+                  memories.map((m, i) => `[Memory ${i + 1}]: ${m}`).join("\n") +
+                  "\n</relevant_past_conversations>",
+              );
+            }
+            if (contextParts.length > 0) {
+              return {
+                ...r,
+                args: {
+                  ...r.args,
+                  request: contextParts.join("\n") + "\n\nTask: " + query,
+                },
+              };
+            }
+          }
+          return r;
+        }),
+    );
 
     const [directParts, completedCalls] = await Promise.all([
-      Promise.all(nativeRequests.map(req => this.handleNative(req, onToolResponse))),
+      Promise.all(
+        nativeRequests.map((req) => this.handleNative(req, onToolResponse)),
+      ),
       standardRequests.length > 0
         ? this.scheduler.schedule(standardRequests, signal)
         : Promise.resolve([]),
@@ -146,74 +222,103 @@ export class ToolRouter {
         });
       }
       try {
-        const model = this.client.getCurrentSequenceModel() ?? this.client.getChat().getModel();
+        const model =
+          this.client.getCurrentSequenceModel() ??
+          this.client.getChat().getModel();
         this.client.getChat().recordCompletedToolCalls(model, completedCalls);
-        await recordToolCallInteractions(this.client.config as Parameters<typeof recordToolCallInteractions>[0], completedCalls as Parameters<typeof recordToolCallInteractions>[1]);
+        await recordToolCallInteractions(
+          this.client.config as Parameters<
+            typeof recordToolCallInteractions
+          >[0],
+          completedCalls as Parameters<typeof recordToolCallInteractions>[1],
+        );
       } catch (_e) {}
     }
 
     return [...directParts, ...standardParts];
   }
 
-  private async handleNative(req: ToolCallRequest, onToolResponse: (r: ToolCallResponse) => void): Promise<Part> {
+  private async handleNative(
+    req: ToolCallRequest,
+    onToolResponse: (r: ToolCallResponse) => void,
+  ): Promise<Part> {
     try {
-      let output = '';
+      let output = "";
 
-      if (req.name.startsWith('run_evolved_skill_')) {
+      if (req.name.startsWith("run_evolved_skill_")) {
         output = await this.dynamicRegistry.runSkill(req.name, req.args);
-      } else if (req.name === 'save_memory') {
+      } else if (req.name === "save_memory") {
         const fact = req.args.fact as string;
-        await this.memoryService.saveFact('preference', fact, 10);
+        await this.memoryService.saveFact("preference", fact, 10);
         output = `Integrated into structured core: ${fact}`;
         console.error(`🛡️ [Jarvis] Memory Redirected: ${fact}`);
-      } else if (req.name === 'recall_memory') {
-        const query = (req.args.query as string)?.trim() || '';
+      } else if (req.name === "recall_memory") {
+        const query = (req.args.query as string)?.trim() || "";
         const limit = (req.args.limit as number) || 5;
         if (!query) {
           output = `recall_memory requires a non-empty query. Please provide keywords to search.`;
         } else {
           console.error(`🧠 [Jarvis] Active Recall initiated for: "${query}"`);
           const memories = await this.memoryService.search(query, limit);
-          output = memories.length > 0
-            ? `LONG-TERM MEMORIES FOUND:\n${memories.map(m => `- ${m}`).join('\n')}\n\nINSTRUCTION: Now synthesize this history into your final answer.`
-            : `NO SPECIFIC MEMORIES FOUND for "${query}". Proceed with current knowledge.`;
+          output =
+            memories.length > 0
+              ? `LONG-TERM MEMORIES FOUND:\n${memories.map((m) => `- ${m}`).join("\n")}\n\nINSTRUCTION: Now synthesize this history into your final answer.`
+              : `NO SPECIFIC MEMORIES FOUND for "${query}". Proceed with current knowledge.`;
         }
-      } else if (req.name.startsWith('task_')) {
-        const action = req.name.slice('task_'.length);
+      } else if (req.name.startsWith("task_")) {
+        const action = req.name.slice("task_".length);
         if (this.taskCommandHandler) {
           console.error(`📅 [Jarvis] Task tool invoked: ${req.name}`);
           output = await this.taskCommandHandler.handleTool(action, req.args);
         } else {
-          output = '❌ Task management not available (TaskCommandHandler not initialized).';
+          output =
+            "❌ Task management not available (TaskCommandHandler not initialized).";
         }
-      } else if (req.name === 'ask_user') {
+      } else if (req.name === "ask_user") {
         const questions = (req.args.questions ?? []) as AskUserQuestion[];
-        console.error(`❓ [Jarvis] ask_user intercepted — auto-selecting recommended options.`);
+        console.error(
+          `❓ [Jarvis] ask_user intercepted — auto-selecting recommended options.`,
+        );
         output = buildAskUserResponse(questions);
-      } else if (req.name === 'push_to_channel') {
+      } else if (req.name === "push_to_channel") {
         const channel = req.args.channel as string;
         const content = req.args.content as string;
-        const chatId = (req.args.chat_id as string) || '';
+        const chatId = (req.args.chat_id as string) || "";
         if (this.channelRegistry) {
           console.error(`📤 [Jarvis] Pushing to ${channel}...`);
-          const pushed = await this.channelRegistry.pushSafe(channel, chatId, content);
+          const pushed = await this.channelRegistry.pushSafe(
+            channel,
+            chatId,
+            content,
+          );
           output = pushed
             ? `✅ Message pushed to ${channel} successfully.`
             : `❌ Failed to push to ${channel}. Check that the channel is enabled and you are logged in.`;
         } else {
-          output = '❌ Push not available (ChannelRegistry not initialized).';
+          output = "❌ Push not available (ChannelRegistry not initialized).";
         }
       }
 
-      onToolResponse({ name: req.name, status: 'success', output, callId: req.callId });
+      onToolResponse({
+        name: req.name,
+        status: "success",
+        output,
+        callId: req.callId,
+      });
 
       const responsePayload: unknown =
-        this.client.config.api?.apiVersion === 'v1' ? output : { result: output };
+        this.client.config.api?.apiVersion === "v1"
+          ? output
+          : { result: output };
 
-      return { functionResponse: { name: req.name, response: responsePayload } } as Part;
+      return {
+        functionResponse: { name: req.name, response: responsePayload },
+      } as Part;
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
-      return { functionResponse: { name: req.name, response: { error: msg } } } as Part;
+      return {
+        functionResponse: { name: req.name, response: { error: msg } },
+      } as Part;
     }
   }
 }
