@@ -397,9 +397,11 @@
                 }
                 else if (msg.type === 'stream') {
                     const eventData = msg.payload;
-                    
+                    console.log('[UI] stream event received, type=', eventData.type, 'value=', eventData.value);
+
                     // 🛡️ GLOBAL UI EVENTS (Do not create a message bubble)
                     if (eventData.type === 'confirmation_request') {
+                        console.log('[UI] showing confirmation modal for id=', eventData.value.id);
                         showConfirmation(eventData.value.id, eventData.value.message);
                         return; // Exit early, no bubble needed
                     }
