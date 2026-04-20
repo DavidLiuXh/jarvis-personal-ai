@@ -63,7 +63,7 @@ jobs:
 
       - name: 'Setup Windows SDK (Windows)'
         if: "matrix.os == 'windows-latest'"
-        uses: 'microsoft/setup-msbuild@v2'
+        uses: 'microsoft/setup-msbuild@v3'
 
       - name: 'Add Signtool to Path (Windows)'
         if: "matrix.os == 'windows-latest'"
