@@ -190,6 +190,16 @@
     // 所有重试失败后，自动清除对话历史中的孤立 user turn，
     // 防止对话状态卡死。默认：true
     "cleanOrphanedTurnOnFailure": true,
+
+    // 单次 processMessage 中工具调用的最大轮次。
+    // 超过此限制时主动终止并向用户报告，防止复杂任务或死循环导致 Agent 失控。
+    // 默认：30
+    "maxToolIterations": 30,
+
+    // 连续 N 轮工具调用全部失败后终止任务。
+    // 将静默失败转化为主动报告，而不是让 LLM 悄悄放弃。
+    // 默认：3
+    "maxConsecutiveToolFailures": 3,
   },
 
   // ─────────────────────────────────────────────

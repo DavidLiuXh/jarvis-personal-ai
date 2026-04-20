@@ -194,6 +194,16 @@ Configuration file location: `~/.gemini-jarvis/config.json`
     // Remove orphaned user turn from chat history after all retries fail.
     // Prevents stuck conversation state. Default: true
     "cleanOrphanedTurnOnFailure": true,
+
+    // Max tool-call iterations per processMessage.
+    // Aborts and reports to the user if the tool-call loop exceeds this limit,
+    // preventing runaway agents on complex or looping tasks. Default: 30
+    "maxToolIterations": 30,
+
+    // Abort after this many consecutive rounds where every tool call fails.
+    // Surfaces silent failures instead of letting the LLM quietly give up.
+    // Default: 3
+    "maxConsecutiveToolFailures": 3,
   },
 
   // ─────────────────────────────────────────────
