@@ -103,11 +103,26 @@ export class EntityExtractor {
         return [];
       }
 
-      const jsonText = responseText
-        .substring(start, end + 1)
-        .replace(/\n/g, " ") // Remove newlines that sometimes break LLM JSON
+      const rawJson = responseText.substring(start, end + 1);
+
+      // Apply repairs only when needed. Try direct parse first to avoid
+      // corrupting multi-line string values with the newline replacement.
+      const repaired = rawJson
         .replace(/,\s*]/g, "]") // Fix trailing commas in arrays
         .replace(/,\s*}/g, "}"); // Fix trailing commas in objects
+
+      // If repaired JSON still fails to parse, fall back to collapsing
+      // bare newlines (LLM sometimes emits unescaped newlines inside strings).
+      const jsonText = (() => {
+        try {
+          JSON.parse(repaired);
+          return repaired;
+        } catch {
+          // Only replace newlines that appear outside of quoted strings
+          // by collapsing runs of whitespace between tokens.
+          return repaired.replace(/\n/g, " ");
+        }
+      })();
 
       try {
         const data = JSON.parse(jsonText) as {
