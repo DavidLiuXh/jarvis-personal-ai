@@ -2150,7 +2150,10 @@ Respond ONLY with a JSON array:
       "storage",
       "chats",
     );
-    if (!fs.existsSync(chatsDir)) return;
+    if (!fs.existsSync(chatsDir)) {
+      this.isBackfillingSessionEvents = false;
+      return;
+    }
 
     const files = fs
       .readdirSync(chatsDir)

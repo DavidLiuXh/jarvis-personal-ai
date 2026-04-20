@@ -12,6 +12,7 @@ import {
   Scheduler,
   promptIdContext,
   LlmRole,
+  ToolConfirmationOutcome,
   type Part,
 } from "../../../gemini-cli/packages/core/src/index.js";
 
@@ -445,11 +446,28 @@ export class JarvisAgent extends EventEmitter {
                   this.emit(JarvisEventType.CONTENT, event);
                 } else if (event.type === GeminiEventType.ToolCallRequest) {
                   toolCallRequests.push(event.value);
-                } else if (event.type === GeminiEventType.ConfirmationRequest) {
+                } else if (
+                  event.type === GeminiEventType.ToolCallConfirmation
+                ) {
                   this.emit(JarvisEventType.CONTENT, event);
-                  // 🛡️ WAIT FOR USER: Block the loop until we get a response for this ID
-                  await new Promise<"allow" | "deny">((resolve) => {
-                    this.pendingConfirmResolvers.set(event.value.id, resolve);
+                  // 🛡️ WAIT FOR USER: Block the loop until we get a response
+                  const confirmDetails = event.value.details;
+                  const confirmId =
+                    (event.value as any).correlationId ??
+                    event.value.request?.callId ??
+                    String(Date.now());
+                  await new Promise<void>((resolve) => {
+                    this.pendingConfirmResolvers.set(
+                      confirmId,
+                      async (decision: "allow" | "deny") => {
+                        await confirmDetails.onConfirm(
+                          decision === "allow"
+                            ? ToolConfirmationOutcome.ProceedOnce
+                            : ToolConfirmationOutcome.Abort,
+                        );
+                        resolve();
+                      },
+                    );
                   });
                 } else if (event.type === GeminiEventType.Error) {
                   throw event.value.error;
@@ -543,19 +561,17 @@ export class JarvisAgent extends EventEmitter {
 
   private pendingConfirmResolvers = new Map<
     string,
-    (decision: "allow" | "deny") => void
+    (decision: "allow" | "deny") => Promise<void>
   >();
 
-  public provideConfirmationResponse(id: string, decision: "allow" | "deny") {
-    if (this.client) {
-      this.client.config.messageBus.provideResponse(id, decision);
-
-      // Also resolve local promise if anyone is waiting
-      const resolver = this.pendingConfirmResolvers.get(id);
-      if (resolver) {
-        resolver(decision);
-        this.pendingConfirmResolvers.delete(id);
-      }
+  public async provideConfirmationResponse(
+    id: string,
+    decision: "allow" | "deny",
+  ) {
+    const resolver = this.pendingConfirmResolvers.get(id);
+    if (resolver) {
+      await resolver(decision);
+      this.pendingConfirmResolvers.delete(id);
     }
   }
 }
