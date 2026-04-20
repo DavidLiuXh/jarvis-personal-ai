@@ -15,6 +15,10 @@ import {
   ToolConfirmationOutcome,
   type Part,
 } from "../../../gemini-cli/packages/core/src/index.js";
+import {
+  MessageBusType,
+  type ToolConfirmationRequest,
+} from "../../../gemini-cli/packages/core/src/confirmation-bus/types.js";
 
 import { JarvisEventType, type JarvisAgentOptions } from "./types.js";
 import { type MemoryService } from "./memory.js";
@@ -149,6 +153,26 @@ export class JarvisAgent extends EventEmitter {
     // Uses summarizer.model (Ollama) if configured, falls back to CLI-auth
     this.summarizerGenerateText =
       this.memoryService.buildReflectionGenerateText(generateText);
+
+    // 🛡️ Register messageBus listener for tool confirmation requests.
+    // When PolicyEngine returns ASK_USER, the scheduler publishes a
+    // TOOL_CONFIRMATION_REQUEST on the messageBus. We intercept it here,
+    // emit a normalized "confirmation_request" JarvisEvent so the web UI
+    // can display the confirmation dialog, and wait for the user's response
+    // via provideConfirmationResponse() which emits TOOL_CONFIRMATION_RESPONSE.
+    const messageBus = this.client.config.getMessageBus();
+    messageBus.on(
+      MessageBusType.TOOL_CONFIRMATION_REQUEST,
+      (msg: ToolConfirmationRequest) => {
+        const toolName = msg.toolCall?.name ?? "unknown_tool";
+        const toolArgs = JSON.stringify(msg.toolCall?.args ?? {});
+        const message = `Tool "${toolName}" requires confirmation.\nArgs: ${toolArgs}`;
+        this.emit(JarvisEventType.CONTENT, {
+          type: "confirmation_request",
+          value: { id: msg.correlationId, message },
+        });
+      },
+    );
 
     this.initialized = true;
     debugLogger.debug(`[JarvisAgent] Lifeform Ready.`);
@@ -446,29 +470,6 @@ export class JarvisAgent extends EventEmitter {
                   this.emit(JarvisEventType.CONTENT, event);
                 } else if (event.type === GeminiEventType.ToolCallRequest) {
                   toolCallRequests.push(event.value);
-                } else if (
-                  event.type === GeminiEventType.ToolCallConfirmation
-                ) {
-                  this.emit(JarvisEventType.CONTENT, event);
-                  // 🛡️ WAIT FOR USER: Block the loop until we get a response
-                  const confirmDetails = event.value.details;
-                  const confirmId =
-                    (event.value as any).correlationId ??
-                    event.value.request?.callId ??
-                    String(Date.now());
-                  await new Promise<void>((resolve) => {
-                    this.pendingConfirmResolvers.set(
-                      confirmId,
-                      async (decision: "allow" | "deny") => {
-                        await confirmDetails.onConfirm(
-                          decision === "allow"
-                            ? ToolConfirmationOutcome.ProceedOnce
-                            : ToolConfirmationOutcome.Cancel,
-                        );
-                        resolve();
-                      },
-                    );
-                  });
                 } else if (event.type === GeminiEventType.Error) {
                   throw event.value.error;
                 } else if (event.type !== GeminiEventType.ModelInfo) {
@@ -559,19 +560,17 @@ export class JarvisAgent extends EventEmitter {
     return this.client.getChat().getHistory();
   }
 
-  private pendingConfirmResolvers = new Map<
-    string,
-    (decision: "allow" | "deny") => Promise<void>
-  >();
-
-  public async provideConfirmationResponse(
-    id: string,
-    decision: "allow" | "deny",
-  ) {
-    const resolver = this.pendingConfirmResolvers.get(id);
-    if (resolver) {
-      await resolver(decision);
-      this.pendingConfirmResolvers.delete(id);
-    }
+  public provideConfirmationResponse(id: string, decision: "allow" | "deny") {
+    if (!this.client) return;
+    const messageBus = this.client.config.getMessageBus();
+    messageBus.emit(MessageBusType.TOOL_CONFIRMATION_RESPONSE, {
+      type: MessageBusType.TOOL_CONFIRMATION_RESPONSE,
+      correlationId: id,
+      confirmed: decision === "allow",
+      outcome:
+        decision === "allow"
+          ? ToolConfirmationOutcome.ProceedOnce
+          : ToolConfirmationOutcome.Cancel,
+    });
   }
 }
