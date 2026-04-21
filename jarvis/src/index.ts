@@ -273,7 +273,7 @@ class JarvisServer {
 
           // 1. WebSocket (always broadcast)
           this.wss.clients.forEach((client) => {
-            if (client.readyState === ws.OPEN) {
+            if (client.readyState === 1 /* WebSocket.OPEN */) {
               client.send(
                 JSON.stringify({
                   type: "stream",
