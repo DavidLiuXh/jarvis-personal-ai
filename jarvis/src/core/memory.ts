@@ -651,9 +651,27 @@ ${factsText}
         throw new Error("Empty response from reflection model");
       }
 
-      const match = responseText.match(/\[[\s\S]*\]/);
+      // Strip markdown code fences if LLM wrapped the JSON
+      const stripped = responseText
+        .replace(/^```(?:json)?\s*/i, "")
+        .replace(/\s*```\s*$/, "")
+        .trim();
+      const match = stripped.match(/\[[\s\S]*\]/);
       if (match) {
-        const newFacts = JSON.parse(match[0]) as Array<{
+        let jsonText = match[0];
+        // If JSON appears truncated (no closing bracket on last object),
+        // attempt to repair by closing open structures.
+        if (!/\]\s*$/.test(jsonText.trimEnd())) {
+          // Truncated — trim to last complete object
+          const lastClose = jsonText.lastIndexOf("}");
+          if (lastClose !== -1) {
+            jsonText = jsonText.slice(0, lastClose + 1) + "]";
+            console.error(
+              `⚠️ [Jarvis Reflection] Consolidation response appears truncated — repaired to last complete object.`,
+            );
+          }
+        }
+        const newFacts = JSON.parse(jsonText) as Array<{
           category: string;
           content: string;
           importance: number;
@@ -1071,15 +1089,29 @@ Respond ONLY with a JSON array:
 `.trim();
 
       const raw = await generateText(prompt);
-      const match = raw.match(/\[[\s\S]*\]/);
+      const rawStripped = raw
+        .replace(/^```(?:json)?\s*/i, "")
+        .replace(/\s*```\s*$/, "")
+        .trim();
+      const match = rawStripped.match(/\[[\s\S]*\]/);
       if (!match) {
         console.error(
           `⚠️ [MemoryService] Reflection failed: no JSON array in model response. Response preview: ${raw.slice(0, 200)}`,
         );
         return;
       }
+      let reflectJson = match[0];
+      if (!/\]\s*$/.test(reflectJson.trimEnd())) {
+        const lastClose = reflectJson.lastIndexOf("}");
+        if (lastClose !== -1) {
+          reflectJson = reflectJson.slice(0, lastClose + 1) + "]";
+          console.error(
+            `⚠️ [MemoryService] Reflection response appears truncated — repaired to last complete object.`,
+          );
+        }
+      }
 
-      const newInsights = JSON.parse(match[0]) as Array<{
+      const newInsights = JSON.parse(reflectJson) as Array<{
         category: string;
         content: string;
         importance: number;
