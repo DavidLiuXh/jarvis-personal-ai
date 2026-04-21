@@ -1448,9 +1448,37 @@ Respond ONLY with a JSON array:
         );
       }
     } catch (e: any) {
-      console.error(
-        `⚠️ [MemoryService] extractAndSaveEntities failed: ${e.message}`,
-      );
+      const isAbort =
+        e?.name === "AbortError" ||
+        e?.message?.includes("aborted") ||
+        e?.message?.includes("timed out");
+      if (isAbort) {
+        // Timeout/abort is expected when Ollama is slow or unavailable.
+        // Do NOT write sentinel — allow retry on next backfill run.
+        debugLogger.debug(
+          `[MemoryService] extractAndSaveEntities aborted for fact ${factId}: ${e.message}`,
+        );
+      } else {
+        // Unexpected error (bad JSON, model error, etc.) — write sentinel to
+        // prevent this fact from being retried indefinitely.
+        console.error(
+          `⚠️ [MemoryService] extractAndSaveEntities failed for fact ${factId}: ${e.message}`,
+        );
+        if (factId !== null) {
+          try {
+            const alreadyMarked = this.db
+              .prepare("SELECT id FROM entity_links WHERE fact_id = ?")
+              .get(factId);
+            if (!alreadyMarked) {
+              this.db
+                .prepare(
+                  "INSERT INTO entity_links (subject_id, relation, object_id, fact_id, timestamp) VALUES (NULL, 'processed', NULL, ?, ?)",
+                )
+                .run(factId, Date.now());
+            }
+          } catch (_e) {}
+        }
+      }
     }
   }
 
