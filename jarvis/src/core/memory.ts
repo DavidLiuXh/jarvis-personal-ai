@@ -600,28 +600,34 @@ export class MemoryService {
         )
         .join("\n");
 
-      const reflectionPrompt = `
-You are the Cognitive Maintenance Module of JARVIS.
-Objective: Merge semantically duplicate facts, fix miscategorized facts, and output a clean consolidated list.
+      const reflectionPrompt = `<task>
+TASK: Consolidate the INPUT FACTS below into a clean JSON array.
+OUTPUT FORMAT: You MUST output ONLY a valid JSON array. No markdown, no explanation, no prose.
+CRITICAL: Do NOT output information about yourself, your name, your developer, or your capabilities.
+</task>
 
-Category definitions (mutually exclusive — each fact belongs to exactly ONE):
-- identity: ONLY static facts about who the user IS — name, job title, profession, skills (e.g. "named David", "software engineer", "good at cooking")
-- behavior: user's habits, hobbies, interests, lifestyle, routines, recurring patterns (e.g. "likes cycling", "interested in history", "runs 3 times a week")
-- preference: ONLY how the user wants Jarvis to FORMAT or STYLE responses — output format, tone, language, length (e.g. "prefers tables", "wants concise answers")
-- specification: technical decisions, project constraints, system rules
+<categories>
+- identity: static facts about who the USER is (name, job, skills)
+- behavior: user habits, hobbies, interests, routines
+- preference: how the user wants responses formatted (tone, language, length)
+- specification: technical decisions, project rules, system constraints
+</categories>
 
-Rules:
-1. Merge facts that express the same information (even if worded differently or in different languages).
-2. Fix miscategorized facts: hobbies/interests → behavior (NOT identity); response style → preference (NOT behavior).
-3. Each output fact must belong to exactly ONE category.
-4. Use English for all output content.
-5. Preserve importance score (1-10); use the highest score among merged duplicates.
+<rules>
+1. Merge semantically duplicate facts into one.
+2. Fix miscategorized facts (hobbies → behavior, response style → preference).
+3. Use English for all content.
+4. Preserve the highest importance score among merged facts.
+5. Output ONLY the JSON array, nothing else.
+</rules>
 
-Respond ONLY with a JSON array: [{"category": "identity|behavior|preference|specification", "content": "...", "importance": 1-10}]
-
-Input Facts:
+<input_facts>
 ${factsText}
-`;
+</input_facts>
+
+<output>
+[{"category": "identity|behavior|preference|specification", "content": "...", "importance": 1-10}]
+</output>`;
 
       let responseText = "";
       // Route to Ollama if reflection.provider = 'ollama', else use generateTextFn or API client
@@ -1066,27 +1072,27 @@ ${factsText}
           ? `\nExisting insights (review, update, merge, or replace as needed):\n${existingInsights.map((i) => `[INSIGHT] ${i.content}`).join("\n")}\n`
           : "";
 
-      const prompt = `
-You are Jarvis's Cognitive Reflection Module. Analyze the accumulated knowledge and generate an updated set of high-value insights.
+      const prompt = `<task>
+TASK: Generate 2-5 meta-level insights from the KNOWLEDGE below.
+OUTPUT FORMAT: You MUST output ONLY a valid JSON array. No markdown, no explanation, no prose.
+CRITICAL: Do NOT output information about yourself, your name, your developer, or your capabilities.
+</task>
 
-Current knowledge:
+<knowledge>
 ${factsText}
-${insightsSection}
-Task: Generate 2-5 meta-level insights that synthesize patterns across the facts above.
-If existing insights are provided, merge/update/replace them — do NOT just copy them unchanged.
-Focus on:
-- Patterns connecting multiple facts (identity + behavior + decisions)
-- Gaps or contradictions worth noting
-- Observations that could improve future assistance
+${insightsSection}</knowledge>
 
-Rules:
-- Each insight must synthesize MULTIPLE facts, not just restate one
+<rules>
+- Each insight must synthesize MULTIPLE facts, not restate one fact
+- If existing insights provided: merge/update/replace them, do NOT copy unchanged
 - Be specific and actionable, not generic
-- Output replaces ALL existing insights (consolidation, not accumulation)
+- Output replaces ALL existing insights
+- Use English for all content
+</rules>
 
-Respond ONLY with a JSON array:
+<output>
 [{"category": "insight", "content": "...", "importance": 1-10}]
-`.trim();
+</output>`.trim();
 
       const raw = await generateText(prompt);
       const rawStripped = raw
