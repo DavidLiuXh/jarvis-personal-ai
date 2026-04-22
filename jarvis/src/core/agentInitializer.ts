@@ -145,6 +145,15 @@ export class AgentInitializer {
       fs.mkdirSync(jarvisStorageRoot, { recursive: true });
     }
 
+    // Ensure api.proxy from Jarvis config is applied as environment variable
+    // so loadCliConfig (and subsequently setGlobalProxy) picks it up.
+    // This bridges the gap between Jarvis config and gemini-cli's proxy handling.
+    const jarvisProxy = this.jarvisConfig.api?.proxy;
+    if (jarvisProxy && !process.env.HTTPS_PROXY && !process.env.https_proxy) {
+      process.env.HTTPS_PROXY = jarvisProxy;
+      console.error(`🌐 [Jarvis] Proxy configured: ${jarvisProxy}`);
+    }
+
     const config = await loadCliConfig(
       settings.merged,
       this.sessionId,
