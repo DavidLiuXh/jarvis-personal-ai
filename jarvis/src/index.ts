@@ -334,6 +334,7 @@ class JarvisServer {
           reloadSkillManager,
           () => this.loadAvailableSkills(),
           skills,
+          () => agent.triggerSkillExtraction(),
         );
         agent.setSkillCommandHandler(skillCommandHandler);
       });

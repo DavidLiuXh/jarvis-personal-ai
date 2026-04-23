@@ -641,6 +641,10 @@ export class JarvisAgent extends EventEmitter {
     return this.client.getChat().getHistory();
   }
 
+  public triggerSkillExtraction(): Promise<void> {
+    return this.agentInitializer.triggerSkillExtraction();
+  }
+
   public provideConfirmationResponse(id: string, decision: "allow" | "deny") {
     if (!this.client) return;
     const messageBus = this.client.config.getMessageBus();
