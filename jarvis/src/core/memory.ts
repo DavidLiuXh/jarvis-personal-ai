@@ -374,7 +374,8 @@ export class MemoryService {
    * Latin: word tokens (length > 1, stop words removed).
    * CJK: unigrams + bigrams (stop words removed).
    */
-  private tokenize(s: string): Set<string> {
+  private tokenize(s: string | null | undefined): Set<string> {
+    if (!s) return new Set();
     const lower = s.toLowerCase();
     const tokens = new Set<string>();
     // Latin words
