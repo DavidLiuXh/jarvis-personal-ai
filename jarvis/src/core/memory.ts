@@ -727,7 +727,12 @@ ${factsText}
 
           for (let i = 0; i < newFacts.length; i++) {
             const f = newFacts[i];
-            if (!f.content?.trim()) continue; // skip null/empty content from LLM
+            if (!f.content?.trim()) {
+              console.error(
+                `⚠️ [Jarvis Reflection] consolidateFacts: skipping fact with null/empty content (category=${f.category}, importance=${f.importance})`,
+              );
+              continue;
+            }
             const emb = embeddings[i];
             // Best-effort: restore access stats if content matches an old fact
             const access = accessMap.get(f.content);
@@ -1127,7 +1132,15 @@ ${insightsSection}</knowledge>
       }>;
       // Force category to 'insight' — small models often ignore the category constraint
       const validInsights = newInsights
-        .filter((i) => i.content)
+        .filter((i) => {
+          if (!i.content?.trim()) {
+            console.error(
+              `⚠️ [MemoryService] reflect: skipping insight with null/empty content (category=${i.category}, importance=${i.importance})`,
+            );
+            return false;
+          }
+          return true;
+        })
         .map((i) => ({ ...i, category: "insight" }));
       if (validInsights.length === 0) {
         console.error(
@@ -2026,7 +2039,12 @@ ${insightsSection}</knowledge>
           this.db.prepare("DELETE FROM facts_fts").run();
         } catch (_) {}
         for (const f of parsedFacts) {
-          if (!f.content?.trim()) continue; // skip null/empty content from LLM
+          if (!f.content?.trim()) {
+            console.error(
+              `⚠️ [MemoryService] syncHistoricalSessions: skipping fact with null/empty content (category=${f.category}, importance=${f.importance})`,
+            );
+            continue;
+          }
           const info = this.db
             .prepare(
               "INSERT INTO facts (category, content, importance, timestamp) VALUES (?, ?, ?, ?)",
