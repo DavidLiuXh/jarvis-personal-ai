@@ -92,6 +92,9 @@ export type InitializeResult = {
  */
 export class AgentInitializer {
   private jarvisConfig = ConfigManager.getInstance().get();
+  // Stored after initialize() so triggerSkillExtraction() can reuse it
+  private config: any = null;
+  private isExtractingSkills = false;
 
   constructor(
     private sessionId: string,
@@ -186,6 +189,7 @@ export class AgentInitializer {
         AuthType.LOGIN_WITH_GOOGLE;
     await config.refreshAuth(authType);
     await config.initialize();
+    this.config = config; // store for triggerSkillExtraction()
 
     // III. TOOL REGISTRATION
     const registry = config.getToolRegistry();
@@ -456,6 +460,130 @@ export class AgentInitializer {
 
     debugLogger.debug(`[AgentInitializer] Lifeform Ready.`);
     return { client, scheduler };
+  }
+
+  /**
+   * Runs confucius (SkillExtractionAgent) against Jarvis session history.
+   * Writes new SKILL.md files to ~/.gemini/skills/ so they are immediately
+   * available via activate_skill.
+   * Non-blocking: safe to call with setImmediate / setTimeout.
+   */
+  public async triggerSkillExtraction(): Promise<void> {
+    if (!this.config) return;
+    if (this.isExtractingSkills) return;
+    this.isExtractingSkills = true;
+
+    try {
+      // Dynamically import to avoid circular deps and keep startup fast
+      const { SkillExtractionAgent } = await import(
+        "../../../gemini-cli/packages/core/src/agents/skill-extraction-agent.js"
+      );
+      const { LocalAgentExecutor } = await import(
+        "../../../gemini-cli/packages/core/src/agents/local-executor.js"
+      );
+      const { buildSessionIndex } = await import(
+        "../../../gemini-cli/packages/core/src/services/memoryService.js"
+      );
+      const { getModelConfigAlias } = await import(
+        "../../../gemini-cli/packages/core/src/agents/registry.js"
+      );
+
+      // Jarvis session files live in ~/.gemini-jarvis/storage/chats/
+      const chatsDir = path.join(
+        os.homedir(),
+        ".gemini-jarvis",
+        "storage",
+        "chats",
+      );
+      // Write skills to ~/.gemini/skills/ — where Jarvis loads them from
+      const skillsDir = path.join(os.homedir(), ".gemini", "skills");
+      if (!fs.existsSync(skillsDir)) {
+        fs.mkdirSync(skillsDir, { recursive: true });
+      }
+
+      // Build session index (only processes new sessions)
+      const statePath = path.join(
+        os.homedir(),
+        ".gemini-jarvis",
+        "skill-extraction-state.json",
+      );
+      const { readExtractionState } = await import(
+        "../../../gemini-cli/packages/core/src/services/memoryService.js"
+      );
+      const state = await readExtractionState(statePath);
+      const { sessionIndex, newSessionIds } = await buildSessionIndex(
+        chatsDir,
+        state,
+      );
+
+      if (newSessionIds.length === 0) {
+        debugLogger.debug(
+          "[AgentInitializer] triggerSkillExtraction: no new sessions, skipping.",
+        );
+        return;
+      }
+
+      console.error(
+        `🧠 [Jarvis] Skill extraction started: ${newSessionIds.length} new session(s) to analyze...`,
+      );
+
+      const agentDefinition = SkillExtractionAgent(
+        skillsDir,
+        sessionIndex,
+        "", // no existing skills summary for now
+      );
+
+      // Register model config (required before running)
+      const modelAlias = getModelConfigAlias(agentDefinition);
+      this.config.modelConfigService.registerRuntimeModelConfig(modelAlias, {
+        modelConfig: agentDefinition.modelConfig,
+      });
+
+      // Build AgentLoopContext from stored config
+      const context = {
+        config: this.config,
+        promptId: `skill-extraction-${Date.now()}`,
+        toolRegistry: this.config.getToolRegistry(),
+        promptRegistry: this.config.getPromptRegistry?.() ?? ({} as any),
+        resourceRegistry: this.config.getResourceRegistry?.() ?? ({} as any),
+        messageBus: this.config.getMessageBus(),
+        geminiClient: this.config.getGeminiClient?.() ?? ({} as any),
+        sandboxManager: this.config.getSandboxManager?.() ?? ({} as any),
+      };
+
+      const executor = await LocalAgentExecutor.create(
+        agentDefinition,
+        context,
+      );
+      const abortController = new AbortController();
+      await executor.run(
+        { request: "Extract reusable skills from the provided sessions." },
+        abortController.signal,
+      );
+
+      // Persist state so processed sessions aren't re-analyzed next time
+      const { writeExtractionState } = await import(
+        "../../../gemini-cli/packages/core/src/services/memoryService.js"
+      );
+      await writeExtractionState(statePath, {
+        ...state,
+        runs: [
+          ...state.runs,
+          {
+            timestamp: Date.now(),
+            processedSessionIds: newSessionIds,
+            skillsCreated: [],
+            durationMs: 0,
+          },
+        ],
+      });
+
+      console.error(`✅ [Jarvis] Skill extraction complete.`);
+    } catch (e: any) {
+      console.error(`⚠️ [Jarvis] Skill extraction failed: ${e.message}`);
+    } finally {
+      this.isExtractingSkills = false;
+    }
   }
 
   private async resumeFromDisk(

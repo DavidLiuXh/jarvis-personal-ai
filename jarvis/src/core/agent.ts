@@ -613,6 +613,16 @@ export class JarvisAgent extends EventEmitter {
             setImmediate(() => void this.memoryService.backfillSessionEvents());
           }
 
+          // Trigger skill extraction every 50 turns (async, non-blocking)
+          // confucius analyzes new sessions and writes SKILL.md to ~/.gemini/skills/
+          const skillInterval = 50;
+          if (this.conversationTurnCount % skillInterval === 0) {
+            setTimeout(
+              () => void this.agentInitializer.triggerSkillExtraction(),
+              120_000, // 2 min delay to avoid competing with ongoing conversation
+            );
+          }
+
           // Compress in-memory chat history if it exceeds the threshold
           setImmediate(() => void this.compressHistoryIfNeeded());
         }
