@@ -142,9 +142,14 @@ class JarvisServer {
     }
 
     // --- Proactive Task System ---
-    this.channelRegistry = new ChannelRegistry(
-      jarvisConfig.tasks?.defaultChannel ?? "feishu",
-    );
+    // Priority: tasks.json defaultChannel → config.json tasks.defaultChannel → "feishu"
+    // tasks.json is initialized before channelRegistry so getDefaultChannel() is available.
+    this.taskScheduler = new TaskScheduler(JARVIS_HOME);
+    const defaultChannel =
+      this.taskScheduler.getDefaultChannel() ??
+      jarvisConfig.tasks?.defaultChannel ??
+      "feishu";
+    this.channelRegistry = new ChannelRegistry(defaultChannel);
 
     // Build reflect function — routes to Ollama if reflection.provider = 'ollama'
     const reflectFn = async () => {
@@ -193,9 +198,6 @@ class JarvisServer {
       (sessionId) => this.manager.getAgent(sessionId),
       reflectFn,
     );
-    this.taskScheduler = new TaskScheduler(JARVIS_HOME);
-
-    // Register feishu adapter
     if (this.feishuChannel) {
       const feishu = this.feishuChannel;
       this.channelRegistry.register("feishu", {

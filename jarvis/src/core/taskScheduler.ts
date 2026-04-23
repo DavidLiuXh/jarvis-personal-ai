@@ -128,6 +128,14 @@ export class TaskScheduler {
     return this.config?.tasks ?? [];
   }
 
+  public getDefaultChannel(): string | undefined {
+    return this.config?.defaultChannel;
+  }
+
+  public getDefaultChatId(): string | undefined {
+    return this.config?.defaultChatId;
+  }
+
   public onTrigger(cb: TriggerCallback): void {
     this.triggerCallbacks.push(cb);
   }
