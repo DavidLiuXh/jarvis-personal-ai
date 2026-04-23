@@ -527,6 +527,7 @@ export class MemoryService {
     content: string,
     importance: number = 5,
   ) {
+    if (!content?.trim()) return; // guard against null/empty content
     try {
       // Exact-string dedup (fast path)
       const exists = this.db
@@ -726,6 +727,7 @@ ${factsText}
 
           for (let i = 0; i < newFacts.length; i++) {
             const f = newFacts[i];
+            if (!f.content?.trim()) continue; // skip null/empty content from LLM
             const emb = embeddings[i];
             // Best-effort: restore access stats if content matches an old fact
             const access = accessMap.get(f.content);
@@ -2024,6 +2026,7 @@ ${insightsSection}</knowledge>
           this.db.prepare("DELETE FROM facts_fts").run();
         } catch (_) {}
         for (const f of parsedFacts) {
+          if (!f.content?.trim()) continue; // skip null/empty content from LLM
           const info = this.db
             .prepare(
               "INSERT INTO facts (category, content, importance, timestamp) VALUES (?, ?, ?, ?)",
