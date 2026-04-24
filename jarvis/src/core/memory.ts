@@ -1190,21 +1190,26 @@ ${insightsSection}</knowledge>
           const trimmed = insight.content.trim();
           const old = oldInsightMap.get(trimmed);
 
-          // Default importance for new insights: 6 (conservative — needs validation)
-          let finalImportance = insight.importance ?? 6;
+          // New insights are capped at 6 regardless of model output — they must
+          // earn trust through repeated relevance before reaching the inject
+          // threshold (>= 7). Model importance is only used as a tiebreaker
+          // between new insights when all are below the cap.
+          const NEW_INSIGHT_CAP = 6;
+          let finalImportance = Math.min(
+            insight.importance ?? 6,
+            NEW_INSIGHT_CAP,
+          );
           let inheritedAccessCount = 0;
 
           if (old) {
             // Exact text match: inherit access_count and apply boost if earned
             inheritedAccessCount = old.access_count;
             if (old.access_count >= 3) {
-              // Boost: this insight has been repeatedly relevant, trust it more
-              finalImportance = Math.min(
-                9,
-                Math.max(finalImportance, old.importance) + 1,
-              );
+              // Boost: this insight has been repeatedly relevant — allow it to
+              // exceed the new-insight cap and potentially reach inject threshold
+              finalImportance = Math.min(9, old.importance + 1);
             } else {
-              // Not yet earned boost: keep the higher of old vs new importance
+              // Not yet earned boost: keep the higher of old vs capped new
               finalImportance = Math.max(finalImportance, old.importance);
             }
           }
@@ -1364,8 +1369,12 @@ ${insightsSection}</knowledge>
               .map((r, vecIdx) => {
                 const fact = factById.get(r.id);
                 if (!fact) return null;
-                // Skip always-inject categories — they are already in alwaysOut
-                if (MemoryService.ALWAYS_INJECT_CATEGORIES.has(fact.category))
+                // Skip always-inject categories (already in alwaysOut) and
+                // insight (handled separately with its own quota and threshold)
+                if (
+                  MemoryService.ALWAYS_INJECT_CATEGORIES.has(fact.category) ||
+                  fact.category === "insight"
+                )
                   return null;
                 const vecRank = vecIdx + 1;
                 const bm25Rank = bm25RankMap.get(r.id) ?? fetchLimit + 1;
