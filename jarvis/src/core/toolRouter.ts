@@ -71,12 +71,19 @@ const JARVIS_NATIVE_TOOLS = new Set([
   "push_to_channel",
 ]);
 
-// Patterns indicating the user explicitly requested Jarvis to remember something
+// Prefix-style commands: anchored to start of string to avoid matching
+// mid-sentence occurrences like "I remember: we used TypeScript before"
+const REMEMBER_PREFIX_PATTERNS = [
+  /^remember\b\s*[:：\-–—]/i, // Remember: / remember - / remember – etc.
+  /^记住\b/,
+  /^记下来\b/,
+];
+
+// In-sentence explicit requests
 const REMEMBER_INTENT_PATTERNS = [
   /记住(这个|一下|这点)?/,
   /你记一下/,
   /别忘了/,
-  /记下来/,
   /remember (this|that|me|it)/i,
   /please remember/i,
   /make a note/i,
@@ -86,7 +93,10 @@ const REMEMBER_INTENT_PATTERNS = [
 /** Returns 9 if the text contains an explicit "remember" intent, 6 otherwise. */
 function computeRememberIntentScore(text?: string): number {
   if (!text) return 6;
-  return REMEMBER_INTENT_PATTERNS.some((p) => p.test(text)) ? 9 : 6;
+  const normalized = text.trim();
+  if (REMEMBER_PREFIX_PATTERNS.some((p) => p.test(normalized))) return 9;
+  if (REMEMBER_INTENT_PATTERNS.some((p) => p.test(normalized))) return 9;
+  return 6;
 }
 
 /**

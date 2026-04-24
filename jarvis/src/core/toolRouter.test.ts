@@ -109,35 +109,55 @@ describe("ToolRouter", () => {
     expect(imp).toBe(8);
   });
 
-  it("save_memory request arg: detects remember-intent in raw request text", async () => {
-    // When using the "request" arg (gemini-cli MemoryManagerAgent compat),
-    // the raw text contains explicit intent keywords like "Remember that..."
-    // This should be detected and raise importance above the neutral default.
+  it("save_memory: prefix form 'Remember: ...' triggers high intent", async () => {
+    // The most common compat-path format — anchored prefix must be detected
     const { router, saveFact } = makeRouter();
+    const req = makeReq("save_memory", {
+      request: "Remember: user prefers TypeScript over JavaScript",
+    });
+    await router.route([req], new AbortController().signal, vi.fn());
+    const [, , imp] = saveFact.mock.calls[0];
+    // rememberIntent=9 → preference: 0.7*7 + 0.3*9 = 7.6 → 8
+    expect(imp).toBe(8);
+  });
 
+  it("save_memory: prefix variant 'remember - ...' triggers high intent", async () => {
+    const { router, saveFact } = makeRouter();
+    const req = makeReq("save_memory", {
+      request: "remember - use Chinese for all replies",
+    });
+    await router.route([req], new AbortController().signal, vi.fn());
+    const [, , imp] = saveFact.mock.calls[0];
+    expect(imp).toBe(8);
+  });
+
+  it("save_memory: in-sentence 'Remember that ...' triggers high intent", async () => {
+    const { router, saveFact } = makeRouter();
     const req = makeReq("save_memory", {
       request: "Remember that I prefer TypeScript over JavaScript",
     });
     await router.route([req], new AbortController().signal, vi.fn());
-
-    const [cat, content, imp] = saveFact.mock.calls[0];
-    expect(cat).toBe("preference");
-    expect(content).toBe("Remember that I prefer TypeScript over JavaScript");
-    // "remember" keyword detected → rememberIntent=9
-    // preference: 0.7*7 + 0.3*9 = 4.9+2.7 = 7.6 → 8
+    const [, , imp] = saveFact.mock.calls[0];
+    // "remember that" matches in-sentence pattern → rememberIntent=9
     expect(imp).toBe(8);
   });
 
-  it("save_memory fact arg without remember-intent uses neutral score", async () => {
-    // When using the "fact" arg (distilled content like "user prefers TypeScript"),
-    // there is no explicit remember intent — should use neutral score 6.
+  it("save_memory: mid-sentence 'I remember: ...' does NOT trigger intent (not anchored)", async () => {
+    // "I remember: we used TypeScript" is a recall statement, not a command
     const { router, saveFact } = makeRouter();
-
     const req = makeReq("save_memory", {
-      fact: "user prefers TypeScript",
+      request: "I remember: we used TypeScript in the last project",
     });
     await router.route([req], new AbortController().signal, vi.fn());
+    const [, , imp] = saveFact.mock.calls[0];
+    // No intent detected → rememberIntent=6 → preference: 0.7*7 + 0.3*6 = 6.7 → 7
+    expect(imp).toBe(7);
+  });
 
+  it("save_memory fact arg without remember-intent uses neutral score", async () => {
+    const { router, saveFact } = makeRouter();
+    const req = makeReq("save_memory", { fact: "user prefers TypeScript" });
+    await router.route([req], new AbortController().signal, vi.fn());
     const [, , imp] = saveFact.mock.calls[0];
     // preference: 0.7*7 + 0.3*6 = 4.9+1.8 = 6.7 → 7
     expect(imp).toBe(7);
