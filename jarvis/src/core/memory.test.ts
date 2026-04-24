@@ -1398,24 +1398,136 @@ describe("MemoryService.searchFacts — L3 weighted fusion", () => {
     );
   });
 
-  it("always includes preference and insight facts regardless of embedding strategy", async () => {
+  it("embedding: preference always included; insight only when importance >= 7", async () => {
     const { service } = await createFusionService();
     const db = (service as any).db;
 
     db.prepare(
       "INSERT INTO facts (category, content, importance, timestamp) VALUES (?, ?, ?, ?)",
     ).run("preference", "prefers concise answers", 10, Date.now());
+    // insight at importance=7 (at threshold) — should be included
     db.prepare(
       "INSERT INTO facts (category, content, importance, timestamp) VALUES (?, ?, ?, ?)",
-    ).run("insight", "User is disciplined", 9, Date.now());
+    ).run("insight", "User is disciplined", 7, Date.now());
+    // insight at importance=6 (below threshold) — should NOT be included
+    db.prepare(
+      "INSERT INTO facts (category, content, importance, timestamp) VALUES (?, ?, ?, ?)",
+    ).run("insight", "User sometimes forgets", 6, Date.now());
     db.prepare(
       "INSERT INTO facts (category, content, importance, timestamp) VALUES (?, ?, ?, ?)",
     ).run("identity", "user is a developer", 7, Date.now());
 
     service.setEmbedContent(async (_text: string) => [1, 0, 0, 0]);
 
-    const results = await service.searchFacts("cooking", 1);
+    const results = await service.searchFacts("discipline", 5);
     expect(results.some((f: any) => f.category === "preference")).toBe(true);
-    expect(results.some((f: any) => f.category === "insight")).toBe(true);
+    // Only the importance=7 insight should appear
+    const injectedInsights = results.filter(
+      (f: any) => f.category === "insight",
+    );
+    expect(injectedInsights.length).toBe(1);
+    expect(injectedInsights[0].content).toBe("User is disciplined");
+  });
+
+  it("embedding: insight excluded from scoredRows (vec_facts SQL path)", async () => {
+    // Regression test: vec_facts KNN returns all fact ids including insight.
+    // The scoredRows filter must skip category=insight so insights don't
+    // appear in ranked[] and bypass the INSIGHT_MIN_IMPORTANCE threshold.
+    const { service } = await createFusionService();
+    const db = (service as any).db;
+
+    const vec = new Float32Array([1, 0, 0, 0]);
+
+    // Insert an insight with importance=6 (below threshold) into both tables
+    const insightInfo = db
+      .prepare(
+        "INSERT INTO facts (category, content, importance, timestamp, embedding) VALUES (?, ?, ?, ?, ?)",
+      )
+      .run(
+        "insight",
+        "Low-importance insight",
+        6,
+        Date.now(),
+        Buffer.from(vec.buffer),
+      );
+
+    // Insert a regular fact
+    const factInfo = db
+      .prepare(
+        "INSERT INTO facts (category, content, importance, timestamp, embedding) VALUES (?, ?, ?, ?, ?)",
+      )
+      .run(
+        "identity",
+        "user is a developer",
+        7,
+        Date.now(),
+        Buffer.from(vec.buffer),
+      );
+
+    try {
+      db.prepare("INSERT INTO vec_facts (id, embedding) VALUES (?, ?)").run(
+        insightInfo.lastInsertRowid,
+        vec,
+      );
+      db.prepare("INSERT INTO vec_facts (id, embedding) VALUES (?, ?)").run(
+        factInfo.lastInsertRowid,
+        vec,
+      );
+    } catch (_) {
+      // vec extension not available — skip
+      return;
+    }
+
+    service.setEmbedContent(async (_text: string) => [1, 0, 0, 0]);
+    const results = await service.searchFacts("developer", 5);
+
+    // insight with importance=6 must NOT appear anywhere in results
+    const insightResults = results.filter((f: any) => f.category === "insight");
+    expect(insightResults.length).toBe(0);
+    // The regular fact should appear
+    expect(results.some((f: any) => f.content === "user is a developer")).toBe(
+      true,
+    );
+  });
+
+  it("embedding: insight ranked by queryVecCached (rankByEmbeddingWithId path)", async () => {
+    // Regression test: insight candidates must use the pre-computed queryVec
+    // (queryVecCached) for cosine ranking, not fall back to jaccard.
+    // Verify by checking that the more similar insight ranks first.
+    const { service } = await createFusionService();
+    const db = (service as any).db;
+
+    // Query vector = [1, 0, 0, 0]
+    // Insight A: vec close to query → high cosine sim
+    const vecA = new Float32Array([1, 0, 0, 0]);
+    // Insight B: vec orthogonal to query → low cosine sim
+    const vecB = new Float32Array([0, 1, 0, 0]);
+
+    db.prepare(
+      "INSERT INTO facts (category, content, importance, timestamp, embedding) VALUES (?, ?, ?, ?, ?)",
+    ).run(
+      "insight",
+      "Insight close to query",
+      7,
+      Date.now(),
+      Buffer.from(vecA.buffer),
+    );
+    db.prepare(
+      "INSERT INTO facts (category, content, importance, timestamp, embedding) VALUES (?, ?, ?, ?, ?)",
+    ).run(
+      "insight",
+      "Insight far from query",
+      7,
+      Date.now(),
+      Buffer.from(vecB.buffer),
+    );
+
+    service.setEmbedContent(async (_text: string) => [1, 0, 0, 0]);
+    const results = await service.searchFacts("query topic", 5);
+
+    const insightResults = results.filter((f: any) => f.category === "insight");
+    // At most 2 insights, and the closer one should rank first
+    expect(insightResults.length).toBeGreaterThanOrEqual(1);
+    expect(insightResults[0].content).toBe("Insight close to query");
   });
 });
