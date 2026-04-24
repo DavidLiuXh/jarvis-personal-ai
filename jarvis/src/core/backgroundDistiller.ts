@@ -53,6 +53,13 @@ Category definitions (mutually exclusive):
   Signs of one-time (IGNORE these): "this time", "just now", "for this response", "这次", "just say", test commands like "return exactly X"
 - specification: Technical decisions, project constraints, or system rules FOR THIS PROJECT (e.g. "this project uses TypeScript", "do not modify gemini-cli source"). Must be a rule the user wants JARVIS to follow.
 
+Importance scoring (1-10):
+- 9-10: Core identity facts (name, profession), strong long-term preferences, critical project constraints
+- 7-8:  Recurring behavior patterns, important project decisions, persistent style preferences
+- 5-6:  Occasional habits, secondary preferences, project context that may change
+- 3-4:  Weak signals, single-mention interests, low-confidence inferences
+- 1-2:  Rarely useful, highly situational, almost certainly transient
+
 Rules:
 - Each fact belongs to exactly ONE category.
 - Hobbies, interests, and things the user "likes" → behavior, NOT identity.
@@ -62,7 +69,7 @@ Rules:
 - If a fact is about an external entity (like "OpenClaw"), ignore it.
 - Only extract facts that are genuinely new and worth remembering long-term.
 
-Respond ONLY with JSON: {"found": true, "facts": [{"category": "identity|behavior|preference|specification", "content": "..."}]}
+Respond ONLY with JSON: {"found": true, "facts": [{"category": "identity|behavior|preference|specification", "content": "...", "importance": 1-10}]}
 If zero new data worth persisting, respond: {"found": false}
 
 User input: ${userPrompt}
@@ -76,11 +83,20 @@ Assistant output (context only, do NOT extract from this): ${assistantText}
 
       const data = JSON.parse(match[0].replace(/\n/g, " ")) as {
         found: boolean;
-        facts?: Array<{ category: string; content: string }>;
+        facts?: Array<{
+          category: string;
+          content: string;
+          importance?: number;
+        }>;
       };
       if (data.found && data.facts) {
         for (const fact of data.facts) {
-          await this.saveFact(fact.category, fact.content, 10);
+          // Use LLM-assigned importance; clamp to [1, 10]; fallback to 5
+          const importance = Math.min(
+            10,
+            Math.max(1, Math.round(fact.importance ?? 5)),
+          );
+          await this.saveFact(fact.category, fact.content, importance);
         }
       }
     } catch (e) {

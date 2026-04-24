@@ -248,8 +248,20 @@ export class ToolRouter {
       if (req.name.startsWith("run_evolved_skill_")) {
         output = await this.dynamicRegistry.runSkill(req.name, req.args);
       } else if (req.name === "save_memory") {
-        const fact = req.args.fact as string;
-        await this.memoryService.saveFact("preference", fact, 10);
+        // gemini-cli's MemoryManagerAgent uses "request"; older Jarvis tool used "fact"
+        const fact = (req.args.fact || req.args.request) as string;
+        const category = (req.args.category as string) || "preference";
+        // LLM explicitly called save_memory → user-initiated, so importance
+        // starts at 8. Category-based adjustment: identity/specification are
+        // typically more stable and important than behavior/preference.
+        const categoryImportance: Record<string, number> = {
+          identity: 9,
+          specification: 8,
+          behavior: 7,
+          preference: 7,
+        };
+        const importance = categoryImportance[category] ?? 7;
+        await this.memoryService.saveFact(category, fact, importance);
         output = `Integrated into structured core: ${fact}`;
         console.error(`🛡️ [Jarvis] Memory Redirected: ${fact}`);
       } else if (req.name === "recall_memory") {
