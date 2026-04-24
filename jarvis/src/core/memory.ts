@@ -1295,6 +1295,7 @@ ${insightsSection}</knowledge>
 
       let ranked: Array<{ category: string; content: string }>;
       let rankedIdsForGraph: number[] = [];
+      let queryVecCached: number[] | null = null; // shared across ranking passes
       // Build id → fact map from ALL facts so expandViaEntityLinks can resolve
       // any linked fact_id including insight/preference categories
       const factById = new Map(allFacts.map((f) => [f.id, f]));
@@ -1302,6 +1303,7 @@ ${insightsSection}</knowledge>
       if (strategy === "embedding" && this.embedContentFn) {
         try {
           const queryVec = await this.embedContentFn(query);
+          queryVecCached = queryVec;
           const alpha = this.jarvisConfig.memory.vectorSimilarityWeight ?? 0.7;
           const beta = this.jarvisConfig.memory.importanceWeight ?? 0.3;
 
@@ -1440,12 +1442,10 @@ ${insightsSection}</knowledge>
       }> = [];
       if (insightCandidates.length > 0) {
         const insightLimit = MemoryService.INSIGHT_INJECT_LIMIT;
-        if (strategy === "embedding" && this.embedContentFn) {
-          // Reuse already-computed queryVec via jaccard fallback for simplicity
-          // (embedding path already ran above; use jaccard for insight ranking
-          // to avoid a second embed call)
-          rankedInsights = this.rankByJaccardWithId(
-            query,
+        if (strategy === "embedding" && queryVecCached) {
+          // Reuse the already-computed query embedding — no extra API call
+          rankedInsights = this.rankByEmbeddingWithId(
+            queryVecCached,
             insightCandidates,
             insightLimit,
           );
@@ -1726,6 +1726,32 @@ ${insightsSection}</knowledge>
   ): Array<{ id: number; category: string; content: string }> {
     return facts
       .map((f) => ({ ...f, score: this.jaccardSimilarity(query, f.content) }))
+      .sort((a, b) => b.score - a.score)
+      .slice(0, limit)
+      .map(({ id, category, content }) => ({ id, category, content }));
+  }
+
+  /**
+   * Rank facts by cosine similarity to a pre-computed query embedding.
+   * Reuses queryVec already computed in searchFacts — no extra API call.
+   */
+  private rankByEmbeddingWithId(
+    queryVec: number[],
+    facts: Array<{
+      id: number;
+      category: string;
+      content: string;
+      importance: number;
+      embedding?: Buffer | null;
+    }>,
+    limit: number,
+  ): Array<{ id: number; category: string; content: string }> {
+    return facts
+      .map((f) => {
+        if (!f.embedding) return { ...f, score: 0 };
+        const vec = Array.from(new Float32Array(f.embedding.buffer));
+        return { ...f, score: this.cosineSimilarity(queryVec, vec) };
+      })
       .sort((a, b) => b.score - a.score)
       .slice(0, limit)
       .map(({ id, category, content }) => ({ id, category, content }));
