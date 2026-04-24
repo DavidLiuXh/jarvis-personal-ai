@@ -1067,9 +1067,13 @@ ${factsText}
 
       const existingInsights = this.db
         .prepare(
-          "SELECT content, importance FROM facts WHERE category = 'insight' ORDER BY importance DESC",
+          "SELECT content, importance, COALESCE(access_count, 0) as access_count FROM facts WHERE category = 'insight' ORDER BY importance DESC",
         )
-        .all() as Array<{ content: string; importance: number }>;
+        .all() as Array<{
+        content: string;
+        importance: number;
+        access_count: number;
+      }>;
 
       const factsText = nonInsightFacts
         .map((f) => `[${f.category.toUpperCase()}] ${f.content}`)
@@ -1174,16 +1178,47 @@ ${insightsSection}</knowledge>
             )
             .run();
         } catch (_) {}
+        // Build map of old insight text → {importance, access_count} for inheritance
+        const oldInsightMap = new Map(
+          existingInsights.map((i) => [
+            i.content.trim(),
+            { importance: i.importance, access_count: i.access_count },
+          ]),
+        );
+
         for (const insight of validInsights) {
+          const trimmed = insight.content.trim();
+          const old = oldInsightMap.get(trimmed);
+
+          // Default importance for new insights: 6 (conservative — needs validation)
+          let finalImportance = insight.importance ?? 6;
+          let inheritedAccessCount = 0;
+
+          if (old) {
+            // Exact text match: inherit access_count and apply boost if earned
+            inheritedAccessCount = old.access_count;
+            if (old.access_count >= 3) {
+              // Boost: this insight has been repeatedly relevant, trust it more
+              finalImportance = Math.min(
+                9,
+                Math.max(finalImportance, old.importance) + 1,
+              );
+            } else {
+              // Not yet earned boost: keep the higher of old vs new importance
+              finalImportance = Math.max(finalImportance, old.importance);
+            }
+          }
+
           const info = this.db
             .prepare(
-              "INSERT INTO facts (category, content, importance, timestamp) VALUES (?, ?, ?, ?)",
+              "INSERT INTO facts (category, content, importance, timestamp, access_count) VALUES (?, ?, ?, ?, ?)",
             )
             .run(
               "insight",
               insight.content,
-              insight.importance ?? 8,
+              finalImportance,
               Date.now(),
+              inheritedAccessCount,
             );
           try {
             this.db
@@ -1205,11 +1240,14 @@ ${insightsSection}</knowledge>
   }
 
   // preference: response style — always needed every turn
-  // insight: high-order meta-knowledge — always valuable regardless of current topic
-  private static readonly ALWAYS_INJECT_CATEGORIES = new Set([
-    "preference",
-    "insight",
-  ]);
+  // insight: moved to conservative mode — ranked by relevance, max 2 per turn,
+  //          only injected when importance >= 7 and query-relevant
+  private static readonly ALWAYS_INJECT_CATEGORIES = new Set(["preference"]);
+
+  // Max number of insights to inject per turn (conservative quota)
+  private static readonly INSIGHT_INJECT_LIMIT = 2;
+  // Minimum importance for an insight to be eligible for injection
+  private static readonly INSIGHT_MIN_IMPORTANCE = 7;
 
   /**
    * Returns facts relevant to the given query.
@@ -1239,8 +1277,16 @@ ${insightsSection}</knowledge>
       const alwaysFacts = allFacts.filter((f) =>
         MemoryService.ALWAYS_INJECT_CATEGORIES.has(f.category),
       );
+      // insight is no longer always-inject; handle separately below
+      const insightCandidates = allFacts.filter(
+        (f) =>
+          f.category === "insight" &&
+          f.importance >= MemoryService.INSIGHT_MIN_IMPORTANCE,
+      );
       const candidateFacts = allFacts.filter(
-        (f) => !MemoryService.ALWAYS_INJECT_CATEGORIES.has(f.category),
+        (f) =>
+          !MemoryService.ALWAYS_INJECT_CATEGORIES.has(f.category) &&
+          f.category !== "insight",
       );
 
       const cap = limit ?? this.jarvisConfig.memory.factRelevanceLimit ?? 5;
@@ -1386,10 +1432,47 @@ ${insightsSection}</knowledge>
         ranked = this.rankByJaccard(query, candidateFacts, cap);
       }
 
+      // Rank insights using the same strategy as other facts, cap at INSIGHT_INJECT_LIMIT
+      let rankedInsights: Array<{
+        id: number;
+        category: string;
+        content: string;
+      }> = [];
+      if (insightCandidates.length > 0) {
+        const insightLimit = MemoryService.INSIGHT_INJECT_LIMIT;
+        if (strategy === "embedding" && this.embedContentFn) {
+          // Reuse already-computed queryVec via jaccard fallback for simplicity
+          // (embedding path already ran above; use jaccard for insight ranking
+          // to avoid a second embed call)
+          rankedInsights = this.rankByJaccardWithId(
+            query,
+            insightCandidates,
+            insightLimit,
+          );
+        } else {
+          rankedInsights = this.rankByJaccardWithId(
+            query,
+            insightCandidates,
+            insightLimit,
+          );
+        }
+      }
+
       const alwaysOut = alwaysFacts.map(({ category, content }) => ({
         category,
         content,
       }));
+      const insightOut = rankedInsights.map(({ category, content }) => ({
+        category,
+        content,
+      }));
+
+      // Only update access_count for insights that are actually injected
+      if (rankedInsights.length > 0) {
+        const injectedInsightIds = rankedInsights.map((f) => f.id);
+        const nowMs = Date.now();
+        setImmediate(() => this.updateAccessStats(injectedInsightIds, nowMs));
+      }
 
       console.error(
         `🧠 [searchFacts] always(${alwaysOut.length}): ${alwaysOut.map((f) => `[${f.category}] ${f.content.slice(0, 50)}`).join(" | ")}`,
@@ -1397,6 +1480,11 @@ ${insightsSection}</knowledge>
       console.error(
         `🧠 [searchFacts] ranked(${ranked.length}): ${ranked.map((f) => `[${f.category}] ${f.content.slice(0, 50)}`).join(" | ")}`,
       );
+      if (insightOut.length > 0) {
+        console.error(
+          `💡 [searchFacts] insights(${insightOut.length}): ${insightOut.map((f) => f.content.slice(0, 60)).join(" | ")}`,
+        );
+      }
 
       // Graph expansion: use ids collected during ranking
       // Filter out facts already in alwaysOut or ranked to avoid duplicates
@@ -1413,7 +1501,7 @@ ${insightsSection}</knowledge>
           `🔗 [searchFacts] expanded(${expanded.length}): ${expanded.map((f) => `[${f.category}] ${f.content.slice(0, 50)}`).join(" | ")}`,
         );
       }
-      return [...alwaysOut, ...ranked, ...expanded];
+      return [...alwaysOut, ...ranked, ...insightOut, ...expanded];
     } catch (e: any) {
       console.error(`⚠️ [searchFacts] outer catch: ${e?.message}`);
       return this.getStructuredFacts();
@@ -1623,6 +1711,24 @@ ${insightsSection}</knowledge>
       .sort((a, b) => b.score - a.score)
       .slice(0, limit)
       .map(({ category, content }) => ({ category, content }));
+  }
+
+  /** Like rankByJaccard but preserves id for access_count tracking. */
+  private rankByJaccardWithId(
+    query: string,
+    facts: Array<{
+      id: number;
+      category: string;
+      content: string;
+      importance: number;
+    }>,
+    limit: number,
+  ): Array<{ id: number; category: string; content: string }> {
+    return facts
+      .map((f) => ({ ...f, score: this.jaccardSimilarity(query, f.content) }))
+      .sort((a, b) => b.score - a.score)
+      .slice(0, limit)
+      .map(({ id, category, content }) => ({ id, category, content }));
   }
 
   /**
