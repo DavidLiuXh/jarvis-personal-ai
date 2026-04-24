@@ -1331,8 +1331,8 @@ describe("MemoryService.searchFacts — L3 weighted fusion", () => {
         vecB,
       );
     } catch (_) {
-      // vec extension not available in test — skip this assertion
-      return;
+      // vec extension unavailable — fallback cosine path used instead.
+      // The importance-weight assertion below still runs via in-memory cosine.
     }
 
     // Query vector = [1, 0, 0, 0]
@@ -1429,10 +1429,12 @@ describe("MemoryService.searchFacts — L3 weighted fusion", () => {
     expect(injectedInsights[0].content).toBe("User is disciplined");
   });
 
-  it("embedding: insight excluded from scoredRows (vec_facts SQL path)", async () => {
-    // Regression test: vec_facts KNN returns all fact ids including insight.
-    // The scoredRows filter must skip category=insight so insights don't
-    // appear in ranked[] and bypass the INSIGHT_MIN_IMPORTANCE threshold.
+  it("embedding: insight excluded from ranked facts (both vec_facts SQL and fallback cosine paths)", async () => {
+    // Regression test: insight must never appear in ranked[] regardless of
+    // which embedding path is taken.
+    // vec_facts SQL path: scoredRows filter must skip category=insight.
+    // fallback cosine path: candidateFacts already excludes insight.
+    // Both paths are exercised — assertion runs unconditionally either way.
     const { service } = await createFusionService();
     const db = (service as any).db;
 
@@ -1474,17 +1476,17 @@ describe("MemoryService.searchFacts — L3 weighted fusion", () => {
         vec,
       );
     } catch (_) {
-      // vec extension not available — skip
-      return;
+      // vec extension unavailable — fallback cosine path will be used instead.
+      // The assertion below still runs and verifies the fallback path.
     }
 
     service.setEmbedContent(async (_text: string) => [1, 0, 0, 0]);
     const results = await service.searchFacts("developer", 5);
 
-    // insight with importance=6 must NOT appear anywhere in results
+    // insight with importance=6 must NOT appear via either path
     const insightResults = results.filter((f: any) => f.category === "insight");
     expect(insightResults.length).toBe(0);
-    // The regular fact should appear
+    // The regular fact must appear
     expect(results.some((f: any) => f.content === "user is a developer")).toBe(
       true,
     );
