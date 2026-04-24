@@ -77,7 +77,7 @@ const REMEMBER_INTENT_PATTERNS = [
   /你记一下/,
   /别忘了/,
   /记下来/,
-  /remember this/i,
+  /remember (this|that|me|it)/i,
   /please remember/i,
   /make a note/i,
   /don't forget/i,
@@ -292,9 +292,17 @@ export class ToolRouter {
         // Two-factor formula: category stability + remember intent strength.
         // Does NOT use llm_score because save_memory lacks the content-analysis
         // signal that BackgroundDistiller has.
+        //
+        // For remember_intent detection, prefer the raw "request" field when
+        // available — it contains the original user phrasing (e.g. "Remember
+        // that I prefer tabs") which is more likely to contain explicit intent
+        // keywords than the distilled "fact" content.
+        const rawRequest = (req.args.request || req.args.fact) as
+          | string
+          | undefined;
         const importance = computeManualMemoryImportance({
           category,
-          requestText: fact,
+          requestText: rawRequest,
         });
         await this.memoryService.saveFact(category, fact, importance);
         output = `Integrated into structured core: ${fact}`;

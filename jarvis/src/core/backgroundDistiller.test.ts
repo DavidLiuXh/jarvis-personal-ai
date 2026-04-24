@@ -74,15 +74,27 @@ describe("computeExplicitnessScore", () => {
     expect(computeExplicitnessScore("我可能喜欢中文")).toBe(3);
   });
 
-  it("uses factContent as auxiliary signal", () => {
-    // userPrompt is neutral but factContent contains persistent intent
+  it("does NOT use factContent for pattern matching — only userPrompt", () => {
+    // factContent is LLM-produced and may strengthen weak expressions.
+    // "user always prefers Chinese" in factContent must NOT raise score.
     expect(
       computeExplicitnessScore(
-        "ok",
-        "user always prefers Chinese",
+        "ok", // neutral userPrompt
+        "user always prefers Chinese", // LLM-produced factContent — must be ignored
         "preference",
       ),
-    ).toBe(9);
+    ).toBe(5); // default, not 9
+  });
+
+  it("weak userPrompt is not overridden by strong factContent", () => {
+    // User said "可能" (weak), LLM produced "user always runs" — must stay 3
+    expect(
+      computeExplicitnessScore(
+        "可能我有时跑步",
+        "user always runs every day",
+        "behavior",
+      ),
+    ).toBe(3);
   });
 });
 

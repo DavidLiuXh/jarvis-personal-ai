@@ -103,24 +103,35 @@ export function computeExplicitnessScore(
   factContent?: string,
   category?: string,
 ): number {
-  const text = `${userPrompt}\n${factContent ?? ""}`.trim();
+  // Primary signal: userPrompt only — this is the raw user expression.
+  // factContent is LLM-produced and must NOT be used for pattern matching
+  // because the LLM may strengthen weak expressions (e.g. "I sometimes run"
+  // → "user always runs"), which would inflate explicitness scores.
+  const primary = userPrompt.trim();
+
+  // factContent is used only as a tiebreaker for the identity category check
+  // (to confirm the fact is about the user's identity, not as a pattern source).
+  // It is intentionally NOT concatenated into the pattern-matching text.
 
   // Check weak patterns first — they override everything else
-  if (WEAK_PATTERNS.some((p) => p.test(text))) return 3;
+  if (WEAK_PATTERNS.some((p) => p.test(primary))) return 3;
 
   // Persistent intent is the strongest signal
-  if (PERSISTENT_INTENT_PATTERNS.some((p) => p.test(text))) return 9;
+  if (PERSISTENT_INTENT_PATTERNS.some((p) => p.test(primary))) return 9;
 
   // Identity assertions are strong, but only meaningful for identity category
-  if (category === "identity" && IDENTITY_PATTERNS.some((p) => p.test(text))) {
+  if (
+    category === "identity" &&
+    IDENTITY_PATTERNS.some((p) => p.test(primary))
+  ) {
     return 8;
   }
 
   // Explicit preference statements
-  if (PREFERENCE_PATTERNS.some((p) => p.test(text))) return 7;
+  if (PREFERENCE_PATTERNS.some((p) => p.test(primary))) return 7;
 
   // Behavior patterns with clear evidence
-  if (BEHAVIOR_PATTERNS.some((p) => p.test(text))) return 6;
+  if (BEHAVIOR_PATTERNS.some((p) => p.test(primary))) return 6;
 
   // Default: inferred from context
   return 5;

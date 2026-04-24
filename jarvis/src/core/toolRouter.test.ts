@@ -109,17 +109,38 @@ describe("ToolRouter", () => {
     expect(imp).toBe(8);
   });
 
-  it("save_memory falls back to request arg (gemini-cli MemoryManagerAgent compat)", async () => {
+  it("save_memory request arg: detects remember-intent in raw request text", async () => {
+    // When using the "request" arg (gemini-cli MemoryManagerAgent compat),
+    // the raw text contains explicit intent keywords like "Remember that..."
+    // This should be detected and raise importance above the neutral default.
     const { router, saveFact } = makeRouter();
 
     const req = makeReq("save_memory", {
-      request: "Remember: user prefers TypeScript",
+      request: "Remember that I prefer TypeScript over JavaScript",
     });
     await router.route([req], new AbortController().signal, vi.fn());
 
-    const [cat, content] = saveFact.mock.calls[0];
+    const [cat, content, imp] = saveFact.mock.calls[0];
     expect(cat).toBe("preference");
-    expect(content).toBe("Remember: user prefers TypeScript");
+    expect(content).toBe("Remember that I prefer TypeScript over JavaScript");
+    // "remember" keyword detected → rememberIntent=9
+    // preference: 0.7*7 + 0.3*9 = 4.9+2.7 = 7.6 → 8
+    expect(imp).toBe(8);
+  });
+
+  it("save_memory fact arg without remember-intent uses neutral score", async () => {
+    // When using the "fact" arg (distilled content like "user prefers TypeScript"),
+    // there is no explicit remember intent — should use neutral score 6.
+    const { router, saveFact } = makeRouter();
+
+    const req = makeReq("save_memory", {
+      fact: "user prefers TypeScript",
+    });
+    await router.route([req], new AbortController().signal, vi.fn());
+
+    const [, , imp] = saveFact.mock.calls[0];
+    // preference: 0.7*7 + 0.3*6 = 4.9+1.8 = 6.7 → 7
+    expect(imp).toBe(7);
   });
 
   it("save_memory importance is always in [1, 10]", async () => {
