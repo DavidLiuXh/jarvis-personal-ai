@@ -182,11 +182,13 @@ describe("MemoryService.consolidateFacts", () => {
     await service.consolidateFacts();
 
     const prompt = generateText.mock.calls[0][0] as string;
-    expect(prompt).toContain("mutually exclusive");
+    // Prompt must include all four category definitions
     expect(prompt).toContain("behavior");
     expect(prompt).toContain("preference");
     expect(prompt).toContain("identity");
     expect(prompt).toContain("specification");
+    // Must include merge/dedup instruction
+    expect(prompt.toLowerCase()).toMatch(/merge|consolidate|dedup/);
   });
 
   it("updates lastConsolidatedCount after successful consolidation", async () => {
@@ -638,7 +640,8 @@ describe("MemoryService.reflect", () => {
       .all() as any[];
     expect(saved).toHaveLength(1);
     expect(saved[0].content).toContain("discipline");
-    expect(saved[0].importance).toBe(9);
+    // New insights are capped at 6 regardless of model output (conservative mode)
+    expect(saved[0].importance).toBe(6);
   });
 
   it("reflect does nothing when no facts exist", async () => {
@@ -671,17 +674,15 @@ describe("MemoryService.reflect", () => {
       "INSERT INTO facts (category, content, importance, timestamp) VALUES (?, ?, ?, ?)",
     ).run("insight", "Old insight about discipline", 9, Date.now());
 
-    const generateText = vi
-      .fn()
-      .mockResolvedValue(
-        JSON.stringify([
-          {
-            category: "insight",
-            content: "Updated insight merging old and new",
-            importance: 9,
-          },
-        ]),
-      );
+    const generateText = vi.fn().mockResolvedValue(
+      JSON.stringify([
+        {
+          category: "insight",
+          content: "Updated insight merging old and new",
+          importance: 9,
+        },
+      ]),
+    );
 
     await service.reflect(generateText);
 
@@ -718,6 +719,209 @@ describe("MemoryService.reflect", () => {
     // Old insights gone, only new one remains
     expect(saved).toHaveLength(1);
     expect(saved[0].content).toBe("New merged insight");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Conservative insight mode regression tests
+// ---------------------------------------------------------------------------
+
+describe("MemoryService — conservative insight mode", () => {
+  afterEach(() => {
+    vi.resetModules();
+    vi.clearAllMocks();
+  });
+
+  async function createInsightService() {
+    vi.doMock("./configManager.js", () => ({
+      ConfigManager: {
+        getInstance: vi.fn().mockReturnValue({
+          get: vi.fn().mockReturnValue({
+            api: { key: "test-key", proxy: null },
+            models: {
+              embedding: "test-model",
+              embeddingDimension: 4,
+              distillation: "test-model",
+            },
+            memory: {
+              ingestionDelayMs: 0,
+              retrievalLimit: 5,
+              consolidationThreshold: 100,
+              dedupStrategy: "jaccard",
+              factRelevanceStrategy: "jaccard",
+              factRelevanceLimit: 5,
+              prewarmLimit: 0,
+            },
+          }),
+        }),
+      },
+    }));
+    const { MemoryService } = await import("./memory.js");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "jarvis-insight-"));
+    const service = new (MemoryService as new (
+      root: string,
+      dbPath?: string,
+    ) => InstanceType<typeof MemoryService>)("", tmpDir);
+    const db = (service as any).db;
+    return { service, db, tmpDir };
+  }
+
+  // ── reflect() importance cap ───────────────────────────────────────────────
+
+  it("reflect: new insight importance is capped at 6 regardless of model output", async () => {
+    const { service, db } = await createInsightService();
+    db.prepare(
+      "INSERT INTO facts (category, content, importance, timestamp) VALUES (?, ?, ?, ?)",
+    ).run("behavior", "user runs daily", 8, Date.now());
+
+    const generateText = vi
+      .fn()
+      .mockResolvedValue(
+        '[{"category":"insight","content":"User is disciplined","importance":9}]',
+      );
+    await service.reflect(generateText);
+
+    const saved = db
+      .prepare("SELECT importance FROM facts WHERE category = 'insight'")
+      .all() as Array<{ importance: number }>;
+    expect(saved).toHaveLength(1);
+    // Model said 9, but cap must enforce 6
+    expect(saved[0].importance).toBe(6);
+  });
+
+  it("reflect: existing insight with access_count >= 3 gets importance boost", async () => {
+    const { service, db } = await createInsightService();
+    db.prepare(
+      "INSERT INTO facts (category, content, importance, timestamp) VALUES (?, ?, ?, ?)",
+    ).run("behavior", "user runs daily", 8, Date.now());
+    // Seed an old insight with access_count=3 and importance=6
+    db.prepare(
+      "INSERT INTO facts (category, content, importance, timestamp, access_count) VALUES (?, ?, ?, ?, ?)",
+    ).run("insight", "User is disciplined", 6, Date.now() - 1000, 3);
+
+    const generateText = vi
+      .fn()
+      .mockResolvedValue(
+        '[{"category":"insight","content":"User is disciplined","importance":6}]',
+      );
+    await service.reflect(generateText);
+
+    const saved = db
+      .prepare(
+        "SELECT importance, access_count FROM facts WHERE category = 'insight'",
+      )
+      .all() as Array<{ importance: number; access_count: number }>;
+    expect(saved).toHaveLength(1);
+    // access_count was 3 → boost: old importance(6) + 1 = 7
+    expect(saved[0].importance).toBe(7);
+    // access_count inherited from old insight
+    expect(saved[0].access_count).toBe(3);
+  });
+
+  it("reflect: existing insight with access_count < 3 does NOT get boost", async () => {
+    const { service, db } = await createInsightService();
+    db.prepare(
+      "INSERT INTO facts (category, content, importance, timestamp) VALUES (?, ?, ?, ?)",
+    ).run("behavior", "user runs daily", 8, Date.now());
+    db.prepare(
+      "INSERT INTO facts (category, content, importance, timestamp, access_count) VALUES (?, ?, ?, ?, ?)",
+    ).run("insight", "User is disciplined", 6, Date.now() - 1000, 2);
+
+    const generateText = vi
+      .fn()
+      .mockResolvedValue(
+        '[{"category":"insight","content":"User is disciplined","importance":6}]',
+      );
+    await service.reflect(generateText);
+
+    const saved = db
+      .prepare("SELECT importance FROM facts WHERE category = 'insight'")
+      .all() as Array<{ importance: number }>;
+    // No boost: access_count=2 < 3, importance stays at max(6, 6) = 6
+    expect(saved[0].importance).toBe(6);
+  });
+
+  it("reflect: new insight (no match) starts fresh at importance=6 with access_count=0", async () => {
+    const { service, db } = await createInsightService();
+    db.prepare(
+      "INSERT INTO facts (category, content, importance, timestamp) VALUES (?, ?, ?, ?)",
+    ).run("behavior", "user runs daily", 8, Date.now());
+
+    const generateText = vi
+      .fn()
+      .mockResolvedValue(
+        '[{"category":"insight","content":"Brand new insight","importance":8}]',
+      );
+    await service.reflect(generateText);
+
+    const saved = db
+      .prepare(
+        "SELECT importance, access_count FROM facts WHERE category = 'insight'",
+      )
+      .all() as Array<{ importance: number; access_count: number }>;
+    expect(saved[0].importance).toBe(6); // capped at 6
+    expect(saved[0].access_count).toBe(0); // no inheritance
+  });
+
+  // ── searchFacts() insight filtering ───────────────────────────────────────
+
+  it("searchFacts: insight with importance < 7 is NOT injected", async () => {
+    const { service, db } = await createInsightService();
+    // insight at importance=6 (below threshold)
+    db.prepare(
+      "INSERT INTO facts (category, content, importance, timestamp) VALUES (?, ?, ?, ?)",
+    ).run("insight", "User is disciplined", 6, Date.now());
+    db.prepare(
+      "INSERT INTO facts (category, content, importance, timestamp) VALUES (?, ?, ?, ?)",
+    ).run("preference", "prefers concise answers", 9, Date.now());
+
+    const results = await service.searchFacts("discipline", 5);
+
+    expect(results.some((f) => f.category === "insight")).toBe(false);
+    expect(results.some((f) => f.category === "preference")).toBe(true);
+  });
+
+  it("searchFacts: insight with importance >= 7 IS injected when query-relevant", async () => {
+    const { service, db } = await createInsightService();
+    db.prepare(
+      "INSERT INTO facts (category, content, importance, timestamp) VALUES (?, ?, ?, ?)",
+    ).run("insight", "User is disciplined about exercise", 7, Date.now());
+
+    const results = await service.searchFacts("exercise discipline", 5);
+
+    expect(results.some((f) => f.category === "insight")).toBe(true);
+  });
+
+  it("searchFacts: at most 2 insights injected regardless of how many qualify", async () => {
+    const { service, db } = await createInsightService();
+    // Insert 4 qualifying insights (importance >= 7)
+    for (let i = 1; i <= 4; i++) {
+      db.prepare(
+        "INSERT INTO facts (category, content, importance, timestamp) VALUES (?, ?, ?, ?)",
+      ).run("insight", `Insight about exercise ${i}`, 7, Date.now());
+    }
+
+    const results = await service.searchFacts("exercise", 10);
+
+    const injectedInsights = results.filter((f) => f.category === "insight");
+    expect(injectedInsights.length).toBeLessThanOrEqual(2);
+  });
+
+  it("searchFacts: insight does not appear in ranked facts (separate path)", async () => {
+    const { service, db } = await createInsightService();
+    // insight at importance=7 (qualifies), plus regular facts
+    db.prepare(
+      "INSERT INTO facts (category, content, importance, timestamp) VALUES (?, ?, ?, ?)",
+    ).run("insight", "User is disciplined", 7, Date.now());
+    db.prepare(
+      "INSERT INTO facts (category, content, importance, timestamp) VALUES (?, ?, ?, ?)",
+    ).run("behavior", "user runs daily", 8, Date.now());
+
+    const results = await service.searchFacts("discipline", 5);
+
+    // insight should appear exactly once (not duplicated via ranked path)
+    const insightResults = results.filter((f) => f.category === "insight");
+    expect(insightResults.length).toBeLessThanOrEqual(1);
   });
 });
 
