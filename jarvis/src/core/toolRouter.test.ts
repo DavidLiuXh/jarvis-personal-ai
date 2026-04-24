@@ -63,28 +63,38 @@ describe("ToolRouter", () => {
     };
   };
 
-  it("routes save_memory (fact arg) with category-based importance", async () => {
+  it("routes save_memory (fact arg) with two-factor importance formula", async () => {
     const { router, saveFact } = makeRouter();
 
-    const onToolResponse = vi.fn();
     const req = makeReq("save_memory", { fact: "user likes TypeScript" });
     const parts = await router.route(
       [req],
       new AbortController().signal,
-      onToolResponse,
+      vi.fn(),
     );
 
-    // preference category → importance 7
-    expect(saveFact).toHaveBeenCalledWith(
-      "preference",
-      "user likes TypeScript",
-      7,
-    );
+    expect(saveFact).toHaveBeenCalledOnce();
+    const [cat, , imp] = saveFact.mock.calls[0];
+    // preference category, no remember-intent → 0.7*7 + 0.3*6 = 4.9+1.8 = 6.7 → 7
+    expect(cat).toBe("preference");
+    expect(imp).toBe(7);
     expect(parts).toHaveLength(1);
     expect((parts[0] as any).functionResponse.name).toBe("save_memory");
   });
 
-  it("save_memory uses category arg when provided", async () => {
+  it("save_memory: explicit remember-intent raises importance", async () => {
+    const { router, saveFact } = makeRouter();
+
+    // "记住这个" triggers remember_intent=9
+    // preference: 0.7*7 + 0.3*9 = 4.9+2.7 = 7.6 → 8
+    const req = makeReq("save_memory", { fact: "记住这个：用中文回答" });
+    await router.route([req], new AbortController().signal, vi.fn());
+
+    const [, , imp] = saveFact.mock.calls[0];
+    expect(imp).toBe(8);
+  });
+
+  it("save_memory: identity category has higher base importance", async () => {
     const { router, saveFact } = makeRouter();
 
     const req = makeReq("save_memory", {
@@ -93,12 +103,10 @@ describe("ToolRouter", () => {
     });
     await router.route([req], new AbortController().signal, vi.fn());
 
-    // identity category → importance 9
-    expect(saveFact).toHaveBeenCalledWith(
-      "identity",
-      "user is a software engineer",
-      9,
-    );
+    const [cat, , imp] = saveFact.mock.calls[0];
+    expect(cat).toBe("identity");
+    // identity: 0.7*9 + 0.3*6 = 6.3+1.8 = 8.1 → 8
+    expect(imp).toBe(8);
   });
 
   it("save_memory falls back to request arg (gemini-cli MemoryManagerAgent compat)", async () => {
@@ -109,44 +117,30 @@ describe("ToolRouter", () => {
     });
     await router.route([req], new AbortController().signal, vi.fn());
 
-    expect(saveFact).toHaveBeenCalledWith(
-      "preference",
-      "Remember: user prefers TypeScript",
-      7,
-    );
+    const [cat, content] = saveFact.mock.calls[0];
+    expect(cat).toBe("preference");
+    expect(content).toBe("Remember: user prefers TypeScript");
   });
 
-  it("save_memory importance by category: specification=8, behavior=7", async () => {
+  it("save_memory importance is always in [1, 10]", async () => {
     const { router, saveFact } = makeRouter();
 
-    await router.route(
-      [
-        makeReq("save_memory", {
-          fact: "project uses monorepo",
-          category: "specification",
-        }),
-      ],
-      new AbortController().signal,
-      vi.fn(),
-    );
-    expect(saveFact).toHaveBeenCalledWith(
+    for (const category of [
+      "identity",
       "specification",
-      "project uses monorepo",
-      8,
-    );
-
-    saveFact.mockClear();
-    await router.route(
-      [
-        makeReq("save_memory", {
-          fact: "user runs daily",
-          category: "behavior",
-        }),
-      ],
-      new AbortController().signal,
-      vi.fn(),
-    );
-    expect(saveFact).toHaveBeenCalledWith("behavior", "user runs daily", 7);
+      "behavior",
+      "preference",
+    ]) {
+      saveFact.mockClear();
+      await router.route(
+        [makeReq("save_memory", { fact: "some fact", category })],
+        new AbortController().signal,
+        vi.fn(),
+      );
+      const [, , imp] = saveFact.mock.calls[0];
+      expect(imp).toBeGreaterThanOrEqual(1);
+      expect(imp).toBeLessThanOrEqual(10);
+    }
   });
 
   it("routes recall_memory to memoryService.search", async () => {

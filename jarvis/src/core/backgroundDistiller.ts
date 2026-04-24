@@ -17,6 +17,166 @@ export type SaveFactFn = (
  */
 export type GenerateTextFn = (prompt: string) => Promise<string>;
 
+// ---------------------------------------------------------------------------
+// Multi-factor importance scoring helpers
+// ---------------------------------------------------------------------------
+
+// A. Persistent intent patterns → explicitness 9
+const PERSISTENT_INTENT_PATTERNS = [
+  /以后(都|每次|总是)/,
+  /每次都/,
+  /永远/,
+  /从现在开始/,
+  /from now on/i,
+  /always /i,
+  /every time/i,
+  /forever/i,
+];
+
+// B. Identity assertion patterns → explicitness 8 (only when category=identity)
+const IDENTITY_PATTERNS = [
+  /我是/,
+  /我叫/,
+  /我的职业/,
+  /我的工作/,
+  /I am /i,
+  /my name is/i,
+  /I'm a /i,
+  /my job is/i,
+];
+
+// C. Preference statement patterns → explicitness 7
+const PREFERENCE_PATTERNS = [
+  /我喜欢/,
+  /我更喜欢/,
+  /我偏好/,
+  /我通常用/,
+  /我一般用/,
+  /I like /i,
+  /I prefer /i,
+  /I usually /i,
+  /I tend to /i,
+];
+
+// D. Strong behavior evidence patterns → explicitness 6
+const BEHAVIOR_PATTERNS = [
+  /我经常/,
+  /我通常/,
+  /我一般/,
+  /我会先/,
+  /I often /i,
+  /I usually /i,
+  /I tend to /i,
+];
+
+// F. Weak / uncertain patterns → explicitness 3
+const WEAK_PATTERNS = [
+  /可能/,
+  /也许/,
+  /暂时/,
+  /试试/,
+  /maybe/i,
+  /perhaps/i,
+  /for now/i,
+];
+
+/**
+ * Returns the category base score used in the importance formula.
+ * insight is excluded — it uses its own conservative mode in memory.ts.
+ */
+export function getCategoryBaseScore(category: string): number {
+  const scores: Record<string, number> = {
+    identity: 9,
+    specification: 8,
+    preference: 7,
+    behavior: 6,
+  };
+  return scores[category] ?? 5;
+}
+
+/**
+ * Computes explicitness score (3/5/6/7/8/9) based on expression strength.
+ * Uses userPrompt as primary signal; factContent and category as auxiliaries.
+ */
+export function computeExplicitnessScore(
+  userPrompt: string,
+  factContent?: string,
+  category?: string,
+): number {
+  const text = `${userPrompt}\n${factContent ?? ""}`.trim();
+
+  // Check weak patterns first — they override everything else
+  if (WEAK_PATTERNS.some((p) => p.test(text))) return 3;
+
+  // Persistent intent is the strongest signal
+  if (PERSISTENT_INTENT_PATTERNS.some((p) => p.test(text))) return 9;
+
+  // Identity assertions are strong, but only meaningful for identity category
+  if (category === "identity" && IDENTITY_PATTERNS.some((p) => p.test(text))) {
+    return 8;
+  }
+
+  // Explicit preference statements
+  if (PREFERENCE_PATTERNS.some((p) => p.test(text))) return 7;
+
+  // Behavior patterns with clear evidence
+  if (BEHAVIOR_PATTERNS.some((p) => p.test(text))) return 6;
+
+  // Default: inferred from context
+  return 5;
+}
+
+/**
+ * Normalizes an LLM-returned score to [1, 10], defaulting to 5.
+ */
+export function normalizeLlmScore(raw?: number): number {
+  if (typeof raw !== "number" || Number.isNaN(raw)) return 5;
+  return Math.max(1, Math.min(10, Math.round(raw)));
+}
+
+/**
+ * Clamps a computed score to the [1, 10] integer range.
+ */
+export function clampScore(n: number): number {
+  return Math.max(1, Math.min(10, Math.round(n)));
+}
+
+/**
+ * Computes the final importance for a regular fact (identity/specification/
+ * preference/behavior) using the three-factor formula:
+ *   importance = round(0.35 * category + 0.25 * explicitness + 0.40 * llm)
+ *
+ * insight is excluded — it uses its own conservative mode in memory.ts.
+ */
+export function computeFactImportance(params: {
+  category: string;
+  userPrompt: string;
+  factContent: string;
+  llmScore?: number;
+}): number {
+  const categoryScore = getCategoryBaseScore(params.category);
+  const explicitnessScore = computeExplicitnessScore(
+    params.userPrompt,
+    params.factContent,
+    params.category,
+  );
+  const llmScore = normalizeLlmScore(params.llmScore);
+
+  const final = clampScore(
+    0.35 * categoryScore + 0.25 * explicitnessScore + 0.4 * llmScore,
+  );
+
+  console.error(
+    `[importance] category=${params.category} cat=${categoryScore} explicit=${explicitnessScore} llm=${llmScore} final=${final} content="${params.factContent.slice(0, 80)}"`,
+  );
+
+  return final;
+}
+
+// ---------------------------------------------------------------------------
+// BackgroundDistiller
+// ---------------------------------------------------------------------------
+
 /**
  * Runs a silent background LLM call after each turn to extract
  * persistent facts from the conversation and persist them to memory.
@@ -91,11 +251,15 @@ Assistant output (context only, do NOT extract from this): ${assistantText}
       };
       if (data.found && data.facts) {
         for (const fact of data.facts) {
-          // Use LLM-assigned importance; clamp to [1, 10]; fallback to 5
-          const importance = Math.min(
-            10,
-            Math.max(1, Math.round(fact.importance ?? 5)),
-          );
+          // insight is managed by memory.ts conservative mode — skip here
+          if (fact.category === "insight") continue;
+
+          const importance = computeFactImportance({
+            category: fact.category,
+            userPrompt,
+            factContent: fact.content,
+            llmScore: fact.importance,
+          });
           await this.saveFact(fact.category, fact.content, importance);
         }
       }

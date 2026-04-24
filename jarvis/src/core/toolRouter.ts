@@ -8,6 +8,7 @@ import {
   recordToolCallInteractions,
   type Part,
 } from "../../../gemini-cli/packages/core/src/index.js";
+import { getCategoryBaseScore, clampScore } from "./backgroundDistiller.js";
 
 export type ToolCallRequest = {
   name: string;
@@ -69,6 +70,43 @@ const JARVIS_NATIVE_TOOLS = new Set([
   "ask_user",
   "push_to_channel",
 ]);
+
+// Patterns indicating the user explicitly requested Jarvis to remember something
+const REMEMBER_INTENT_PATTERNS = [
+  /记住(这个|一下|这点)?/,
+  /你记一下/,
+  /别忘了/,
+  /记下来/,
+  /remember this/i,
+  /please remember/i,
+  /make a note/i,
+  /don't forget/i,
+];
+
+/** Returns 9 if the text contains an explicit "remember" intent, 6 otherwise. */
+function computeRememberIntentScore(text?: string): number {
+  if (!text) return 6;
+  return REMEMBER_INTENT_PATTERNS.some((p) => p.test(text)) ? 9 : 6;
+}
+
+/**
+ * Computes importance for manually saved facts (save_memory tool).
+ * Uses a two-factor formula: 0.7 * category + 0.3 * rememberIntent
+ * This is intentionally simpler than the distiller's three-factor formula
+ * because save_memory lacks the LLM content-analysis signal.
+ */
+function computeManualMemoryImportance(params: {
+  category?: string;
+  requestText?: string;
+}): number {
+  const categoryScore = getCategoryBaseScore(params.category ?? "preference");
+  const rememberIntentScore = computeRememberIntentScore(params.requestText);
+  const final = clampScore(0.7 * categoryScore + 0.3 * rememberIntentScore);
+  console.error(
+    `[importance/manual] category=${params.category} cat=${categoryScore} rememberIntent=${rememberIntentScore} final=${final}`,
+  );
+  return final;
+}
 
 function isNativeTool(name: string): boolean {
   return (
@@ -251,16 +289,13 @@ export class ToolRouter {
         // gemini-cli's MemoryManagerAgent uses "request"; older Jarvis tool used "fact"
         const fact = (req.args.fact || req.args.request) as string;
         const category = (req.args.category as string) || "preference";
-        // LLM explicitly called save_memory → user-initiated, so importance
-        // starts at 8. Category-based adjustment: identity/specification are
-        // typically more stable and important than behavior/preference.
-        const categoryImportance: Record<string, number> = {
-          identity: 9,
-          specification: 8,
-          behavior: 7,
-          preference: 7,
-        };
-        const importance = categoryImportance[category] ?? 7;
+        // Two-factor formula: category stability + remember intent strength.
+        // Does NOT use llm_score because save_memory lacks the content-analysis
+        // signal that BackgroundDistiller has.
+        const importance = computeManualMemoryImportance({
+          category,
+          requestText: fact,
+        });
         await this.memoryService.saveFact(category, fact, importance);
         output = `Integrated into structured core: ${fact}`;
         console.error(`🛡️ [Jarvis] Memory Redirected: ${fact}`);
