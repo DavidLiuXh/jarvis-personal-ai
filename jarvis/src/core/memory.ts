@@ -222,15 +222,17 @@ export class MemoryService {
   private initEntityExtractor(): void {
     const cfg = this.jarvisConfig.entityExtraction;
     if (!cfg?.enabled) return;
+    const timeoutMs =
+      cfg.timeoutMs ?? this.jarvisConfig.ollama?.defaultTimeoutMs ?? 120_000;
     this.entityExtractor = new EntityExtractor(
       cfg.provider ?? "gemini",
       this.generateTextFn,
       this.jarvisConfig.ollama?.baseUrl ?? "http://localhost:11434",
       cfg.model ?? "",
-      cfg.timeoutMs ?? this.jarvisConfig.ollama?.defaultTimeoutMs ?? 30_000,
+      timeoutMs,
     );
     console.error(
-      `🔗 [MemoryService] EntityExtractor initialized (provider=${cfg.provider ?? "gemini"}${cfg.model ? ", model=" + cfg.model : ""}, timeout=${cfg.timeoutMs ?? 30_000}ms)`,
+      `🔗 [MemoryService] EntityExtractor initialized (provider=${cfg.provider ?? "gemini"}${cfg.model ? ", model=" + cfg.model : ""}, timeout=${timeoutMs}ms)`,
     );
   }
 
