@@ -11,20 +11,20 @@ const DEFAULT_TIMEOUT_MS = 30_000;
 
 /**
  * undici Agent with extended timeouts for slow local Ollama instances.
- * headersTimeout / bodyTimeout cover the server-side processing time,
- * which can exceed 1 minute on low-end hardware.
  */
 function makeAgent(timeoutMs: number): Agent {
   return new Agent({
     headersTimeout: timeoutMs,
     bodyTimeout: timeoutMs,
     connectTimeout: timeoutMs,
+    // Ensure idle connections don't drop during long inference sessions
+    keepAliveTimeout: 180_000,
+    keepAliveMaxTimeout: 600_000,
   });
 }
 
 /**
  * Unified Ollama /api/generate call.
- * Returns the model's text response.
  */
 export async function ollamaGenerate(
   model: string,
@@ -36,9 +36,11 @@ export async function ollamaGenerate(
 ): Promise<string> {
   const baseUrl = options.baseUrl ?? DEFAULT_BASE_URL;
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  const startTime = Date.now();
 
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
+
   try {
     const response = await undiciFetch(`${baseUrl}/api/generate`, {
       method: "POST",
@@ -48,6 +50,7 @@ export async function ollamaGenerate(
       // @ts-expect-error - undici fetch dispatcher option
       dispatcher: makeAgent(timeoutMs),
     });
+
     if (!response.ok) {
       throw new Error(
         `Ollama generate failed: ${response.status} ${await response.text()}`,
@@ -55,6 +58,14 @@ export async function ollamaGenerate(
     }
     const data = (await response.json()) as { response: string };
     return data.response;
+  } catch (e: any) {
+    const duration = Date.now() - startTime;
+    if (e.name === "AbortError") {
+      console.error(
+        `❌ [Ollama] Request ABORTED after ${duration}ms (Configured timeout: ${timeoutMs}ms)`,
+      );
+    }
+    throw e;
   } finally {
     clearTimeout(timeout);
   }
@@ -62,7 +73,6 @@ export async function ollamaGenerate(
 
 /**
  * Unified Ollama /api/embed call.
- * Returns the embedding vector for the given input text.
  */
 export async function ollamaEmbed(
   model: string,
@@ -74,9 +84,11 @@ export async function ollamaEmbed(
 ): Promise<number[]> {
   const baseUrl = options.baseUrl ?? DEFAULT_BASE_URL;
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  const startTime = Date.now();
 
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
+
   try {
     const response = await undiciFetch(`${baseUrl}/api/embed`, {
       method: "POST",
@@ -86,6 +98,7 @@ export async function ollamaEmbed(
       // @ts-expect-error - undici fetch dispatcher option
       dispatcher: makeAgent(timeoutMs),
     });
+
     if (!response.ok) {
       throw new Error(
         `Ollama embed failed: ${response.status} ${await response.text()}`,
@@ -93,6 +106,14 @@ export async function ollamaEmbed(
     }
     const data = (await response.json()) as { embeddings: number[][] };
     return data.embeddings[0];
+  } catch (e: any) {
+    const duration = Date.now() - startTime;
+    if (e.name === "AbortError") {
+      console.error(
+        `❌ [Ollama] Embedding ABORTED after ${duration}ms (Configured timeout: ${timeoutMs}ms)`,
+      );
+    }
+    throw e;
   } finally {
     clearTimeout(timeout);
   }
