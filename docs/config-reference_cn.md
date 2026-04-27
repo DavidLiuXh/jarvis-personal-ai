@@ -304,6 +304,12 @@
     // bge-m3 参考值：< 0.5 高相关，< 1.0 中等相关，> 1.5 基本无关。
     // 仅在 factRelevanceStrategy = "embedding" 时生效。默认：1.0
     "factMaxDistance": 1.0,
+
+    // vec_memories 过滤的最大 L2 距离门槛（prewarm 预热 + recall_memory 工具）。
+    // 距离 >= 此值的历史记忆不注入 prewarm 上下文，
+    // 防止语义无关的历史片段污染当前对话上下文，缓解 Context Adhesion 问题。
+    // 与 factMaxDistance 使用相同的距离尺度。默认：1.0
+    "memoryMaxDistance": 1.0,
   },
 
   // ─────────────────────────────────────────────

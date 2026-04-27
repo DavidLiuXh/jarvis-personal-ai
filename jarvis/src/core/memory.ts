@@ -947,8 +947,12 @@ ${factsText}
       const lambda = this.jarvisConfig.memory.decayLambda ?? 0.1;
       const nowMs = Date.now();
 
-      // Fetch more candidates than needed, then re-rank with time decay for events
-      // vec0 KNN requires LIMIT directly on the vec_memories subquery
+      // Fetch candidates within distance threshold to avoid injecting
+      // semantically irrelevant memories into prewarm context.
+      // vec0 KNN requires LIMIT in the subquery; distance filter applied
+      // in the outer WHERE clause after JOIN to avoid vec0 syntax issues.
+      const memoryMaxDistance =
+        this.jarvisConfig.memory.memoryMaxDistance ?? 1.0;
       const rows = this.db
         .prepare(
           `SELECT m.text, m.source, m.timestamp, v.distance
@@ -958,9 +962,14 @@ ${factsText}
              WHERE embedding MATCH ?
              ORDER BY distance
              LIMIT ?
-           ) v ON m.id = v.id`,
+           ) v ON m.id = v.id
+           WHERE v.distance < ?`,
         )
-        .all(new Float32Array(queryVec), fetchLimit) as Array<{
+        .all(
+          new Float32Array(queryVec),
+          fetchLimit,
+          memoryMaxDistance,
+        ) as Array<{
         text: string;
         source: string;
         timestamp: number;

@@ -311,6 +311,12 @@ Configuration file location: `~/.gemini-jarvis/config.json`
     // bge-m3 guide: <0.5 high relevance, <1.0 medium, >1.5 noise.
     // Only applies when factRelevanceStrategy = "embedding". Default: 1.0
     "factMaxDistance": 1.0,
+
+    // Maximum L2 distance for vec_memories filtering (prewarm + recall_memory).
+    // Memories with distance >= this value are excluded from prewarm injection,
+    // preventing semantically irrelevant history from polluting context.
+    // Uses same distance scale as factMaxDistance. Default: 1.0
+    "memoryMaxDistance": 1.0,
   },
 
   // ─────────────────────────────────────────────

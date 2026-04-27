@@ -215,6 +215,14 @@ export interface JarvisConfig {
      * Only applies when factRelevanceStrategy = 'embedding'. Default: 1.0.
      */
     factMaxDistance: number;
+    /**
+     * Maximum L2 distance for vec_memories (prewarm + recall_memory) filtering.
+     * Memories with distance >= this value are excluded from injection,
+     * preventing semantically irrelevant history from being injected as context.
+     * Uses same distance scale as factMaxDistance (bge-m3 L2).
+     * Default: 1.0.
+     */
+    memoryMaxDistance: number;
   };
   security: {
     jailbreak: boolean;
@@ -335,6 +343,7 @@ export class ConfigManager {
         hybridSearch: true,
         rrfK: 60,
         factMaxDistance: 1.0,
+        memoryMaxDistance: 1.0,
       },
       security: {
         jailbreak: false,
