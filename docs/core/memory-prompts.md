@@ -6,14 +6,14 @@
 
 ## 总览
 
-| 组件                                                   | 文件                     | 触发时机                   | 模型路由            | 输出格式           |
-| ------------------------------------------------------ | ------------------------ | -------------------------- | ------------------- | ------------------ |
-| [Fact 提取](#1-fact-提取--backgrounddistillerts)       | `backgroundDistiller.ts` | 每次对话后（异步）         | Gemini distillation | JSON facts 数组    |
-| [Fact 合并](#2-fact-合并--consolidatefacts)            | `memory.ts`              | facts 数超过阈值时         | Ollama / Gemini     | JSON facts 数组    |
-| [Insight 生成](#3-insight-生成--reflect)               | `memory.ts`              | consolidateFacts 后 / 手动 | Ollama / Gemini     | JSON insights 数组 |
-| [会话事件提取](#4-会话事件提取--backfillsessionevents) | `memory.ts`              | 启动时 + 每 N 轮对话       | Gemini distillation | 事件行列表         |
-| [实体提取](#5-实体提取--entityextractorts)             | `entityExtractor.ts`     | saveFact 后（异步）        | Ollama / Gemini     | JSON links 数组    |
-| [记忆注入](#6-记忆注入--systempromptbuilderts)         | `systemPromptBuilder.ts` | 每个用户输入前             | —                   | System prompt 片段 |
+| 组件                                                   | 文件                     | 触发时机                   | 模型路由                                     | 输出格式           |
+| ------------------------------------------------------ | ------------------------ | -------------------------- | -------------------------------------------- | ------------------ |
+| [Fact 提取](#1-fact-提取--backgrounddistillerts)       | `backgroundDistiller.ts` | 每次对话后（异步）         | `reflection.provider`（同 consolidateFacts） | JSON facts 数组    |
+| [Fact 合并](#2-fact-合并--consolidatefacts)            | `memory.ts`              | facts 数超过阈值时         | Ollama / Gemini                              | JSON facts 数组    |
+| [Insight 生成](#3-insight-生成--reflect)               | `memory.ts`              | consolidateFacts 后 / 手动 | Ollama / Gemini                              | JSON insights 数组 |
+| [会话事件提取](#4-会话事件提取--backfillsessionevents) | `memory.ts`              | 启动时 + 每 N 轮对话       | Gemini distillation                          | 事件行列表         |
+| [实体提取](#5-实体提取--entityextractorts)             | `entityExtractor.ts`     | saveFact 后（异步）        | Ollama / Gemini                              | JSON links 数组    |
+| [记忆注入](#6-记忆注入--systempromptbuilderts)         | `systemPromptBuilder.ts` | 每个用户输入前             | —                                            | System prompt 片段 |
 
 ---
 
@@ -23,7 +23,11 @@
 
 **触发位置**：`agent.ts` → `distiller.distill(userPrompt, finalAssistantText)`
 
-**模型**：`jarvisConfig.models.distillation`（默认 `gemini-2.5-flash`）
+**模型路由**：`reflection.provider` 配置（与 `consolidateFacts`、`reflect` 相同）
+
+- `provider=ollama` 且 `model` 已设置 → 使用本地 Ollama 模型
+- `provider=ollama` 但 `model` 为空 → fallback 到 Gemini
+- `provider=gemini` → 使用 `gemini-2.5-flash`
 
 **Prompt**：
 

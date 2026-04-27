@@ -133,8 +133,11 @@ Configuration file location: `~/.gemini-jarvis/config.json`
   },
 
   // ─────────────────────────────────────────────
-  // Reflection — model for consolidateFacts and nightly reflect
+  // Reflection — model for consolidateFacts, nightly reflect, AND fact distillation
   // ─────────────────────────────────────────────
+  // NOTE: This setting now also controls BackgroundDistiller (fact extraction
+  // after each conversation turn). Set model to use a local Ollama model for
+  // all memory-related LLM calls without sending data to Google.
   "reflection": {
     // "gemini": use existing CLI auth / generateTextFn
     // "ollama": use local Ollama model (default, works offline)
@@ -145,6 +148,7 @@ Configuration file location: `~/.gemini-jarvis/config.json`
 
     // Ollama model name, e.g. "gemma4:e2b". Only used when provider = "ollama".
     // If empty, falls back to gemini provider automatically.
+    // REQUIRED to use local model for fact extraction and reflection.
     "model": "gemma4:e2b",
 
     // Timeout in milliseconds. Reflection prompts are long — use a generous value.

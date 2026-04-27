@@ -104,8 +104,14 @@ export class JarvisAgent extends EventEmitter {
       return response.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
     };
 
+    // Route distillation through reflection.provider so local Ollama models
+    // can be used for fact extraction. Falls back to Gemini if reflection.model
+    // is not set or provider is "gemini".
+    const distillGenerateText =
+      this.memoryService.buildReflectionGenerateText(generateText);
+
     this.distiller = new BackgroundDistiller(
-      generateText,
+      distillGenerateText,
       (category, content, importance) =>
         this.memoryService.saveFact(category, content, importance),
     );

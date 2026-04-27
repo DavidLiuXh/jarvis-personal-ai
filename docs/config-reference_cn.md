@@ -131,8 +131,10 @@
   },
 
   // ─────────────────────────────────────────────
-  // Reflection — consolidateFacts 和夜间反思任务使用的模型
+  // Reflection — consolidateFacts、夜间反思任务，以及 Fact 提取（BackgroundDistiller）使用的模型
   // ─────────────────────────────────────────────
+  // 注意：此配置现在同时控制 BackgroundDistiller（每轮对话后的事实提取）。
+  // 设置 model 后，所有记忆相关的 LLM 调用都将使用本地 Ollama，无需将数据发送给 Google。
   "reflection": {
     // "gemini"：使用现有 CLI 认证 / generateTextFn
     // "ollama"：使用本地 Ollama 模型（默认，离线可用）
@@ -143,6 +145,7 @@
 
     // Ollama 模型名称，例如 "gemma4:e2b"。仅 provider = "ollama" 时生效。
     // 留空时自动 fallback 到 gemini provider。
+    // 若要在本地完成事实提取和反思，此字段必填。
     "model": "gemma4:e2b",
 
     // 超时时间（毫秒）。反思 prompt 较长，建议设置较大值。默认：120000（2分钟）
