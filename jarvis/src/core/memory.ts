@@ -2546,10 +2546,18 @@ ${insightsSection}</knowledge>
             ? dateMatch[1]
             : new Date().toISOString().slice(0, 10);
 
-          const prompt = `Extract 3-10 atomic memory events from the following conversation.
-Each event should be a single sentence describing a decision, solution, preference, or key fact.
-Format: one event per line, starting with [${date}].
-Only extract substantive items — ignore greetings, confirmations, and filler.
+          const prompt = `Extract atomic memory events from the following conversation.
+Extract ALL valid substantive events. If the conversation contains zero substantive events, output nothing.
+Do NOT hallucinate or force extraction to generate output — quality over quantity.
+
+Each event must be:
+- A single self-contained sentence starting with [${date}]
+- A decision, solution, preference, or key fact worth remembering long-term
+- Written with an explicit subject: use "User" or "Jarvis", not pronouns like "it", "this", "they"
+  BAD: "Decided to use TypeScript"
+  GOOD: "User decided to use TypeScript for the project"
+
+Ignore completely: greetings, polite confirmations ("ok", "thanks"), chit-chat, and conversational filler.
 
 Conversation:
 ${convoText}
