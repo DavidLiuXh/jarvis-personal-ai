@@ -32,6 +32,10 @@ export class MemoryService {
   private config: any;
   private lastConsolidatedCount = 0;
   private generateTextFn: ((prompt: string) => Promise<string>) | null = null;
+  // reflection-routed version of generateTextFn (Ollama or Gemini per config)
+  private reflectionGenerateTextFn:
+    | ((prompt: string) => Promise<string>)
+    | null = null;
   private embedContentFn: ((text: string) => Promise<number[]>) | null = null;
   private memoryDir: string;
   private entityExtractor: EntityExtractor | null = null;
@@ -189,6 +193,10 @@ export class MemoryService {
   /** Inject a CLI-auth generateText function to replace the API-key-based client for LLM calls. */
   public setGenerateText(fn: (prompt: string) => Promise<string>) {
     this.generateTextFn = fn;
+    // Pre-build the reflection-routed version so all memory LLM calls
+    // (distill, consolidate, reflect, backfillSessionEvents) use the same
+    // routing logic without rebuilding the closure on every call.
+    this.reflectionGenerateTextFn = this.buildReflectionGenerateText(fn);
     this.initEntityExtractor();
   }
 
@@ -2371,7 +2379,7 @@ ${insightsSection}</knowledge>
    * - events_extracted=1, events_last_msg_time>0 → incremental: only new messages
    */
   public async backfillSessionEvents(): Promise<void> {
-    if (!this.generateTextFn) return;
+    if (!this.reflectionGenerateTextFn) return;
     if (this.isBackfillingSessionEvents) return;
     this.isBackfillingSessionEvents = true;
 
@@ -2491,7 +2499,7 @@ ${convoText}
 
 Events:`;
 
-          const raw = await this.generateTextFn(prompt);
+          const raw = await this.reflectionGenerateTextFn!(prompt);
           const events = raw
             .split("\n")
             .map((l) => l.trim())

@@ -11,7 +11,7 @@
 | [Fact 提取](#1-fact-提取--backgrounddistillerts)       | `backgroundDistiller.ts` | 每次对话后（异步）         | `reflection.provider`（同 consolidateFacts） | JSON facts 数组    |
 | [Fact 合并](#2-fact-合并--consolidatefacts)            | `memory.ts`              | facts 数超过阈值时         | Ollama / Gemini                              | JSON facts 数组    |
 | [Insight 生成](#3-insight-生成--reflect)               | `memory.ts`              | consolidateFacts 后 / 手动 | Ollama / Gemini                              | JSON insights 数组 |
-| [会话事件提取](#4-会话事件提取--backfillsessionevents) | `memory.ts`              | 启动时 + 每 N 轮对话       | Gemini distillation                          | 事件行列表         |
+| [会话事件提取](#4-会话事件提取--backfillsessionevents) | `memory.ts`              | 启动时 + 每 N 轮对话       | `reflection.provider`（同 consolidateFacts） | 事件行列表         |
 | [实体提取](#5-实体提取--entityextractorts)             | `entityExtractor.ts`     | saveFact 后（异步）        | Ollama / Gemini                              | JSON links 数组    |
 | [记忆注入](#6-记忆注入--systempromptbuilderts)         | `systemPromptBuilder.ts` | 每个用户输入前             | —                                            | System prompt 片段 |
 
@@ -211,7 +211,7 @@ ${insightsSection}
 - `autoBackfill()`：Jarvis 启动后 60 秒
 - `agent.ts`：每 `eventsExtractionInterval`（默认 20）轮对话触发一次
 
-**模型**：`jarvisConfig.models.distillation`
+**模型路由**：`reflection.provider` 配置（与 `consolidateFacts`、`reflect` 相同）
 
 **Prompt**：
 
