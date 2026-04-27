@@ -189,6 +189,10 @@ describe("MemoryService.consolidateFacts", () => {
     expect(prompt).toContain("specification");
     // Must include merge/dedup instruction
     expect(prompt.toLowerCase()).toMatch(/merge|consolidate|dedup/);
+    // Must include conflict resolution instruction
+    expect(prompt.toUpperCase()).toContain("RESOLVE CONFLICTS");
+    // Must instruct not to output XML tags
+    expect(prompt.toLowerCase()).toContain("xml tags");
   });
 
   it("updates lastConsolidatedCount after successful consolidation", async () => {

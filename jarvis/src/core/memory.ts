@@ -656,6 +656,7 @@ export class MemoryService {
 TASK: Consolidate the INPUT FACTS below into a clean JSON array.
 OUTPUT FORMAT: You MUST output ONLY a valid JSON array. No markdown, no explanation, no prose.
 CRITICAL: Do NOT output information about yourself, your name, your developer, or your capabilities.
+CRITICAL: Do NOT include any XML tags in your response.
 </task>
 
 <categories>
@@ -667,19 +668,18 @@ CRITICAL: Do NOT output information about yourself, your name, your developer, o
 
 <rules>
 1. Merge semantically duplicate facts into one.
-2. Fix miscategorized facts (hobbies → behavior, response style → preference).
-3. Use English for all content.
-4. Preserve the highest importance score among merged facts.
-5. Output ONLY the JSON array, nothing else.
+2. RESOLVE CONFLICTS: if facts contradict each other (e.g., an older fact says "User prefers Python" and a newer fact says "User uses Node.js exclusively"), synthesize them to reflect the most updated state.
+3. Fix miscategorized facts (hobbies → behavior, response style → interaction_style).
+4. Use English for all content.
+5. Preserve the highest importance score among merged facts.
+6. Output ONLY the JSON array, nothing else.
 </rules>
 
 <input_facts>
 ${factsText}
 </input_facts>
 
-<output>
-[{"category": "identity|behavior|preference|specification", "content": "...", "importance": 1-10}]
-</output>`;
+[{"category": "identity|behavior|interaction_style|specification", "content": "...", "importance": 1-10}]`;
 
       let responseText = "";
       // Route to Ollama if reflection.provider = 'ollama', else use generateTextFn or API client
