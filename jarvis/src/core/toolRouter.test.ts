@@ -75,8 +75,8 @@ describe("ToolRouter", () => {
 
     expect(saveFact).toHaveBeenCalledOnce();
     const [cat, , imp] = saveFact.mock.calls[0];
-    // preference category, no remember-intent → 0.7*7 + 0.3*6 = 4.9+1.8 = 6.7 → 7
-    expect(cat).toBe("preference");
+    // interaction_style category, no remember-intent → 0.7*7 + 0.3*6 = 4.9+1.8 = 6.7 → 7
+    expect(cat).toBe("interaction_style");
     expect(imp).toBe(7);
     expect(parts).toHaveLength(1);
     expect((parts[0] as any).functionResponse.name).toBe("save_memory");
@@ -86,7 +86,7 @@ describe("ToolRouter", () => {
     const { router, saveFact } = makeRouter();
 
     // "记住这个" triggers remember_intent=9
-    // preference: 0.7*7 + 0.3*9 = 4.9+2.7 = 7.6 → 8
+    // interaction_style: 0.7*7 + 0.3*9 = 4.9+2.7 = 7.6 → 8
     const req = makeReq("save_memory", { fact: "记住这个：用中文回答" });
     await router.route([req], new AbortController().signal, vi.fn());
 
@@ -117,7 +117,7 @@ describe("ToolRouter", () => {
     });
     await router.route([req], new AbortController().signal, vi.fn());
     const [, , imp] = saveFact.mock.calls[0];
-    // rememberIntent=9 → preference: 0.7*7 + 0.3*9 = 7.6 → 8
+    // rememberIntent=9 → interaction_style: 0.7*7 + 0.3*9 = 7.6 → 8
     expect(imp).toBe(8);
   });
 
@@ -150,7 +150,7 @@ describe("ToolRouter", () => {
     });
     await router.route([req], new AbortController().signal, vi.fn());
     const [, , imp] = saveFact.mock.calls[0];
-    // No intent detected → rememberIntent=6 → preference: 0.7*7 + 0.3*6 = 6.7 → 7
+    // No intent detected → rememberIntent=6 → interaction_style: 0.7*7 + 0.3*6 = 6.7 → 7
     expect(imp).toBe(7);
   });
 
@@ -159,7 +159,7 @@ describe("ToolRouter", () => {
     const req = makeReq("save_memory", { fact: "user prefers TypeScript" });
     await router.route([req], new AbortController().signal, vi.fn());
     const [, , imp] = saveFact.mock.calls[0];
-    // preference: 0.7*7 + 0.3*6 = 4.9+1.8 = 6.7 → 7
+    // interaction_style: 0.7*7 + 0.3*6 = 4.9+1.8 = 6.7 → 7
     expect(imp).toBe(7);
   });
 
@@ -170,7 +170,7 @@ describe("ToolRouter", () => {
       "identity",
       "specification",
       "behavior",
-      "preference",
+      "interaction_style",
     ]) {
       saveFact.mockClear();
       await router.route(

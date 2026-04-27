@@ -88,7 +88,7 @@ export function getCategoryBaseScore(category: string): number {
   const scores: Record<string, number> = {
     identity: 9,
     specification: 8,
-    preference: 7,
+    interaction_style: 7,
     behavior: 6,
   };
   return scores[category] ?? 5;
@@ -218,7 +218,7 @@ SUBJECT FILTER:
 CATEGORIES (assign each fact to exactly one):
 - identity: static attributes that define who the user IS — name, job title, profession, skills (e.g. "user is a software engineer named David")
 - behavior: the user's habits, hobbies, interests, lifestyle, routines, recurring patterns (e.g. "runs 3 times a week", "likes cycling")
-- preference: how the user wants Jarvis to FORMAT or STYLE its responses — output format, tone, language, length. Applies to persistent instructions only.
+- interaction_style: how the user wants Jarvis to FORMAT or STYLE its responses — output format, tone, language, length. Applies to persistent instructions only.
   Persistent signals: "always", "every time", "from now on", "以后", "每次"
   One-time signals (skip these): "this time", "just now", "for this response", "这次", test commands like "return exactly X"
 - specification: technical decisions, project constraints, or rules the user wants Jarvis to follow in THIS PROJECT (e.g. "this project uses TypeScript")
@@ -237,7 +237,7 @@ IMPORTANCE (1-10):
 - 1-2:  Highly situational, almost certainly transient
 
 OUTPUT FORMAT:
-{"found": true, "facts": [{"category": "identity|behavior|preference|specification", "content": "...", "importance": 1-10}]}
+{"found": true, "facts": [{"category": "identity|behavior|interaction_style|specification", "content": "...", "importance": 1-10}]}
 When nothing is worth recording: {"found": false}
 
 [USER_INPUT]: ${userPrompt}

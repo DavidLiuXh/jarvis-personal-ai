@@ -20,7 +20,7 @@ describe("getCategoryBaseScore", () => {
   it("returns correct base scores for all known categories", () => {
     expect(getCategoryBaseScore("identity")).toBe(9);
     expect(getCategoryBaseScore("specification")).toBe(8);
-    expect(getCategoryBaseScore("preference")).toBe(7);
+    expect(getCategoryBaseScore("interaction_style")).toBe(7);
     expect(getCategoryBaseScore("behavior")).toBe(6);
   });
 
@@ -81,7 +81,7 @@ describe("computeExplicitnessScore", () => {
       computeExplicitnessScore(
         "ok", // neutral userPrompt
         "user always prefers Chinese", // LLM-produced factContent — must be ignored
-        "preference",
+        "interaction_style",
       ),
     ).toBe(5); // default, not 9
   });
@@ -134,7 +134,7 @@ describe("computeFactImportance", () => {
 
   it("falls back to llmScore=5 when LLM omits importance", () => {
     const imp = computeFactImportance({
-      category: "preference",
+      category: "interaction_style",
       userPrompt: "I prefer tables",
       factContent: "user prefers table format",
       llmScore: undefined,
@@ -173,7 +173,7 @@ describe("BackgroundDistiller", () => {
     const generateText = vi
       .fn()
       .mockResolvedValue(
-        '{"found": true, "facts": [{"category": "preference", "content": "user prefers Chinese", "importance": 5}]}',
+        '{"found": true, "facts": [{"category": "interaction_style", "content": "user prefers Chinese", "importance": 5}]}',
       );
     const fakeSaveFact = vi.fn().mockResolvedValue(undefined);
     const distiller = new BackgroundDistiller(generateText, fakeSaveFact);
@@ -272,7 +272,7 @@ describe("BackgroundDistiller", () => {
     const calledPrompt = generateText.mock.calls[0][0] as string;
     expect(calledPrompt).toContain("identity");
     expect(calledPrompt).toContain("behavior");
-    expect(calledPrompt).toContain("preference");
+    expect(calledPrompt).toContain("interaction_style");
     expect(calledPrompt).toContain("specification");
     // New prompt uses "exactly one" instead of "exactly ONE category"
     expect(calledPrompt.toLowerCase()).toContain("exactly one");
@@ -285,7 +285,7 @@ describe("BackgroundDistiller", () => {
     const generateText = vi
       .fn()
       .mockResolvedValue(
-        '{"found": true, "facts": [{"category": "preference", "content": "user prefers table format for data", "importance": 7}]}',
+        '{"found": true, "facts": [{"category": "interaction_style", "content": "user prefers table format for data", "importance": 7}]}',
       );
     const fakeSaveFact = vi.fn().mockResolvedValue(undefined);
     const distiller = new BackgroundDistiller(generateText, fakeSaveFact);
@@ -294,7 +294,7 @@ describe("BackgroundDistiller", () => {
 
     expect(fakeSaveFact).toHaveBeenCalledOnce();
     const [cat, , imp] = fakeSaveFact.mock.calls[0];
-    expect(cat).toBe("preference");
+    expect(cat).toBe("interaction_style");
     expect(imp).toBeGreaterThanOrEqual(1);
     expect(imp).toBeLessThanOrEqual(10);
   });

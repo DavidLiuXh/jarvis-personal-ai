@@ -166,6 +166,15 @@ export class MemoryService {
       );
     } catch (_) {}
 
+    // Migration: rename category "preference" → "interaction_style"
+    try {
+      this.db
+        .prepare(
+          "UPDATE facts SET category = 'interaction_style' WHERE category = 'preference'",
+        )
+        .run();
+    } catch (_) {}
+
     try {
       sqliteVec.load(this.db);
       this.db.exec(`
@@ -652,7 +661,7 @@ CRITICAL: Do NOT output information about yourself, your name, your developer, o
 <categories>
 - identity: static facts about who the USER is (name, job, skills)
 - behavior: user habits, hobbies, interests, routines
-- preference: how the user wants responses formatted (tone, language, length)
+- interaction_style: how the user wants responses formatted (tone, language, length)
 - specification: technical decisions, project rules, system constraints
 </categories>
 
@@ -1290,7 +1299,9 @@ ${insightsSection}</knowledge>
   // preference: response style — always needed every turn
   // insight: moved to conservative mode — ranked by relevance, max 2 per turn,
   //          only injected when importance >= 7 and query-relevant
-  private static readonly ALWAYS_INJECT_CATEGORIES = new Set(["preference"]);
+  private static readonly ALWAYS_INJECT_CATEGORIES = new Set([
+    "interaction_style",
+  ]);
 
   // Max number of insights to inject per turn (conservative quota)
   private static readonly INSIGHT_INJECT_LIMIT = 2;

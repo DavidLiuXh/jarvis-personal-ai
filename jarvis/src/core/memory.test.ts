@@ -184,7 +184,7 @@ describe("MemoryService.consolidateFacts", () => {
     const prompt = generateText.mock.calls[0][0] as string;
     // Prompt must include all four category definitions
     expect(prompt).toContain("behavior");
-    expect(prompt).toContain("preference");
+    expect(prompt).toContain("interaction_style");
     expect(prompt).toContain("identity");
     expect(prompt).toContain("specification");
     // Must include merge/dedup instruction
@@ -458,7 +458,7 @@ describe("MemoryService.searchFacts", () => {
     // 'project uses TypeScript' should rank highest for this query
     // limit=2 applies to identity/specification candidates only (preference/behavior always included)
     const nonStyleFacts = results.filter(
-      (f) => f.category !== "preference" && f.category !== "behavior",
+      (f) => f.category !== "interaction_style" && f.category !== "behavior",
     );
     expect(nonStyleFacts.length).toBeLessThanOrEqual(2);
     expect(results.some((f) => f.content.includes("TypeScript"))).toBe(true);
@@ -472,7 +472,7 @@ describe("MemoryService.searchFacts", () => {
         importance: 8,
       },
       {
-        category: "preference",
+        category: "interaction_style",
         content: "prefers concise answers",
         importance: 10,
       },
@@ -492,10 +492,12 @@ describe("MemoryService.searchFacts", () => {
     const results = await service.searchFacts("cooking recipes", 1);
 
     // preference must always be included (style instructions needed every turn)
-    expect(results.some((f) => f.category === "preference")).toBe(true);
+    expect(results.some((f) => f.category === "interaction_style")).toBe(true);
     // behavior is NOT guaranteed — it competes with identity/specification for the limit
     // With limit=1, only the top-1 non-preference fact is included
-    const nonPrefFacts = results.filter((f) => f.category !== "preference");
+    const nonPrefFacts = results.filter(
+      (f) => f.category !== "interaction_style",
+    );
     expect(nonPrefFacts.length).toBeLessThanOrEqual(1);
   });
 
@@ -554,7 +556,7 @@ describe("MemoryService.searchFacts", () => {
     insertFact("specification", "project uses TypeScript", 9, tsVec);
     insertFact("behavior", "user runs 3 times a week", 6, runVec);
     insertFact("identity", "user likes history", 7, histVec);
-    insertFact("preference", "prefers concise answers", 10, prefVec);
+    insertFact("interaction_style", "prefers concise answers", 10, prefVec);
 
     // Query vector close to TypeScript vector
     service.setEmbedContent(async (_text: string) => [1, 0, 0, 0]);
@@ -563,7 +565,7 @@ describe("MemoryService.searchFacts", () => {
 
     // TypeScript fact should be top result; preference always included
     expect(results.some((f) => f.content.includes("TypeScript"))).toBe(true);
-    expect(results.some((f) => f.category === "preference")).toBe(true);
+    expect(results.some((f) => f.category === "interaction_style")).toBe(true);
     // behavior competes with others under the limit, not guaranteed
   });
 });
@@ -873,12 +875,12 @@ describe("MemoryService — conservative insight mode", () => {
     ).run("insight", "User is disciplined", 6, Date.now());
     db.prepare(
       "INSERT INTO facts (category, content, importance, timestamp) VALUES (?, ?, ?, ?)",
-    ).run("preference", "prefers concise answers", 9, Date.now());
+    ).run("interaction_style", "prefers concise answers", 9, Date.now());
 
     const results = await service.searchFacts("discipline", 5);
 
     expect(results.some((f) => f.category === "insight")).toBe(false);
-    expect(results.some((f) => f.category === "preference")).toBe(true);
+    expect(results.some((f) => f.category === "interaction_style")).toBe(true);
   });
 
   it("searchFacts: insight with importance >= 7 IS injected when query-relevant", async () => {
@@ -1340,7 +1342,8 @@ describe("MemoryService.searchFacts — L3 weighted fusion", () => {
 
     const results = await service.searchFacts("test query", 2);
     const nonStyle = results.filter(
-      (f: any) => f.category !== "preference" && f.category !== "insight",
+      (f: any) =>
+        f.category !== "interaction_style" && f.category !== "insight",
     );
 
     // With equal weights, fact B (importance=10) should rank above fact A (importance=2)
@@ -1404,7 +1407,7 @@ describe("MemoryService.searchFacts — L3 weighted fusion", () => {
 
     db.prepare(
       "INSERT INTO facts (category, content, importance, timestamp) VALUES (?, ?, ?, ?)",
-    ).run("preference", "prefers concise answers", 10, Date.now());
+    ).run("interaction_style", "prefers concise answers", 10, Date.now());
     // insight at importance=7 (at threshold) — should be included
     db.prepare(
       "INSERT INTO facts (category, content, importance, timestamp) VALUES (?, ?, ?, ?)",
@@ -1420,7 +1423,9 @@ describe("MemoryService.searchFacts — L3 weighted fusion", () => {
     service.setEmbedContent(async (_text: string) => [1, 0, 0, 0]);
 
     const results = await service.searchFacts("discipline", 5);
-    expect(results.some((f: any) => f.category === "preference")).toBe(true);
+    expect(results.some((f: any) => f.category === "interaction_style")).toBe(
+      true,
+    );
     // Only the importance=7 insight should appear
     const injectedInsights = results.filter(
       (f: any) => f.category === "insight",

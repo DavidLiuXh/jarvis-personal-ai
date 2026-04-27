@@ -109,7 +109,9 @@ function computeManualMemoryImportance(params: {
   category?: string;
   requestText?: string;
 }): number {
-  const categoryScore = getCategoryBaseScore(params.category ?? "preference");
+  const categoryScore = getCategoryBaseScore(
+    params.category ?? "interaction_style",
+  );
   const rememberIntentScore = computeRememberIntentScore(params.requestText);
   const final = clampScore(0.7 * categoryScore + 0.3 * rememberIntentScore);
   console.error(
@@ -298,7 +300,7 @@ export class ToolRouter {
       } else if (req.name === "save_memory") {
         // gemini-cli's MemoryManagerAgent uses "request"; older Jarvis tool used "fact"
         const fact = (req.args.fact || req.args.request) as string;
-        const category = (req.args.category as string) || "preference";
+        const category = (req.args.category as string) || "interaction_style";
         // Two-factor formula: category stability + remember intent strength.
         // Does NOT use llm_score because save_memory lacks the content-analysis
         // signal that BackgroundDistiller has.

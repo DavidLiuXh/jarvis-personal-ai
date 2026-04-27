@@ -164,9 +164,11 @@ export class SystemPromptBuilder {
     skills: SkillInfo[] = [],
   ): string {
     const identityFacts = facts.filter((f) => f.category === "identity");
-    const preferenceFacts = facts.filter((f) => f.category === "preference");
+    const preferenceFacts = facts.filter(
+      (f) => f.category === "interaction_style",
+    );
     const nonIdentityFacts = facts.filter(
-      (f) => f.category !== "preference" && f.category !== "identity",
+      (f) => f.category !== "interaction_style" && f.category !== "identity",
     );
 
     const derivedStyle = deriveStyleFromIdentity(identityFacts);

@@ -355,7 +355,7 @@ If no entity relations can be extracted, respond: {"found": false}
 ## III. OUTPUT CONSTRAINTS
 <style_constraints>
 - [DEFAULT]: ...                  ← 从 identity facts 推导
-- [USER_PREFERENCE]: ...          ← preference facts
+- [USER_PREFERENCE]: ...          ← interaction_style facts
 </style_constraints>
 
 <relevant_past_conversations>     ← vec_memories 语义预热，最多 prewarmLimit 条
