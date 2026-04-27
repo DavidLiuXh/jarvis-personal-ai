@@ -70,6 +70,10 @@ export class MemoryService {
         filename TEXT PRIMARY KEY,
         last_mtime INTEGER
       );
+      CREATE TABLE IF NOT EXISTS kv_meta (
+        key   TEXT PRIMARY KEY,
+        value TEXT
+      );
     `);
 
     // Knowledge graph tables
@@ -181,6 +185,33 @@ export class MemoryService {
         e.message,
       );
     }
+
+    // Restore lastConsolidatedCount from DB so restarts don't cause spurious
+    // consolidations. Falls back to current fact count if no value persisted.
+    this.lastConsolidatedCount =
+      this.readKvMeta("lastConsolidatedCount") ??
+      (this.db.prepare("SELECT COUNT(*) as c FROM facts").get() as any)?.c ??
+      0;
+  }
+
+  private readKvMeta(key: string): number | null {
+    try {
+      const row = this.db
+        .prepare("SELECT value FROM kv_meta WHERE key = ?")
+        .get(key) as { value: string } | undefined;
+      if (row) return parseInt(row.value, 10);
+    } catch (_) {}
+    return null;
+  }
+
+  private writeKvMeta(key: string, value: number): void {
+    try {
+      this.db
+        .prepare(
+          "INSERT INTO kv_meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+        )
+        .run(key, String(value));
+    } catch (_) {}
   }
 
   public setConfig(config: any) {
@@ -802,6 +833,7 @@ ${factsText}
 
         runUpdate();
         this.lastConsolidatedCount = newFacts.length;
+        this.writeKvMeta("lastConsolidatedCount", newFacts.length);
         console.error(
           `✨ [Jarvis Reflection] Consolidation complete. Condensed ${allFacts.length} fragments into ${newFacts.length} core insights.`,
         );
@@ -815,6 +847,7 @@ ${factsText}
       } else {
         // LLM returned text but no valid JSON array — update baseline to avoid re-triggering immediately
         this.lastConsolidatedCount = allFacts.length;
+        this.writeKvMeta("lastConsolidatedCount", allFacts.length);
         console.error(
           `⚠️ [Jarvis Reflection] No valid JSON array in consolidation response. Skipping. Preview: ${responseText.slice(0, 200)}`,
         );
