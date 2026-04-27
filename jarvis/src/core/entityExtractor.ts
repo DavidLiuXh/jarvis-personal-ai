@@ -8,17 +8,28 @@ import { ollamaGenerate } from "./ollamaClient.js";
 
 export type EntityLink = {
   subject: string;
-  subject_type: "person" | "project" | "technology" | "concept";
+  subject_type:
+    | "person"
+    | "project"
+    | "technology"
+    | "concept"
+    | "formatting_rule";
   relation:
     | "is_a"
     | "has_skill"
     | "works_on"
     | "uses"
     | "interested_in"
-    | "has_habit"
-    | "part_of";
+    | "has_behavior"
+    | "is_part_of"
+    | "prefers";
   object: string;
-  object_type: "person" | "project" | "technology" | "concept";
+  object_type:
+    | "person"
+    | "project"
+    | "technology"
+    | "concept"
+    | "formatting_rule";
 };
 
 export type GenerateTextFn = (prompt: string) => Promise<string>;
@@ -26,36 +37,38 @@ export type GenerateTextFn = (prompt: string) => Promise<string>;
 const EXTRACTION_PROMPT = (factsText: string) =>
   `
 Extract entities and relations from the following FACTS ONLY.
+Respond ONLY with raw valid JSON. DO NOT wrap in markdown code blocks (no \`\`\`json).
 
 ENTITY TYPES (mutually exclusive):
-- person: a human individual (e.g. "David", "the user")
+- person: a human individual (e.g. "David", "User")
 - project: a software project or system (e.g. "Jarvis", "jarvis-personal-ai")
 - technology: a tool, language, framework, or service (e.g. "TypeScript", "Ollama", "bge-m3")
 - concept: an abstract domain or topic (e.g. "investing", "running", "machine learning")
+- formatting_rule: a response style or format preference (e.g. "table format", "Chinese language")
 
-RELATION TYPES:
-- is_a: subject is an instance of object (e.g. David is_a software_engineer)
-- has_skill: person has a skill (e.g. David has_skill embedding_debugging)
-- works_on: person works on a project (e.g. David works_on jarvis-personal-ai)
-- uses: project/person uses a technology (e.g. jarvis-personal-ai uses TypeScript)
-- interested_in: person is interested in a concept (e.g. David interested_in investing)
-- has_habit: person has a recurring behavior (e.g. David has_habit running)
-- part_of: object is a component of subject (e.g. DNI part_of jarvis-personal-ai)
+RELATION TYPES (Subject -> Relation -> Object):
+- is_a: subject is an instance or type of object (e.g. David is_a software_engineer)
+- has_skill: person possesses a skill (e.g. David has_skill TypeScript)
+- works_on: person contributes to a project (e.g. David works_on jarvis-personal-ai)
+- uses: person/project utilizes a technology (e.g. jarvis-personal-ai uses TypeScript)
+- interested_in: person is curious about or focuses on a concept (e.g. David interested_in investing)
+- has_behavior: person exhibits a recurring habit or action (e.g. David has_behavior running)
+- is_part_of: subject is a component of object (e.g. API is_part_of Backend)
+- prefers: person/project favors a technology or formatting_rule (e.g. User prefers table_format)
 
-RULES:
-- Only extract entities that are explicitly named or clearly implied in the facts.
-- The user should always be normalized to their actual name if known, otherwise use "user".
-- Do NOT invent entities or relations not grounded in the facts.
-- Each relation must have exactly one subject and one object.
-- If a fact yields no clear entity relation, skip it.
-- Prefer specific entity names over generic ones ("jarvis-personal-ai" over "the project").
+EXTRACTION RULES:
+- GROUNDING: Only extract entities explicitly named or clearly implied in the facts. Do NOT hallucinate.
+- NORMALIZATION: Standardize entity names to canonical forms (e.g. "ts" -> "TypeScript", "js" -> "JavaScript"). Use proper casing ("Python" not "python").
+- USER: Normalize the user to their actual name if known; otherwise use "User" (capitalized).
+- ATOMICITY: Each relation must have exactly one subject and one object.
+- SPECIFICITY: Prefer specific names over generic ones ("jarvis-personal-ai" over "the project").
+- If a fact yields no clear mapped relation, skip it.
 
 Input facts:
 ${factsText}
 
-Respond ONLY with JSON:
-{"found": true, "links": [{"subject": "...", "subject_type": "person|project|technology|concept", "relation": "is_a|has_skill|works_on|uses|interested_in|has_habit|part_of", "object": "...", "object_type": "person|project|technology|concept"}]}
-If no entity relations can be extracted, respond: {"found": false}
+If valid relations found: {"found": true, "links": [{"subject": "...", "subject_type": "person|project|technology|concept|formatting_rule", "relation": "is_a|has_skill|works_on|uses|interested_in|has_behavior|is_part_of|prefers", "object": "...", "object_type": "person|project|technology|concept|formatting_rule"}]}
+If no relations found: {"found": false}
 `.trim();
 
 export class EntityExtractor {
