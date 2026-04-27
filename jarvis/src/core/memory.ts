@@ -1372,15 +1372,17 @@ ${insightsSection}</knowledge>
           // bge-m3 L2 distance guide: <0.5 high, <1.0 medium, >1.5 noise.
           const fetchLimit = Math.max(cap * 3, 20);
           const maxDistance = this.jarvisConfig.memory.factMaxDistance ?? 1.0;
+          // sqlite-vec requires 'k = ?' alongside distance filter —
+          // LIMIT alone is not accepted when AND constraints are present.
           const vecRows = this.db
             .prepare(
               `SELECT id, distance FROM vec_facts
                  WHERE embedding MATCH ?
+                   AND k = ?
                    AND distance < ?
-                 ORDER BY distance
-                 LIMIT ?`,
+                 ORDER BY distance`,
             )
-            .all(new Float32Array(queryVec), maxDistance, fetchLimit) as Array<{
+            .all(new Float32Array(queryVec), fetchLimit, maxDistance) as Array<{
             id: number;
             distance: number;
           }>;
