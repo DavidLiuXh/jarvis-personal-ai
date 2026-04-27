@@ -207,6 +207,14 @@ export interface JarvisConfig {
      * Higher λ = faster forgetting. Default: 0.1 (~37% after 10 days, ~5% after 30 days).
      */
     decayLambda: number;
+    /**
+     * Maximum L2 distance for vec_facts KNN candidate filtering.
+     * Facts with distance >= this value are excluded before RRF fusion,
+     * keeping the relevance signal clean from importance/decay noise.
+     * bge-m3 guide: <0.5 high relevance, <1.0 medium, >1.5 noise.
+     * Only applies when factRelevanceStrategy = 'embedding'. Default: 1.0.
+     */
+    factMaxDistance: number;
   };
   security: {
     jailbreak: boolean;
@@ -326,6 +334,7 @@ export class ConfigManager {
         decayLambda: 0.1,
         hybridSearch: true,
         rrfK: 60,
+        factMaxDistance: 1.0,
       },
       security: {
         jailbreak: false,

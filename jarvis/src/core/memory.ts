@@ -1366,16 +1366,21 @@ ${insightsSection}</knowledge>
           const alpha = this.jarvisConfig.memory.vectorSimilarityWeight ?? 0.7;
           const beta = this.jarvisConfig.memory.importanceWeight ?? 0.3;
 
-          // vec_facts: only fetch id + distance (no JOIN needed)
+          // vec_facts: fetch candidates within distance threshold.
+          // Filtering at the KNN stage keeps the signal clean — distance is
+          // pure semantic similarity, unaffected by importance or decay.
+          // bge-m3 L2 distance guide: <0.5 high, <1.0 medium, >1.5 noise.
           const fetchLimit = Math.max(cap * 3, 20);
+          const maxDistance = this.jarvisConfig.memory.factMaxDistance ?? 1.0;
           const vecRows = this.db
             .prepare(
               `SELECT id, distance FROM vec_facts
-               WHERE embedding MATCH ?
-               ORDER BY distance
-               LIMIT ?`,
+                 WHERE embedding MATCH ?
+                   AND distance < ?
+                 ORDER BY distance
+                 LIMIT ?`,
             )
-            .all(new Float32Array(queryVec), fetchLimit) as Array<{
+            .all(new Float32Array(queryVec), maxDistance, fetchLimit) as Array<{
             id: number;
             distance: number;
           }>;

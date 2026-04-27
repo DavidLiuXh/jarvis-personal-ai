@@ -304,6 +304,13 @@ Configuration file location: `~/.gemini-jarvis/config.json`
     // RRF parameter k. Higher k reduces the dominance of top-ranked results.
     // Standard value is 60. Default: 60
     "rrfK": 60,
+
+    // Maximum L2 distance for vec_facts KNN candidate filtering.
+    // Facts with distance >= this value are excluded at the KNN stage,
+    // before RRF fusion — keeps relevance signal clean from importance/decay.
+    // bge-m3 guide: <0.5 high relevance, <1.0 medium, >1.5 noise.
+    // Only applies when factRelevanceStrategy = "embedding". Default: 1.0
+    "factMaxDistance": 1.0,
   },
 
   // ─────────────────────────────────────────────
