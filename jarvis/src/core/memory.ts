@@ -1392,6 +1392,12 @@ ${insightsSection}</knowledge>
           const nowMs = Date.now();
 
           if (vecRows.length > 0) {
+            // Log distance distribution to help calibrate factMaxDistance
+            const distMin = vecRows[0]?.distance.toFixed(3);
+            const distMax = vecRows[vecRows.length - 1]?.distance.toFixed(3);
+            debugLogger.debug(
+              `[searchFacts] vec_facts distances: count=${vecRows.length} min=${distMin} max=${distMax} threshold=${maxDistance}`,
+            );
             // BM25 parallel search (best-effort)
             const bm25RankMap = new Map<number, number>(); // fact_id → rank (1-based)
             if (hybridSearch) {
