@@ -274,7 +274,8 @@ describe("BackgroundDistiller", () => {
     expect(calledPrompt).toContain("behavior");
     expect(calledPrompt).toContain("preference");
     expect(calledPrompt).toContain("specification");
-    expect(calledPrompt).toContain("exactly ONE category");
+    // New prompt uses "exactly one" instead of "exactly ONE category"
+    expect(calledPrompt.toLowerCase()).toContain("exactly one");
     expect(calledPrompt).toContain("FORMAT or STYLE");
     expect(calledPrompt.toLowerCase()).toMatch(/persistent|long.term/);
     expect(calledPrompt.toLowerCase()).toMatch(/one.time|temporary|test/);
@@ -357,8 +358,9 @@ describe("BackgroundDistiller", () => {
     );
 
     const calledPrompt = generateText.mock.calls[0][0] as string;
-    expect(calledPrompt.toLowerCase()).toContain("user input");
-    expect(calledPrompt).toContain("NOT from");
+    // New prompt uses [USER_INPUT] tag and positive framing ("sole data source")
+    expect(calledPrompt).toContain("[USER_INPUT]");
+    expect(calledPrompt.toLowerCase()).toContain("sole data source");
   });
 
   it("prompt classifies hobbies and interests as behavior, not identity", async () => {
@@ -376,6 +378,7 @@ describe("BackgroundDistiller", () => {
       lines.find((l) => l.trim().startsWith("- identity:")) ?? "";
     expect(behaviorLine.toLowerCase()).toContain("hobbies");
     expect(identityLine.toLowerCase()).not.toContain("hobbies");
-    expect(calledPrompt).toContain("behavior, NOT identity");
+    // New prompt uses positive framing: "choose behavior" instead of "NOT identity"
+    expect(calledPrompt.toLowerCase()).toContain("behavior");
   });
 });

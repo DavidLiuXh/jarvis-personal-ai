@@ -203,48 +203,45 @@ export class BackgroundDistiller {
   async distill(userPrompt: string, assistantText: string): Promise<void> {
     try {
       const frozenPrompt = `
-Extract persistent facts from the USER INPUT ONLY. Do NOT extract facts from the assistant output.
+You are a memory probe that reads only the [USER_INPUT] field below and extracts persistent facts about the user or the Jarvis project.
 
-ENTITY ATTRIBUTION (CRITICAL):
-- Only extract facts where the subject is the USER (e.g., "User likes X") or the JARVIS SYSTEM/PROJECT (e.g., "Jarvis must use Y").
-- Do NOT extract facts about external entities, third-party projects, or topics being discussed conceptually (e.g., if user says "OpenClaw uses DNI", do NOT extract this as a fact about Jarvis or the user).
-- If the subject is an external product or another AI, IGNORE it.
+DATA SOURCE:
+- Your sole data source is [USER_INPUT].
+- [ASSISTANT_OUTPUT] is provided as context only; treat it as read-only background.
+- When the user asks a question and the assistant answers, the assistant's answer carries zero evidentiary weight — only what the user explicitly stated counts.
+- When [USER_INPUT] contains no new persistent facts, respond with {"found": false}.
 
-Source rule (CRITICAL):
-- Extract ONLY from: "User input" below
-- NOT from: the assistant's response, even if the assistant enumerates or summarizes user information
-- If the user asks "what are my hobbies?" and the assistant lists them, extract NOTHING — the user stated no new facts
-- Only extract what the user explicitly stated or revealed about themselves
+SUBJECT FILTER:
+- Record facts whose subject is the USER or the JARVIS SYSTEM/PROJECT.
+- Facts about third-party products, external projects, or conceptual topics belong to those entities, not to the user or Jarvis — leave them unrecorded.
 
-Category definitions (mutually exclusive):
-- identity: ONLY static facts about who the user IS — name, job title, profession, skills (e.g. "user is a software engineer named David", "user is good at cooking")
-- behavior: User's habits, hobbies, interests, lifestyle, routines, or recurring patterns (e.g. "runs 3 times a week", "likes cycling", "interested in history", "always asks for background before details")
-- preference: ONLY persistent, long-term response style preferences about FORMAT or STYLE — output format, tone, language, length. NOT personal traits, hobbies, or one-time/temporary instructions.
-  Signs of persistence: "always", "every time", "from now on", "以后", "每次"
-  Signs of one-time (IGNORE these): "this time", "just now", "for this response", "这次", "just say", test commands like "return exactly X"
-- specification: Technical decisions, project constraints, or system rules FOR THIS PROJECT (e.g. "this project uses TypeScript", "do not modify gemini-cli source"). Must be a rule the user wants JARVIS to follow.
+CATEGORIES (assign each fact to exactly one):
+- identity: static attributes that define who the user IS — name, job title, profession, skills (e.g. "user is a software engineer named David")
+- behavior: the user's habits, hobbies, interests, lifestyle, routines, recurring patterns (e.g. "runs 3 times a week", "likes cycling")
+- preference: how the user wants Jarvis to FORMAT or STYLE its responses — output format, tone, language, length. Applies to persistent instructions only.
+  Persistent signals: "always", "every time", "from now on", "以后", "每次"
+  One-time signals (skip these): "this time", "just now", "for this response", "这次", test commands like "return exactly X"
+- specification: technical decisions, project constraints, or rules the user wants Jarvis to follow in THIS PROJECT (e.g. "this project uses TypeScript")
 
-Importance scoring (1-10):
-- 9-10: Core identity facts (name, profession), strong long-term preferences, critical project constraints
+CLASSIFICATION GUIDE:
+- Hobbies, interests, things the user "likes" → behavior
+- identity covers name / job / skill only; when unsure between identity and behavior, choose behavior
+- preference covers response style only; personal interests go to behavior
+- Each piece of information belongs to one category; record it once
+
+IMPORTANCE (1-10):
+- 9-10: Core identity facts, strong long-term preferences, critical project constraints
 - 7-8:  Recurring behavior patterns, important project decisions, persistent style preferences
 - 5-6:  Occasional habits, secondary preferences, project context that may change
 - 3-4:  Weak signals, single-mention interests, low-confidence inferences
-- 1-2:  Rarely useful, highly situational, almost certainly transient
+- 1-2:  Highly situational, almost certainly transient
 
-Rules:
-- Each fact belongs to exactly ONE category.
-- Hobbies, interests, and things the user "likes" → behavior, NOT identity.
-- identity = name/job/skill only. If unsure between identity/behavior, use behavior.
-- "preference" means response style only. User hobbies/interests → behavior, NOT preference.
-- Do not repeat the same information under different categories.
-- If a fact is about an external entity (like "OpenClaw"), ignore it.
-- Only extract facts that are genuinely new and worth remembering long-term.
+OUTPUT FORMAT:
+{"found": true, "facts": [{"category": "identity|behavior|preference|specification", "content": "...", "importance": 1-10}]}
+When nothing is worth recording: {"found": false}
 
-Respond ONLY with JSON: {"found": true, "facts": [{"category": "identity|behavior|preference|specification", "content": "...", "importance": 1-10}]}
-If zero new data worth persisting, respond: {"found": false}
-
-User input: ${userPrompt}
-Assistant output (context only, do NOT extract from this): ${assistantText}
+[USER_INPUT]: ${userPrompt}
+[ASSISTANT_OUTPUT]: ${assistantText}
 `;
 
       const fullText = await this.generateText(frozenPrompt);
