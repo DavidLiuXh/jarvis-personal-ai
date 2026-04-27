@@ -1,6 +1,6 @@
 # Jarvis System Prompt Structure
 
-记录 Jarvis 每轮对话发送给 LLM 的完整 prompt 构成，以及精简前后的对比。
+记录 Jarvis 每轮对话发送给 LLM 的完整 prompt 构成。
 
 ---
 
@@ -32,178 +32,135 @@
 
 ---
 
-## 二、精简前：使用 getCoreSystemPrompt()（已废弃）
+## 二、System Instruction 详细构成
 
-**代码**（`agent.ts`）：
-
-```typescript
-const defaultInstruction = getCoreSystemPrompt(
-  this.client.config,
-  this.client.config.getUserMemory(),
-);
-```
-
-### System Instruction 完整构成
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│  ① getCoreSystemPrompt() 输出                               │
-│                                                             │
-│  Preamble                                                   │
-│    "You are Gemini CLI, an interactive CLI agent..."        │
-│                                                             │
-│  # Core Mandates                                            │
-│    ## Security & System Integrity                           │
-│    ## Context Efficiency（详细规则 + examples）              │
-│    ## Engineering Standards（代码规范、测试要求等）           │
-│                                                             │
-│  # Available Sub-Agents                                     │
-│  # Agent Skills                                             │
-│  # Primary Workflows（工具使用、代码编辑、Plan Mode）         │
-│  # Operational Guidelines（Tone、Shell、Tool Usage）         │
-│  # Sandbox / Git                                            │
-│  GEMINI.md（userMemory）                                    │
-│                                                             │
-│  估计 token 数：3000 - 5000 tokens                          │
-├─────────────────────────────────────────────────────────────┤
-│  ② JARVIS OPERATIONAL FRAMEWORK v4.0                        │
-│                                                             │
-│  ## I. CORE PROTOCOLS (MANDATORY)                           │
-│     1. TOOL_USE_ATOMICITY                                   │
-│     2. CODE_MODIFICATION_PROTOCOL（含代码关键词时）          │
-│     3. PUSH_TO_CHANNEL（含推送关键词时）                     │
-│     4. TASK_MANAGEMENT（含任务关键词时）                     │
-│     5. TASK_DECOMPOSITION                                   │
-│     6. ACTIVE_RECALL (MANDATORY)                            │
-│     7. SKILL_ACTIVATION（有 skill 时）                      │
-│                                                             │
-│  ## II. EXECUTION CONTEXT                                   │
-│     <persistent_context>（facts，无排序优化）                │
-│     <memory_status>[STRICT]: LONG-TERM LOGS NOT LOADED      │
-│     <style_constraints>                                     │
-│                                                             │
-│  ## III. ROLE & TONE                                        │
-│  ## IV. RESPONSE FORMATTING                                 │
-│                                                             │
-│  估计 token 数：500 - 1500 tokens                           │
-├─────────────────────────────────────────────────────────────┤
-│  ③ <relevant_past_conversations>（末尾，压住 Formatting）   │
-│     [Past 1]: User: ... \nAssistant: ...                    │
-│     估计 token 数：0 - 600 tokens                           │
-└─────────────────────────────────────────────────────────────┘
-
-总计估算：3500 - 7100 tokens / 轮
-
-问题：
-- Formatting 规则被 relevant_past_conversations 压到中间，近因效应失效
-- identity facts 散落在 persistent_context 中间，首因效应未利用
-- memory_status 标签弱（[STRICT]），LLM 容易忽略失忆状态
-- vec_memories 和 session history 格式相同，模型易混淆时间线
-- ACTIVE_RECALL 与 memory_status 内容重复
-```
-
----
-
-## 三、当前版本：buildJarvisPreamble() + 注入顺序优化
-
-**代码**（`agent.ts`）：
+**代码入口**：`agent.ts` → `refreshContext(userPrompt)`
 
 ```typescript
+// agent.ts
 const defaultInstruction = buildJarvisPreamble();
+const protocol = this.promptBuilder.buildFromFacts(facts, userPrompt, skills);
+// prewarmSection = <relevant_past_conversations>...</relevant_past_conversations>
+this.client
+  .getChat()
+  .setSystemInstruction(defaultInstruction + "\n" + protocol + prewarmSection);
 ```
 
-### System Instruction 完整构成
+### ① buildJarvisPreamble()
+
+**文件**：`systemPromptBuilder.ts:14`  
+**token 估算**：300 - 600
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│  ① buildJarvisPreamble() 输出                               │
-│                                                             │
-│  "You are Jarvis, a deeply personalized AI assistant..."    │
-│                                                             │
-│  # Core Mandates                                            │
-│    ## Security & System Integrity（凭证保护、不自动 commit） │
-│    ## Context Efficiency（核心原则：并行、减少轮次）          │
-│    ## Tool Usage（并行/顺序、文件编辑冲突、Shell 规则、确认） │
-│    ## Memory（recall_memory / saveFact Jarvis 专属规则）     │
-│    ## Tone & Style（简洁、Markdown、工具用于行动）            │
-│                                                             │
-│  注：GEMINI.md 不再加载（Gemini CLI 全局配置与 Jarvis 无关） │
-│                                                             │
-│  估计 token 数：300 - 600 tokens                            │
-├─────────────────────────────────────────────────────────────┤
-│  ② JARVIS OPERATIONAL FRAMEWORK v4.0                        │
-│                                                             │
-│  ## I. EXECUTION CONTEXT（首因 — 开头奠定基调）             │
-│                                                             │
-│     <memory_status>                                         │
-│     [CRITICAL_LIMITATION]: Long-term memory is currently   │
-│     offline. Do not reference past events unless they       │
-│     appear in <persistent_context> or                       │
-│     <relevant_past_conversations>. Call 'recall_memory'     │
-│     first. DO NOT HALLUCINATE.                              │
-│     </memory_status>                                        │
-│                                                             │
-│     <persistent_context>                                    │
-│       [IDENTITY] facts（首因，排在最前）                    │
-│       [BEHAVIOR] / [SPECIFICATION] / [INSIGHT] facts        │
-│     </persistent_context>                                   │
-│                                                             │
-│     <relevant_past_conversations>                           │
-│       [Long-term Memory 1]: User: ... \nAssistant: ...      │
-│       [Long-term Memory 2]: ...                             │
-│     </relevant_past_conversations>                          │
-│                                                             │
-│  ## II. OPERATIONAL PROTOCOLS（动态注入）                   │
-│     1. TOOL_USE_ATOMICITY（始终）                           │
-│     2. CODE_MODIFICATION_PROTOCOL（含代码关键词时）          │
-│     3. PUSH_TO_CHANNEL（含推送关键词时）                     │
-│     4. TASK_MANAGEMENT（含任务关键词时）                     │
-│     5. TASK_DECOMPOSITION（始终）                           │
-│     6. SKILL_ACTIVATION（有 skill 时）                      │
-│     注：ACTIVE_RECALL 已合并入 memory_status，不再重复      │
-│                                                             │
-│  ## III. OUTPUT CONSTRAINTS（近因 — 末尾最后通牒）          │
-│     - Role & Tone（JARVIS: deterministic, precise）         │
-│     - Response Formatting（Markdown、表格、代码路径）        │
-│     - <style_constraints>（preference facts + 推断风格）    │
-│                                                             │
-│  估计 token 数：400 - 1200 tokens                           │
-└─────────────────────────────────────────────────────────────┘
+You are Jarvis, a deeply personalized AI assistant...
 
-总计估算：700 - 1800 tokens / 轮
+# Core Mandates
+
+## Security & System Integrity
+  - 凭证保护，不自动 commit
+
+## Context Efficiency
+  - 并行工具调用，减少轮次
+
+## Tool Usage
+  - 并行/顺序规则（wait_for_previous）
+  - 文件编辑冲突规则
+  - Shell 命令规则
+  - 确认协议
+
+## Memory
+  - recall_memory：上下文不可见时必须先调用
+  - save_memory：自动蒸馏，仅在用户明确要求时手动调用
+
+## Tone & Style
+  - 简洁直接，避免废话
+  - GitHub-flavored Markdown
+  - 工具用于行动，文本用于沟通
 ```
 
 ---
 
-## 四、精简前后对比
+### ② JARVIS OPERATIONAL FRAMEWORK v4.0
 
-| 部分                     | 精简前                         | 当前版本                     |
-| ------------------------ | ------------------------------ | ---------------------------- |
-| 角色定义                 | "You are Gemini CLI..."        | "You are Jarvis..."          |
-| Security                 | ✅ 完整                        | ✅ 完整                      |
-| Context Efficiency       | 详细 + examples（~500 tokens） | 核心原则（~50 tokens）       |
-| Engineering Standards    | ✅（~800 tokens）              | ❌ 去掉                      |
-| Sub-Agents               | ✅                             | ❌ 去掉                      |
-| Primary Workflows        | ✅（~600 tokens）              | ❌ 去掉                      |
-| Tool Usage               | ✅                             | ✅ 精简保留                  |
-| Shell 规则               | ✅                             | ✅ 保留                      |
-| 记忆工具规则             | Gemini CLI（save_memory）      | Jarvis 专属（recall_memory） |
-| Tone & Style             | ✅                             | ✅ 保留                      |
-| Plan Mode / Task Tracker | ✅                             | ❌ 去掉                      |
-| Sandbox / Git            | ✅                             | ❌ 去掉                      |
-| GEMINI.md                | ✅ 加载                        | ❌ 不加载                    |
-| memory_status 标签       | `[STRICT]`                     | `[CRITICAL_LIMITATION]`      |
-| ACTIVE_RECALL 协议       | 单独一条                       | 合并入 memory_status         |
-| identity facts 位置      | 散落在 persistent_context      | 置顶（首因效应）             |
-| vec_memories 标签        | `[Past N]`                     | `[Long-term Memory N]`       |
-| Formatting 位置          | 中间（被 prewarm 压住）        | 末尾（近因效应）             |
-| **Preamble token**       | **3000 - 5000**                | **300 - 600**                |
-| **总 system prompt**     | **3500 - 7100**                | **700 - 1800**               |
-| **节省**                 | —                              | **~75%**                     |
+**文件**：`systemPromptBuilder.ts:233` → `framework()` 方法  
+**token 估算**：400 - 1200
+
+```
+# JARVIS OPERATIONAL FRAMEWORK v4.0
+
+## I. EXECUTION CONTEXT
+  ┌─ <memory_status>
+  │  [CRITICAL_LIMITATION]: Long-term memory is currently offline.
+  │  Do not reference past events unless they appear in
+  │  <persistent_context> or <relevant_past_conversations>.
+  │  If the user refers to past conversations or decisions,
+  │  call 'recall_memory' first. DO NOT HALLUCINATE.
+  └─ </memory_status>
+
+  ┌─ <persistent_context>
+  │  - [IDENTITY]: ...    ← identity facts，置顶（首因效应）
+  │  - [BEHAVIOR]: ...    ← behavior facts
+  │  - [SPECIFICATION]: ... ← specification facts
+  │  - [INSIGHT]: ...     ← insight facts（importance≥7 且查询相关时，最多2条）
+  │  （注：interaction_style facts 不在此处，在 style_constraints）
+  └─ </persistent_context>
+
+## II. OPERATIONAL PROTOCOLS（动态注入，由 selectProtocols(userPrompt) 决定）
+  1. TOOL_USE_ATOMICITY          ← 始终注入
+  2. CODE_MODIFICATION_PROTOCOL  ← 含代码关键词时（修改/edit/refactor 等）
+  3. PUSH_TO_CHANNEL             ← 含推送关键词时（发到/微信/feishu 等）
+  4. TASK_MANAGEMENT             ← 含任务关键词时（每天/定时/task 等）
+  5. TASK_DECOMPOSITION          ← 始终注入
+  6. SKILL_ACTIVATION            ← 有可用 skill 时
+
+## III. OUTPUT CONSTRAINTS（近因效应 — 末尾最后通牒）
+  - You are JARVIS: deterministic, precise, and system-native.
+  - Skip conversational fillers. Use high-density information.
+  - Use Markdown for structure. For financial/data analysis, use tables.
+    For code, specify language and file path.
+
+  ┌─ <style_constraints>（仅在有 identity 技术特征或 interaction_style facts 时生成）
+  │  - [DEFAULT]: User is a technical professional...  ← 从 identity facts 推导
+  │  - [USER_PREFERENCE]: ...  ← interaction_style facts（每条一行）
+  └─ </style_constraints>
+```
 
 ---
 
-## 五、注入顺序设计原理
+### ③ \<relevant_past_conversations\>（prewarm）
+
+**文件**：`agent.ts:322`，拼接在 protocol 末尾  
+**数据来源**：`memoryService.search(userPrompt, prewarmLimit)`，查询 `vec_memories`  
+**token 估算**：0 - 600（默认最多 3 条，`prewarmLimit=3`）
+
+```
+<relevant_past_conversations>
+[Long-term Memory 1]: [2026-04-17] User decided to use TypeScript...
+[Long-term Memory 2]: [2026-04-18] Jarvis confirmed the project structure...
+[Long-term Memory 3]: ...
+</relevant_past_conversations>
+```
+
+---
+
+## 三、Fact 注入规则
+
+| Category            | 注入位置                    | 注入策略                                         |
+| ------------------- | --------------------------- | ------------------------------------------------ |
+| `identity`          | `<persistent_context>` 首位 | 无条件注入，置顶                                 |
+| `behavior`          | `<persistent_context>`      | 按相关性排序，上限 `factRelevanceLimit`（默认5） |
+| `specification`     | `<persistent_context>`      | 同上                                             |
+| `insight`           | `<persistent_context>` 末尾 | importance≥7 且查询相关，最多2条                 |
+| `interaction_style` | `<style_constraints>`       | 无条件注入，标签 `[USER_PREFERENCE]`             |
+
+**检索策略**（`factRelevanceStrategy`）：
+
+- `"jaccard"`（默认）：词汇重叠，适合关键词查询
+- `"embedding"`（推荐）：语义相似度，适合自然语言查询；需配置 `factMaxDistance`（默认1.0）过滤低相关候选
+
+---
+
+## 四、注入顺序设计原理
 
 基于 LLM 注意力的 **U 型曲线（Lost in the Middle）**：
 
@@ -221,17 +178,33 @@ const defaultInstruction = buildJarvisPreamble();
 | 位置           | 放什么                                                                   | 原因                                           |
 | -------------- | ------------------------------------------------------------------------ | ---------------------------------------------- |
 | 开头（首因）   | EXECUTION CONTEXT（memory_status + identity facts + persistent_context） | 奠定"我是谁、我知道什么、我失忆了什么"的基调   |
-| 中间（塌陷区） | relevant_past_conversations + protocols                                  | 数据填充，LLM 会读但注意力较低                 |
-| 末尾（近因）   | OUTPUT CONSTRAINTS（Role + Formatting + style）                          | 最后通牒，生成响应前看到的最后内容，遵循率最高 |
+| 中间（塌陷区） | protocols + relevant_past_conversations                                  | 数据填充，LLM 会读但注意力较低                 |
+| 末尾（近因）   | OUTPUT CONSTRAINTS + style_constraints                                   | 最后通牒，生成响应前看到的最后内容，遵循率最高 |
+
+---
+
+## 五、token 估算汇总
+
+| 部分                            | 估算 token     |
+| ------------------------------- | -------------- |
+| ① buildJarvisPreamble           | 300 - 600      |
+| ② FRAMEWORK（无 facts/prewarm） | 200 - 400      |
+| persistent_context（facts）     | 100 - 400      |
+| protocols（动态）               | 100 - 400      |
+| style_constraints               | 0 - 100        |
+| ③ relevant_past_conversations   | 0 - 600        |
+| **合计**                        | **700 - 2500** |
 
 ---
 
 ## 六、注意事项
 
-1. **JARVIS OPERATIONAL FRAMEWORK 每轮重建**：`buildFromFacts()` 在每次 `refreshContext()` 时调用，facts 和 prewarm 内容随查询变化，protocols 由 `selectProtocols(userPrompt)` 动态决定。
+1. **FRAMEWORK 每轮重建**：`buildFromFacts()` 在每次 `refreshContext()` 时调用，facts 和 prewarm 内容随查询变化，protocols 由 `selectProtocols(userPrompt)` 动态决定。
 
-2. **Conversation History 只在启动时注入一次**：`agentInitializer.resumeFromDisk()` 在启动时把 session summary + 最近 N 轮原始消息通过 `client.resumeChat()` 设置为初始历史，之后由 Gemini CLI 的 `ChatRecordingService` 自动追加新消息。
+2. **Conversation History 只在启动时注入一次**：`agentInitializer.resumeFromDisk()` 在启动时把 session summary + 最近 N 轮原始消息通过 `client.resumeChat()` 设置为初始历史，之后由 Gemini CLI 自动追加新消息。
 
-3. **[Long-term Memory] vs Session History 区分**：`<relevant_past_conversations>` 里的内容标记为 `[Long-term Memory N]`，与 conversation history 里的当前 session 消息在格式上明确区分，减少模型时间线混淆。
+3. **`[Long-term Memory]` vs Session History 区分**：`<relevant_past_conversations>` 里的内容标记为 `[Long-term Memory N]`，与 conversation history 里的当前 session 消息在格式上明确区分，减少模型时间线混淆。
 
-4. **ACTIVE_RECALL 不再单独出现**：recall_memory 的使用规则已合并到 `<memory_status>` 的 `[CRITICAL_LIMITATION]` 标签里，避免重复。
+4. **interaction_style 不在 persistent_context**：`interaction_style` facts 单独提取，注入 `<style_constraints>` 而不是 `<persistent_context>`，确保格式规则在末尾（近因）生效。
+
+5. **insight 保守模式**：新生成的 insight 默认 importance=6，低于注入门槛（≥7），需经过多次被召回（`access_count≥3`）后才能升权到注入门槛。每轮最多注入2条。
