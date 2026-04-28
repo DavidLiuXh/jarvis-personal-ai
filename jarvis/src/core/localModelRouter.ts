@@ -32,16 +32,17 @@ Classify what the request is asking ABOUT. Choose exactly one:
 KEY RULE: If the user is asking whether something was discussed or what happened in a past conversation, classify as "personal" regardless of the topic.
 
 DIMENSION 4 — Time Window (for memory retrieval)
-If the request refers to a specific past time period, output the number of days ago that period starts from today.
-- "yesterday" / "昨天" → 1
-- "today" / "今天" → 0
-- "the day before yesterday" / "前天" → 2
+If the request refers to a specific past time period, output how many calendar days back the window should start.
+The window always ends at NOW. Examples:
+- "yesterday" / "昨天" → 1  (start from yesterday 00:00)
+- "the day before yesterday" / "前天" → 2  (start from 2 days ago 00:00)
+- "two days ago" / "两天前" → 2
 - "last week" / "上周" → 7
 - "last month" / "上个月" → 30
 - "recently" / "最近" / "这两天" → 3
-- "two days ago" / "两天前" → 2
-- No time reference → null
-Output the LARGEST number that covers the full period mentioned. If uncertain, output null.
+- "today" / "今天" / "just now" / "刚才" → 0  (start from today 00:00, i.e. no days back)
+- No time reference at all → null
+Output the LARGEST integer that covers the full period. If uncertain, output null.
 
 SCORING FORMULA
 complexity_score = knowledge_score * 0.6 + operation_score * 0.4
