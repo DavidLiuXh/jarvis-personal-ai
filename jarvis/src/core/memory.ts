@@ -964,6 +964,59 @@ ${factsText}
     } catch (e) {}
   }
 
+  /**
+   * Detects temporal intent in a query and returns a {from, to} timestamp
+   * window in milliseconds, or null if no temporal intent is detected.
+   * Used to restrict vec_memories KNN to the relevant time range.
+   */
+  private detectTemporalWindow(
+    query: string,
+    nowMs: number,
+  ): { from: number; to: number } | null {
+    const q = query.toLowerCase();
+    const DAY = 86_400_000;
+
+    // Yesterday / 昨天
+    if (/yesterday|昨天|昨日/.test(q)) {
+      const startOfToday = new Date(nowMs);
+      startOfToday.setHours(0, 0, 0, 0);
+      return {
+        from: startOfToday.getTime() - DAY,
+        to: startOfToday.getTime(),
+      };
+    }
+
+    // Today / 今天
+    if (/\btoday\b|今天|今日/.test(q)) {
+      const startOfToday = new Date(nowMs);
+      startOfToday.setHours(0, 0, 0, 0);
+      return {
+        from: startOfToday.getTime(),
+        to: nowMs,
+      };
+    }
+
+    // Last week / 上周 / 上个星期
+    if (/last week|上周|上个星期|上星期/.test(q)) {
+      return { from: nowMs - 7 * DAY, to: nowMs };
+    }
+
+    // Recently / 最近 / 近期 (3 days)
+    if (/recently|最近|近期|近来/.test(q)) {
+      return { from: nowMs - 3 * DAY, to: nowMs };
+    }
+
+    // This week / 本周 / 这周
+    if (/this week|本周|这周/.test(q)) {
+      const startOfWeek = new Date(nowMs);
+      startOfWeek.setHours(0, 0, 0, 0);
+      startOfWeek.setDate(startOfWeek.getDate() - startOfWeek.getDay());
+      return { from: startOfWeek.getTime(), to: nowMs };
+    }
+
+    return null;
+  }
+
   public async search(query: string, limit: number = 5): Promise<string[]> {
     if (!query?.trim()) return [];
     if (!this.embedContentFn && !this.client) return [];
@@ -984,34 +1037,67 @@ ${factsText}
       const lambda = this.jarvisConfig.memory.decayLambda ?? 0.1;
       const nowMs = Date.now();
 
+      // Detect temporal intent in query and compute a time window filter.
+      // When the user asks "what did we discuss yesterday/last week/recently",
+      // restrict candidates to the relevant time range so old records don't
+      // crowd out recent ones purely on semantic similarity.
+      const timeWindow = this.detectTemporalWindow(query, nowMs);
+
       // Fetch candidates within distance threshold to avoid injecting
       // semantically irrelevant memories into prewarm context.
       // vec0 KNN requires LIMIT in the subquery; distance filter applied
       // in the outer WHERE clause after JOIN to avoid vec0 syntax issues.
       const memoryMaxDistance =
         this.jarvisConfig.memory.memoryMaxDistance ?? 1.0;
-      const rows = this.db
-        .prepare(
-          `SELECT m.text, m.source, m.timestamp, v.distance
-           FROM memories m
-           JOIN (
-             SELECT id, distance FROM vec_memories
-             WHERE embedding MATCH ?
-             ORDER BY distance
-             LIMIT ?
-           ) v ON m.id = v.id
-           WHERE v.distance < ?`,
-        )
-        .all(
-          new Float32Array(queryVec),
-          fetchLimit,
-          memoryMaxDistance,
-        ) as Array<{
+
+      const rows = (
+        timeWindow
+          ? this.db
+              .prepare(
+                `SELECT m.text, m.source, m.timestamp, v.distance
+                 FROM memories m
+                 JOIN (
+                   SELECT id, distance FROM vec_memories
+                   WHERE embedding MATCH ?
+                   ORDER BY distance
+                   LIMIT ?
+                 ) v ON m.id = v.id
+                 WHERE v.distance < ?
+                   AND m.timestamp >= ?
+                   AND m.timestamp <= ?`,
+              )
+              .all(
+                new Float32Array(queryVec),
+                fetchLimit,
+                memoryMaxDistance,
+                timeWindow.from,
+                timeWindow.to,
+              )
+          : this.db
+              .prepare(
+                `SELECT m.text, m.source, m.timestamp, v.distance
+                 FROM memories m
+                 JOIN (
+                   SELECT id, distance FROM vec_memories
+                   WHERE embedding MATCH ?
+                   ORDER BY distance
+                   LIMIT ?
+                 ) v ON m.id = v.id
+                 WHERE v.distance < ?`,
+              )
+              .all(new Float32Array(queryVec), fetchLimit, memoryMaxDistance)
+      ) as Array<{
         text: string;
         source: string;
         timestamp: number;
         distance: number;
       }>;
+
+      if (timeWindow) {
+        debugLogger.debug(
+          `[search] temporal filter: from=${new Date(timeWindow.from).toISOString().slice(0, 10)} to=${new Date(timeWindow.to).toISOString().slice(0, 10)}, candidates=${rows.length}`,
+        );
+      }
 
       // Score: events get time decay bonus; conversations get no bonus
       // fusedScore = (1 - distance) + eventBonus * decay
