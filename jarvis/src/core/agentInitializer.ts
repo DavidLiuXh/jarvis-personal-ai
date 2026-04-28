@@ -198,9 +198,11 @@ export class AgentInitializer {
       name: "recall_memory",
       description:
         "MANDATORY for retrieving any past interaction, technical decision, or user preference not in the current view. " +
-        "The 'query' parameter MUST contain specific keywords extracted from the user's question — " +
+        "The 'query' parameter MUST contain specific topic keywords extracted from the user's question — " +
         "e.g. if user asks 'did I ask about Ollama?', set query='Ollama'; " +
-        "if user asks 'what was my investment strategy?', set query='investment strategy'. " +
+        "if user asks 'what was my investment strategy?', set query='investment strategy'; " +
+        "if user asks 'did we discuss Anthropic yesterday?', set query='Anthropic' (extract the TOPIC, not the time word); " +
+        "if user asks 'what did we talk about last week?', set query='recent discussion'. " +
         "NEVER call this tool without a non-empty query.",
       parameters: {
         type: "object",

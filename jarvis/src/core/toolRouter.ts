@@ -323,7 +323,16 @@ export class ToolRouter {
         const query = (req.args.query as string)?.trim() || "";
         const limit = (req.args.limit as number) || 5;
         if (!query) {
-          output = `recall_memory requires a non-empty query. Please provide keywords to search.`;
+          // LLM called recall_memory without a query — give actionable guidance
+          // so it retries with proper keywords instead of silently failing.
+          output =
+            `recall_memory requires a non-empty query. ` +
+            `Extract the TOPIC keywords from the user's question and retry. ` +
+            `Example: if user asked "did we discuss Anthropic yesterday?", use query="Anthropic". ` +
+            `If user asked "what did we talk about recently?", use query="recent discussion".`;
+          console.error(
+            `⚠️ [Jarvis] recall_memory called with empty query — returned guidance to LLM.`,
+          );
         } else {
           console.error(`🧠 [Jarvis] Active Recall initiated for: "${query}"`);
           const memories = await this.memoryService.search(query, limit);
