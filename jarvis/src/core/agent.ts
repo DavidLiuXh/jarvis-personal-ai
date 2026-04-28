@@ -320,12 +320,16 @@ export class JarvisAgent extends EventEmitter {
         querySubject === "personal" || querySubject === "mixed"
           ? "PRIVATE_USER_DATA: User Query - " + userPrompt
           : userPrompt;
+      const hasPrefix = embeddingQuery !== userPrompt;
+      console.error(
+        `🔍 [Jarvis] searchFacts (subject=${querySubject}, prefix=${hasPrefix}): "${embeddingQuery.slice(0, 80)}"`,
+      );
       facts = (await this.memoryService.searchFacts(
         embeddingQuery,
       )) as FactRecord[];
     } else {
       console.error(
-        `🔍 [Jarvis] External query detected — skipping personal facts injection.`,
+        `🔍 [Jarvis] External query (subject=external) — skipping facts + prewarm injection.`,
       );
     }
 
