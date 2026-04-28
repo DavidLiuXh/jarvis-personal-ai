@@ -2643,11 +2643,15 @@ Do NOT hallucinate or force extraction to generate output — quality over quant
 Each event must be:
 - A single self-contained sentence starting with [${date}]
 - A decision, solution, preference, or key fact worth remembering long-term
-- Written with an explicit subject: use "User" or "Jarvis", not pronouns like "it", "this", "they"
-  BAD: "Decided to use TypeScript"
-  GOOD: "User decided to use TypeScript for the project"
+- Written as an OBJECTIVE FACT, not as a record of what Jarvis said or confirmed
+  BAD: "Jarvis confirmed that Amazon invested in Anthropic"
+  BAD: "Jarvis stated that the user prefers Python"
+  GOOD: "Amazon and Google both invested in Anthropic"
+  GOOD: "User prefers Python for this project"
+- Use "User" as subject for user actions/decisions/preferences; use the entity name directly for facts about the world
 
 Ignore completely: greetings, polite confirmations ("ok", "thanks"), chit-chat, and conversational filler.
+Ignore: meta-commentary about what Jarvis said, confirmed, or explained — extract the underlying fact instead.
 
 Conversation:
 ${convoText}
