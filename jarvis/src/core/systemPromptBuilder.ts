@@ -205,7 +205,8 @@ export class SystemPromptBuilder {
     const memoryContext =
       `\n<memory_status>\n[INSTRUCTION]: Long-term memory is not pre-loaded into this context window. ` +
       `Do not reference past events unless they appear in <persistent_context> or <relevant_past_conversations>. ` +
-      `When the user asks about past conversations or decisions, call 'recall_memory' first to retrieve them. DO NOT HALLUCINATE.\n</memory_status>` +
+      `If the user asks about past conversations: first check <relevant_past_conversations> — if the answer is there, use it directly. ` +
+      `Only call 'recall_memory' if <relevant_past_conversations> does not contain the needed information. DO NOT HALLUCINATE.\n</memory_status>` +
       `\n\n<persistent_context>\n${contextLines}\n</persistent_context>`;
 
     const protocols = selectProtocols(userPrompt);
