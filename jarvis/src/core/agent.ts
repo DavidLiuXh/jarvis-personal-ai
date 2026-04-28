@@ -309,6 +309,7 @@ export class JarvisAgent extends EventEmitter {
   private async refreshContext(
     userPrompt: string,
     querySubject: "personal" | "external" | "mixed" = "mixed",
+    timeWindowDays: number | null = null,
   ) {
     // For external queries (pure world knowledge), skip personal facts entirely —
     // they add noise and no value. For personal/mixed, use symmetric embedding:
@@ -350,6 +351,7 @@ export class JarvisAgent extends EventEmitter {
       const similarMemories = await this.memoryService.search(
         userPrompt,
         prewarmLimit,
+        timeWindowDays,
       );
       if (similarMemories.length > 0) {
         prewarmSection =
@@ -448,6 +450,7 @@ export class JarvisAgent extends EventEmitter {
       await promptIdContext.run(pId, async () => {
         // Local model routing: classify complexity + query subject, set model
         let querySubject: "personal" | "external" | "mixed" = "mixed";
+        let timeWindowDays: number | null = null;
         if (this.localModelRouter) {
           const rawHistory = this.client.getChat().getHistory();
           const history = rawHistory.flatMap((turn) => {
@@ -466,12 +469,13 @@ export class JarvisAgent extends EventEmitter {
           const result = await this.localModelRouter.route(userPrompt, history);
           this.client.config.setModel(result.model);
           querySubject = result.querySubject;
+          timeWindowDays = result.timeWindowDays;
           console.error(
-            `🔀 [Jarvis] Local routing: ${result.decision} | subject=${result.querySubject} | reason="${result.classifierReason}" (source=${result.source})`,
+            `🔀 [Jarvis] Local routing: ${result.decision} | subject=${result.querySubject} | time_window=${result.timeWindowDays ?? "none"} | reason="${result.classifierReason}" (source=${result.source})`,
           );
         }
 
-        await this.refreshContext(userPrompt, querySubject);
+        await this.refreshContext(userPrompt, querySubject, timeWindowDays);
 
         const abortController = new AbortController();
         let currentQueryParts: Part[] = [{ text: userPrompt }];

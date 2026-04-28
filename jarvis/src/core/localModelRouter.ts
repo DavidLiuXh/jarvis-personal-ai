@@ -31,6 +31,18 @@ Classify what the request is asking ABOUT. Choose exactly one:
 
 KEY RULE: If the user is asking whether something was discussed or what happened in a past conversation, classify as "personal" regardless of the topic.
 
+DIMENSION 4 — Time Window (for memory retrieval)
+If the request refers to a specific past time period, output the number of days ago that period starts from today.
+- "yesterday" / "昨天" → 1
+- "today" / "今天" → 0
+- "the day before yesterday" / "前天" → 2
+- "last week" / "上周" → 7
+- "last month" / "上个月" → 30
+- "recently" / "最近" / "这两天" → 3
+- "two days ago" / "两天前" → 2
+- No time reference → null
+Output the LARGEST number that covers the full period mentioned. If uncertain, output null.
+
 SCORING FORMULA
 complexity_score = knowledge_score * 0.6 + operation_score * 0.4
 Round to the nearest integer.
@@ -39,10 +51,10 @@ OUTPUT RULES
 - Respond ONLY with a raw JSON object.
 - DO NOT wrap in markdown code blocks.
 - DO NOT output any explanation outside the JSON.
-- All fields are REQUIRED. Missing fields will cause a system error.
+- All fields are REQUIRED except time_window_days which can be null.
 
 Required schema:
-{"knowledge_score": <integer 1-100>, "operation_score": <integer 1-100>, "complexity_score": <integer 1-100>, "complexity_reasoning": "<one sentence>", "query_subject": "personal" | "external" | "mixed"}
+{"knowledge_score": <integer 1-100>, "operation_score": <integer 1-100>, "complexity_score": <integer 1-100>, "complexity_reasoning": "<one sentence>", "query_subject": "personal" | "external" | "mixed", "time_window_days": <integer> | null}
 `.trim();
 
 export type QuerySubject = "personal" | "external" | "mixed";
@@ -54,12 +66,15 @@ export type RoutingResult = {
   decision: string;
   source: "local-router/ollama" | "local-router/fallback";
   querySubject: QuerySubject;
+  /** Days ago to start the time window, or null if no temporal intent. */
+  timeWindowDays: number | null;
 };
 
 type ClassifyResult = {
   score: number;
   reason: string;
   querySubject: QuerySubject;
+  timeWindowDays: number | null;
 };
 
 export type ConversationTurn = {
@@ -87,10 +102,8 @@ export class LocalModelRouter {
     history: ConversationTurn[] = [],
   ): Promise<RoutingResult> {
     try {
-      const { score, reason, querySubject } = await this.classify(
-        userPrompt,
-        history,
-      );
+      const { score, reason, querySubject, timeWindowDays } =
+        await this.classify(userPrompt, history);
       const model = score >= this.threshold ? this.proModel : this.flashModel;
       return {
         model,
@@ -102,6 +115,7 @@ export class LocalModelRouter {
             : `Score ${score} < threshold ${this.threshold} → ${this.flashModel}`,
         source: "local-router/ollama",
         querySubject,
+        timeWindowDays,
       };
     } catch (e: any) {
       return {
@@ -111,6 +125,7 @@ export class LocalModelRouter {
         decision: `Classification failed, defaulting to ${this.proModel}`,
         source: "local-router/fallback",
         querySubject: FALLBACK_QUERY_SUBJECT,
+        timeWindowDays: null,
       };
     }
   }
@@ -150,6 +165,7 @@ export class LocalModelRouter {
       operation_score?: number;
       complexity_reasoning?: string;
       query_subject?: string;
+      time_window_days?: number | null;
     };
 
     // Validate complexity_score
@@ -177,6 +193,22 @@ export class LocalModelRouter {
       );
     }
 
+    // Parse time_window_days — must be a non-negative integer or null
+    let timeWindowDays: number | null = null;
+    if (
+      parsed.time_window_days !== null &&
+      parsed.time_window_days !== undefined
+    ) {
+      const raw = Number(parsed.time_window_days);
+      if (!isNaN(raw) && raw >= 0 && Number.isInteger(raw)) {
+        timeWindowDays = raw;
+      } else {
+        console.error(
+          `⚠️ [LocalModelRouter] Invalid time_window_days "${parsed.time_window_days}", using null`,
+        );
+      }
+    }
+
     const knowledgeScore = parsed.knowledge_score ?? null;
     const operationScore = parsed.operation_score ?? null;
     const breakdown =
@@ -188,6 +220,7 @@ export class LocalModelRouter {
       score,
       reason: `${parsed.complexity_reasoning ?? "(no reason)"}${breakdown}`,
       querySubject,
+      timeWindowDays,
     };
   }
 }

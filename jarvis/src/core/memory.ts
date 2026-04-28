@@ -964,60 +964,11 @@ ${factsText}
     } catch (e) {}
   }
 
-  /**
-   * Detects temporal intent in a query and returns a {from, to} timestamp
-   * window in milliseconds, or null if no temporal intent is detected.
-   * Used to restrict vec_memories KNN to the relevant time range.
-   */
-  private detectTemporalWindow(
+  public async search(
     query: string,
-    nowMs: number,
-  ): { from: number; to: number } | null {
-    const q = query.toLowerCase();
-    const DAY = 86_400_000;
-
-    // Yesterday / 昨天
-    if (/yesterday|昨天|昨日/.test(q)) {
-      const startOfToday = new Date(nowMs);
-      startOfToday.setHours(0, 0, 0, 0);
-      return {
-        from: startOfToday.getTime() - DAY,
-        to: startOfToday.getTime(),
-      };
-    }
-
-    // Today / 今天
-    if (/\btoday\b|今天|今日/.test(q)) {
-      const startOfToday = new Date(nowMs);
-      startOfToday.setHours(0, 0, 0, 0);
-      return {
-        from: startOfToday.getTime(),
-        to: nowMs,
-      };
-    }
-
-    // Last week / 上周 / 上个星期
-    if (/last week|上周|上个星期|上星期/.test(q)) {
-      return { from: nowMs - 7 * DAY, to: nowMs };
-    }
-
-    // Recently / 最近 / 近期 (3 days)
-    if (/recently|最近|近期|近来/.test(q)) {
-      return { from: nowMs - 3 * DAY, to: nowMs };
-    }
-
-    // This week / 本周 / 这周
-    if (/this week|本周|这周/.test(q)) {
-      const startOfWeek = new Date(nowMs);
-      startOfWeek.setHours(0, 0, 0, 0);
-      startOfWeek.setDate(startOfWeek.getDate() - startOfWeek.getDay());
-      return { from: startOfWeek.getTime(), to: nowMs };
-    }
-
-    return null;
-  }
-
-  public async search(query: string, limit: number = 5): Promise<string[]> {
+    limit: number = 5,
+    timeWindowDays: number | null = null,
+  ): Promise<string[]> {
     if (!query?.trim()) return [];
     if (!this.embedContentFn && !this.client) return [];
     try {
@@ -1037,11 +988,21 @@ ${factsText}
       const lambda = this.jarvisConfig.memory.decayLambda ?? 0.1;
       const nowMs = Date.now();
 
-      // Detect temporal intent in query and compute a time window filter.
-      // When the user asks "what did we discuss yesterday/last week/recently",
-      // restrict candidates to the relevant time range so old records don't
-      // crowd out recent ones purely on semantic similarity.
-      const timeWindow = this.detectTemporalWindow(query, nowMs);
+      // Apply time window filter when the caller (via LLM classifier) detected
+      // temporal intent in the query. timeWindowDays=0 means "today only",
+      // timeWindowDays=1 means "yesterday", etc.
+      const timeWindow =
+        timeWindowDays !== null
+          ? (() => {
+              const DAY = 86_400_000;
+              const startOfToday = new Date(nowMs);
+              startOfToday.setHours(0, 0, 0, 0);
+              return {
+                from: startOfToday.getTime() - timeWindowDays * DAY,
+                to: nowMs,
+              };
+            })()
+          : null;
 
       // Fetch candidates within distance threshold to avoid injecting
       // semantically irrelevant memories into prewarm context.
