@@ -222,8 +222,12 @@ export class SystemPromptBuilder {
         : "(No persistent facts)";
 
     const memoryContext =
-      `\n<memory_status>\n[CRITICAL_LIMITATION]: Long-term memory is currently offline. ` +
-      `If the user refers to past conversations or decisions, call 'recall_memory' first. DO NOT HALLUCINATE.\n</memory_status>` +
+      `\n<memory_status>\n[INSTRUCTION]: Long-term memory is not pre-loaded into this context window. ` +
+      `Do not reference past events unless they appear in <persistent_context> or <relevant_past_conversations>. ` +
+      `If the user asks about past conversations: ` +
+      `(1) First check <relevant_past_conversations> — if the answer is there, use it directly without calling any tool. ` +
+      `(2) Only if <relevant_past_conversations> does not contain the needed information, call 'recall_memory' with the TOPIC keywords from the user's question as the query (e.g. user asks "did we discuss Hormuz?" → query="Hormuz"; user asks "what was my plan for the project?" → query="project plan"). ` +
+      `DO NOT HALLUCINATE.\n</memory_status>` +
       `\n\n<persistent_context>\n${contextLines}\n</persistent_context>`;
 
     return this.framework(memoryContext, "", {
