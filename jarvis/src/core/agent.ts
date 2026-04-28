@@ -306,10 +306,29 @@ export class JarvisAgent extends EventEmitter {
     }
   }
 
-  private async refreshContext(userPrompt: string) {
-    const facts = (await this.memoryService.searchFacts(
-      userPrompt,
-    )) as FactRecord[];
+  private async refreshContext(
+    userPrompt: string,
+    querySubject: "personal" | "external" | "mixed" = "mixed",
+  ) {
+    // For external queries (pure world knowledge), skip personal facts entirely —
+    // they add noise and no value. For personal/mixed, use symmetric embedding:
+    // prepend the same "PRIVATE_USER_DATA: User Query - " prefix to the query
+    // so it lands in the same embedding space as the prefixed fact vectors.
+    let facts: FactRecord[] = [];
+    if (querySubject !== "external") {
+      const embeddingQuery =
+        querySubject === "personal" || querySubject === "mixed"
+          ? "PRIVATE_USER_DATA: User Query - " + userPrompt
+          : userPrompt;
+      facts = (await this.memoryService.searchFacts(
+        embeddingQuery,
+      )) as FactRecord[];
+    } else {
+      console.error(
+        `🔍 [Jarvis] External query detected — skipping personal facts injection.`,
+      );
+    }
+
     const protocol = this.promptBuilder.buildFromFacts(
       facts,
       userPrompt,
@@ -320,9 +339,10 @@ export class JarvisAgent extends EventEmitter {
     const defaultInstruction = buildJarvisPreamble();
 
     // vec_memories pre-warm: inject semantically similar past conversations
+    // Also skip for external queries to avoid Context Adhesion
     const prewarmLimit = this.jarvisConfig.memory.prewarmLimit ?? 3;
     let prewarmSection = "";
-    if (prewarmLimit > 0) {
+    if (prewarmLimit > 0 && querySubject !== "external") {
       const similarMemories = await this.memoryService.search(
         userPrompt,
         prewarmLimit,
@@ -350,7 +370,7 @@ export class JarvisAgent extends EventEmitter {
       );
 
     console.error(
-      `🔄 [Jarvis] System Prompt Refreshed. Facts injected: ${facts.length}. Prewarmed memories: ${prewarmLimit > 0 ? (prewarmSection ? prewarmSection.split("[Long-term Memory ").length - 1 : 0) : "disabled"}.`,
+      `🔄 [Jarvis] System Prompt Refreshed (subject=${querySubject}). Facts injected: ${facts.length}. Prewarmed memories: ${prewarmLimit > 0 ? (prewarmSection ? prewarmSection.split("[Long-term Memory ").length - 1 : 0) : "disabled"}.`,
     );
   }
 
@@ -422,9 +442,9 @@ export class JarvisAgent extends EventEmitter {
       const pId = `jarvis-${this.sessionId}-${Date.now()}`;
 
       await promptIdContext.run(pId, async () => {
-        // Local model routing: classify complexity and set model before LLM call
+        // Local model routing: classify complexity + query subject, set model
+        let querySubject: "personal" | "external" | "mixed" = "mixed";
         if (this.localModelRouter) {
-          // Build history from current chat for context-aware routing
           const rawHistory = this.client.getChat().getHistory();
           const history = rawHistory.flatMap((turn) => {
             const content =
@@ -441,12 +461,13 @@ export class JarvisAgent extends EventEmitter {
           });
           const result = await this.localModelRouter.route(userPrompt, history);
           this.client.config.setModel(result.model);
+          querySubject = result.querySubject;
           console.error(
-            `🔀 [Jarvis] Local routing: ${result.decision} | reason="${result.classifierReason}" (source=${result.source})`,
+            `🔀 [Jarvis] Local routing: ${result.decision} | subject=${result.querySubject} | reason="${result.classifierReason}" (source=${result.source})`,
           );
         }
 
-        await this.refreshContext(userPrompt);
+        await this.refreshContext(userPrompt, querySubject);
 
         const abortController = new AbortController();
         let currentQueryParts: Part[] = [{ text: userPrompt }];
