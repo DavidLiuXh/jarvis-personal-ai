@@ -16,6 +16,15 @@ import { ConfigManager } from "./configManager.js";
 import { EntityExtractor, type EntityLink } from "./entityExtractor.js";
 import { ollamaGenerate, ollamaEmbed } from "./ollamaClient.js";
 
+/** Format a timestamp as a local date string (YYYY-MM-DD) for logging. */
+function toLocalDateString(ms: number): string {
+  const d = new Date(ms);
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
 export class MemoryService {
   private db: Database.Database;
   private jarvisConfig = ConfigManager.getInstance().get();
@@ -1066,7 +1075,7 @@ ${factsText}
 
       if (timeWindow) {
         debugLogger.debug(
-          `[search] temporal filter: from=${new Date(timeWindow.from).toISOString().slice(0, 10)} to=${new Date(timeWindow.to).toISOString().slice(0, 10)}, candidates=${rows.length}`,
+          `[search] temporal filter: from=${toLocalDateString(timeWindow.from)} to=${toLocalDateString(timeWindow.to)}, candidates=${rows.length}`,
         );
       }
 
