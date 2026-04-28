@@ -771,11 +771,24 @@ ${factsText}
             );
           }
         }
-        const newFacts = JSON.parse(jsonText) as Array<{
-          category: string;
-          content: string;
-          importance: number;
+        const rawFacts = JSON.parse(jsonText) as Array<{
+          category: unknown;
+          content: unknown;
+          importance: unknown;
         }>;
+        // Normalise: coerce content to string in case LLM returns non-string
+        const newFacts = rawFacts.map((f) => ({
+          category:
+            typeof f.category === "string"
+              ? f.category
+              : String(f.category ?? "specification"),
+          content:
+            typeof f.content === "string" ? f.content : String(f.content ?? ""),
+          importance:
+            typeof f.importance === "number"
+              ? f.importance
+              : Number(f.importance ?? 5),
+        }));
 
         // Preserve access stats: build content → {last_accessed, access_count} map from old facts
         const accessMap = new Map<
@@ -1299,11 +1312,20 @@ ${insightsSection}</knowledge>
         }
       }
 
-      const newInsights = JSON.parse(reflectJson) as Array<{
-        category: string;
-        content: string;
-        importance: number;
+      const rawInsights = JSON.parse(reflectJson) as Array<{
+        category: unknown;
+        content: unknown;
+        importance: unknown;
       }>;
+      const newInsights = rawInsights.map((i) => ({
+        category: typeof i.category === "string" ? i.category : "insight",
+        content:
+          typeof i.content === "string" ? i.content : String(i.content ?? ""),
+        importance:
+          typeof i.importance === "number"
+            ? i.importance
+            : Number(i.importance ?? 5),
+      }));
       // Force category to 'insight' — small models often ignore the category constraint
       const validInsights = newInsights
         .filter((i) => {
