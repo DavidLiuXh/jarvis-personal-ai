@@ -1115,11 +1115,17 @@ ${factsText}
     for (const text of events) {
       try {
         const vec = await this.embedContentFn(text);
+        // Use the date from the event text prefix [YYYY-MM-DD] as the timestamp
+        // so temporal filtering matches the event's actual date, not ingestion time.
+        const dateMatch = text.match(/^\[(\d{4}-\d{2}-\d{2})\]/);
+        const eventTimestamp = dateMatch
+          ? new Date(dateMatch[1]).getTime()
+          : Date.now();
         const info = this.db
           .prepare(
             "INSERT INTO memories (sessionId, text, timestamp, source) VALUES (?, ?, ?, 'event')",
           )
-          .run("events", text, Date.now());
+          .run("events", text, eventTimestamp);
         try {
           this.db
             .prepare("INSERT INTO vec_memories (id, embedding) VALUES (?, ?)")
