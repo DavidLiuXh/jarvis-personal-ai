@@ -782,8 +782,17 @@ ${factsText}
             typeof f.category === "string"
               ? f.category
               : String(f.category ?? "specification"),
-          content:
-            typeof f.content === "string" ? f.content : String(f.content ?? ""),
+          content: (() => {
+            if (typeof f.content === "string") return f.content;
+            // LLM returned non-string content — log type and recover
+            const t = Array.isArray(f.content) ? "array" : typeof f.content;
+            console.error(
+              `⚠️ [consolidateFacts] non-string content (type=${t}): ${JSON.stringify(f.content).slice(0, 100)}`,
+            );
+            if (Array.isArray(f.content))
+              return (f.content as unknown[]).map((c) => String(c)).join(". ");
+            return String(f.content ?? "");
+          })(),
           importance:
             typeof f.importance === "number"
               ? f.importance
