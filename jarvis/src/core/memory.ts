@@ -717,11 +717,22 @@ CRITICAL: Do NOT include any XML tags in your response.
 6. Output ONLY the JSON array, nothing else.
 </rules>
 
+<schema>
+Each element MUST follow this exact structure:
+- "category": one string value from: "identity", "behavior", "interaction_style", "specification"
+- "content": one string sentence (NEVER an array, NEVER nested object — always a plain string)
+- "importance": one integer between 1 and 10
+
+Example of correct output:
+[{"category": "behavior", "content": "User runs 3 times a week.", "importance": 7}]
+
+Example of WRONG output (do not do this):
+[{"category": "behavior", "content": ["User runs", "User cycles"], "importance": 7}]
+</schema>
+
 <input_facts>
 ${factsText}
-</input_facts>
-
-[{"category": "identity|behavior|interaction_style|specification", "content": "...", "importance": 1-10}]`;
+</input_facts>`;
 
       let responseText = "";
       // Route to Ollama if reflection.provider = 'ollama', else use generateTextFn or API client
