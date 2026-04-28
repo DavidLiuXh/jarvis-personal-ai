@@ -522,6 +522,38 @@ export class MemoryService {
   }
 
   /**
+  /**
+   * Current version of the embedding text format.
+   * Increment when buildEmbeddingText() changes to trigger automatic
+   * re-embedding of all existing facts on next startup.
+   */
+  private static readonly EMBEDDING_TEXT_VERSION = "2";
+
+  /**
+   * Builds the text used for embedding generation.
+   * Prepends a strongly-typed prefix so the embedding vector carries
+   * "this is personal user data" or "this is a system constraint" signal,
+   * separating fact vectors from general-knowledge query vectors in the
+   * embedding space and reducing Context Adhesion false-positives.
+   *
+   * The prefix uses UPPERCASE_SNAKE_CASE tokens that are rare in natural
+   * language queries, maximising the semantic distance from external-world
+   * queries like "Did Amazon invest in Anthropic?".
+   */
+  static buildEmbeddingText(category: string, content: string): string {
+    const prefixes: Record<string, string> = {
+      identity: "PRIVATE_USER_DATA: Identity - ",
+      behavior: "PRIVATE_USER_DATA: Habit/Behavior - ",
+      interaction_style: "UI_UX_INSTRUCTION: Response Pattern - ",
+      specification: "SYSTEM_CONSTRAINT: Implementation Rule - ",
+      insight: "PRIVATE_USER_DATA: Meta Observation - ",
+    };
+    const prefix =
+      prefixes[category] ?? "PRIVATE_USER_DATA: User/Project Fact - ";
+    return prefix + content;
+  }
+
+  /**
    * Insert a fact into the facts table and sync its embedding to vec_facts
    * within a single transaction to keep the two tables consistent.
    */
@@ -589,7 +621,8 @@ export class MemoryService {
       const strategy = this.jarvisConfig.memory.dedupStrategy ?? "jaccard";
       if (strategy === "embedding" && this.embedContentFn) {
         if (await this.isDuplicateByEmbedding(content)) return;
-        const newVec = await this.embedContentFn(content).catch(() => null);
+        const embText = MemoryService.buildEmbeddingText(category, content);
+        const newVec = await this.embedContentFn(embText).catch(() => null);
         this.insertFactWithVec(category, content, importance, newVec);
       } else {
         if (this.isDuplicateByJaccard(content)) return;
@@ -751,7 +784,11 @@ ${factsText}
         const embeddings: Array<number[] | null> = [];
         if (this.embedContentFn) {
           for (const f of newFacts) {
-            const vec = await this.embedContentFn(f.content).catch(() => null);
+            const embText = MemoryService.buildEmbeddingText(
+              f.category,
+              f.content,
+            );
+            const vec = await this.embedContentFn(embText).catch(() => null);
             embeddings.push(vec);
           }
         } else {
@@ -2356,6 +2393,27 @@ ${insightsSection}</knowledge>
   private async backfillVecFacts(): Promise<void> {
     if (!this.embedContentFn) return;
 
+    // Version check: if embedding text format changed, re-embed all facts.
+    const storedVersion = this.readKvMeta("embedding_text_version");
+    const currentVersion = parseInt(MemoryService.EMBEDDING_TEXT_VERSION, 10);
+    const needsFullReembed =
+      storedVersion === null || storedVersion < currentVersion;
+
+    if (needsFullReembed) {
+      console.error(
+        `[MemoryService] backfillVecFacts: embedding format changed (stored=${storedVersion} → current=${currentVersion}). Re-embedding all facts...`,
+      );
+      // Clear vec_facts so all facts get fresh embeddings below
+      try {
+        this.db.prepare("DELETE FROM vec_facts").run();
+        this.db.prepare("UPDATE facts SET embedding = NULL").run();
+      } catch (e: any) {
+        console.error(
+          `⚠️ [MemoryService] Failed to clear vec_facts for re-embed: ${e.message}`,
+        );
+      }
+    }
+
     // Facts with embedding blob but missing from vec_facts
     console.error(
       `[MemoryService] backfillVecFacts: checking for missing vec_facts entries...`,
@@ -2363,13 +2421,18 @@ ${insightsSection}</knowledge>
     const missingInVec = this.db
       .prepare(
         `
-      SELECT f.id, f.content, f.embedding
+      SELECT f.id, f.category, f.content, f.embedding
       FROM facts f
       WHERE f.embedding IS NOT NULL
         AND f.id NOT IN (SELECT id FROM vec_facts)
     `,
       )
-      .all() as Array<{ id: number; content: string; embedding: Buffer }>;
+      .all() as Array<{
+      id: number;
+      category: string;
+      content: string;
+      embedding: Buffer;
+    }>;
 
     for (const row of missingInVec) {
       try {
@@ -2386,8 +2449,10 @@ ${insightsSection}</knowledge>
 
     // Facts with no embedding at all — generate in batches of 20
     const noEmbedding = this.db
-      .prepare("SELECT id, content FROM facts WHERE embedding IS NULL")
-      .all() as Array<{ id: number; content: string }>;
+      .prepare(
+        "SELECT id, category, content FROM facts WHERE embedding IS NULL",
+      )
+      .all() as Array<{ id: number; category: string; content: string }>;
 
     console.error(
       `[MemoryService] backfillVecFacts: missingInVec=${missingInVec.length}, noEmbedding=${noEmbedding.length}`,
@@ -2396,6 +2461,12 @@ ${insightsSection}</knowledge>
       if (missingInVec.length > 0) {
         console.error(
           `✅ [MemoryService] Auto-backfill: synced ${missingInVec.length} facts into vec_facts`,
+        );
+      }
+      if (needsFullReembed) {
+        this.writeKvMeta("embedding_text_version", currentVersion);
+        console.error(
+          `✅ [MemoryService] embedding_text_version updated to ${currentVersion}`,
         );
       }
       return;
@@ -2409,7 +2480,11 @@ ${insightsSection}</knowledge>
       const batch = noEmbedding.slice(i, i + BATCH);
       for (const row of batch) {
         try {
-          const vec = await this.embedContentFn(row.content);
+          const embText = MemoryService.buildEmbeddingText(
+            row.category,
+            row.content,
+          );
+          const vec = await this.embedContentFn(embText);
           const buf = Buffer.from(new Float32Array(vec).buffer);
           this.db
             .prepare("UPDATE facts SET embedding = ? WHERE id = ?")
@@ -2429,6 +2504,12 @@ ${insightsSection}</knowledge>
     if (missingInVec.length > 0 || noEmbedding.length > 0) {
       console.error(
         `✅ [MemoryService] Auto-backfill: synced ${missingInVec.length + noEmbedding.length} facts into vec_facts`,
+      );
+    }
+    if (needsFullReembed) {
+      this.writeKvMeta("embedding_text_version", currentVersion);
+      console.error(
+        `✅ [MemoryService] embedding_text_version updated to ${currentVersion}`,
       );
     }
   }

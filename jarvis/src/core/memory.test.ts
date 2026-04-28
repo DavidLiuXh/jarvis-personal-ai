@@ -4,7 +4,15 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { describe, it, expect, vi, afterEach } from "vitest";
+import {
+  describe,
+  it,
+  expect,
+  vi,
+  afterEach,
+  beforeAll,
+  beforeEach,
+} from "vitest";
 import os from "node:os";
 import path from "node:path";
 import fs from "node:fs";
@@ -1540,5 +1548,195 @@ describe("MemoryService.searchFacts — L3 weighted fusion", () => {
     // At most 2 insights, and the closer one should rank first
     expect(insightResults.length).toBeGreaterThanOrEqual(1);
     expect(insightResults[0].content).toBe("Insight close to query");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Semantic prefix embedding tests
+// ---------------------------------------------------------------------------
+
+describe("MemoryService.buildEmbeddingText", () => {
+  // Import the class directly — buildEmbeddingText is a pure static method
+  // that does not touch the DB or any mocked module, so a static import is safe.
+  let BuildEmbeddingText: (category: string, content: string) => string;
+
+  beforeAll(async () => {
+    const mod = await import("./memory.js");
+    BuildEmbeddingText = (mod.MemoryService as any).buildEmbeddingText;
+  });
+
+  it("prepends PRIVATE_USER_DATA prefix for identity", () => {
+    const text = BuildEmbeddingText("identity", "user is a software engineer");
+    expect(text).toBe(
+      "PRIVATE_USER_DATA: Identity - user is a software engineer",
+    );
+  });
+
+  it("prepends PRIVATE_USER_DATA prefix for behavior", () => {
+    const text = BuildEmbeddingText(
+      "behavior",
+      "User has a moderate risk appetite for investment.",
+    );
+    expect(text).toContain("PRIVATE_USER_DATA: Habit/Behavior - ");
+    expect(text).toContain("moderate risk appetite");
+  });
+
+  it("prepends UI_UX_INSTRUCTION prefix for interaction_style", () => {
+    const text = BuildEmbeddingText("interaction_style", "respond in Chinese");
+    expect(text).toBe(
+      "UI_UX_INSTRUCTION: Response Pattern - respond in Chinese",
+    );
+  });
+
+  it("prepends SYSTEM_CONSTRAINT prefix for specification", () => {
+    const text = BuildEmbeddingText("specification", "project uses TypeScript");
+    expect(text).toBe(
+      "SYSTEM_CONSTRAINT: Implementation Rule - project uses TypeScript",
+    );
+  });
+
+  it("prepends PRIVATE_USER_DATA prefix for insight", () => {
+    const text = BuildEmbeddingText("insight", "user is disciplined");
+    expect(text).toBe(
+      "PRIVATE_USER_DATA: Meta Observation - user is disciplined",
+    );
+  });
+
+  it("uses generic prefix for unknown categories", () => {
+    const text = BuildEmbeddingText("unknown_category", "some fact");
+    expect(text).toContain("PRIVATE_USER_DATA: User/Project Fact - ");
+    expect(text).toContain("some fact");
+  });
+
+  it("prefix makes behavior fact semantically distinct from general investment query", () => {
+    // The key property: embedding text for a personal behavior fact
+    // contains "PRIVATE_USER_DATA" which is absent from external-world queries.
+    const factText = BuildEmbeddingText(
+      "behavior",
+      "User has a moderate risk appetite for investment.",
+    );
+    const queryText = "Did Amazon invest in Anthropic?";
+    // The fact text contains the discriminating prefix
+    expect(factText).toContain("PRIVATE_USER_DATA");
+    // The query text does not contain any such prefix
+    expect(queryText).not.toContain("PRIVATE_USER_DATA");
+    // They share the word "invest" but the prefix creates semantic distance
+    expect(factText).not.toBe(queryText);
+  });
+});
+
+describe("MemoryService — embedding prefix used during saveFact", () => {
+  beforeEach(() => {
+    vi.resetModules();
+  });
+  afterEach(() => {
+    vi.resetModules();
+    vi.clearAllMocks();
+  });
+
+  it("calls embedContentFn with prefixed text for the fact embedding", async () => {
+    // vi.doMock must be called at test scope (not inside a helper) for vitest
+    // module isolation to work correctly.
+    vi.doMock("./configManager.js", () => ({
+      ConfigManager: {
+        getInstance: vi.fn().mockReturnValue({
+          get: vi.fn().mockReturnValue({
+            api: { key: "test-key", proxy: null },
+            models: {
+              embedding: "test-embedding-model",
+              embeddingDimension: 128,
+              distillation: "test-distillation-model",
+            },
+            memory: {
+              ingestionDelayMs: 0,
+              retrievalLimit: 5,
+              consolidationThreshold: 100,
+              dedupStrategy: "embedding",
+            },
+          }),
+        }),
+      },
+    }));
+    const { MemoryService } = await import("./memory.js");
+    const tmpDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), "jarvis-prefix-test-"),
+    );
+    const service = new (MemoryService as new (
+      root: string,
+      dbPath?: string,
+    ) => InstanceType<typeof MemoryService>)("", tmpDir);
+
+    const embedCalls: string[] = [];
+    service.setEmbedContent(async (text: string) => {
+      embedCalls.push(text);
+      return new Array(128).fill(0.1);
+    });
+
+    await service.saveFact("behavior", "user runs daily", 7);
+
+    // isDuplicateByEmbedding calls embedContentFn with raw content first.
+    // Then the storage embedding must use the semantic prefix.
+    const prefixedCall = embedCalls.find(
+      (t) => t.startsWith("PRIVATE_USER_DATA") && t.includes("user runs daily"),
+    );
+    expect(prefixedCall).toBeDefined();
+    expect(prefixedCall).toBe(
+      "PRIVATE_USER_DATA: Habit/Behavior - user runs daily",
+    );
+  });
+
+  it("different categories produce different prefixes", async () => {
+    vi.doMock("./configManager.js", () => ({
+      ConfigManager: {
+        getInstance: vi.fn().mockReturnValue({
+          get: vi.fn().mockReturnValue({
+            api: { key: "test-key", proxy: null },
+            models: {
+              embedding: "test-embedding-model",
+              embeddingDimension: 128,
+              distillation: "test-distillation-model",
+            },
+            memory: {
+              ingestionDelayMs: 0,
+              retrievalLimit: 5,
+              consolidationThreshold: 100,
+              dedupStrategy: "embedding",
+            },
+          }),
+        }),
+      },
+    }));
+    const { MemoryService } = await import("./memory.js");
+    const tmpDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), "jarvis-prefix-test-2-"),
+    );
+    const service = new (MemoryService as new (
+      root: string,
+      dbPath?: string,
+    ) => InstanceType<typeof MemoryService>)("", tmpDir);
+
+    const embedCalls: string[] = [];
+    let callIdx = 0;
+    service.setEmbedContent(async (text: string) => {
+      embedCalls.push(text);
+      // Return distinct vectors so facts don't get rejected as duplicates
+      const vec = new Array(128).fill(0);
+      vec[callIdx % 128] = 1.0;
+      callIdx++;
+      return vec;
+    });
+
+    await service.saveFact("identity", "user is named David", 9);
+    await service.saveFact("specification", "project uses TypeScript", 8);
+
+    const identityEmbed = embedCalls.find((t) =>
+      t.startsWith("PRIVATE_USER_DATA: Identity"),
+    );
+    const specEmbed = embedCalls.find((t) =>
+      t.startsWith("SYSTEM_CONSTRAINT: Implementation Rule"),
+    );
+
+    expect(identityEmbed).toBeDefined();
+    expect(specEmbed).toBeDefined();
   });
 });
