@@ -203,9 +203,9 @@ export class SystemPromptBuilder {
         : [identityLines, otherLines].filter(Boolean).join("\n");
 
     const memoryContext =
-      `\n<memory_status>\n[CRITICAL_LIMITATION]: Long-term memory is currently offline. ` +
+      `\n<memory_status>\n[INSTRUCTION]: Long-term memory is not pre-loaded into this context window. ` +
       `Do not reference past events unless they appear in <persistent_context> or <relevant_past_conversations>. ` +
-      `If the user refers to past conversations or decisions, call 'recall_memory' first. DO NOT HALLUCINATE.\n</memory_status>` +
+      `When the user asks about past conversations or decisions, call 'recall_memory' first to retrieve them. DO NOT HALLUCINATE.\n</memory_status>` +
       `\n\n<persistent_context>\n${contextLines}\n</persistent_context>`;
 
     const protocols = selectProtocols(userPrompt);
