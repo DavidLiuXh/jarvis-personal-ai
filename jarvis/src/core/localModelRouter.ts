@@ -25,9 +25,11 @@ How complex are the actual steps, tool usage, or execution required?
 
 DIMENSION 3 — Query Subject (CRITICAL for memory retrieval)
 Classify what the request is asking ABOUT. Choose exactly one:
-- "personal": The request is about the USER's own traits, history, habits, preferences, past decisions, or ongoing projects. Examples: "What is my investment style?", "What did we discuss last week?", "What are my coding preferences?"
-- "external": The request is about the outside world, general knowledge, third-party companies, public figures, or factual information unrelated to the user. Examples: "Who invested in Anthropic?", "What is the capital of France?", "How does TCP/IP work?"
+- "personal": The request is about the USER's own traits, history, habits, preferences, past decisions, or ongoing projects. ALSO includes any question about past conversations or what was discussed — even if the topic itself is an external entity. Examples: "What is my investment style?", "What did we discuss last week?", "Did we talk about Anthropic yesterday?", "Have I asked about NVDA before?"
+- "external": The request is PURELY about the outside world with NO reference to the user's history or personal context. Examples: "Who invested in Anthropic?", "What is the capital of France?", "How does TCP/IP work?", "What is AWS's market share?"
 - "mixed": The request requires BOTH personal context AND external knowledge to answer well. Examples: "Should I invest in NVDA given my risk profile?", "Is this architecture suitable for my project?"
+
+KEY RULE: If the user is asking whether something was discussed or what happened in a past conversation, classify as "personal" regardless of the topic.
 
 SCORING FORMULA
 complexity_score = knowledge_score * 0.6 + operation_score * 0.4
