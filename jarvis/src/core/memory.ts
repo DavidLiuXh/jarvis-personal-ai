@@ -1150,9 +1150,16 @@ ${factsText}
         const vec = await this.embedContentFn(text);
         // Use the date from the event text prefix [YYYY-MM-DD] as the timestamp
         // so temporal filtering matches the event's actual date, not ingestion time.
+        // IMPORTANT: parse as local midnight (not UTC) so the timestamp aligns
+        // with the local-time-based startOfToday used in temporal filtering.
+        // new Date("2026-04-28") parses as UTC midnight (= 08:00 local in UTC+8),
+        // which would be 8 hours off from the local 00:00 used in filters.
         const dateMatch = text.match(/^\[(\d{4}-\d{2}-\d{2})\]/);
         const eventTimestamp = dateMatch
-          ? new Date(dateMatch[1]).getTime()
+          ? (() => {
+              const [y, m, d] = dateMatch[1].split("-").map(Number);
+              return new Date(y, m - 1, d, 0, 0, 0, 0).getTime(); // local midnight
+            })()
           : Date.now();
         const info = this.db
           .prepare(
