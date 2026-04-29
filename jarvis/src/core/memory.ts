@@ -777,7 +777,9 @@ ${factsText}
         .replace(/^```(?:json)?\s*/i, "")
         .replace(/\s*```\s*$/, "")
         .trim();
-      const match = stripped.match(/\[[\s\S]*\]/);
+      // Match array with closing bracket, OR array that starts but is truncated
+      const match =
+        stripped.match(/\[[\s\S]*\]/) ?? stripped.match(/\[[\s\S]*/);
       if (match) {
         let jsonText = match[0];
         // If JSON appears truncated (no closing bracket on last object),
@@ -1331,7 +1333,8 @@ ${insightsSection}</knowledge>
         .replace(/^```(?:json)?\s*/i, "")
         .replace(/\s*```\s*$/, "")
         .trim();
-      const match = rawStripped.match(/\[[\s\S]*\]/);
+      const match =
+        rawStripped.match(/\[[\s\S]*\]/) ?? rawStripped.match(/\[[\s\S]*/);
       if (!match) {
         console.error(
           `⚠️ [MemoryService] Reflection failed: no JSON array in model response. Response preview: ${raw.slice(0, 200)}`,
