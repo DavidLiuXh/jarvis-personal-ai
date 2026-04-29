@@ -322,6 +322,8 @@ export class ToolRouter {
       } else if (req.name === "recall_memory") {
         const query = (req.args.query as string)?.trim() || "";
         const limit = (req.args.limit as number) || 5;
+        const timeWindowDays = (req.args.time_window_days as number) ?? null;
+
         if (!query) {
           // LLM called recall_memory without a query — give actionable guidance
           // so it retries with proper keywords instead of silently failing.
@@ -334,8 +336,14 @@ export class ToolRouter {
             `⚠️ [Jarvis] recall_memory called with empty query — returned guidance to LLM.`,
           );
         } else {
-          console.error(`🧠 [Jarvis] Active Recall initiated for: "${query}"`);
-          const memories = await this.memoryService.search(query, limit);
+          console.error(
+            `🧠 [Jarvis] Active Recall initiated for: "${query}" (TimeWindow: ${timeWindowDays ?? "All-time"})`,
+          );
+          const memories = await this.memoryService.search(
+            query,
+            limit,
+            timeWindowDays,
+          );
           output =
             memories.length > 0
               ? `LONG-TERM MEMORIES FOUND:\n${memories.map((m) => `- ${m}`).join("\n")}\n\nINSTRUCTION: Now synthesize this history into your final answer.`

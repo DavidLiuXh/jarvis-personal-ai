@@ -213,6 +213,11 @@ export class AgentInitializer {
               "Specific keywords extracted from the user's question to search in long-term memory. Must be non-empty.",
           },
           limit: { type: "number", description: "Number of results (1-10)." },
+          time_window_days: {
+            type: "number",
+            description:
+              "Optional filter for recent history. 0=today, 1=yesterday, 7=last week. Leave null for all-time search.",
+          },
         },
         required: ["query"],
       },
