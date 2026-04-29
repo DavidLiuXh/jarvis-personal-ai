@@ -1108,7 +1108,7 @@ ${factsText}
 
       if (timeWindow) {
         debugLogger.debug(
-          `[search] temporal filter: from=${toLocalDateString(timeWindow.from)} to=${toLocalDateString(timeWindow.to)}, candidates=${rows.length}`,
+          `[search] temporal filter: [${toLocalDateString(timeWindow.from)} 00:00 ~ ${toLocalDateString(timeWindow.to)} 00:00), candidates=${rows.length}`,
         );
       }
 
