@@ -148,7 +148,7 @@ class JarvisServer {
     const defaultChannel =
       this.taskScheduler.getDefaultChannel() ??
       jarvisConfig.tasks?.defaultChannel ??
-      "feishu";
+      "weixin";
     this.channelRegistry = new ChannelRegistry(defaultChannel);
 
     // Build reflect function — routes to Ollama if reflection.provider = 'ollama'
