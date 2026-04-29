@@ -32,10 +32,14 @@ export async function ollamaGenerate(
   options: {
     baseUrl?: string;
     timeoutMs?: number;
+    /** Max output tokens. -1 means no limit (Ollama default is often 128 which
+     *  truncates structured JSON responses). Set to -1 unless you need a cap. */
+    numPredict?: number;
   } = {},
 ): Promise<string> {
   const baseUrl = options.baseUrl ?? DEFAULT_BASE_URL;
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  const numPredict = options.numPredict ?? -1; // -1 = unlimited
   const startTime = Date.now();
 
   const controller = new AbortController();
@@ -45,7 +49,12 @@ export async function ollamaGenerate(
     const response = await undiciFetch(`${baseUrl}/api/generate`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ model, prompt, stream: false }),
+      body: JSON.stringify({
+        model,
+        prompt,
+        stream: false,
+        options: { num_predict: numPredict },
+      }),
       signal: controller.signal,
       // @ts-expect-error - undici fetch dispatcher option
       dispatcher: makeAgent(timeoutMs),
