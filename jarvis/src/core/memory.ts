@@ -14,7 +14,11 @@ import { HttpsProxyAgent } from "https-proxy-agent";
 import { debugLogger } from "../../../gemini-cli/packages/core/src/index.js";
 import { ConfigManager } from "./configManager.js";
 import { EntityExtractor, type EntityLink } from "./entityExtractor.js";
-import { ollamaGenerate, ollamaEmbed } from "./ollamaClient.js";
+import {
+  ollamaGenerate,
+  ollamaGenerateWithRetry,
+  ollamaEmbed,
+} from "./ollamaClient.js";
 
 /** Format a timestamp as a local date string (YYYY-MM-DD) for logging. */
 function toLocalDateString(ms: number): string {
@@ -268,8 +272,14 @@ export class MemoryService {
       const baseUrl = this.jarvisConfig.ollama?.baseUrl;
       const timeoutMs =
         cfg.timeoutMs ?? this.jarvisConfig.ollama?.defaultTimeoutMs ?? 120_000;
+      const maxRetries = this.jarvisConfig.ollama?.maxRetries ?? 2;
       return (prompt: string) =>
-        ollamaGenerate(model, prompt, { baseUrl, timeoutMs });
+        ollamaGenerateWithRetry(model, prompt, {
+          baseUrl,
+          timeoutMs,
+          maxRetries,
+          maxTimeoutMs: timeoutMs * 3,
+        });
     }
     return fallbackFn;
   }

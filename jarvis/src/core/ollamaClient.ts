@@ -81,6 +81,60 @@ export async function ollamaGenerate(
 }
 
 /**
+ * Retry wrapper for ollamaGenerate with exponential backoff.
+ * Retries on AbortError (timeout) and network errors.
+ * Each retry doubles the timeout up to maxTimeoutMs.
+ */
+export async function ollamaGenerateWithRetry(
+  model: string,
+  prompt: string,
+  options: {
+    baseUrl?: string;
+    timeoutMs?: number;
+    numPredict?: number;
+    maxRetries?: number;
+    maxTimeoutMs?: number;
+  } = {},
+): Promise<string> {
+  const maxRetries = options.maxRetries ?? 2;
+  const baseTimeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  const maxTimeoutMs = options.maxTimeoutMs ?? baseTimeoutMs * 3;
+
+  let lastError: Error | null = null;
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    // Exponential backoff on timeout: 1x → 1.5x → 2x, capped at maxTimeoutMs
+    const timeoutMs = Math.min(
+      Math.round(baseTimeoutMs * Math.pow(1.5, attempt)),
+      maxTimeoutMs,
+    );
+    if (attempt > 0) {
+      const delayMs = Math.min(2000 * attempt, 8000);
+      console.error(
+        `🔄 [Ollama] Retry ${attempt}/${maxRetries} after ${delayMs}ms delay (timeout=${timeoutMs}ms)...`,
+      );
+      await new Promise((r) => setTimeout(r, delayMs));
+    }
+    try {
+      return await ollamaGenerate(model, prompt, {
+        ...options,
+        timeoutMs,
+      });
+    } catch (e: any) {
+      lastError = e;
+      const isRetryable =
+        e.name === "AbortError" ||
+        e.message?.includes("ECONNREFUSED") ||
+        e.message?.includes("ECONNRESET") ||
+        e.message?.includes("fetch failed");
+      if (!isRetryable || attempt === maxRetries) {
+        throw e;
+      }
+    }
+  }
+  throw lastError ?? new Error("ollamaGenerateWithRetry exhausted");
+}
+
+/**
  * Unified Ollama /api/embed call.
  */
 export async function ollamaEmbed(

@@ -31,6 +31,12 @@ export interface JarvisConfig {
     baseUrl: string;
     /** Default request timeout in milliseconds. Default: 30000. */
     defaultTimeoutMs: number;
+    /**
+     * Max retry attempts on timeout or network errors for reflection/entity
+     * extraction calls. Each retry doubles the timeout up to 3x the base.
+     * Default: 2 (total 3 attempts).
+     */
+    maxRetries: number;
   };
   /**
    * Embedding service configuration.
@@ -304,6 +310,7 @@ export class ConfigManager {
       ollama: {
         baseUrl: "http://localhost:11434",
         defaultTimeoutMs: 30_000,
+        maxRetries: 2,
       },
       embeddingService: {
         provider: "google" as const,

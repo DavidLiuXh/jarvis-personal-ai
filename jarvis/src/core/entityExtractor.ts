@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { ollamaGenerate } from "./ollamaClient.js";
+import { ollamaGenerateWithRetry } from "./ollamaClient.js";
 
 export type EntityLink = {
   subject: string;
@@ -96,9 +96,11 @@ export class EntityExtractor {
       if (this.provider === "ollama") {
         if (!this.ollamaModel)
           throw new Error("[EntityExtractor] ollamaModel is required");
-        responseText = await ollamaGenerate(this.ollamaModel, prompt, {
+        responseText = await ollamaGenerateWithRetry(this.ollamaModel, prompt, {
           baseUrl: this.ollamaBaseUrl,
           timeoutMs: this.timeoutMs,
+          maxRetries: 2,
+          maxTimeoutMs: this.timeoutMs * 3,
         });
       } else {
         if (!this.generateTextFn)
