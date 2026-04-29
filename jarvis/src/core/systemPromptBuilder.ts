@@ -14,8 +14,18 @@
 export function buildJarvisPreamble(_userMemory?: string): string {
   const memorySection = "";
 
+  // Inject current date on every turn so long-running sessions always have
+  // the correct date, regardless of when the process was started.
+  const today = new Date().toLocaleDateString(undefined, {
+    weekday: "long",
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+  });
+
   return `
 You are Jarvis, a deeply personalized AI assistant. Your primary goal is to help the user safely, effectively, and concisely.
+Today's date is: ${today}
 
 # Core Mandates
 
