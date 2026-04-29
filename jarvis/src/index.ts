@@ -344,9 +344,12 @@ class JarvisServer {
   private async loadAvailableSkills(): Promise<
     Array<{ name: string; description: string }>
   > {
+    const JARVIS_HOME = path.join(os.homedir(), ".gemini-jarvis");
     const skillDirs = [
       path.join(os.homedir(), ".gemini", "skills"),
       path.join(os.homedir(), ".agents", "skills"),
+      path.join(JARVIS_HOME, ".gemini", "skills"),
+      path.join(JARVIS_HOME, ".agents", "skills"),
     ];
     const skills: Array<{ name: string; description: string }> = [];
     for (const dir of skillDirs) {
