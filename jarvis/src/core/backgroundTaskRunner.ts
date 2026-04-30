@@ -191,7 +191,10 @@ export class BackgroundTaskRunner extends EventEmitter {
         error,
       } satisfies BackgroundTaskEvent);
     } finally {
-      agent.removeAllListeners();
+      // dispose() calls Config.dispose() → coreEvents.off() for model-changed etc.
+      // Without this, coreEvents holds a reference chain preventing GC of the
+      // agent, its GeminiClient, and Config after the task completes.
+      await agent.dispose();
       // Evict completed/failed tasks after 30 minutes to prevent unbounded map growth
       setTimeout(() => this.tasks.delete(task.taskId), 30 * 60 * 1000);
     }

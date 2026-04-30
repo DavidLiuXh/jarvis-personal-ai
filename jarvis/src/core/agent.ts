@@ -796,6 +796,21 @@ export class JarvisAgent extends EventEmitter {
     return this.client.getChat().getHistory();
   }
 
+  /**
+   * Releases resources held by this agent.
+   * Calls Config.dispose() which deregisters listeners on the global coreEvents
+   * singleton (model-changed, agents-refreshed, etc.) so the agent and its
+   * GeminiClient / Config can be garbage-collected.
+   * Must be called for ephemeral agents (e.g. background task agents) to
+   * prevent coreEvents from accumulating stale listeners.
+   */
+  public async dispose(): Promise<void> {
+    if (this.client?.config) {
+      await this.client.config.dispose();
+    }
+    this.removeAllListeners();
+  }
+
   public triggerSkillExtraction(): Promise<void> {
     return this.agentInitializer.triggerSkillExtraction();
   }
