@@ -473,24 +473,36 @@ export class AgentInitializer {
 
     await this.resumeFromDisk(client, generateText);
 
-    // Strip the gemini-cli session_context turn (first user/model pair) from
-    // chat history. Jarvis injects date/OS info via its own system prompt every
-    // turn, so this turn is redundant and wastes tokens on every request.
-    const chat = client.getChat();
-    const history = chat.getHistory();
-    const stripped = history.filter(
-      (turn) =>
-        !(
-          turn.role === "user" &&
-          turn.parts?.some((p: any) =>
-            (p.text ?? "").includes("<session_context>"),
-          )
-        ),
-    );
-    if (stripped.length < history.length) {
-      chat.setHistory(stripped);
+    // Strip the gemini-cli session_context turn from ALL GeminiClient instances.
+    // gemini-cli maintains TWO separate GeminiClient objects:
+    //   1. config._geminiClient — used by ContextBuilder/Conseca safety checks
+    //   2. Jarvis's own `client` — used for actual LLM requests
+    // Both get session_context prepended via getInitialChatHistory().
+    // Stripping only one leaves the other stale and Conseca still sees it.
+    const stripSessionContext = (c: any): number => {
+      if (!c?.getHistory || !c?.setHistory) return 0;
+      const h = [...(c.getHistory() as any[])];
+      const stripped = h.filter(
+        (turn: any) =>
+          !(
+            turn.role === "user" &&
+            turn.parts?.some((p: any) =>
+              (p.text ?? "").includes("<session_context>"),
+            )
+          ),
+      );
+      if (stripped.length < h.length) {
+        c.setHistory(stripped);
+        return h.length - stripped.length;
+      }
+      return 0;
+    };
+
+    const n1 = stripSessionContext(client);
+    const n2 = stripSessionContext((config as any)._geminiClient);
+    if (n1 + n2 > 0) {
       console.error(
-        `🧹 [Jarvis] Stripped ${history.length - stripped.length} session_context turn(s) from history.`,
+        `🧹 [Jarvis] Stripped session_context from ${[n1 && "own", n2 && "config"].filter(Boolean).join(" + ")} client(s).`,
       );
     }
 
