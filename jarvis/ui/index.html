@@ -947,6 +947,9 @@
                     showInputRequired(msg.taskId, msg.question);
 
                 // ── Background Task Events ─────────────────────────────────
+                } else if (msg.type === 'bg_task_started') {
+                    console.log('[bg] task started:', msg.task?.taskId);
+
                 } else if (msg.type === 'bg_task_done') {
                     appendMessage('jarvis',
                         `✅ **后台任务完成** (ID: \`${esc(msg.taskId.slice(0, 8))}\`)\n\n${msg.result || ''}`,
