@@ -203,6 +203,7 @@ export class AgentInitializer {
         "if user asks 'what was my investment strategy?', set query='investment strategy'; " +
         "if user asks 'did we discuss Anthropic yesterday?', set query='Anthropic' (extract the TOPIC, not the time word); " +
         "if user asks 'what did we talk about last week?', set query='recent discussion'. " +
+        "When the question mentions a specific time period, also set time_window_days: yesterday=1, today=0, last week=7, last month=30. " +
         "NEVER call this tool without a non-empty query.",
       parameters: {
         type: "object",
