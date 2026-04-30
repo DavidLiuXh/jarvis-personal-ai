@@ -470,6 +470,9 @@ export class JarvisAgent extends EventEmitter {
           this.client.config.setModel(result.model);
           querySubject = result.querySubject;
           timeWindowDays = result.timeWindowDays;
+          // Propagate to toolRouter so recall_memory falls back to this
+          // window when LLM omits time_window_days parameter.
+          this.toolRouter.setCurrentTimeWindow(timeWindowDays);
           console.error(
             `🔀 [Jarvis] Local routing: ${result.decision} | subject=${result.querySubject} | time_window=${result.timeWindowDays ?? "none"} | reason="${result.classifierReason}" (source=${result.source})`,
           );

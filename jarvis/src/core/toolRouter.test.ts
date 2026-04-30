@@ -197,7 +197,7 @@ describe("ToolRouter", () => {
       vi.fn(),
     );
 
-    expect(search).toHaveBeenCalledWith("TypeScript", 3);
+    expect(search).toHaveBeenCalledWith("TypeScript", 3, null);
     expect(parts).toHaveLength(1);
     const response = (parts[0] as any).functionResponse.response;
     expect(JSON.stringify(response)).toContain("memory item 1");

@@ -190,6 +190,10 @@ type TaskCommandHandlerHandle = {
  * Scheduler, then assembles the response parts for the next LLM turn.
  */
 export class ToolRouter {
+  // Time window from the current turn's routing classification.
+  // Used as fallback when LLM calls recall_memory without time_window_days.
+  private currentTimeWindowDays: number | null = null;
+
   constructor(
     private memoryService: MemoryServiceHandle,
     private dynamicRegistry: DynamicRegistryHandle,
@@ -198,6 +202,11 @@ export class ToolRouter {
     private taskCommandHandler?: TaskCommandHandlerHandle,
     private channelRegistry?: ChannelRegistryHandle,
   ) {}
+
+  /** Called by agent.ts each turn with the routing result's time window. */
+  public setCurrentTimeWindow(days: number | null): void {
+    this.currentTimeWindowDays = days;
+  }
 
   async route(
     requests: ToolCallRequest[],
@@ -322,7 +331,11 @@ export class ToolRouter {
       } else if (req.name === "recall_memory") {
         const query = (req.args.query as string)?.trim() || "";
         const limit = (req.args.limit as number) || 5;
-        const timeWindowDays = (req.args.time_window_days as number) ?? null;
+        // Use LLM-provided time window, falling back to the routing-inferred
+        // window so temporal queries get the correct scope even when LLM omits
+        // the parameter (e.g. "昨天我们讨论了什么" → time_window=1 from router).
+        const timeWindowDays =
+          (req.args.time_window_days as number) ?? this.currentTimeWindowDays;
 
         if (!query) {
           // LLM called recall_memory without a query — give actionable guidance
@@ -336,8 +349,14 @@ export class ToolRouter {
             `⚠️ [Jarvis] recall_memory called with empty query — returned guidance to LLM.`,
           );
         } else {
+          const twSource =
+            req.args.time_window_days != null
+              ? "llm"
+              : this.currentTimeWindowDays != null
+                ? "router-fallback"
+                : "all-time";
           console.error(
-            `🧠 [Jarvis] Active Recall initiated for: "${query}" (TimeWindow: ${timeWindowDays ?? "All-time"})`,
+            `🧠 [Jarvis] Active Recall initiated for: "${query}" (TimeWindow: ${timeWindowDays ?? "all-time"}, source=${twSource})`,
           );
           const memories = await this.memoryService.search(
             query,
