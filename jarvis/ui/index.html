@@ -877,7 +877,10 @@
 
             ws.onmessage = (event) => {
                 const msg = JSON.parse(event.data);
-                
+                if (msg.type && msg.type.startsWith('bg_')) {
+                    console.log('[bg-rx]', msg.type, JSON.stringify(msg).slice(0, 120));
+                }
+
                 if (msg.type === 'history') {
                     chatWindow.innerHTML = '';
                     msg.payload.forEach(m => {
