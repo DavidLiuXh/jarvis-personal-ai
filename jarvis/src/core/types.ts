@@ -30,6 +30,13 @@ export interface JarvisAgentOptions {
   memoryService: MemoryService;
   /** Skip session history restore — used for background task agents */
   skipResume?: boolean;
+  /**
+   * Lightweight mode for ephemeral agents (background tasks).
+   * Skips: BackgroundDistiller, summarizerGenerateText, EntityExtractor
+   * trigger (via setGenerateText), autoBackfill/waitForBackfill.
+   * These are expensive and irrelevant for one-shot background tasks.
+   */
+  lightweight?: boolean;
 }
 
 export interface JarvisChatMessage {

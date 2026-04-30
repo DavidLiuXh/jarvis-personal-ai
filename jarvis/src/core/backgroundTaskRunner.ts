@@ -144,7 +144,8 @@ export class BackgroundTaskRunner extends EventEmitter {
       sessionId: bgSessionId,
       cwd: this.sourceRoot,
       memoryService: this.memoryService,
-      skipResume: true, // background agents need no history — avoids loading all sessions
+      skipResume: true, // no history restore — avoids loading all sessions
+      lightweight: true, // skip BackgroundDistiller, EntityExtractor, backfill, summarizer
     });
 
     if (this.agentManager) agent.setAgentManager(this.agentManager);

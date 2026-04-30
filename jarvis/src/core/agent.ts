@@ -76,11 +76,13 @@ export class JarvisAgent extends EventEmitter {
   private conversationTurnCount = 0;
   private summarizerGenerateText: ((prompt: string) => Promise<string>) | null =
     null;
+  private lightweight: boolean;
 
   constructor(options: JarvisAgentOptions) {
     super();
     this.sessionId = options.sessionId;
     this.memoryService = options.memoryService;
+    this.lightweight = options.lightweight ?? false;
     this.dynamicRegistry = new DynamicToolRegistry(options.cwd);
     this.agentInitializer = new AgentInitializer(
       options.sessionId,
@@ -113,19 +115,22 @@ export class JarvisAgent extends EventEmitter {
       return response.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
     };
 
-    // Route distillation through reflection.provider so local Ollama models
-    // can be used for fact extraction. Falls back to Gemini if reflection.model
-    // is not set or provider is "gemini".
-    const distillGenerateText =
-      this.memoryService.buildReflectionGenerateText(generateText);
+    if (!this.lightweight) {
+      // Route distillation through reflection.provider so local Ollama models
+      // can be used for fact extraction. Falls back to Gemini if reflection.model
+      // is not set or provider is "gemini".
+      const distillGenerateText =
+        this.memoryService.buildReflectionGenerateText(generateText);
 
-    this.distiller = new BackgroundDistiller(
-      distillGenerateText,
-      (category, content, importance) =>
-        this.memoryService.saveFact(category, content, importance),
-    );
+      this.distiller = new BackgroundDistiller(
+        distillGenerateText,
+        (category, content, importance) =>
+          this.memoryService.saveFact(category, content, importance),
+      );
 
-    this.memoryService.setGenerateText(generateText);
+      // setGenerateText triggers EntityExtractor initialization inside MemoryService
+      this.memoryService.setGenerateText(generateText);
+    }
 
     // Always use the API key path for embedding — Code Assist mode does not
     // support embedContent, and the direct GoogleGenAI client is more reliable.
@@ -161,10 +166,12 @@ export class JarvisAgent extends EventEmitter {
       );
     }
 
-    // Initialize summarizer generateText for history compression
-    // Uses summarizer.model (Ollama) if configured, falls back to CLI-auth
-    this.summarizerGenerateText =
-      this.memoryService.buildReflectionGenerateText(generateText);
+    // Initialize summarizer generateText for history compression.
+    // Skipped in lightweight mode — bg agents don't compress history.
+    if (!this.lightweight) {
+      this.summarizerGenerateText =
+        this.memoryService.buildReflectionGenerateText(generateText);
+    }
 
     // 🛡️ Register messageBus listener for tool confirmation.
     // The correct confirmation flow in gemini-cli:
@@ -210,9 +217,11 @@ export class JarvisAgent extends EventEmitter {
     this.initialized = true;
     debugLogger.debug(`[JarvisAgent] Lifeform Ready.`);
 
-    // Wait for autoBackfill (including startup events backfill) to complete
-    // so Jarvis is fully ready before the HTTP server starts accepting requests
-    await this.memoryService.waitForBackfill();
+    // Wait for autoBackfill to complete. Skipped in lightweight mode —
+    // backfill is a global DB maintenance task, not needed per bg agent.
+    if (!this.lightweight) {
+      await this.memoryService.waitForBackfill();
+    }
   }
 
   /**
@@ -736,7 +745,9 @@ export class JarvisAgent extends EventEmitter {
             userPrompt,
             finalAssistantText,
           );
-          void this.distiller.distill(userPrompt, finalAssistantText);
+          if (this.distiller) {
+            void this.distiller.distill(userPrompt, finalAssistantText);
+          }
 
           // Trigger session events extraction every N turns (async, non-blocking)
           const interval =
