@@ -12,6 +12,7 @@ import type {
   AgentTaskEvent,
   AgentTaskStatus,
 } from "./externalAgent.js";
+import { launchAgent, sendAgentInput } from "./agentLauncher.js";
 
 /**
  * Manages the lifecycle of all running ADK agent tasks.
@@ -114,7 +115,29 @@ export class AgentManager extends EventEmitter {
       return;
     }
     console.error(`📥 [AgentManager] User input received for task ${taskId}`);
-    // Phase 2: forward to AgentLauncher
+
+    if (!task.port) {
+      this.failTask(taskId, "Cannot resume: agent port unknown");
+      return;
+    }
+
+    this.updateStatus(task, "running");
+
+    // Resume the A2A session — non-blocking
+    setImmediate(() =>
+      sendAgentInput(
+        task.port!,
+        task.taskId,
+        task.a2aContextId ?? task.taskId,
+        value,
+        {
+          onChunk: (chunk) => this.appendChunk(taskId, chunk),
+          onComplete: (output) => this.completeTask(taskId, output),
+          onFailed: (error) => this.failTask(taskId, error),
+          onInputRequired: (question) => this.requireInput(taskId, question),
+        },
+      ),
+    );
   }
 
   cancel(taskId: string): void {
@@ -133,7 +156,13 @@ export class AgentManager extends EventEmitter {
       taskId,
     } satisfies AgentTaskEvent);
     console.error(`🛑 [AgentManager] Task cancelled: ${taskId}`);
-    // Phase 2: kill the process
+    if (task.pid) {
+      try {
+        process.kill(task.pid, "SIGTERM");
+      } catch {
+        // process may have already exited
+      }
+    }
   }
 
   // ── Internal helpers ─────────────────────────────────────────────────────
@@ -143,10 +172,6 @@ export class AgentManager extends EventEmitter {
     task.updatedAt = Date.now();
   }
 
-  /**
-   * Phase 1 stub — just marks the task as failed with a helpful message.
-   * Phase 2 will replace this with real AgentLauncher invocation.
-   */
   private async launchTask(task: AgentTask, card: AgentCard): Promise<void> {
     this.updateStatus(task, "starting");
     this.emit("event", {
@@ -154,21 +179,21 @@ export class AgentManager extends EventEmitter {
       taskId: task.taskId,
     } satisfies AgentTaskEvent);
 
-    console.error(
-      `🚀 [AgentManager] Launching agent ${card.agentId} for task ${task.taskId} [STUB — Phase 2 pending]`,
-    );
+    const result = await launchAgent(card, task, {
+      onChunk: (chunk) => this.appendChunk(task.taskId, chunk),
+      onComplete: (output) => this.completeTask(task.taskId, output),
+      onFailed: (error) => this.failTask(task.taskId, error),
+      onInputRequired: (question) => {
+        // Keep pid/port on the task so sendInput can resume the A2A session
+        this.requireInput(task.taskId, question);
+      },
+    });
 
-    // Stub: simulate a short delay then report "not yet implemented"
-    await new Promise((r) => setTimeout(r, 500));
-
-    const msg = `Agent launcher not yet implemented (Phase 2). Agent: ${card.name}, Input: ${JSON.stringify(task.input)}`;
-    task.error = msg;
-    this.updateStatus(task, "failed");
-    this.emit("event", {
-      type: "agent_task_failed",
-      taskId: task.taskId,
-      error: msg,
-    } satisfies AgentTaskEvent);
+    if (result) {
+      task.pid = result.pid;
+      task.port = result.port;
+      task.updatedAt = Date.now();
+    }
   }
 
   // ── Stream helpers (called by AgentLauncher in Phase 2) ──────────────────

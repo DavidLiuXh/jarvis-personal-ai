@@ -52,6 +52,8 @@ export type AgentTask = {
   pid?: number;
   /** Local port the agent is listening on */
   port?: number;
+  /** A2A context id for session resumption (INPUT_REQUIRED flow) */
+  a2aContextId?: string;
   createdAt: number;
   updatedAt: number;
 };
