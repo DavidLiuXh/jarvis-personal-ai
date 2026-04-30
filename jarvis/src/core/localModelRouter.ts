@@ -6,7 +6,60 @@
 
 import { ollamaGenerate } from "./ollamaClient.js";
 
-const CLASSIFIER_SYSTEM_PROMPT = `
+const DAY_NAMES = [
+  "Sunday",
+  "Monday",
+  "Tuesday",
+  "Wednesday",
+  "Thursday",
+  "Friday",
+  "Saturday",
+];
+
+function buildClassifierPrompt(): string {
+  const now = new Date();
+  const todayName = DAY_NAMES[now.getDay()];
+  const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+  // Days since Monday (0=Mon … 6=Sun); used to compute "this Monday" offset
+  const daysSinceMonday = (now.getDay() + 6) % 7;
+  return buildClassifierPromptTemplate(todayStr, todayName, daysSinceMonday);
+}
+
+function isoDate(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+function buildClassifierPromptTemplate(
+  todayStr: string,
+  todayName: string,
+  daysSinceMonday: number,
+): string {
+  // Pre-compute ISO date for each weekday so LLM never has to do arithmetic.
+  // weekdayIndex: 0=Mon, 1=Tue, 2=Wed, 3=Thu, 4=Fri, 5=Sat, 6=Sun
+  const daysAgo = (weekdayIndex: number) =>
+    (daysSinceMonday - weekdayIndex + 7) % 7;
+  const weekdayDate = (weekdayIndex: number): string => {
+    const d = new Date();
+    d.setDate(d.getDate() - daysAgo(weekdayIndex));
+    return isoDate(d);
+  };
+  const monDate = weekdayDate(0);
+  const tueDate = weekdayDate(1);
+  const wedDate = weekdayDate(2);
+  const thuDate = weekdayDate(3);
+  const friDate = weekdayDate(4);
+  const satDate = weekdayDate(5);
+  const sunDate = weekdayDate(6);
+  // Last-week dates (7 days earlier)
+  const lastMonDate = isoDate(
+    new Date(new Date().setDate(new Date().getDate() - daysAgo(0) - 7)),
+  );
+  const lastFriDate = isoDate(
+    new Date(new Date().setDate(new Date().getDate() - daysAgo(4) - 7)),
+  );
+
+  return `
+Today is ${todayStr} (${todayName}).
 You are a task analyst. Evaluate the user's request on THREE dimensions simultaneously.
 
 DIMENSION 1 — Knowledge Depth (1-100)
@@ -32,17 +85,33 @@ Classify what the request is asking ABOUT. Choose exactly one:
 KEY RULE: If the user is asking whether something was discussed or what happened in a past conversation, classify as "personal" regardless of the topic.
 
 DIMENSION 4 — Time Window (for memory retrieval)
-If the request refers to a specific past time period, output how many calendar days back the window should start.
-The window always ends at NOW. Examples:
-- "yesterday" / "昨天" → 1  (start from yesterday 00:00)
-- "the day before yesterday" / "前天" → 2  (start from 2 days ago 00:00)
-- "two days ago" / "两天前" → 2
-- "last week" / "上周" → 7
+When the request refers to a time period, output EITHER:
+  A) date_from + date_to  (for specific days: a weekday, a calendar date, yesterday, today)
+  B) time_window_days     (for open-ended ranges: "last week", "recently", "last month")
+Never output both. Leave both null if no time reference.
+
+Rules for specific days — use date_from/date_to (exact ISO dates, pre-computed below):
+- "today" / "今天" → date_from="${todayStr}", date_to="${todayStr}"
+- "yesterday" / "昨天" → date_from="${isoDate(new Date(new Date().setDate(new Date().getDate() - 1)))}", date_to="${isoDate(new Date(new Date().setDate(new Date().getDate() - 1)))}"
+- "the day before yesterday" / "前天" → date_from="${isoDate(new Date(new Date().setDate(new Date().getDate() - 2)))}", date_to="${isoDate(new Date(new Date().setDate(new Date().getDate() - 2)))}"
+- "Monday" / "周一" / "星期一" → date_from="${monDate}", date_to="${monDate}"
+- "Tuesday" / "周二" / "星期二" → date_from="${tueDate}", date_to="${tueDate}"
+- "Wednesday" / "周三" / "星期三" → date_from="${wedDate}", date_to="${wedDate}"
+- "Thursday" / "周四" / "星期四" → date_from="${thuDate}", date_to="${thuDate}"
+- "Friday" / "周五" / "星期五" → date_from="${friDate}", date_to="${friDate}"
+- "Saturday" / "周六" / "星期六" → date_from="${satDate}", date_to="${satDate}"
+- "Sunday" / "周日" / "星期日" → date_from="${sunDate}", date_to="${sunDate}"
+- "last Monday" / "上周一" → date_from="${lastMonDate}", date_to="${lastMonDate}"
+- "last Friday" / "上周五" → date_from="${lastFriDate}", date_to="${lastFriDate}"
+- Any specific "YYYY-MM-DD" or "Month Day" date → compute the ISO date and use date_from=date_to=that date
+
+Rules for open ranges — use time_window_days (integer, no date_from/date_to):
+- "last week" / "上周" / "this week" → 7
 - "last month" / "上个月" → 30
 - "recently" / "最近" / "这两天" → 3
-- "today" / "今天" / "just now" / "刚才" → 0  (start from today 00:00, i.e. no days back)
-- No time reference at all → null
-Output the LARGEST integer that covers the full period. If uncertain, output null.
+- "last N days" → N
+
+Output null for both if there is no time reference at all.
 
 SCORING FORMULA
 complexity_score = knowledge_score * 0.6 + operation_score * 0.4
@@ -52,11 +121,13 @@ OUTPUT RULES
 - Respond ONLY with a raw JSON object.
 - DO NOT wrap in markdown code blocks.
 - DO NOT output any explanation outside the JSON.
-- All fields are REQUIRED except time_window_days which can be null.
+- All fields are REQUIRED. time_window_days, date_from, date_to may be null.
+- Use EITHER time_window_days OR date_from+date_to, never both.
 
 Required schema:
-{"knowledge_score": <integer 1-100>, "operation_score": <integer 1-100>, "complexity_score": <integer 1-100>, "complexity_reasoning": "<one sentence>", "query_subject": "personal" | "external" | "mixed", "time_window_days": <integer> | null}
+{"knowledge_score": <integer 1-100>, "operation_score": <integer 1-100>, "complexity_score": <integer 1-100>, "complexity_reasoning": "<one sentence>", "query_subject": "personal" | "external" | "mixed", "time_window_days": <integer> | null, "date_from": "<YYYY-MM-DD>" | null, "date_to": "<YYYY-MM-DD>" | null}
 `.trim();
+}
 
 export type QuerySubject = "personal" | "external" | "mixed";
 
@@ -67,8 +138,12 @@ export type RoutingResult = {
   decision: string;
   source: "local-router/ollama" | "local-router/fallback";
   querySubject: QuerySubject;
-  /** Days ago to start the time window, or null if no temporal intent. */
+  /** Days ago to start the time window (open-ended ranges). Null when date_from/date_to is set. */
   timeWindowDays: number | null;
+  /** Exact start date for specific-day queries (YYYY-MM-DD). */
+  dateFrom: string | null;
+  /** Exact end date for specific-day queries (YYYY-MM-DD). */
+  dateTo: string | null;
 };
 
 type ClassifyResult = {
@@ -76,6 +151,8 @@ type ClassifyResult = {
   reason: string;
   querySubject: QuerySubject;
   timeWindowDays: number | null;
+  dateFrom: string | null;
+  dateTo: string | null;
 };
 
 export type ConversationTurn = {
@@ -103,7 +180,7 @@ export class LocalModelRouter {
     history: ConversationTurn[] = [],
   ): Promise<RoutingResult> {
     try {
-      const { score, reason, querySubject, timeWindowDays } =
+      const { score, reason, querySubject, timeWindowDays, dateFrom, dateTo } =
         await this.classify(userPrompt, history);
       const model = score >= this.threshold ? this.proModel : this.flashModel;
       return {
@@ -117,6 +194,8 @@ export class LocalModelRouter {
         source: "local-router/ollama",
         querySubject,
         timeWindowDays,
+        dateFrom,
+        dateTo,
       };
     } catch (e: any) {
       return {
@@ -127,6 +206,8 @@ export class LocalModelRouter {
         source: "local-router/fallback",
         querySubject: FALLBACK_QUERY_SUBJECT,
         timeWindowDays: null,
+        dateFrom: null,
+        dateTo: null,
       };
     }
   }
@@ -146,7 +227,7 @@ export class LocalModelRouter {
             .join("\n")}\n`
         : "";
 
-    const fullPrompt = `${CLASSIFIER_SYSTEM_PROMPT}${historySection}\nUser request: ${prompt}`;
+    const fullPrompt = `${buildClassifierPrompt()}${historySection}\nUser request: ${prompt}`;
     const raw = await ollamaGenerate(this.classifierModel, fullPrompt, {
       baseUrl: this.baseUrl,
       timeoutMs: this.timeoutMs,
@@ -167,6 +248,8 @@ export class LocalModelRouter {
       complexity_reasoning?: string;
       query_subject?: string;
       time_window_days?: number | null;
+      date_from?: string | null;
+      date_to?: string | null;
     };
 
     // Validate complexity_score
@@ -210,6 +293,22 @@ export class LocalModelRouter {
       }
     }
 
+    // Parse date_from / date_to — must be YYYY-MM-DD strings or null.
+    // When present, they take priority over time_window_days (clear it).
+    const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+    let dateFrom: string | null = null;
+    let dateTo: string | null = null;
+    if (parsed.date_from && ISO_DATE_RE.test(String(parsed.date_from))) {
+      dateFrom = String(parsed.date_from);
+    }
+    if (parsed.date_to && ISO_DATE_RE.test(String(parsed.date_to))) {
+      dateTo = String(parsed.date_to);
+    }
+    // If LLM provided date range, discard time_window_days to avoid conflict.
+    if (dateFrom !== null && dateTo !== null) {
+      timeWindowDays = null;
+    }
+
     const knowledgeScore = parsed.knowledge_score ?? null;
     const operationScore = parsed.operation_score ?? null;
     const breakdown =
@@ -222,6 +321,8 @@ export class LocalModelRouter {
       reason: `${parsed.complexity_reasoning ?? "(no reason)"}${breakdown}`,
       querySubject,
       timeWindowDays,
+      dateFrom,
+      dateTo,
     };
   }
 }

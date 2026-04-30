@@ -195,9 +195,10 @@ type TaskCommandHandlerHandle = {
  * Scheduler, then assembles the response parts for the next LLM turn.
  */
 export class ToolRouter {
-  // Time window from the current turn's routing classification.
-  // Used as fallback when LLM calls recall_memory without time_window_days.
+  // Fallbacks from the current turn's routing classification.
+  // Used when LLM calls recall_memory without time parameters.
   private currentTimeWindowDays: number | null = null;
+  private currentDateRange: { from: number; to: number } | null = null;
 
   constructor(
     private memoryService: MemoryServiceHandle,
@@ -208,9 +209,27 @@ export class ToolRouter {
     private channelRegistry?: ChannelRegistryHandle,
   ) {}
 
-  /** Called by agent.ts each turn with the routing result's time window. */
+  /** Called by agent.ts each turn with the routing result's relative time window. */
   public setCurrentTimeWindow(days: number | null): void {
     this.currentTimeWindowDays = days;
+  }
+
+  /** Called by agent.ts each turn with the routing result's exact date range. */
+  public setCurrentDateRange(
+    dateFrom: string | null,
+    dateTo: string | null,
+  ): void {
+    if (dateFrom && dateTo) {
+      // Parse as local midnight: "2026-04-27" → start/end of that day
+      const [fy, fm, fd] = dateFrom.split("-").map(Number);
+      const [ty, tm, td] = dateTo.split("-").map(Number);
+      const from = new Date(fy, fm - 1, fd, 0, 0, 0, 0).getTime();
+      // end of dateTo day = start of next day
+      const to = new Date(ty, tm - 1, td + 1, 0, 0, 0, 0).getTime();
+      this.currentDateRange = { from, to };
+    } else {
+      this.currentDateRange = null;
+    }
   }
 
   async route(
@@ -361,6 +380,11 @@ export class ToolRouter {
           }
         }
 
+        // Fall back to router-inferred date range when LLM didn't provide one.
+        if (dateRange === null && this.currentDateRange !== null) {
+          dateRange = this.currentDateRange;
+        }
+
         if (!query) {
           // LLM called recall_memory without a query — give actionable guidance
           // so it retries with proper keywords instead of silently failing.
@@ -375,7 +399,9 @@ export class ToolRouter {
         } else {
           const twSource =
             dateRange !== null
-              ? "date-range"
+              ? req.args.date_from != null
+                ? "date-range/llm"
+                : "date-range/router-fallback"
               : req.args.time_window_days != null
                 ? "llm"
                 : this.currentTimeWindowDays != null

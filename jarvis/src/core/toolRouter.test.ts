@@ -358,6 +358,25 @@ describe("ToolRouter", () => {
     expect(pushSafe).toHaveBeenCalledWith("feishu", "oc_123", "Report");
   });
 
+  it("recall_memory: router-set dateRange used as fallback when LLM omits date params", async () => {
+    const search = vi.fn().mockResolvedValue(["monday result"]);
+    const { router } = makeRouter({ search });
+
+    // Simulate router having classified "周一" → exact date
+    router.setCurrentDateRange("2026-04-27", "2026-04-27");
+
+    // LLM calls recall_memory without date_from/date_to
+    const req = makeReq("recall_memory", { query: "discussion" });
+    await router.route([req], new AbortController().signal, vi.fn());
+
+    const [, , twDays, dateRange] = search.mock.calls[0];
+    expect(twDays).toBeNull();
+    expect(dateRange).not.toBeNull();
+    // from = 2026-04-27 00:00 local, to = 2026-04-28 00:00 local
+    expect(dateRange.from).toBe(new Date(2026, 3, 27, 0, 0, 0, 0).getTime());
+    expect(dateRange.to).toBe(new Date(2026, 3, 28, 0, 0, 0, 0).getTime());
+  });
+
   it("recall_memory: date_from/date_to ISO strings are parsed into dateRange", async () => {
     const search = vi.fn().mockResolvedValue(["result about investment"]);
     const { router } = makeRouter({ search });
