@@ -80,6 +80,10 @@ import { SkillCommandHandler } from "./core/skillCommandHandler.js";
 import { AgentManager } from "./core/agentManager.js";
 import { loadAgentRegistry } from "./core/agentRegistry.js";
 import type { AgentTaskEvent } from "./core/externalAgent.js";
+import {
+  BackgroundTaskRunner,
+  type BackgroundTaskEvent,
+} from "./core/backgroundTaskRunner.js";
 
 const JARVIS_HOME = path.join(os.homedir(), ".gemini-jarvis");
 
@@ -107,6 +111,7 @@ class JarvisServer {
     { id: string; message: string }
   >();
   private agentManager: AgentManager;
+  private backgroundTaskRunner: BackgroundTaskRunner;
 
   constructor() {
     this.app = express();
@@ -114,6 +119,11 @@ class JarvisServer {
     this.wss = new WebSocketServer({ server: this.server });
     this.manager = JarvisManager.getInstance(SOURCE_ROOT);
     this.agentManager = new AgentManager(loadAgentRegistry(SOURCE_ROOT));
+    this.backgroundTaskRunner = new BackgroundTaskRunner(
+      SOURCE_ROOT,
+      this.manager.getMemoryService(),
+      this.agentManager,
+    );
 
     // Bridge AgentManager events → WebSocket broadcast
     this.agentManager.on("event", (event: AgentTaskEvent) => {
@@ -125,9 +135,20 @@ class JarvisServer {
       });
     });
 
+    // Bridge BackgroundTaskRunner events → WebSocket broadcast
+    this.backgroundTaskRunner.on("event", (event: BackgroundTaskEvent) => {
+      const payload = JSON.stringify({ type: event.type, ...event });
+      this.wss.clients.forEach((client) => {
+        if ((client as WebSocket).readyState === 1) {
+          client.send(payload);
+        }
+      });
+    });
+
     // Inject agentManager into JarvisManager before WebSocket is set up,
     // so every agent created from the first message already has it set.
     this.manager.setAgentManager(this.agentManager);
+    this.manager.setBackgroundTaskRunner(this.backgroundTaskRunner);
 
     // Wire MemoryService for task persistence + restore tasks from DB.
     this.agentManager.setMemoryService(this.manager.getMemoryService());
@@ -449,6 +470,10 @@ class JarvisServer {
         res.json({ taskId: task.taskId, logs: task.logs });
       },
     );
+    this.app.get("/api/bg-tasks", (req: Request, res: Response) => {
+      const sessionId = req.query.sessionId as string | undefined;
+      res.json(this.backgroundTaskRunner.listTasks(sessionId));
+    });
 
     const uiPath = path.join(SOURCE_ROOT, "jarvis/ui");
     this.app.use(express.static(uiPath));
@@ -499,6 +524,15 @@ class JarvisServer {
             } else {
               console.error(
                 `⚠️ [Jarvis] agent_cancel: task ${message.taskId} not found or session mismatch`,
+              );
+            }
+          } else if (message.type === "bg_cancel") {
+            const t = this.backgroundTaskRunner.getTask(message.taskId);
+            if (t && t.sessionId === sessionId) {
+              // BackgroundTaskRunner doesn't yet support mid-flight abort;
+              // the result will still be emitted but the user has been notified.
+              console.error(
+                `⚠️ [Jarvis] bg_cancel requested for ${message.taskId} — cancellation of in-flight LLM tasks not yet supported`,
               );
             }
           } else if (message.type === "ping") {

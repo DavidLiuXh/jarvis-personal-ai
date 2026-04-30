@@ -945,6 +945,17 @@
 
                 } else if (msg.type === 'agent_input_required') {
                     showInputRequired(msg.taskId, msg.question);
+
+                // ── Background Task Events ─────────────────────────────────
+                } else if (msg.type === 'bg_task_done') {
+                    appendMessage('jarvis',
+                        `✅ **后台任务完成** (ID: \`${esc(msg.taskId.slice(0, 8))}\`)\n\n${msg.result || ''}`,
+                    );
+                } else if (msg.type === 'bg_task_failed') {
+                    appendMessage('jarvis',
+                        `❌ **后台任务失败** (ID: \`${esc(msg.taskId.slice(0, 8))}\`): ${esc(msg.error || 'unknown error')}`,
+                    );
+                // ── End Background Task Events ─────────────────────────────
                 // ── End Agent Task Events ──────────────────────────────────
                 }
             };

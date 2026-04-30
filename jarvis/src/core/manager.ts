@@ -9,6 +9,7 @@ import { MemoryService } from "./memory.js";
 import { debugLogger } from "../../../gemini-cli/packages/core/src/index.js";
 import { ConfigManager } from "./configManager.js";
 import { type AgentManager } from "./agentManager.js";
+import { type BackgroundTaskRunner } from "./backgroundTaskRunner.js";
 
 export class JarvisManager {
   private static instance: JarvisManager;
@@ -16,6 +17,7 @@ export class JarvisManager {
   private sourceRoot: string;
   private memoryService: MemoryService;
   private agentManager: AgentManager | null = null;
+  private backgroundTaskRunner: BackgroundTaskRunner | null = null;
 
   private constructor(sourceRoot: string) {
     this.sourceRoot = sourceRoot;
@@ -32,9 +34,15 @@ export class JarvisManager {
   /** Set once at startup so every newly created agent gets it immediately. */
   public setAgentManager(manager: AgentManager): void {
     this.agentManager = manager;
-    // Apply to already-created agents too
     for (const agent of this.agents.values()) {
       agent.setAgentManager(manager);
+    }
+  }
+
+  public setBackgroundTaskRunner(runner: BackgroundTaskRunner): void {
+    this.backgroundTaskRunner = runner;
+    for (const agent of this.agents.values()) {
+      agent.setBackgroundTaskRunner(runner);
     }
   }
 
@@ -69,10 +77,9 @@ export class JarvisManager {
       memoryService: this.memoryService,
     });
 
-    // Inject AgentManager immediately so routing is available from first message
-    if (this.agentManager) {
-      agent.setAgentManager(this.agentManager);
-    }
+    if (this.agentManager) agent.setAgentManager(this.agentManager);
+    if (this.backgroundTaskRunner)
+      agent.setBackgroundTaskRunner(this.backgroundTaskRunner);
 
     this.agents.set(effectiveId, agent);
     return agent;

@@ -28,6 +28,8 @@ export interface JarvisAgentOptions {
   sessionId: string;
   cwd: string;
   memoryService: MemoryService;
+  /** Skip session history restore — used for background task agents */
+  skipResume?: boolean;
 }
 
 export interface JarvisChatMessage {
@@ -67,10 +69,18 @@ export interface JarvisAgentCancelMessage {
   sessionId?: string;
 }
 
+/** Cancel a running background task */
+export interface JarvisBgCancelMessage {
+  type: "bg_cancel";
+  taskId: string;
+  sessionId?: string;
+}
+
 export type JarvisIncomingMessage =
   | JarvisChatMessage
   | JarvisPingMessage
   | JarvisRestoreMessage
   | JarvisConfirmationMessage
   | JarvisAgentInputMessage
-  | JarvisAgentCancelMessage;
+  | JarvisAgentCancelMessage
+  | JarvisBgCancelMessage;

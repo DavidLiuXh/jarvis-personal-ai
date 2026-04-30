@@ -101,6 +101,7 @@ export class AgentInitializer {
     private sourceRoot: string,
     private memoryService: MemoryService,
     private dynamicRegistry: DynamicRegistryHandle,
+    private skipResume: boolean = false,
   ) {}
 
   async initialize(
@@ -645,9 +646,9 @@ export class AgentInitializer {
     client: GeminiClient,
     generateText?: (prompt: string) => Promise<string>,
   ): Promise<void> {
-    if (!this.jarvisConfig.session?.resumeOnStart) {
+    if (this.skipResume || !this.jarvisConfig.session?.resumeOnStart) {
       debugLogger.debug(
-        "[AgentInitializer] resumeOnStart=false, skipping history restore.",
+        `[AgentInitializer] Skipping history restore (skipResume=${this.skipResume}, resumeOnStart=${this.jarvisConfig.session?.resumeOnStart}).`,
       );
       return;
     }

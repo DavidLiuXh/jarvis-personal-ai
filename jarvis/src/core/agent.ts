@@ -42,6 +42,10 @@ import {
 import { LocalModelRouter } from "./localModelRouter.js";
 import { type AgentManager } from "./agentManager.js";
 import { routeToAgent } from "./agentRouter.js";
+import {
+  extractBackgroundPrompt,
+  type BackgroundTaskRunner,
+} from "./backgroundTaskRunner.js";
 
 /**
  * JARVIS 3.0: The Digital Lifeform Agent
@@ -68,6 +72,7 @@ export class JarvisAgent extends EventEmitter {
   private availableSkills: SkillInfo[] = [];
   private localModelRouter: LocalModelRouter | null = null;
   private agentManager: AgentManager | null = null;
+  private backgroundTaskRunner: BackgroundTaskRunner | null = null;
   private conversationTurnCount = 0;
   private summarizerGenerateText: ((prompt: string) => Promise<string>) | null =
     null;
@@ -82,6 +87,7 @@ export class JarvisAgent extends EventEmitter {
       options.cwd,
       options.memoryService,
       this.dynamicRegistry,
+      options.skipResume ?? false,
     );
   }
 
@@ -417,6 +423,10 @@ export class JarvisAgent extends EventEmitter {
     this.agentManager = manager;
   }
 
+  public setBackgroundTaskRunner(runner: BackgroundTaskRunner): void {
+    this.backgroundTaskRunner = runner;
+  }
+
   public async processMessage(
     userPrompt: string,
     imageAttachment?: { data: Buffer; mimeType: string },
@@ -445,6 +455,35 @@ export class JarvisAgent extends EventEmitter {
       this.emit(JarvisEventType.DONE);
       return;
     }
+
+    // ── Background task intercept ─────────────────────────────────────────
+    // Prefix "后台:", "background:", "async:", "bg:" → run in isolation,
+    // return confirmation immediately, push result when done.
+    if (this.backgroundTaskRunner) {
+      const bgPrompt = extractBackgroundPrompt(userPrompt);
+      if (bgPrompt === null) {
+        // No background trigger — fall through to normal LLM path
+      } else if (bgPrompt === "") {
+        // Trigger present but no task specified
+        this.emit(
+          JarvisEventType.CONTENT,
+          '请在"后台:"后面输入任务内容，例如：`后台: 调研NVDA的竞争对手`',
+        );
+        this.emit(JarvisEventType.DONE, "");
+        return;
+      } else {
+        const bgTask = this.backgroundTaskRunner.run(bgPrompt, this.sessionId);
+        this.emit(
+          JarvisEventType.CONTENT,
+          `🔀 **后台任务已启动** (ID: \`${bgTask.taskId.slice(0, 8)}\`)\n\n` +
+            `任务：${bgPrompt.slice(0, 100)}${bgPrompt.length > 100 ? "..." : ""}\n\n` +
+            `完成后会自动通知你，现在可以继续对话。`,
+        );
+        this.emit(JarvisEventType.DONE, "");
+        return;
+      }
+    }
+    // ── End background task intercept ─────────────────────────────────────
 
     if (this.isProcessing) {
       throw new Error("Mission in progress.");
