@@ -348,6 +348,7 @@ class JarvisServer {
     const skillDirs = [
       path.join(os.homedir(), ".gemini", "skills"),
       path.join(os.homedir(), ".agents", "skills"),
+      path.join(JARVIS_HOME, "skills"),
       path.join(JARVIS_HOME, ".gemini", "skills"),
       path.join(JARVIS_HOME, ".agents", "skills"),
     ];
