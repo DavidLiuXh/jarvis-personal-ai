@@ -29,7 +29,12 @@ export type MemoryServiceHandle = {
     content: string,
     importance: number,
   ) => Promise<void>;
-  search: (query: string, limit: number) => Promise<string[]>;
+  search: (
+    query: string,
+    limit: number,
+    timeWindowDays?: number | null,
+    dateRange?: { from: number; to: number } | null,
+  ) => Promise<string[]>;
   searchFacts: (
     query: string,
   ) => Promise<Array<{ category: string; content: string }>>;
@@ -337,6 +342,25 @@ export class ToolRouter {
         const timeWindowDays =
           (req.args.time_window_days as number) ?? this.currentTimeWindowDays;
 
+        // Parse absolute date range (overrides timeWindowDays when both present).
+        // LLM passes ISO 8601 strings like "2026-04-27" or "2026-04-27T00:00:00".
+        const dateFromArg = req.args.date_from as string | number | undefined;
+        const dateToArg = req.args.date_to as string | number | undefined;
+        let dateRange: { from: number; to: number } | null = null;
+        if (dateFromArg != null && dateToArg != null) {
+          const fromMs =
+            typeof dateFromArg === "number"
+              ? dateFromArg
+              : new Date(dateFromArg).getTime();
+          const toMs =
+            typeof dateToArg === "number"
+              ? dateToArg
+              : new Date(dateToArg).getTime();
+          if (!isNaN(fromMs) && !isNaN(toMs)) {
+            dateRange = { from: fromMs, to: toMs };
+          }
+        }
+
         if (!query) {
           // LLM called recall_memory without a query — give actionable guidance
           // so it retries with proper keywords instead of silently failing.
@@ -350,18 +374,25 @@ export class ToolRouter {
           );
         } else {
           const twSource =
-            req.args.time_window_days != null
-              ? "llm"
-              : this.currentTimeWindowDays != null
-                ? "router-fallback"
-                : "all-time";
+            dateRange !== null
+              ? "date-range"
+              : req.args.time_window_days != null
+                ? "llm"
+                : this.currentTimeWindowDays != null
+                  ? "router-fallback"
+                  : "all-time";
+          const windowLabel =
+            dateRange !== null
+              ? `${new Date(dateRange.from).toISOString().slice(0, 10)}~${new Date(dateRange.to).toISOString().slice(0, 10)}`
+              : (timeWindowDays ?? "all-time");
           console.error(
-            `🧠 [Jarvis] Active Recall initiated for: "${query}" (TimeWindow: ${timeWindowDays ?? "all-time"}, source=${twSource})`,
+            `🧠 [Jarvis] Active Recall initiated for: "${query}" (TimeWindow: ${windowLabel}, source=${twSource})`,
           );
           const memories = await this.memoryService.search(
             query,
             limit,
             timeWindowDays,
+            dateRange,
           );
           output =
             memories.length > 0

@@ -203,7 +203,9 @@ export class AgentInitializer {
         "if user asks 'what was my investment strategy?', set query='investment strategy'; " +
         "if user asks 'did we discuss Anthropic yesterday?', set query='Anthropic' (extract the TOPIC, not the time word); " +
         "if user asks 'what did we talk about last week?', set query='recent discussion'. " +
-        "When the question mentions a specific time period, also set time_window_days: yesterday=1, today=0, last week=7, last month=30. " +
+        "When the question mentions a relative time period, set time_window_days: yesterday=1, today=0, last week=7, last month=30. " +
+        "When the user refers to a specific calendar date (e.g. '4月27日', 'January 20', '2026-04-27'), " +
+        "set date_from='YYYY-MM-DD' and date_to='YYYY-MM-DD' instead of time_window_days — this gives exact date filtering. " +
         "NEVER call this tool without a non-empty query.",
       parameters: {
         type: "object",
@@ -217,7 +219,19 @@ export class AgentInitializer {
           time_window_days: {
             type: "number",
             description:
-              "Optional filter for recent history. 0=today, 1=yesterday, 7=last week. Leave null for all-time search.",
+              "Optional filter for relative time periods. 0=today, 1=yesterday, 7=last week. Leave null when using date_from/date_to.",
+          },
+          date_from: {
+            type: "string",
+            description:
+              "Optional absolute start date for memory search as ISO 8601 (e.g. '2026-01-20' or '2026-04-27T00:00:00'). " +
+              "Use for specific calendar dates. When set, overrides time_window_days.",
+          },
+          date_to: {
+            type: "string",
+            description:
+              "Optional absolute end date for memory search as ISO 8601 (e.g. '2026-01-20' or '2026-04-27T23:59:59'). " +
+              "Must be provided together with date_from.",
           },
         },
         required: ["query"],

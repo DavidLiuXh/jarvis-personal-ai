@@ -1022,6 +1022,7 @@ ${factsText}
     query: string,
     limit: number = 5,
     timeWindowDays: number | null = null,
+    dateRange: { from: number; to: number } | null = null,
   ): Promise<string[]> {
     if (!query?.trim()) return [];
     if (!this.embedContentFn && !this.client) return [];
@@ -1042,31 +1043,30 @@ ${factsText}
       const lambda = this.jarvisConfig.memory.decayLambda ?? 0.1;
       const nowMs = Date.now();
 
-      // Apply time window filter when the caller (via LLM classifier) detected
-      // temporal intent in the query. timeWindowDays=0 means "today only",
-      // timeWindowDays=1 means "yesterday", etc.
-      // Build time window from LLM-parsed timeWindowDays.
-      // timeWindowDays=1 means "yesterday": from=yesterday 00:00, to=today 00:00
-      // timeWindowDays=0 means "today": from=today 00:00, to=now
-      // timeWindowDays=7 means "last 7 days": from=7 days ago 00:00, to=now
+      // Resolve time window. Priority:
+      // 1. dateRange (absolute ms timestamps from LLM date_from/date_to args)
+      // 2. timeWindowDays (relative days, from LLM or router fallback)
+      // 3. null → no filter (all-time)
       const timeWindow =
-        timeWindowDays !== null
-          ? (() => {
-              const DAY = 86_400_000;
-              const startOfToday = new Date(nowMs);
-              startOfToday.setHours(0, 0, 0, 0);
-              const fromMs = startOfToday.getTime() - timeWindowDays * DAY;
-              // For precise past-day queries (yesterday=1, day-before=2),
-              // cap to at start of today to exclude today's records.
-              // For span queries (recently=3, last week=7, etc.) and today=0,
-              // use nowMs so current records are included.
-              const toMs =
-                timeWindowDays >= 1 && timeWindowDays <= 2
-                  ? startOfToday.getTime()
-                  : nowMs;
-              return { from: fromMs, to: toMs };
-            })()
-          : null;
+        dateRange !== null
+          ? dateRange
+          : timeWindowDays !== null
+            ? (() => {
+                const DAY = 86_400_000;
+                const startOfToday = new Date(nowMs);
+                startOfToday.setHours(0, 0, 0, 0);
+                const fromMs = startOfToday.getTime() - timeWindowDays * DAY;
+                // For precise past-day queries (yesterday=1, day-before=2),
+                // cap to start of today to exclude today's records.
+                // For span queries (recently=3, last week=7, etc.) and today=0,
+                // use nowMs so current records are included.
+                const toMs =
+                  timeWindowDays >= 1 && timeWindowDays <= 2
+                    ? startOfToday.getTime()
+                    : nowMs;
+                return { from: fromMs, to: toMs };
+              })()
+            : null;
 
       // Fetch candidates within distance threshold to avoid injecting
       // semantically irrelevant memories into prewarm context.
@@ -1119,8 +1119,9 @@ ${factsText}
       }>;
 
       if (timeWindow) {
+        const twSource = dateRange !== null ? "date-range" : "timeWindowDays";
         debugLogger.debug(
-          `[search] temporal filter: [${toLocalDateString(timeWindow.from)} 00:00 ~ ${toLocalDateString(timeWindow.to)} 00:00), candidates=${rows.length}`,
+          `[search] temporal filter: [${toLocalDateString(timeWindow.from)} ~ ${toLocalDateString(timeWindow.to)}), source=${twSource}, candidates=${rows.length}`,
         );
       }
 

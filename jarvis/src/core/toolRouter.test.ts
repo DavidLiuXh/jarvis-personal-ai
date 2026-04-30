@@ -197,7 +197,7 @@ describe("ToolRouter", () => {
       vi.fn(),
     );
 
-    expect(search).toHaveBeenCalledWith("TypeScript", 3, null);
+    expect(search).toHaveBeenCalledWith("TypeScript", 3, null, null);
     expect(parts).toHaveLength(1);
     const response = (parts[0] as any).functionResponse.response;
     expect(JSON.stringify(response)).toContain("memory item 1");
@@ -356,5 +356,40 @@ describe("ToolRouter", () => {
     await router.route([req], new AbortController().signal, vi.fn());
 
     expect(pushSafe).toHaveBeenCalledWith("feishu", "oc_123", "Report");
+  });
+
+  it("recall_memory: date_from/date_to ISO strings are parsed into dateRange", async () => {
+    const search = vi.fn().mockResolvedValue(["result about investment"]);
+    const { router } = makeRouter({ search });
+
+    const req = makeReq("recall_memory", {
+      query: "investment",
+      date_from: "2026-04-27",
+      date_to: "2026-04-27",
+    });
+    await router.route([req], new AbortController().signal, vi.fn());
+
+    const [q, limit, twDays, dateRange] = search.mock.calls[0];
+    expect(q).toBe("investment");
+    expect(limit).toBe(5);
+    expect(twDays).toBeNull();
+    expect(dateRange).not.toBeNull();
+    expect(dateRange.from).toBe(new Date("2026-04-27").getTime());
+    expect(dateRange.to).toBe(new Date("2026-04-27").getTime());
+  });
+
+  it("recall_memory: invalid date_from/date_to falls back to null dateRange", async () => {
+    const search = vi.fn().mockResolvedValue([]);
+    const { router } = makeRouter({ search });
+
+    const req = makeReq("recall_memory", {
+      query: "test",
+      date_from: "not-a-date",
+      date_to: "also-bad",
+    });
+    await router.route([req], new AbortController().signal, vi.fn());
+
+    const [, , , dateRange] = search.mock.calls[0];
+    expect(dateRange).toBeNull();
   });
 });
