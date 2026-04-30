@@ -164,6 +164,13 @@ export class BackgroundTaskRunner extends EventEmitter {
       if (typeof text === "string" && text) resultChunks.push(text);
     });
 
+    // Debug: log tool call responses to understand tool execution flow
+    agent.on(JarvisEventType.TOOL_CALL_RESPONSE, (data: any) => {
+      console.error(
+        `🔧 [BgTask] tool_response: name=${data?.name} status=${data?.status} output_len=${String(data?.output ?? "").length}`,
+      );
+    });
+
     // Timeout guard: if processMessage hangs (e.g. a tool call never returns),
     // reject after BG_TASK_TIMEOUT_MS so the finally block always runs and
     // the agent is properly disposed.
