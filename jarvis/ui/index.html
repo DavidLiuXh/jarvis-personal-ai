@@ -27,6 +27,7 @@
             display: flex;
             flex-direction: column;
             height: 100vh;
+            overflow: hidden;
         }
         header {
             padding: 1rem 2rem;
@@ -141,10 +142,11 @@
             padding: 0.5rem;
             border-radius: 0.25rem;
         }
-        footer {
+        #chat-panel footer {
             padding: 1.5rem 2rem;
             background-color: var(--bg-main);
             border-top: 1px solid var(--bg-hover);
+            flex-shrink: 0;
         }
         .input-container {
             max-width: 900px;
@@ -245,6 +247,185 @@
         }
         .btn-deny { background-color: var(--bg-hover); }
         .btn-allow { background-color: var(--error); }
+
+        /* ── Agent Tasks Panel ─────────────────────────────────── */
+        #app-layout {
+            display: flex;
+            flex: 1;
+            overflow: hidden;
+        }
+        #chat-panel {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+        #tasks-panel {
+            width: 360px;
+            min-width: 360px;
+            background: var(--bg-card);
+            border-left: 1px solid var(--bg-hover);
+            display: flex;
+            flex-direction: column;
+            transition: width 0.25s ease, min-width 0.25s ease;
+            overflow: hidden;
+        }
+        #tasks-panel.collapsed {
+            width: 0;
+            min-width: 0;
+        }
+        #tasks-panel-header {
+            padding: 0.85rem 1rem;
+            border-bottom: 1px solid var(--bg-hover);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            font-weight: 600;
+            font-size: 0.9rem;
+            color: var(--text-muted);
+            flex-shrink: 0;
+        }
+        #tasks-panel-header span { display: flex; align-items: center; gap: 0.5rem; }
+        #task-count-badge {
+            background: var(--accent);
+            color: white;
+            border-radius: 999px;
+            font-size: 0.7rem;
+            padding: 0.1rem 0.45rem;
+            font-weight: 700;
+            display: none;
+        }
+        #tasks-list {
+            flex: 1;
+            overflow-y: auto;
+            padding: 0.75rem;
+            display: flex;
+            flex-direction: column;
+            gap: 0.75rem;
+        }
+        #tasks-empty {
+            color: var(--text-muted);
+            font-size: 0.85rem;
+            text-align: center;
+            padding: 2rem 1rem;
+        }
+        .task-card {
+            background: var(--bg-main);
+            border: 1px solid var(--bg-hover);
+            border-radius: 0.75rem;
+            padding: 0.9rem 1rem;
+            font-size: 0.85rem;
+            display: flex;
+            flex-direction: column;
+            gap: 0.5rem;
+        }
+        .task-card-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+        .task-agent-name {
+            font-weight: 600;
+            color: var(--text-main);
+            display: flex;
+            align-items: center;
+            gap: 0.4rem;
+        }
+        .task-status-badge {
+            font-size: 0.7rem;
+            padding: 0.15rem 0.5rem;
+            border-radius: 999px;
+            font-weight: 600;
+        }
+        .task-status-pending    { background: #334155; color: #94a3b8; }
+        .task-status-starting   { background: #1e3a5f; color: #60a5fa; }
+        .task-status-running    { background: #1a3a2e; color: #34d399;
+                                  animation: pulse-text 1.5s ease-in-out infinite; }
+        .task-status-input_required { background: #422006; color: #fb923c; }
+        .task-status-completed  { background: #1a3a2e; color: #10b981; }
+        .task-status-failed     { background: #3b0f0f; color: #f87171; }
+        .task-status-cancelled  { background: #1e293b; color: #64748b; }
+        @keyframes pulse-text {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+        .task-input-label {
+            font-size: 0.75rem;
+            color: var(--text-muted);
+        }
+        .task-output {
+            background: #011627;
+            border-radius: 0.5rem;
+            padding: 0.6rem 0.75rem;
+            max-height: 240px;
+            overflow-y: auto;
+            font-size: 0.78rem;
+            line-height: 1.5;
+            color: #cbd5e1;
+            white-space: pre-wrap;
+            word-break: break-word;
+        }
+        .task-output.markdown-body {
+            font-size: 0.78rem;
+        }
+        .task-output.markdown-body p { margin: 0.25rem 0; }
+        .task-output.markdown-body pre {
+            background: #000;
+            padding: 0.5rem;
+            border-radius: 0.25rem;
+            overflow-x: auto;
+        }
+        .task-input-required-box {
+            display: flex;
+            gap: 0.5rem;
+            margin-top: 0.25rem;
+        }
+        .task-input-required-box input {
+            flex: 1;
+            background: var(--bg-hover);
+            border: 1px solid #475569;
+            border-radius: 0.4rem;
+            color: white;
+            padding: 0.4rem 0.6rem;
+            font-size: 0.8rem;
+            outline: none;
+        }
+        .task-input-required-box input:focus { border-color: var(--accent); }
+        .task-btn-send {
+            padding: 0.4rem 0.75rem;
+            font-size: 0.8rem;
+            border-radius: 0.4rem;
+        }
+        .task-btn-cancel {
+            background: var(--bg-hover);
+            color: var(--text-muted);
+            border: none;
+            padding: 0.25rem 0.6rem;
+            border-radius: 0.4rem;
+            cursor: pointer;
+            font-size: 0.75rem;
+        }
+        .task-btn-cancel:hover { background: #3b0f0f; color: var(--error); }
+        .task-time {
+            font-size: 0.7rem;
+            color: #475569;
+        }
+        /* Toggle button in header */
+        #tasks-toggle-btn {
+            background: var(--bg-hover);
+            color: var(--text-muted);
+            border: none;
+            padding: 0.3rem 0.7rem;
+            border-radius: 0.4rem;
+            cursor: pointer;
+            font-size: 0.8rem;
+            font-weight: 600;
+            transition: background 0.2s;
+            display: flex;
+            align-items: center;
+            gap: 0.4rem;
+        }
+        #tasks-toggle-btn:hover { background: var(--accent); color: white; }
     </style>
 </head>
 <body>
@@ -262,22 +443,40 @@
         <div style="font-size: 1.5rem; font-weight: bold; color: var(--accent); display: flex; align-items: center; gap: 0.5rem;">
             <span>🤖</span> Jarvis
         </div>
-        <div id="status-container" style="font-size: 0.85rem; color: var(--text-muted); display: flex; align-items: center; background: var(--bg-main); padding: 0.4rem 0.8rem; border-radius: 2rem;">
-            <span id="status-dot" class="status-dot" style="color: var(--error); background-color: var(--error);"></span>
-            <span id="status-text">Disconnected</span>
+        <div style="display: flex; align-items: center; gap: 1rem;">
+            <button id="tasks-toggle-btn" title="Toggle Agent Tasks Panel">
+                🤖 Tasks <span id="task-count-badge-header"></span>
+            </button>
+            <div id="status-container" style="font-size: 0.85rem; color: var(--text-muted); display: flex; align-items: center; background: var(--bg-main); padding: 0.4rem 0.8rem; border-radius: 2rem;">
+                <span id="status-dot" class="status-dot" style="color: var(--error); background-color: var(--error);"></span>
+                <span id="status-text">Disconnected</span>
+            </div>
         </div>
     </header>
 
-    <div id="chat-window">
-        <!-- Messages will be injected here -->
-    </div>
+    <div id="app-layout">
+        <div id="chat-panel">
+            <div id="chat-window">
+                <!-- Messages will be injected here -->
+            </div>
+            <footer>
+                <form id="chat-form" class="input-container">
+                    <textarea id="user-input" placeholder="Ask Jarvis to do something..." autocomplete="off" rows="1"></textarea>
+                    <button type="submit" id="send-btn">Send</button>
+                </form>
+            </footer>
+        </div>
 
-    <footer>
-        <form id="chat-form" class="input-container">
-            <textarea id="user-input" placeholder="Ask Jarvis to do something..." autocomplete="off" rows="1"></textarea>
-            <button type="submit" id="send-btn">Send</button>
-        </form>
-    </footer>
+        <div id="tasks-panel" class="collapsed">
+            <div id="tasks-panel-header">
+                <span>🤖 Agent Tasks <span id="task-count-badge"></span></span>
+                <button class="task-btn-cancel" id="tasks-close-btn" title="Close panel">✕</button>
+            </div>
+            <div id="tasks-list">
+                <div id="tasks-empty">No active agent tasks.<br>Ask Jarvis to analyze a stock to get started.</div>
+            </div>
+        </div>
+    </div>
 
     <script>
         const chatWindow = document.getElementById('chat-window');
@@ -391,6 +590,157 @@
             }
         });
 
+        // ── Agent Tasks Panel ──────────────────────────────────────────────
+        const tasksPanel    = document.getElementById('tasks-panel');
+        const tasksList     = document.getElementById('tasks-list');
+        const tasksEmpty    = document.getElementById('tasks-empty');
+        const tasksBadge    = document.getElementById('task-count-badge');
+        const tasksToggleBtn = document.getElementById('tasks-toggle-btn');
+        const tasksCloseBtn  = document.getElementById('tasks-close-btn');
+
+        // Map: taskId → { card, outputEl, status, chunks }
+        const taskCards = {};
+
+        function toggleTasksPanel(open) {
+            if (open === undefined) open = tasksPanel.classList.contains('collapsed');
+            if (open) {
+                tasksPanel.classList.remove('collapsed');
+            } else {
+                tasksPanel.classList.add('collapsed');
+            }
+        }
+
+        tasksToggleBtn.onclick = () => toggleTasksPanel();
+        tasksCloseBtn.onclick  = () => toggleTasksPanel(false);
+
+        function updateBadge() {
+            const active = Object.values(taskCards).filter(
+                t => !['completed','failed','cancelled'].includes(t.status)
+            ).length;
+            const total  = Object.keys(taskCards).length;
+            const label  = total > 0 ? String(total) : '';
+            tasksBadge.textContent = label;
+            tasksBadge.style.display = label ? 'inline' : 'none';
+            tasksToggleBtn.innerHTML =
+                `🤖 Tasks${total > 0 ? ' <b style="color:var(--accent)">'+total+'</b>' : ''}`;
+            tasksEmpty.style.display = total > 0 ? 'none' : 'block';
+        }
+
+        function formatTime(ms) {
+            const d = new Date(ms);
+            return d.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit', second:'2-digit'});
+        }
+
+        function createTaskCard(task) {
+            const card = document.createElement('div');
+            card.className = 'task-card';
+            card.id = 'task-card-' + task.taskId;
+            card.innerHTML = `
+                <div class="task-card-header">
+                    <div class="task-agent-name">🤖 <span class="agent-name-text">${task.agentId}</span></div>
+                    <div style="display:flex;align-items:center;gap:0.4rem">
+                        <span class="task-status-badge task-status-pending" id="badge-${task.taskId}">pending</span>
+                        <button class="task-btn-cancel" id="cancel-${task.taskId}" title="Cancel task">✕</button>
+                    </div>
+                </div>
+                <div class="task-input-label" id="input-label-${task.taskId}">Input: ${JSON.stringify(task.input || {})}</div>
+                <div class="task-output markdown-body" id="output-${task.taskId}"></div>
+                <div id="input-required-box-${task.taskId}" style="display:none">
+                    <div style="color:var(--error);font-size:0.78rem;margin-bottom:0.35rem" id="question-${task.taskId}"></div>
+                    <div class="task-input-required-box">
+                        <input type="text" id="input-field-${task.taskId}" placeholder="Your answer..." />
+                        <button class="task-btn-send" id="input-send-${task.taskId}">Send</button>
+                    </div>
+                </div>
+                <div class="task-time">Started: ${formatTime(task.createdAt || Date.now())}</div>
+            `;
+            tasksList.prepend(card);
+
+            // Cancel button
+            document.getElementById('cancel-' + task.taskId).onclick = () => {
+                if (ws && ws.readyState === WebSocket.OPEN) {
+                    ws.send(JSON.stringify({ type: 'agent_cancel', taskId: task.taskId }));
+                }
+            };
+
+            // Input send button
+            document.getElementById('input-send-' + task.taskId).onclick = () => {
+                const val = document.getElementById('input-field-' + task.taskId).value.trim();
+                if (!val || !ws) return;
+                ws.send(JSON.stringify({ type: 'agent_input', taskId: task.taskId, value: val }));
+                document.getElementById('input-required-box-' + task.taskId).style.display = 'none';
+                document.getElementById('input-field-' + task.taskId).value = '';
+            };
+
+            taskCards[task.taskId] = {
+                card,
+                status: 'pending',
+                chunks: '',
+            };
+            updateBadge();
+            return card;
+        }
+
+        function setTaskStatus(taskId, status) {
+            const entry = taskCards[taskId];
+            if (!entry) return;
+            entry.status = status;
+            const badge = document.getElementById('badge-' + taskId);
+            if (badge) {
+                badge.className = 'task-status-badge task-status-' + status;
+                badge.textContent = status.replace('_', ' ');
+            }
+            // Hide cancel button on terminal states
+            if (['completed','failed','cancelled'].includes(status)) {
+                const btn = document.getElementById('cancel-' + taskId);
+                if (btn) btn.style.display = 'none';
+            }
+            updateBadge();
+        }
+
+        function appendTaskChunk(taskId, chunk) {
+            const entry = taskCards[taskId];
+            if (!entry) return;
+            entry.chunks += chunk;
+            const outputEl = document.getElementById('output-' + taskId);
+            if (outputEl) {
+                outputEl.innerHTML = marked.parse(entry.chunks);
+                outputEl.querySelectorAll('pre code').forEach(el => hljs.highlightElement(el));
+                outputEl.scrollTop = outputEl.scrollHeight;
+            }
+        }
+
+        function showInputRequired(taskId, question) {
+            setTaskStatus(taskId, 'input_required');
+            const box = document.getElementById('input-required-box-' + taskId);
+            const qEl = document.getElementById('question-' + taskId);
+            if (box) box.style.display = 'block';
+            if (qEl) qEl.textContent = '❓ ' + question;
+            // Focus the input field
+            const field = document.getElementById('input-field-' + taskId);
+            if (field) setTimeout(() => field.focus(), 100);
+        }
+
+        // On reconnect, fetch existing tasks from REST API
+        function restoreTasks() {
+            fetch('/api/agent-tasks?sessionId=' + sessionId)
+                .then(r => r.json())
+                .then(tasks => {
+                    tasks.forEach(task => {
+                        if (taskCards[task.taskId]) return; // already tracked
+                        createTaskCard(task);
+                        setTaskStatus(task.taskId, task.status);
+                        if (task.streamChunks && task.streamChunks.length > 0) {
+                            task.streamChunks.forEach(c => appendTaskChunk(task.taskId, c));
+                        }
+                        if (task.output) appendTaskChunk(task.taskId, task.output);
+                    });
+                    if (tasks.length > 0) toggleTasksPanel(true);
+                })
+                .catch(() => {}); // silent fail — server may not have tasks yet
+        }
+        // ── End Agent Tasks Panel ──────────────────────────────────────────
+
         let ws;
         let currentResponseEl = null;
         let currentMarkdownBuffer = '';
@@ -439,6 +789,7 @@
                 
                 // Request history restoration
                 ws.send(JSON.stringify({ type: 'restore', sessionId: sessionId }));
+                restoreTasks();
             };
 
             ws.onclose = () => {
@@ -553,6 +904,35 @@
                     errorEl.innerHTML = `<strong>Error:</strong> ${msg.message}`;
                     chatWindow.appendChild(errorEl);
                     sendBtn.disabled = false;
+
+                // ── Agent Task Events ──────────────────────────────────────
+                } else if (msg.type === 'agent_task_created') {
+                    createTaskCard(msg.task);
+                    toggleTasksPanel(true);
+
+                } else if (msg.type === 'agent_task_started') {
+                    setTaskStatus(msg.taskId, 'running');
+
+                } else if (msg.type === 'agent_task_stream') {
+                    setTaskStatus(msg.taskId, 'running');
+                    appendTaskChunk(msg.taskId, msg.chunk);
+
+                } else if (msg.type === 'agent_task_done') {
+                    setTaskStatus(msg.taskId, 'completed');
+                    if (msg.output && !taskCards[msg.taskId]?.chunks) {
+                        appendTaskChunk(msg.taskId, msg.output);
+                    }
+
+                } else if (msg.type === 'agent_task_failed') {
+                    setTaskStatus(msg.taskId, 'failed');
+                    appendTaskChunk(msg.taskId, `\n\n❌ **Error:** ${msg.error}`);
+
+                } else if (msg.type === 'agent_task_cancelled') {
+                    setTaskStatus(msg.taskId, 'cancelled');
+
+                } else if (msg.type === 'agent_input_required') {
+                    showInputRequired(msg.taskId, msg.question);
+                // ── End Agent Task Events ──────────────────────────────────
                 }
             };
         }
