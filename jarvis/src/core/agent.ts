@@ -507,16 +507,23 @@ export class JarvisAgent extends EventEmitter {
             console.error(
               `🤖 [AgentRouter] Dispatching to agent=${route.agentId}, input=${JSON.stringify(route.input)}`,
             );
-            // Emit confirmation to user immediately (non-blocking)
-            this.emit(JarvisEventType.CONTENT, route.confirmationMessage);
-            this.emit(JarvisEventType.DONE, "");
-            // Start the agent task in the background
-            this.agentManager.createTask(
-              route.agentId,
-              this.sessionId,
-              route.input,
-            );
-            return; // Skip LLM path entirely
+            try {
+              // Emit confirmation to user immediately (non-blocking)
+              this.emit(JarvisEventType.CONTENT, route.confirmationMessage);
+              this.emit(JarvisEventType.DONE, "");
+              // Start the agent task in the background
+              this.agentManager.createTask(
+                route.agentId,
+                this.sessionId,
+                route.input,
+              );
+              return; // Skip LLM path entirely
+            } catch (agentErr: any) {
+              // Validation or registry error — fall through to normal LLM path
+              console.error(
+                `⚠️ [AgentRouter] createTask failed (${agentErr.message}), falling back to LLM`,
+              );
+            }
           }
         }
         // ── End external agent routing ────────────────────────────────────

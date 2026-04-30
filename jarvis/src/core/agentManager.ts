@@ -94,6 +94,15 @@ export class AgentManager extends EventEmitter {
     const card = this.getCard(agentId);
     if (!card) throw new Error(`Unknown agent: ${agentId}`);
 
+    // Validate required fields from inputSchema
+    const required: string[] = (card.inputSchema as any)?.required ?? [];
+    const missing = required.filter((f) => input[f] == null);
+    if (missing.length > 0) {
+      throw new Error(
+        `Agent ${agentId}: missing required input field(s): ${missing.join(", ")}`,
+      );
+    }
+
     const task: AgentTask = {
       taskId: randomUUID(),
       agentId,
