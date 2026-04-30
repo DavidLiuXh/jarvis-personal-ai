@@ -52,8 +52,25 @@ export interface JarvisConfirmationMessage {
   sessionId?: string;
 }
 
+/** User sends input to a paused agent task (INPUT_REQUIRED state) */
+export interface JarvisAgentInputMessage {
+  type: "agent_input";
+  taskId: string;
+  value: string;
+  sessionId?: string;
+}
+
+/** User cancels a running agent task */
+export interface JarvisAgentCancelMessage {
+  type: "agent_cancel";
+  taskId: string;
+  sessionId?: string;
+}
+
 export type JarvisIncomingMessage =
   | JarvisChatMessage
   | JarvisPingMessage
   | JarvisRestoreMessage
-  | JarvisConfirmationMessage;
+  | JarvisConfirmationMessage
+  | JarvisAgentInputMessage
+  | JarvisAgentCancelMessage;

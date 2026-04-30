@@ -77,6 +77,9 @@ import { ChannelRegistry } from "./core/channelRegistry.js";
 import { ProactiveTaskRunner } from "./core/proactiveTaskRunner.js";
 import { TaskCommandHandler } from "./core/taskCommandHandler.js";
 import { SkillCommandHandler } from "./core/skillCommandHandler.js";
+import { AgentManager } from "./core/agentManager.js";
+import { loadAgentRegistry } from "./core/agentRegistry.js";
+import type { AgentTaskEvent } from "./core/externalAgent.js";
 
 const JARVIS_HOME = path.join(os.homedir(), ".gemini-jarvis");
 
@@ -103,12 +106,24 @@ class JarvisServer {
     string,
     { id: string; message: string }
   >();
+  private agentManager: AgentManager;
 
   constructor() {
     this.app = express();
     this.server = createServer(this.app);
     this.wss = new WebSocketServer({ server: this.server });
     this.manager = JarvisManager.getInstance(SOURCE_ROOT);
+    this.agentManager = new AgentManager(loadAgentRegistry());
+
+    // Bridge AgentManager events → WebSocket broadcast
+    this.agentManager.on("event", (event: AgentTaskEvent) => {
+      const payload = JSON.stringify({ type: event.type, ...event });
+      this.wss.clients.forEach((client) => {
+        if ((client as WebSocket).readyState === 1) {
+          client.send(payload);
+        }
+      });
+    });
 
     this.setupRoutes();
     this.setupWebSocket();
@@ -410,6 +425,15 @@ class JarvisServer {
       });
     });
 
+    // Agent task REST endpoints (used by UI on reconnect to restore state)
+    this.app.get("/api/agents", (_req: Request, res: Response) => {
+      res.json(this.agentManager.getRegistry());
+    });
+    this.app.get("/api/agent-tasks", (req: Request, res: Response) => {
+      const sessionId = req.query.sessionId as string | undefined;
+      res.json(this.agentManager.listTasks(sessionId));
+    });
+
     const uiPath = path.join(SOURCE_ROOT, "jarvis/ui");
     this.app.use(express.static(uiPath));
 
@@ -443,6 +467,10 @@ class JarvisServer {
           } else if (message.type === "confirmation") {
             const agent = await this.manager.getAgent(sessionId);
             agent.provideConfirmationResponse(message.id, message.decision);
+          } else if (message.type === "agent_input") {
+            this.agentManager.sendInput(message.taskId, message.value);
+          } else if (message.type === "agent_cancel") {
+            this.agentManager.cancel(message.taskId);
           } else if (message.type === "ping") {
             ws.send(JSON.stringify({ type: "pong" }));
           }
