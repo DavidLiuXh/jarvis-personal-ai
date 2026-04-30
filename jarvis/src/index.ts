@@ -129,6 +129,9 @@ class JarvisServer {
     // so every agent created from the first message already has it set.
     this.manager.setAgentManager(this.agentManager);
 
+    // Wire MemoryService for task persistence + restore tasks from DB.
+    this.agentManager.setMemoryService(this.manager.getMemoryService());
+
     this.setupRoutes();
     this.setupWebSocket();
 

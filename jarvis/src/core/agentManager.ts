@@ -13,6 +13,7 @@ import type {
   AgentTaskStatus,
 } from "./externalAgent.js";
 import { launchAgent, sendAgentInput } from "./agentLauncher.js";
+import type { MemoryService } from "./memory.js";
 
 /**
  * Manages the lifecycle of all running ADK agent tasks.
@@ -32,6 +33,7 @@ export class AgentManager extends EventEmitter {
   private tasks = new Map<string, AgentTask>();
   private registry: AgentCard[] = [];
   private inputTimeouts = new Map<string, ReturnType<typeof setTimeout>>();
+  private memoryService: MemoryService | null = null;
 
   constructor(registry: AgentCard[] = []) {
     super();
@@ -42,6 +44,84 @@ export class AgentManager extends EventEmitter {
     // killAllRunningAgents() as part of its own graceful shutdown — registering
     // them here too would conflict (process.once fires only one handler).
     process.once("exit", () => this.killAllRunningAgents());
+  }
+
+  /**
+   * Inject the MemoryService for task persistence.
+   * Must be called before the first createTask() to ensure tasks are persisted.
+   * Also restores previously persisted tasks from DB.
+   */
+  public setMemoryService(svc: MemoryService): void {
+    this.memoryService = svc;
+    this.restoreFromDb();
+  }
+
+  /**
+   * Loads persisted tasks from DB on startup.
+   * Running/starting tasks are marked failed (process is gone).
+   * Completed/failed/cancelled tasks are restored as-is for history.
+   * input_required tasks are marked failed (agent process is gone).
+   */
+  private restoreFromDb(): void {
+    if (!this.memoryService) return;
+    try {
+      const rows = this.memoryService.loadAgentTasks();
+      let restored = 0;
+      let markedFailed = 0;
+      for (const row of rows) {
+        const task: AgentTask = {
+          taskId: row.taskId,
+          agentId: row.agentId,
+          sessionId: row.sessionId,
+          status: row.status as AgentTaskStatus,
+          input: row.input,
+          streamChunks: row.streamChunks,
+          output: row.output,
+          error: row.error,
+          pid: row.pid,
+          port: row.port,
+          a2aContextId: row.a2aContextId,
+          logs: row.logs,
+          createdAt: row.createdAt,
+          updatedAt: row.updatedAt,
+        };
+        // Tasks that were in-flight when Jarvis stopped cannot be resumed
+        if (
+          task.status === "pending" ||
+          task.status === "starting" ||
+          task.status === "running" ||
+          task.status === "input_required"
+        ) {
+          task.status = "failed";
+          task.error = "Jarvis restarted while this task was in progress.";
+          task.updatedAt = Date.now();
+          this.memoryService.upsertAgentTask(task);
+          markedFailed++;
+        }
+        this.tasks.set(task.taskId, task);
+        restored++;
+      }
+      if (restored > 0) {
+        console.error(
+          `🗄️ [AgentManager] Restored ${restored} task(s) from DB` +
+            (markedFailed > 0
+              ? `, ${markedFailed} marked failed (process gone)`
+              : ""),
+        );
+      }
+    } catch (e: any) {
+      console.error(`⚠️ [AgentManager] restoreFromDb failed: ${e.message}`);
+    }
+  }
+
+  private persist(task: AgentTask): void {
+    try {
+      this.memoryService?.upsertAgentTask(task);
+    } catch (e: any) {
+      console.error(
+        `⚠️ [AgentManager] persist failed for ${task.taskId}: ${e.message}`,
+      );
+    }
   }
 
   public killAllRunningAgents(): void {
@@ -105,6 +185,7 @@ export class AgentManager extends EventEmitter {
     };
 
     this.tasks.set(task.taskId, task);
+    this.persist(task);
     this.emit("event", {
       type: "agent_task_created",
       task,
@@ -114,7 +195,6 @@ export class AgentManager extends EventEmitter {
       `🤖 [AgentManager] Task created: ${task.taskId} (agent=${agentId}, session=${sessionId})`,
     );
 
-    // Non-blocking launch — Phase 2 will replace this stub
     setImmediate(() => this.launchTask(task, card));
 
     return task;
@@ -216,6 +296,7 @@ export class AgentManager extends EventEmitter {
   private updateStatus(task: AgentTask, status: AgentTaskStatus): void {
     task.status = status;
     task.updatedAt = Date.now();
+    this.persist(task);
   }
 
   private async launchTask(task: AgentTask, card: AgentCard): Promise<void> {
@@ -244,6 +325,7 @@ export class AgentManager extends EventEmitter {
         task.pid = result.pid;
         task.port = result.port;
         task.updatedAt = Date.now();
+        this.persist(task);
       }
     } catch (err: any) {
       // Unexpected launcher error (e.g., port exhaustion, spawn failure not
@@ -259,6 +341,10 @@ export class AgentManager extends EventEmitter {
     if (!task) return;
     task.streamChunks.push(chunk);
     task.updatedAt = Date.now();
+    // Persist every 10 chunks to balance durability vs write overhead
+    if (task.streamChunks.length % 10 === 0) {
+      this.persist(task);
+    }
     this.emit("event", {
       type: "agent_task_stream",
       taskId,

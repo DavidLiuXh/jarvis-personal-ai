@@ -208,6 +208,26 @@ export class MemoryService {
       );
     }
 
+    // Agent tasks persistence table
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS agent_tasks (
+        task_id       TEXT PRIMARY KEY,
+        agent_id      TEXT NOT NULL,
+        session_id    TEXT NOT NULL,
+        status        TEXT NOT NULL,
+        input         TEXT NOT NULL,
+        stream_chunks TEXT NOT NULL DEFAULT '[]',
+        output        TEXT,
+        error         TEXT,
+        pid           INTEGER,
+        port          INTEGER,
+        a2a_context_id TEXT,
+        logs          TEXT NOT NULL DEFAULT '[]',
+        created_at    INTEGER NOT NULL,
+        updated_at    INTEGER NOT NULL
+      );
+    `);
+
     // Restore lastConsolidatedCount from DB so restarts don't cause spurious
     // consolidations. Falls back to current fact count if no value persisted.
     this.lastConsolidatedCount =
@@ -2993,5 +3013,96 @@ Events:`;
         } catch (e) {}
       }
     }
+  }
+
+  // ── Agent Task Persistence ───────────────────────────────────────────────
+
+  public upsertAgentTask(task: {
+    taskId: string;
+    agentId: string;
+    sessionId: string;
+    status: string;
+    input: Record<string, unknown>;
+    streamChunks: string[];
+    output?: string;
+    error?: string;
+    pid?: number;
+    port?: number;
+    a2aContextId?: string;
+    logs: string[];
+    createdAt: number;
+    updatedAt: number;
+  }): void {
+    this.db
+      .prepare(
+        `INSERT INTO agent_tasks
+           (task_id, agent_id, session_id, status, input, stream_chunks,
+            output, error, pid, port, a2a_context_id, logs, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(task_id) DO UPDATE SET
+           status         = excluded.status,
+           stream_chunks  = excluded.stream_chunks,
+           output         = excluded.output,
+           error          = excluded.error,
+           pid            = excluded.pid,
+           port           = excluded.port,
+           a2a_context_id = excluded.a2a_context_id,
+           logs           = excluded.logs,
+           updated_at     = excluded.updated_at`,
+      )
+      .run(
+        task.taskId,
+        task.agentId,
+        task.sessionId,
+        task.status,
+        JSON.stringify(task.input),
+        JSON.stringify(task.streamChunks),
+        task.output ?? null,
+        task.error ?? null,
+        task.pid ?? null,
+        task.port ?? null,
+        task.a2aContextId ?? null,
+        JSON.stringify(task.logs),
+        task.createdAt,
+        task.updatedAt,
+      );
+  }
+
+  public loadAgentTasks(): Array<{
+    taskId: string;
+    agentId: string;
+    sessionId: string;
+    status: string;
+    input: Record<string, unknown>;
+    streamChunks: string[];
+    output?: string;
+    error?: string;
+    pid?: number;
+    port?: number;
+    a2aContextId?: string;
+    logs: string[];
+    createdAt: number;
+    updatedAt: number;
+  }> {
+    const rows = this.db
+      .prepare(`SELECT * FROM agent_tasks ORDER BY created_at ASC`)
+      .all() as any[];
+
+    return rows.map((r) => ({
+      taskId: r.task_id,
+      agentId: r.agent_id,
+      sessionId: r.session_id,
+      status: r.status,
+      input: JSON.parse(r.input ?? "{}"),
+      streamChunks: JSON.parse(r.stream_chunks ?? "[]"),
+      output: r.output ?? undefined,
+      error: r.error ?? undefined,
+      pid: r.pid ?? undefined,
+      port: r.port ?? undefined,
+      a2aContextId: r.a2a_context_id ?? undefined,
+      logs: JSON.parse(r.logs ?? "[]"),
+      createdAt: r.created_at,
+      updatedAt: r.updated_at,
+    }));
   }
 }
