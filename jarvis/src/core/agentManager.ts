@@ -32,6 +32,38 @@ export class AgentManager extends EventEmitter {
   constructor(registry: AgentCard[] = []) {
     super();
     this.registry = registry;
+
+    // Kill all running agent processes when Jarvis exits (including crashes).
+    // This prevents orphaned agent processes occupying ports after restart.
+    const cleanup = () => this.killAllRunningAgents();
+    process.once("exit", cleanup);
+    process.once("SIGINT", () => {
+      cleanup();
+      process.exit(0);
+    });
+    process.once("SIGTERM", () => {
+      cleanup();
+      process.exit(0);
+    });
+    process.once("uncaughtException", (err) => {
+      console.error("[AgentManager] Uncaught exception, killing agents:", err);
+      cleanup();
+    });
+  }
+
+  private killAllRunningAgents(): void {
+    for (const task of this.tasks.values()) {
+      if (
+        task.pid &&
+        !["completed", "failed", "cancelled"].includes(task.status)
+      ) {
+        try {
+          process.kill(task.pid, "SIGTERM");
+        } catch {
+          // already gone
+        }
+      }
+    }
   }
 
   // ── Registry ────────────────────────────────────────────────────────────
@@ -183,8 +215,9 @@ export class AgentManager extends EventEmitter {
       onChunk: (chunk) => this.appendChunk(task.taskId, chunk),
       onComplete: (output) => this.completeTask(task.taskId, output),
       onFailed: (error) => this.failTask(task.taskId, error),
-      onInputRequired: (question) => {
-        // Keep pid/port on the task so sendInput can resume the A2A session
+      onInputRequired: (question, contextId) => {
+        // Store contextId so sendInput can resume the correct A2A session
+        task.a2aContextId = contextId;
         this.requireInput(task.taskId, question);
       },
     });

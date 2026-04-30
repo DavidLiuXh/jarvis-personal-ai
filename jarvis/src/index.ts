@@ -125,6 +125,10 @@ class JarvisServer {
       });
     });
 
+    // Inject agentManager into JarvisManager before WebSocket is set up,
+    // so every agent created from the first message already has it set.
+    this.manager.setAgentManager(this.agentManager);
+
     this.setupRoutes();
     this.setupWebSocket();
 
@@ -282,7 +286,7 @@ class JarvisServer {
     void this.manager.getAgent(globalSessionId).then((agent) => {
       agent.setTaskCommandHandler(taskCommandHandler);
       agent.setChannelRegistry(this.channelRegistry);
-      agent.setAgentManager(this.agentManager);
+      // agentManager already injected by JarvisManager.setAgentManager() at startup
 
       // Listen for Confirmation Requests and route to the correct channel
       agent.on(JarvisEventType.CONTENT, async (event) => {

@@ -730,10 +730,13 @@
                         if (taskCards[task.taskId]) return; // already tracked
                         createTaskCard(task);
                         setTaskStatus(task.taskId, task.status);
-                        if (task.streamChunks && task.streamChunks.length > 0) {
+                        // Prefer final output; fall back to stream chunks.
+                        // Never append both — avoids duplication on reconnect.
+                        if (task.output) {
+                            appendTaskChunk(task.taskId, task.output);
+                        } else if (task.streamChunks && task.streamChunks.length > 0) {
                             task.streamChunks.forEach(c => appendTaskChunk(task.taskId, c));
                         }
-                        if (task.output) appendTaskChunk(task.taskId, task.output);
                     });
                     if (tasks.length > 0) toggleTasksPanel(true);
                 })

@@ -110,7 +110,7 @@ export type LaunchCallbacks = {
   onChunk: (chunk: string) => void;
   onComplete: (output: string) => void;
   onFailed: (error: string) => void;
-  onInputRequired: (question: string) => void;
+  onInputRequired: (question: string, contextId: string) => void;
 };
 
 /**
@@ -235,12 +235,14 @@ export async function launchAgent(
         const state: string = e.result.status.state ?? "";
 
         if (state === "input-required" || state === "INPUT_REQUIRED") {
-          // Extract question from message parts if present
           const msgParts: any[] = e.result.status.message?.parts ?? [];
           const question =
             msgParts.find((p: any) => p.kind === "text")?.text ??
             "Agent requires additional input.";
-          callbacks.onInputRequired(question);
+          // contextId is required to resume the A2A session correctly
+          const contextId: string =
+            e.result.contextId ?? e.result.context_id ?? task.taskId;
+          callbacks.onInputRequired(question, contextId);
           // Don't kill process — it stays alive awaiting sendInput
           return { pid, port };
         }
