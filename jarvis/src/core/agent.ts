@@ -482,20 +482,22 @@ export class JarvisAgent extends EventEmitter {
         // No background trigger — fall through to normal LLM path
       } else if (bgPrompt === "") {
         // Trigger present but no task specified
-        this.emit(
-          JarvisEventType.CONTENT,
-          '请在"后台:"后面输入任务内容，例如：`后台: 调研NVDA的竞争对手`',
-        );
+        this.emit(JarvisEventType.CONTENT, {
+          type: "content",
+          value:
+            '请在"后台:"后面输入任务内容，例如：`后台: 调研NVDA的竞争对手`',
+        });
         this.emit(JarvisEventType.DONE, "");
         return;
       } else {
         const bgTask = this.backgroundTaskRunner.run(bgPrompt, this.sessionId);
-        this.emit(
-          JarvisEventType.CONTENT,
-          `🔀 **后台任务已启动** (ID: \`${bgTask.taskId.slice(0, 8)}\`)\n\n` +
+        this.emit(JarvisEventType.CONTENT, {
+          type: "content",
+          value:
+            `🔀 **后台任务已启动** (ID: \`${bgTask.taskId.slice(0, 8)}\`)\n\n` +
             `任务：${bgPrompt.slice(0, 100)}${bgPrompt.length > 100 ? "..." : ""}\n\n` +
             `完成后会自动通知你，现在可以继续对话。`,
-        );
+        });
         this.emit(JarvisEventType.DONE, "");
         return;
       }
