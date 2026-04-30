@@ -64,16 +64,33 @@ export class AgentManager extends EventEmitter {
    */
   private restoreFromDb(): void {
     if (!this.memoryService) return;
+    const VALID_STATUSES = new Set<string>([
+      "pending",
+      "starting",
+      "running",
+      "input_required",
+      "completed",
+      "failed",
+      "cancelled",
+    ]);
     try {
       const rows = this.memoryService.loadAgentTasks();
       let restored = 0;
       let markedFailed = 0;
       for (const row of rows) {
+        // Validate status at runtime — TypeScript cast won't catch stale DB values
+        let status = row.status as AgentTaskStatus;
+        if (!VALID_STATUSES.has(row.status)) {
+          console.error(
+            `⚠️ [AgentManager] Unknown status "${row.status}" for task ${row.taskId}, marking failed`,
+          );
+          status = "failed";
+        }
         const task: AgentTask = {
           taskId: row.taskId,
           agentId: row.agentId,
           sessionId: row.sessionId,
-          status: row.status as AgentTaskStatus,
+          status,
           input: row.input,
           streamChunks: row.streamChunks,
           output: row.output,
@@ -341,8 +358,10 @@ export class AgentManager extends EventEmitter {
     if (!task) return;
     task.streamChunks.push(chunk);
     task.updatedAt = Date.now();
-    // Persist every 10 chunks to balance durability vs write overhead
-    if (task.streamChunks.length % 10 === 0) {
+    // Persist on first chunk (proves task started) then every 10 thereafter.
+    // completeTask() always persists the final state regardless.
+    const n = task.streamChunks.length;
+    if (n === 1 || n % 10 === 0) {
       this.persist(task);
     }
     this.emit("event", {

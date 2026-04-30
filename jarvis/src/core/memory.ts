@@ -62,6 +62,9 @@ export class MemoryService {
     }
 
     this.db = new Database(path.join(memoryDir, "memory.db"));
+    // WAL mode: allows concurrent readers while a write is in progress,
+    // and is more resilient to crashes than the default DELETE journal.
+    this.db.pragma("journal_mode = WAL");
 
     // Initialize Schema
     this.db.exec(`
@@ -3056,7 +3059,12 @@ Events:`;
         task.sessionId,
         task.status,
         JSON.stringify(task.input),
-        JSON.stringify(task.streamChunks),
+        // Once output is set (task completed), streamChunks are redundant —
+        // drop them to avoid unbounded blob growth in the DB.
+        // Otherwise cap at last 500 chunks for in-progress replay.
+        task.output != null
+          ? JSON.stringify([])
+          : JSON.stringify(task.streamChunks.slice(-500)),
         task.output ?? null,
         task.error ?? null,
         task.pid ?? null,
@@ -3085,8 +3093,16 @@ Events:`;
     updatedAt: number;
   }> {
     const rows = this.db
-      .prepare(`SELECT * FROM agent_tasks ORDER BY created_at ASC`)
-      .all() as any[];
+      // Load all non-terminal tasks (must always be restored) plus terminal
+      // tasks from the last 30 days. Cap at 1000 rows to bound startup memory.
+      .prepare(
+        `SELECT * FROM agent_tasks
+         WHERE status NOT IN ('completed','failed','cancelled')
+            OR created_at > ?
+         ORDER BY created_at ASC
+         LIMIT 1000`,
+      )
+      .all(Date.now() - 30 * 24 * 60 * 60 * 1000) as any[];
 
     return rows.map((r) => ({
       taskId: r.task_id,
