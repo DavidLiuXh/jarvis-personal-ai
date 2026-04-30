@@ -68,6 +68,11 @@ import {
   debugLogger,
   AuthType,
 } from "../../gemini-cli/packages/core/src/index.js";
+// Raise the MaxListeners limit on the shared coreEvents emitter.
+// Each background/bg-task agent registers its own model-changed listener;
+// with the default limit of 10 this triggers a spurious warning.
+import { coreEvents } from "../../gemini-cli/packages/core/src/utils/events.js";
+coreEvents.setMaxListeners(100);
 import { JarvisManager } from "./core/manager.js";
 import { JarvisEventType, type JarvisIncomingMessage } from "./core/types.js";
 import { FeishuChannel } from "./core/channels/feishu.js";
