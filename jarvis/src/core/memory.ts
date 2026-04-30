@@ -335,6 +335,15 @@ export class MemoryService {
     this._backfillPromise = this.autoBackfill();
   }
 
+  /**
+   * Sets the embedding function WITHOUT triggering autoBackfill.
+   * Use this for lightweight/ephemeral agents that need embedding capability
+   * (e.g. for search/prewarm) but should not re-run the global DB maintenance.
+   */
+  public setEmbedContentOnly(fn: (text: string) => Promise<number[]>) {
+    this.embedContentFn = fn;
+  }
+
   /** Wait for the initial autoBackfill() to complete. */
   public async waitForBackfill(): Promise<void> {
     if (this._backfillPromise) {

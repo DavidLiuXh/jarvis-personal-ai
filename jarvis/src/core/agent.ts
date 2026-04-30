@@ -63,7 +63,7 @@ export class JarvisAgent extends EventEmitter {
   private isProcessing = false;
   private promptBuilder = new SystemPromptBuilder();
   private jarvisConfig = ConfigManager.getInstance().get();
-  private distiller!: BackgroundDistiller;
+  private distiller: BackgroundDistiller | null = null;
   private toolRouter!: ToolRouter;
   private agentInitializer: AgentInitializer;
   private taskCommandHandler?: TaskCommandHandler;
@@ -136,7 +136,14 @@ export class JarvisAgent extends EventEmitter {
     // support embedContent, and the direct GoogleGenAI client is more reliable.
     const embedContent = (text: string): Promise<number[]> =>
       this.memoryService.embedWithApiKey(text);
-    this.memoryService.setEmbedContent(embedContent);
+    // Lightweight agents use setEmbedContentOnly to avoid re-triggering the
+    // global autoBackfill (vec rebuild, entity backfill, session events LLM scan)
+    // on every background task start.
+    if (this.lightweight) {
+      this.memoryService.setEmbedContentOnly(embedContent);
+    } else {
+      this.memoryService.setEmbedContent(embedContent);
+    }
 
     this.toolRouter = new ToolRouter(
       this.memoryService,
@@ -147,9 +154,10 @@ export class JarvisAgent extends EventEmitter {
       this.channelRegistry,
     );
 
-    // Initialize local model router if configured
+    // Initialize local model router if configured.
+    // Skipped in lightweight mode — bg agents use the default model directly.
     const routingCfg = this.jarvisConfig.routing;
-    if (routingCfg?.enabled && routingCfg.model) {
+    if (!this.lightweight && routingCfg?.enabled && routingCfg.model) {
       this.localModelRouter = new LocalModelRouter(
         this.jarvisConfig.ollama?.baseUrl ?? "http://localhost:11434",
         routingCfg.model,
@@ -749,21 +757,25 @@ export class JarvisAgent extends EventEmitter {
             void this.distiller.distill(userPrompt, finalAssistantText);
           }
 
-          // Trigger session events extraction every N turns (async, non-blocking)
-          const interval =
-            this.jarvisConfig.memory.eventsExtractionInterval ?? 20;
-          if (interval > 0 && ++this.conversationTurnCount % interval === 0) {
-            setImmediate(() => void this.memoryService.backfillSessionEvents());
-          }
+          if (!this.lightweight) {
+            // Trigger session events extraction every N turns (async, non-blocking)
+            const interval =
+              this.jarvisConfig.memory.eventsExtractionInterval ?? 20;
+            if (interval > 0 && ++this.conversationTurnCount % interval === 0) {
+              setImmediate(
+                () => void this.memoryService.backfillSessionEvents(),
+              );
+            }
 
-          // Trigger skill extraction every 50 turns (async, non-blocking)
-          // confucius analyzes new sessions and writes SKILL.md to ~/.gemini/skills/
-          const skillInterval = 50;
-          if (this.conversationTurnCount % skillInterval === 0) {
-            setTimeout(
-              () => void this.agentInitializer.triggerSkillExtraction(),
-              120_000, // 2 min delay to avoid competing with ongoing conversation
-            );
+            // Trigger skill extraction every 50 turns (async, non-blocking)
+            // confucius analyzes new sessions and writes SKILL.md to ~/.gemini/skills/
+            const skillInterval = 50;
+            if (this.conversationTurnCount % skillInterval === 0) {
+              setTimeout(
+                () => void this.agentInitializer.triggerSkillExtraction(),
+                120_000, // 2 min delay to avoid competing with ongoing conversation
+              );
+            }
           }
 
           // Compress in-memory chat history if it exceeds the threshold
