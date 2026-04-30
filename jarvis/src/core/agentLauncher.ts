@@ -36,7 +36,7 @@ function findFreePort(): Promise<number> {
  * or the timeout expires. Returns true when ready.
  */
 async function waitForReady(port: number): Promise<boolean> {
-  const url = `http://127.0.0.1:${port}/.well-known/agent.json`;
+  const url = `http://127.0.0.1:${port}/.well-known/agent-card.json`;
   const deadline = Date.now() + READY_TIMEOUT_MS;
 
   while (Date.now() < deadline) {
