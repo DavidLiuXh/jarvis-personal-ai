@@ -143,16 +143,11 @@ class JarvisServer {
     // Bridge BackgroundTaskRunner events → WebSocket broadcast
     this.backgroundTaskRunner.on("event", (event: BackgroundTaskEvent) => {
       const payload = JSON.stringify({ type: event.type, ...event });
-      let sent = 0;
       this.wss.clients.forEach((client) => {
         if ((client as WebSocket).readyState === 1) {
           client.send(payload);
-          sent++;
         }
       });
-      console.error(
-        `📡 [BackgroundTask] Broadcast ${event.type} → ${sent} client(s)`,
-      );
     });
 
     // Inject agentManager into JarvisManager before WebSocket is set up,

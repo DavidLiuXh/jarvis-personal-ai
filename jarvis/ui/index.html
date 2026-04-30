@@ -248,6 +248,47 @@
         .btn-deny { background-color: var(--bg-hover); }
         .btn-allow { background-color: var(--error); }
 
+        /* ── Background Task Result Bubble ─────────────────────────── */
+        .bg-task-result {
+            align-self: flex-start;
+            max-width: 90%;
+            border-radius: 1rem;
+            border-bottom-left-radius: 0.25rem;
+            overflow: hidden;
+            animation: fadeIn 0.3s ease-out;
+            border: 1px solid #1e3a5f;
+            background-color: #0f1e30;
+        }
+        .bg-task-result.failed {
+            border-color: #3b0f0f;
+            background-color: #1a0a0a;
+        }
+        .bg-task-header {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            padding: 0.5rem 1rem;
+            background: #1e3a5f;
+            font-size: 0.78rem;
+            font-weight: 600;
+            color: #60a5fa;
+            letter-spacing: 0.02em;
+        }
+        .bg-task-result.failed .bg-task-header {
+            background: #3b0f0f;
+            color: var(--error);
+        }
+        .bg-task-header .bg-task-id {
+            font-family: monospace;
+            font-weight: 400;
+            opacity: 0.7;
+            font-size: 0.72rem;
+        }
+        .bg-task-body {
+            padding: 1rem 1.25rem;
+            line-height: 1.6;
+        }
+
         /* ── Agent Tasks Panel ─────────────────────────────────── */
         #app-layout {
             display: flex;
@@ -779,14 +820,35 @@
             const msgEl = document.createElement('div');
             msgEl.className = `message ${role}`;
             if (isHistory) msgEl.style.opacity = '0.7';
-            
+
             const mdContainer = document.createElement('div');
             mdContainer.className = 'markdown-body';
             mdContainer.innerHTML = marked.parse(content);
             msgEl.appendChild(mdContainer);
-            
+
             chatWindow.appendChild(msgEl);
             mdContainer.querySelectorAll('pre code').forEach(el => hljs.highlightElement(el));
+            chatWindow.scrollTop = chatWindow.scrollHeight;
+        }
+
+        function appendBgTaskResult(taskId, content, isFailed) {
+            const wrap = document.createElement('div');
+            wrap.className = 'bg-task-result' + (isFailed ? ' failed' : '');
+
+            const header = document.createElement('div');
+            header.className = 'bg-task-header';
+            header.innerHTML = isFailed
+                ? `❌ 后台任务失败 <span class="bg-task-id">#${esc(taskId.slice(0, 8))}</span>`
+                : `🔀 后台任务完成 <span class="bg-task-id">#${esc(taskId.slice(0, 8))}</span>`;
+
+            const body = document.createElement('div');
+            body.className = 'bg-task-body markdown-body';
+            body.innerHTML = marked.parse(isFailed ? `**错误：** ${esc(content)}` : content);
+            body.querySelectorAll('pre code').forEach(el => hljs.highlightElement(el));
+
+            wrap.appendChild(header);
+            wrap.appendChild(body);
+            chatWindow.appendChild(wrap);
             chatWindow.scrollTop = chatWindow.scrollHeight;
         }
 
@@ -947,17 +1009,11 @@
                     showInputRequired(msg.taskId, msg.question);
 
                 // ── Background Task Events ─────────────────────────────────
-                } else if (msg.type === 'bg_task_started') {
-                    console.log('[bg] task started:', msg.task?.taskId);
-
                 } else if (msg.type === 'bg_task_done') {
-                    appendMessage('jarvis',
-                        `✅ **后台任务完成** (ID: \`${esc(msg.taskId.slice(0, 8))}\`)\n\n${msg.result || ''}`,
-                    );
+                    appendBgTaskResult(msg.taskId, msg.result || '(no output)', false);
+
                 } else if (msg.type === 'bg_task_failed') {
-                    appendMessage('jarvis',
-                        `❌ **后台任务失败** (ID: \`${esc(msg.taskId.slice(0, 8))}\`): ${esc(msg.error || 'unknown error')}`,
-                    );
+                    appendBgTaskResult(msg.taskId, msg.error || 'unknown error', true);
                 // ── End Background Task Events ─────────────────────────────
                 // ── End Agent Task Events ──────────────────────────────────
                 }
