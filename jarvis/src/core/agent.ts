@@ -471,7 +471,11 @@ export class JarvisAgent extends EventEmitter {
           querySubject = result.querySubject;
           timeWindowDays = result.timeWindowDays;
           this.toolRouter.setCurrentTimeWindow(timeWindowDays);
-          this.toolRouter.setCurrentDateRange(result.dateFrom, result.dateTo);
+          this.toolRouter.setCurrentDateRange(
+            result.resolvedDateRange ?? null,
+            result.dateFrom,
+            result.dateTo,
+          );
           const twLabel = result.dateFrom
             ? `${result.dateFrom}~${result.dateTo}`
             : (result.timeWindowDays ?? "none");

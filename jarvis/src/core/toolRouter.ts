@@ -214,17 +214,23 @@ export class ToolRouter {
     this.currentTimeWindowDays = days;
   }
 
-  /** Called by agent.ts each turn with the routing result's exact date range. */
+  /**
+   * Called by agent.ts each turn with the routing result's exact date range.
+   * `resolved` is the pre-computed {from,to} ms object from extractDateRange()
+   * (preferred). `dateFrom`/`dateTo` ISO strings are a fallback for cases where
+   * only the LLM-returned strings are available.
+   */
   public setCurrentDateRange(
-    dateFrom: string | null,
-    dateTo: string | null,
+    resolved: { from: number; to: number } | null,
+    dateFrom?: string | null,
+    dateTo?: string | null,
   ): void {
-    if (dateFrom && dateTo) {
-      // Parse as local midnight: "2026-04-27" → start/end of that day
+    if (resolved !== null) {
+      this.currentDateRange = resolved;
+    } else if (dateFrom && dateTo) {
       const [fy, fm, fd] = dateFrom.split("-").map(Number);
       const [ty, tm, td] = dateTo.split("-").map(Number);
       const from = new Date(fy, fm - 1, fd, 0, 0, 0, 0).getTime();
-      // end of dateTo day = start of next day
       const to = new Date(ty, tm - 1, td + 1, 0, 0, 0, 0).getTime();
       this.currentDateRange = { from, to };
     } else {

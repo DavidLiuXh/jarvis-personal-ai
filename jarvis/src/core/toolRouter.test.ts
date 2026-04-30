@@ -363,7 +363,11 @@ describe("ToolRouter", () => {
     const { router } = makeRouter({ search });
 
     // Simulate router having classified "周一" → exact date
-    router.setCurrentDateRange("2026-04-27", "2026-04-27");
+    // Pass pre-resolved DateRange directly (as extractDateRange would produce)
+    router.setCurrentDateRange({
+      from: new Date(2026, 3, 27, 0, 0, 0, 0).getTime(),
+      to: new Date(2026, 3, 28, 0, 0, 0, 0).getTime(),
+    });
 
     // LLM calls recall_memory without date_from/date_to
     const req = makeReq("recall_memory", { query: "discussion" });
