@@ -8,6 +8,7 @@ import { EventEmitter } from "node:events";
 import { randomUUID } from "node:crypto";
 import { JarvisAgent } from "./agent.js";
 import { JarvisEventType } from "./types.js";
+import { ConfigManager } from "./configManager.js";
 import type { MemoryService } from "./memory.js";
 import type { AgentManager } from "./agentManager.js";
 import type { ChannelRegistry } from "./channelRegistry.js";
@@ -143,12 +144,18 @@ export class BackgroundTaskRunner extends EventEmitter {
   ): Promise<void> {
     // Create a fully isolated agent instance — never shares isProcessing or
     // chat history with the main session agent.
+    // Resolve model: routing.backgroundModel → routing.flashModel → default
+    const routingCfg = ConfigManager.getInstance().get().routing;
+    const bgModel =
+      routingCfg?.backgroundModel ?? routingCfg?.flashModel ?? undefined;
+
     const agent = new JarvisAgent({
       sessionId: bgSessionId,
       cwd: this.sourceRoot,
       memoryService: this.memoryService,
-      skipResume: true, // no history restore — avoids loading all sessions
-      lightweight: true, // skip BackgroundDistiller, EntityExtractor, backfill, summarizer
+      skipResume: true, // no history restore
+      lightweight: true, // skip distiller/EntityExtractor/backfill/summarizer
+      forceModel: bgModel, // use configured background model, bypass local router
     });
 
     if (this.agentManager) agent.setAgentManager(this.agentManager);

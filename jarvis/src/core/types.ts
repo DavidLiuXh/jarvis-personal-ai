@@ -37,6 +37,11 @@ export interface JarvisAgentOptions {
    * These are expensive and irrelevant for one-shot background tasks.
    */
   lightweight?: boolean;
+  /**
+   * Force a specific model for this agent, overriding any routing decision.
+   * Used by background task agents to bypass local model router.
+   */
+  forceModel?: string;
 }
 
 export interface JarvisChatMessage {

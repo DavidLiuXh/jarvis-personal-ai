@@ -78,11 +78,14 @@ export class JarvisAgent extends EventEmitter {
     null;
   private lightweight: boolean;
 
+  private forceModel: string | undefined;
+
   constructor(options: JarvisAgentOptions) {
     super();
     this.sessionId = options.sessionId;
     this.memoryService = options.memoryService;
     this.lightweight = options.lightweight ?? false;
+    this.forceModel = options.forceModel;
     this.dynamicRegistry = new DynamicToolRegistry(options.cwd);
     this.agentInitializer = new AgentInitializer(
       options.sessionId,
@@ -101,6 +104,11 @@ export class JarvisAgent extends EventEmitter {
     );
     this.client = client;
     this.scheduler = scheduler;
+
+    // Apply forced model immediately after init so all subsequent calls use it
+    if (this.forceModel) {
+      this.client.config.setModel(this.forceModel);
+    }
 
     const generateText = async (prompt: string): Promise<string> => {
       const generator = this.client.config.getContentGenerator();
