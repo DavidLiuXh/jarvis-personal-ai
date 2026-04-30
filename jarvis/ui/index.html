@@ -876,6 +876,7 @@
             };
 
             ws.onmessage = (event) => {
+                try {
                 const msg = JSON.parse(event.data);
                 console.log('[ws-rx]', msg.type, Object.keys(msg));
 
@@ -1019,6 +1020,7 @@
                 // ── End Background Task Events ─────────────────────────────
                 // ── End Agent Task Events ──────────────────────────────────
                 }
+                } catch(e) { console.error('[ws-onmessage-error]', e, event.data.slice(0,200)); }
             };
         }
 
