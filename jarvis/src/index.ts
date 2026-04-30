@@ -113,7 +113,7 @@ class JarvisServer {
     this.server = createServer(this.app);
     this.wss = new WebSocketServer({ server: this.server });
     this.manager = JarvisManager.getInstance(SOURCE_ROOT);
-    this.agentManager = new AgentManager(loadAgentRegistry());
+    this.agentManager = new AgentManager(loadAgentRegistry(SOURCE_ROOT));
 
     // Bridge AgentManager events → WebSocket broadcast
     this.agentManager.on("event", (event: AgentTaskEvent) => {
