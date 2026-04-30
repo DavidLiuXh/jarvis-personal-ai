@@ -250,14 +250,18 @@
 
         /* ── Background Task Result Bubble ─────────────────────────── */
         .bg-task-result {
-            align-self: flex-start;
             max-width: 90%;
-            border-radius: 0.75rem;
+            padding: 0;
+            border-radius: 1rem;
             border-bottom-left-radius: 0.25rem;
-            overflow: hidden;
+            line-height: 1.6;
+            word-wrap: break-word;
+            position: relative;
             animation: fadeIn 0.3s ease-out;
-            border: 1px solid #3b82f6;
+            border: 2px solid #3b82f6;
             background-color: var(--bg-card);
+            /* same layout as .message .jarvis */
+            align-self: flex-start;
         }
         .bg-task-result.failed {
             border-color: var(--error);
@@ -266,16 +270,15 @@
             display: flex;
             align-items: center;
             gap: 0.5rem;
-            padding: 0.5rem 1rem;
+            padding: 0.6rem 1.25rem;
             background: #1d4ed8;
+            border-radius: 0.875rem 0.875rem 0 0;
             font-size: 0.8rem;
-            font-weight: 600;
+            font-weight: 700;
             color: #fff;
-            letter-spacing: 0.01em;
         }
         .bg-task-result.failed .bg-task-header {
             background: #dc2626;
-            color: #fff;
         }
         .bg-task-header .bg-task-id {
             font-family: monospace;
@@ -284,7 +287,7 @@
             font-size: 0.72rem;
         }
         .bg-task-body {
-            padding: 1rem 1.25rem;
+            padding: 1.25rem;
             line-height: 1.6;
             color: var(--text-main);
         }
@@ -832,34 +835,28 @@
         }
 
         function appendBgTaskResult(taskId, content, isFailed) {
+            const wrap = document.createElement('div');
+            wrap.className = 'bg-task-result' + (isFailed ? ' failed' : '');
+
+            const header = document.createElement('div');
+            header.className = 'bg-task-header';
+            header.innerHTML = isFailed
+                ? `❌ 后台任务失败 <span class="bg-task-id">#${esc(taskId.slice(0, 8))}</span>`
+                : `🔀 后台任务完成 <span class="bg-task-id">#${esc(taskId.slice(0, 8))}</span>`;
+
+            const body = document.createElement('div');
+            body.className = 'bg-task-body markdown-body';
             try {
-                const wrap = document.createElement('div');
-                wrap.className = 'bg-task-result' + (isFailed ? ' failed' : '');
-
-                const header = document.createElement('div');
-                header.className = 'bg-task-header';
-                header.innerHTML = isFailed
-                    ? `❌ 后台任务失败 <span class="bg-task-id">#${esc(taskId.slice(0, 8))}</span>`
-                    : `🔀 后台任务完成 <span class="bg-task-id">#${esc(taskId.slice(0, 8))}</span>`;
-
-                const body = document.createElement('div');
-                body.className = 'bg-task-body markdown-body';
-                try {
-                    body.innerHTML = marked.parse(isFailed ? `**错误：** ${esc(content)}` : content);
-                    body.querySelectorAll('pre code').forEach(el => hljs.highlightElement(el));
-                } catch(parseErr) {
-                    console.error('[bg-render] marked.parse failed:', parseErr);
-                    body.textContent = content;
-                }
-
-                wrap.appendChild(header);
-                wrap.appendChild(body);
-                chatWindow.appendChild(wrap);
-                console.log('[bg-render] appended to chatWindow, wrap.offsetHeight=', wrap.offsetHeight);
-                chatWindow.scrollTop = chatWindow.scrollHeight;
-            } catch(e) {
-                console.error('[bg-render] appendBgTaskResult failed:', e);
+                body.innerHTML = marked.parse(isFailed ? `**错误：** ${esc(content)}` : content);
+                body.querySelectorAll('pre code').forEach(el => hljs.highlightElement(el));
+            } catch(_) {
+                body.textContent = content;
             }
+
+            wrap.appendChild(header);
+            wrap.appendChild(body);
+            chatWindow.appendChild(wrap);
+            chatWindow.scrollTop = chatWindow.scrollHeight;
         }
 
         function connect() {
@@ -886,9 +883,7 @@
             };
 
             ws.onmessage = (event) => {
-                try {
                 const msg = JSON.parse(event.data);
-                console.log('[ws-rx]', msg.type, Object.keys(msg));
 
                 if (msg.type === 'history') {
                     chatWindow.innerHTML = '';
@@ -1022,7 +1017,6 @@
 
                 // ── Background Task Events ─────────────────────────────────
                 } else if (msg.type === 'bg_task_done') {
-                    console.log('[bg-render] calling appendBgTaskResult, taskId=', msg.taskId, 'result_len=', (msg.result||'').length);
                     appendBgTaskResult(msg.taskId, msg.result || '(no output)', false);
 
                 } else if (msg.type === 'bg_task_failed') {
@@ -1030,7 +1024,6 @@
                 // ── End Background Task Events ─────────────────────────────
                 // ── End Agent Task Events ──────────────────────────────────
                 }
-                } catch(e) { console.error('[ws-onmessage-error]', e, event.data.slice(0,200)); }
             };
         }
 
