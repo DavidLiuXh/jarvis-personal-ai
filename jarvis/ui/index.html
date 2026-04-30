@@ -1011,6 +1011,7 @@
 
                 // ── Background Task Events ─────────────────────────────────
                 } else if (msg.type === 'bg_task_done') {
+                    console.log('[bg-render] calling appendBgTaskResult, taskId=', msg.taskId, 'result_len=', (msg.result||'').length);
                     appendBgTaskResult(msg.taskId, msg.result || '(no output)', false);
 
                 } else if (msg.type === 'bg_task_failed') {
