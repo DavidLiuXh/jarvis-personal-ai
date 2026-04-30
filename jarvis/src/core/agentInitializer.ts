@@ -473,6 +473,27 @@ export class AgentInitializer {
 
     await this.resumeFromDisk(client, generateText);
 
+    // Strip the gemini-cli session_context turn (first user/model pair) from
+    // chat history. Jarvis injects date/OS info via its own system prompt every
+    // turn, so this turn is redundant and wastes tokens on every request.
+    const chat = client.getChat();
+    const history = chat.getHistory();
+    const stripped = history.filter(
+      (turn) =>
+        !(
+          turn.role === "user" &&
+          turn.parts?.some((p: any) =>
+            (p.text ?? "").includes("<session_context>"),
+          )
+        ),
+    );
+    if (stripped.length < history.length) {
+      chat.setHistory(stripped);
+      console.error(
+        `🧹 [Jarvis] Stripped ${history.length - stripped.length} session_context turn(s) from history.`,
+      );
+    }
+
     const scheduler = new Scheduler({
       context: config,
       messageBus: config.getMessageBus(),
