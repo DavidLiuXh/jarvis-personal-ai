@@ -310,6 +310,7 @@ export class JarvisAgent extends EventEmitter {
     userPrompt: string,
     querySubject: "personal" | "external" | "mixed" = "mixed",
     timeWindowDays: number | null = null,
+    resolvedDateRange: { from: number; to: number } | null = null,
   ) {
     // For external queries (pure world knowledge), skip personal facts entirely —
     // they add noise and no value. For personal/mixed, use symmetric embedding:
@@ -352,6 +353,7 @@ export class JarvisAgent extends EventEmitter {
         userPrompt,
         prewarmLimit,
         timeWindowDays,
+        resolvedDateRange,
       );
       if (similarMemories.length > 0) {
         prewarmSection =
@@ -451,6 +453,7 @@ export class JarvisAgent extends EventEmitter {
         // Local model routing: classify complexity + query subject, set model
         let querySubject: "personal" | "external" | "mixed" = "mixed";
         let timeWindowDays: number | null = null;
+        let resolvedDateRange: { from: number; to: number } | null = null;
         if (this.localModelRouter) {
           const rawHistory = this.client.getChat().getHistory();
           const history = rawHistory.flatMap((turn) => {
@@ -470,9 +473,10 @@ export class JarvisAgent extends EventEmitter {
           this.client.config.setModel(result.model);
           querySubject = result.querySubject;
           timeWindowDays = result.timeWindowDays;
+          resolvedDateRange = result.resolvedDateRange ?? null;
           this.toolRouter.setCurrentTimeWindow(timeWindowDays);
           this.toolRouter.setCurrentDateRange(
-            result.resolvedDateRange ?? null,
+            resolvedDateRange,
             result.dateFrom,
             result.dateTo,
           );
@@ -484,7 +488,12 @@ export class JarvisAgent extends EventEmitter {
           );
         }
 
-        await this.refreshContext(userPrompt, querySubject, timeWindowDays);
+        await this.refreshContext(
+          userPrompt,
+          querySubject,
+          timeWindowDays,
+          resolvedDateRange,
+        );
 
         const abortController = new AbortController();
         let currentQueryParts: Part[] = [{ text: userPrompt }];
