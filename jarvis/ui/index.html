@@ -631,28 +631,38 @@
             return d.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit', second:'2-digit'});
         }
 
+        function esc(s) {
+            return String(s)
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;');
+        }
+
         function createTaskCard(task) {
+            const tid = esc(task.taskId);
             const card = document.createElement('div');
             card.className = 'task-card';
-            card.id = 'task-card-' + task.taskId;
+            card.id = 'task-card-' + tid;
+            // Use esc() for all agent-provided values to prevent stored XSS
             card.innerHTML = `
                 <div class="task-card-header">
-                    <div class="task-agent-name">🤖 <span class="agent-name-text">${task.agentId}</span></div>
+                    <div class="task-agent-name">🤖 <span class="agent-name-text">${esc(task.agentId)}</span></div>
                     <div style="display:flex;align-items:center;gap:0.4rem">
-                        <span class="task-status-badge task-status-pending" id="badge-${task.taskId}">pending</span>
-                        <button class="task-btn-cancel" id="cancel-${task.taskId}" title="Cancel task">✕</button>
+                        <span class="task-status-badge task-status-pending" id="badge-${tid}">pending</span>
+                        <button class="task-btn-cancel" id="cancel-${tid}" title="Cancel task">✕</button>
                     </div>
                 </div>
-                <div class="task-input-label" id="input-label-${task.taskId}">Input: ${JSON.stringify(task.input || {})}</div>
-                <div class="task-output markdown-body" id="output-${task.taskId}"></div>
-                <div id="input-required-box-${task.taskId}" style="display:none">
-                    <div style="color:var(--error);font-size:0.78rem;margin-bottom:0.35rem" id="question-${task.taskId}"></div>
+                <div class="task-input-label" id="input-label-${tid}">Input: ${esc(JSON.stringify(task.input || {}))}</div>
+                <div class="task-output markdown-body" id="output-${tid}"></div>
+                <div id="input-required-box-${tid}" style="display:none">
+                    <div style="color:var(--error);font-size:0.78rem;margin-bottom:0.35rem" id="question-${tid}"></div>
                     <div class="task-input-required-box">
-                        <input type="text" id="input-field-${task.taskId}" placeholder="Your answer..." />
-                        <button class="task-btn-send" id="input-send-${task.taskId}">Send</button>
+                        <input type="text" id="input-field-${tid}" placeholder="Your answer..." />
+                        <button class="task-btn-send" id="input-send-${tid}">Send</button>
                     </div>
                 </div>
-                <div class="task-time">Started: ${formatTime(task.createdAt || Date.now())}</div>
+                <div class="task-time">Started: ${esc(formatTime(task.createdAt || Date.now()))}</div>
             `;
             tasksList.prepend(card);
 
@@ -914,7 +924,7 @@
                     toggleTasksPanel(true);
 
                 } else if (msg.type === 'agent_task_started') {
-                    setTaskStatus(msg.taskId, 'running');
+                    setTaskStatus(msg.taskId, 'starting');
 
                 } else if (msg.type === 'agent_task_stream') {
                     setTaskStatus(msg.taskId, 'running');
@@ -928,7 +938,7 @@
 
                 } else if (msg.type === 'agent_task_failed') {
                     setTaskStatus(msg.taskId, 'failed');
-                    appendTaskChunk(msg.taskId, `\n\n❌ **Error:** ${msg.error}`);
+                    appendTaskChunk(msg.taskId, `\n\n❌ **Error:** ${esc(msg.error || 'unknown')}`);
 
                 } else if (msg.type === 'agent_task_cancelled') {
                     setTaskStatus(msg.taskId, 'cancelled');

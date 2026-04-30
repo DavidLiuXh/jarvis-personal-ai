@@ -703,6 +703,8 @@ class JarvisServer {
   }
 
   public async stop() {
+    // Kill all running ADK agent processes before closing connections
+    this.agentManager.killAllRunningAgents();
     await this.manager.cleanup();
     return new Promise<void>((resolve) => {
       this.wss.close(() => {

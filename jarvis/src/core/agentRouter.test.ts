@@ -78,7 +78,8 @@ describe("routeToAgent", () => {
   });
 
   it("confirmation message contains ticker and agent name", () => {
-    const r = routeToAgent("Should I buy MSFT?", registry);
+    // "分析 MSFT" hits two triggers: "分析" + "MSFT" → score=1
+    const r = routeToAgent("分析MSFT的投资价值", registry);
     expect(r.matched).toBe(true);
     if (!r.matched) return;
     expect(r.confirmationMessage).toContain("MSFT");
@@ -90,5 +91,17 @@ describe("routeToAgent", () => {
     expect(r.matched).toBe(true);
     if (!r.matched) return;
     expect((r.input as any).ticker).toBe("GOOGL");
+  });
+
+  it("does NOT match single-trigger prompt (score < 1 = 2 hits required)", () => {
+    // "analyze" alone is only 1 trigger hit → score=0.5 → no match
+    const r = routeToAgent("analyze my MA thesis", registry);
+    expect(r.matched).toBe(false);
+  });
+
+  it("matches prompt with 2+ trigger hits", () => {
+    // "分析" + "NVDA" both in triggers → score=1 → match
+    const r = routeToAgent("分析一下NVDA", registry);
+    expect(r.matched).toBe(true);
   });
 });

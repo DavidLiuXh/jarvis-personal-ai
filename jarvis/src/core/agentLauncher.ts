@@ -35,11 +35,16 @@ function findFreePort(): Promise<number> {
  * Polls the agent's /.well-known/agent.json endpoint until it returns 200
  * or the timeout expires. Returns true when ready.
  */
-async function waitForReady(port: number): Promise<boolean> {
+async function waitForReady(
+  port: number,
+  isExited: () => boolean,
+): Promise<boolean> {
   const url = `http://127.0.0.1:${port}/.well-known/agent-card.json`;
   const deadline = Date.now() + READY_TIMEOUT_MS;
 
   while (Date.now() < deadline) {
+    // Fast-fail: if the process already exited, no point continuing to poll
+    if (isExited()) return false;
     try {
       const res = await fetch(url, { signal: AbortSignal.timeout(2000) });
       if (res.ok) return true;
@@ -134,11 +139,14 @@ export async function launchAgent(
   task: AgentTask,
   callbacks: LaunchCallbacks,
 ): Promise<{ pid: number; port: number } | null> {
-  const port = await findFreePort();
   let child: ChildProcess | null = null;
+  let port = 0;
 
   try {
-    // ── 1. Spawn Python process ──────────────────────────────────────────────
+    // ── 1. Allocate port + Spawn Python process ──────────────────────────────
+    // findFreePort is inside try so port-allocation failures call onFailed
+    // instead of propagating as an unhandled rejection.
+    port = await findFreePort();
     child = spawn("python3", [card.entrypoint], {
       env: {
         ...process.env,
@@ -177,7 +185,7 @@ export async function launchAgent(
     );
 
     // ── 2. Wait for agent to be ready ────────────────────────────────────────
-    const ready = await waitForReady(port);
+    const ready = await waitForReady(port, () => processExited);
     if (!ready || processExited) {
       const msg = processExited
         ? `Agent process exited before becoming ready`
@@ -254,6 +262,9 @@ export async function launchAgent(
           const contextId: string =
             e.result.contextId ?? e.result.context_id ?? task.taskId;
           callbacks.onInputRequired(question, contextId);
+          // Cancel the response body to release the HTTP connection.
+          // The process stays alive; sendAgentInput will open a new request.
+          response.body?.cancel().catch(() => {});
           return { pid, port };
         }
 

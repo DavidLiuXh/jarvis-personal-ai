@@ -37,25 +37,14 @@ export class AgentManager extends EventEmitter {
     super();
     this.registry = registry;
 
-    // Kill all running agent processes when Jarvis exits (including crashes).
-    // This prevents orphaned agent processes occupying ports after restart.
-    const cleanup = () => this.killAllRunningAgents();
-    process.once("exit", cleanup);
-    process.once("SIGINT", () => {
-      cleanup();
-      process.exit(0);
-    });
-    process.once("SIGTERM", () => {
-      cleanup();
-      process.exit(0);
-    });
-    process.once("uncaughtException", (err) => {
-      console.error("[AgentManager] Uncaught exception, killing agents:", err);
-      cleanup();
-    });
+    // Register only on 'exit' (fires regardless of how the process terminates).
+    // SIGINT/SIGTERM/uncaughtException handlers are owned by index.ts which calls
+    // killAllRunningAgents() as part of its own graceful shutdown — registering
+    // them here too would conflict (process.once fires only one handler).
+    process.once("exit", () => this.killAllRunningAgents());
   }
 
-  private killAllRunningAgents(): void {
+  public killAllRunningAgents(): void {
     for (const task of this.tasks.values()) {
       if (
         task.pid &&
@@ -206,6 +195,7 @@ export class AgentManager extends EventEmitter {
     )
       return;
 
+    this.clearInputTimeout(taskId);
     this.updateStatus(task, "cancelled");
     this.emit("event", {
       type: "agent_task_cancelled",
@@ -235,24 +225,30 @@ export class AgentManager extends EventEmitter {
       taskId: task.taskId,
     } satisfies AgentTaskEvent);
 
-    const result = await launchAgent(card, task, {
-      onChunk: (chunk) => this.appendChunk(task.taskId, chunk),
-      onComplete: (output) => this.completeTask(task.taskId, output),
-      onFailed: (error) => this.failTask(task.taskId, error),
-      onInputRequired: (question, contextId) => {
-        task.a2aContextId = contextId;
-        this.requireInput(task.taskId, question);
-      },
-      onLog: (line) => {
-        task.logs.push(line);
-        if (task.logs.length > 200) task.logs.shift(); // cap at 200 lines
-      },
-    });
+    try {
+      const result = await launchAgent(card, task, {
+        onChunk: (chunk) => this.appendChunk(task.taskId, chunk),
+        onComplete: (output) => this.completeTask(task.taskId, output),
+        onFailed: (error) => this.failTask(task.taskId, error),
+        onInputRequired: (question, contextId) => {
+          task.a2aContextId = contextId;
+          this.requireInput(task.taskId, question);
+        },
+        onLog: (line) => {
+          task.logs.push(line);
+          if (task.logs.length > 200) task.logs.shift();
+        },
+      });
 
-    if (result) {
-      task.pid = result.pid;
-      task.port = result.port;
-      task.updatedAt = Date.now();
+      if (result) {
+        task.pid = result.pid;
+        task.port = result.port;
+        task.updatedAt = Date.now();
+      }
+    } catch (err: any) {
+      // Unexpected launcher error (e.g., port exhaustion, spawn failure not
+      // caught internally). Fail the task so the UI reflects the error.
+      this.failTask(task.taskId, `Internal launcher error: ${err.message}`);
     }
   }
 
@@ -270,9 +266,18 @@ export class AgentManager extends EventEmitter {
     } satisfies AgentTaskEvent);
   }
 
+  private clearInputTimeout(taskId: string): void {
+    const t = this.inputTimeouts.get(taskId);
+    if (t) {
+      clearTimeout(t);
+      this.inputTimeouts.delete(taskId);
+    }
+  }
+
   completeTask(taskId: string, output: string): void {
     const task = this.tasks.get(taskId);
     if (!task) return;
+    this.clearInputTimeout(taskId);
     task.output = output;
     this.updateStatus(task, "completed");
     this.emit("event", {
@@ -286,6 +291,7 @@ export class AgentManager extends EventEmitter {
   failTask(taskId: string, error: string): void {
     const task = this.tasks.get(taskId);
     if (!task) return;
+    this.clearInputTimeout(taskId);
     task.error = error;
     this.updateStatus(task, "failed");
     this.emit("event", {
@@ -299,6 +305,9 @@ export class AgentManager extends EventEmitter {
   requireInput(taskId: string, question: string): void {
     const task = this.tasks.get(taskId);
     if (!task) return;
+    // Clear any existing timer before setting a new one (prevents leaked timer
+    // if agent sends two consecutive input-required events).
+    this.clearInputTimeout(taskId);
     this.updateStatus(task, "input_required");
     this.emit("event", {
       type: "agent_input_required",

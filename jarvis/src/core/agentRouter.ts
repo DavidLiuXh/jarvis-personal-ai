@@ -25,8 +25,10 @@ export type AgentRouteResult =
 // ── Ticker extraction ─────────────────────────────────────────────────────────
 
 /**
- * Common US stock tickers to recognize. Kept intentionally short —
- * the trigger keywords in agent.json cover the rest.
+ * Common US stock tickers to recognize. Only include tickers ≥3 chars
+ * that are unambiguous as standalone words. Single/two-char tickers like
+ * V (Visa), MA (Mastercard), LI (Li Auto), JD are excluded — they match
+ * too broadly ("MA thesis", "V neck", "LI is my friend", "JD is here").
  */
 const WELL_KNOWN_TICKERS = new Set([
   "NVDA",
@@ -39,26 +41,22 @@ const WELL_KNOWN_TICKERS = new Set([
   "TSLA",
   "BRK",
   "JPM",
-  "V",
   "UNH",
   "XOM",
   "JNJ",
   "WMT",
-  "MA",
   "PG",
   "HD",
   "CVX",
   "MRK",
   "ABBV",
   "PEP",
-  "KO",
   "LLY",
   "AVGO",
   "COST",
   "AMD",
   "INTC",
   "QCOM",
-  "MU",
   "AMAT",
   "ASML",
   "TSM",
@@ -73,10 +71,8 @@ const WELL_KNOWN_TICKERS = new Set([
   "COIN",
   "BABA",
   "PDD",
-  "JD",
   "NIO",
   "XPEV",
-  "LI",
   "BTC",
   "ETH",
 ]);
@@ -165,7 +161,11 @@ export function routeToAgent(
     }
   }
 
-  if (!bestCard || bestScore === 0) return { matched: false };
+  // Require at least 2 trigger hits (score >= 1) to avoid false positives
+  // from single-keyword matches (e.g., "analyze my MA thesis" matching only
+  // "analyze" → score=0.5). The extractor provides the second gate for input
+  // validity, but trigger confidence must already be high.
+  if (!bestCard || bestScore < 1) return { matched: false };
 
   // Validate that we can extract a meaningful input for this agent
   const extractor = EXTRACTORS[bestCard.agentId];
