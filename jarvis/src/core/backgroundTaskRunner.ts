@@ -13,6 +13,9 @@ import type { AgentManager } from "./agentManager.js";
 import type { ChannelRegistry } from "./channelRegistry.js";
 import type { TaskCommandHandler } from "./taskCommandHandler.js";
 
+/** Maximum time a background task may run before being force-failed (ms). */
+const BG_TASK_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes
+
 /** Trigger prefixes that activate background task mode */
 const BG_TRIGGERS = [
   /^后台[:：\s]/i,
@@ -154,7 +157,6 @@ export class BackgroundTaskRunner extends EventEmitter {
       agent.setTaskCommandHandler(this.taskCommandHandler);
 
     const resultChunks: string[] = [];
-    let finished = false;
 
     agent.on(JarvisEventType.CONTENT, (event: any) => {
       const text =
@@ -162,8 +164,24 @@ export class BackgroundTaskRunner extends EventEmitter {
       if (typeof text === "string" && text) resultChunks.push(text);
     });
 
+    // Timeout guard: if processMessage hangs (e.g. a tool call never returns),
+    // reject after BG_TASK_TIMEOUT_MS so the finally block always runs and
+    // the agent is properly disposed.
+    let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      timeoutHandle = setTimeout(
+        () =>
+          reject(
+            new Error(
+              `Background task timed out after ${BG_TASK_TIMEOUT_MS / 60000} minutes`,
+            ),
+          ),
+        BG_TASK_TIMEOUT_MS,
+      );
+    });
+
     try {
-      await agent.processMessage(task.prompt);
+      await Promise.race([agent.processMessage(task.prompt), timeoutPromise]);
 
       const result = resultChunks.join("").trim() || "(no output)";
       task.status = "completed";
@@ -191,6 +209,7 @@ export class BackgroundTaskRunner extends EventEmitter {
         error,
       } satisfies BackgroundTaskEvent);
     } finally {
+      if (timeoutHandle !== null) clearTimeout(timeoutHandle);
       // dispose() calls Config.dispose() → coreEvents.off() for model-changed etc.
       // Without this, coreEvents holds a reference chain preventing GC of the
       // agent, its GeminiClient, and Config after the task completes.

@@ -1188,11 +1188,13 @@ ${factsText}
    * Each event is embedded and stored in vec_memories for semantic retrieval.
    */
   public async ingestEvents(events: string[]): Promise<void> {
-    if (!this.embedContentFn || events.length === 0) return;
+    // Capture before first await — concurrent bg agents may overwrite embedContentFn
+    const embedFn = this.embedContentFn;
+    if (!embedFn || events.length === 0) return;
     let vecCount = 0;
     for (const text of events) {
       try {
-        const vec = await this.embedContentFn(text);
+        const vec = await embedFn(text);
         // Use the date from the event text prefix [YYYY-MM-DD] as the timestamp
         // so temporal filtering matches the event's actual date, not ingestion time.
         // IMPORTANT: parse as local midnight (not UTC) so the timestamp aligns
@@ -2558,7 +2560,10 @@ ${insightsSection}</knowledge>
    * by generating one (batched, 20 at a time).
    */
   private async backfillVecFacts(): Promise<void> {
-    if (!this.embedContentFn) return;
+    // Capture embedContentFn before the first await — setEmbedContentOnly() from
+    // a concurrent bg agent could overwrite this.embedContentFn mid-loop otherwise.
+    const embedFn = this.embedContentFn;
+    if (!embedFn) return;
 
     // Version check: if embedding text format changed, re-embed all facts.
     const storedVersion = this.readKvMeta("embedding_text_version");
@@ -2651,7 +2656,7 @@ ${insightsSection}</knowledge>
             row.category,
             row.content,
           );
-          const vec = await this.embedContentFn(embText);
+          const vec = await embedFn(embText);
           const buf = Buffer.from(new Float32Array(vec).buffer);
           this.db
             .prepare("UPDATE facts SET embedding = ? WHERE id = ?")
