@@ -40,6 +40,8 @@ import {
   type SessionMessage,
 } from "./sessionSummarizer.js";
 import { LocalModelRouter } from "./localModelRouter.js";
+import { type AgentManager } from "./agentManager.js";
+import { routeToAgent } from "./agentRouter.js";
 
 /**
  * JARVIS 3.0: The Digital Lifeform Agent
@@ -65,6 +67,7 @@ export class JarvisAgent extends EventEmitter {
   private channelRegistry?: ChannelRegistry;
   private availableSkills: SkillInfo[] = [];
   private localModelRouter: LocalModelRouter | null = null;
+  private agentManager: AgentManager | null = null;
   private conversationTurnCount = 0;
   private summarizerGenerateText: ((prompt: string) => Promise<string>) | null =
     null;
@@ -410,6 +413,10 @@ export class JarvisAgent extends EventEmitter {
     this.skillCommandHandler = handler;
   }
 
+  public setAgentManager(manager: AgentManager): void {
+    this.agentManager = manager;
+  }
+
   public async processMessage(
     userPrompt: string,
     imageAttachment?: { data: Buffer; mimeType: string },
@@ -487,6 +494,32 @@ export class JarvisAgent extends EventEmitter {
             `🔀 [Jarvis] Local routing: ${result.decision} | subject=${result.querySubject} | time_window=${twLabel} | reason="${result.classifierReason}" (source=${result.source})`,
           );
         }
+
+        // ── External Agent routing ────────────────────────────────────────
+        // Check if this request should be dispatched to an ADK agent instead
+        // of going through the normal LLM path.
+        if (this.agentManager) {
+          const route = routeToAgent(
+            userPrompt,
+            this.agentManager.getRegistry(),
+          );
+          if (route.matched) {
+            console.error(
+              `🤖 [AgentRouter] Dispatching to agent=${route.agentId}, input=${JSON.stringify(route.input)}`,
+            );
+            // Emit confirmation to user immediately (non-blocking)
+            this.emit(JarvisEventType.CONTENT, route.confirmationMessage);
+            this.emit(JarvisEventType.DONE, "");
+            // Start the agent task in the background
+            this.agentManager.createTask(
+              route.agentId,
+              this.sessionId,
+              route.input,
+            );
+            return; // Skip LLM path entirely
+          }
+        }
+        // ── End external agent routing ────────────────────────────────────
 
         await this.refreshContext(
           userPrompt,

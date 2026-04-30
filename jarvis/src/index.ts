@@ -282,6 +282,7 @@ class JarvisServer {
     void this.manager.getAgent(globalSessionId).then((agent) => {
       agent.setTaskCommandHandler(taskCommandHandler);
       agent.setChannelRegistry(this.channelRegistry);
+      agent.setAgentManager(this.agentManager);
 
       // Listen for Confirmation Requests and route to the correct channel
       agent.on(JarvisEventType.CONTENT, async (event) => {
