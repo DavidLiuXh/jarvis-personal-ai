@@ -302,7 +302,7 @@ class JarvisServer {
       });
 
       // Load skills and set up dynamic reload
-      void this.loadAvailableSkills().then((skills) => {
+      void this.loadAvailableSkills(SOURCE_ROOT).then((skills) => {
         agent.setAvailableSkills(skills);
         if (skills.length > 0) {
           console.error(
@@ -332,7 +332,7 @@ class JarvisServer {
         const skillCommandHandler = new SkillCommandHandler(
           (newSkills) => agent.setAvailableSkills(newSkills),
           reloadSkillManager,
-          () => this.loadAvailableSkills(),
+          () => this.loadAvailableSkills(SOURCE_ROOT),
           skills,
           () => agent.triggerSkillExtraction(),
         );
@@ -341,9 +341,9 @@ class JarvisServer {
     });
   }
 
-  private async loadAvailableSkills(): Promise<
-    Array<{ name: string; description: string }>
-  > {
+  private async loadAvailableSkills(
+    cwd: string = process.cwd(),
+  ): Promise<Array<{ name: string; description: string }>> {
     const JARVIS_HOME = path.join(os.homedir(), ".gemini-jarvis");
     const skillDirs = [
       path.join(os.homedir(), ".gemini", "skills"),
@@ -351,6 +351,7 @@ class JarvisServer {
       path.join(JARVIS_HOME, "skills"),
       path.join(JARVIS_HOME, ".gemini", "skills"),
       path.join(JARVIS_HOME, ".agents", "skills"),
+      path.join(cwd, ".gemini", "skills"),
     ];
     const skills: Array<{ name: string; description: string }> = [];
     for (const dir of skillDirs) {
