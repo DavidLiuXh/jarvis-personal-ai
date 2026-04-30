@@ -832,24 +832,34 @@
         }
 
         function appendBgTaskResult(taskId, content, isFailed) {
-            const wrap = document.createElement('div');
-            wrap.className = 'bg-task-result' + (isFailed ? ' failed' : '');
+            try {
+                const wrap = document.createElement('div');
+                wrap.className = 'bg-task-result' + (isFailed ? ' failed' : '');
 
-            const header = document.createElement('div');
-            header.className = 'bg-task-header';
-            header.innerHTML = isFailed
-                ? `❌ 后台任务失败 <span class="bg-task-id">#${esc(taskId.slice(0, 8))}</span>`
-                : `🔀 后台任务完成 <span class="bg-task-id">#${esc(taskId.slice(0, 8))}</span>`;
+                const header = document.createElement('div');
+                header.className = 'bg-task-header';
+                header.innerHTML = isFailed
+                    ? `❌ 后台任务失败 <span class="bg-task-id">#${esc(taskId.slice(0, 8))}</span>`
+                    : `🔀 后台任务完成 <span class="bg-task-id">#${esc(taskId.slice(0, 8))}</span>`;
 
-            const body = document.createElement('div');
-            body.className = 'bg-task-body markdown-body';
-            body.innerHTML = marked.parse(isFailed ? `**错误：** ${esc(content)}` : content);
-            body.querySelectorAll('pre code').forEach(el => hljs.highlightElement(el));
+                const body = document.createElement('div');
+                body.className = 'bg-task-body markdown-body';
+                try {
+                    body.innerHTML = marked.parse(isFailed ? `**错误：** ${esc(content)}` : content);
+                    body.querySelectorAll('pre code').forEach(el => hljs.highlightElement(el));
+                } catch(parseErr) {
+                    console.error('[bg-render] marked.parse failed:', parseErr);
+                    body.textContent = content;
+                }
 
-            wrap.appendChild(header);
-            wrap.appendChild(body);
-            chatWindow.appendChild(wrap);
-            chatWindow.scrollTop = chatWindow.scrollHeight;
+                wrap.appendChild(header);
+                wrap.appendChild(body);
+                chatWindow.appendChild(wrap);
+                console.log('[bg-render] appended to chatWindow, wrap.offsetHeight=', wrap.offsetHeight);
+                chatWindow.scrollTop = chatWindow.scrollHeight;
+            } catch(e) {
+                console.error('[bg-render] appendBgTaskResult failed:', e);
+            }
         }
 
         function connect() {
