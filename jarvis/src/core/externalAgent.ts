@@ -54,6 +54,8 @@ export type AgentTask = {
   port?: number;
   /** A2A context id for session resumption (INPUT_REQUIRED flow) */
   a2aContextId?: string;
+  /** Agent process stdout/stderr lines (last 200), for debugging */
+  logs: string[];
   createdAt: number;
   updatedAt: number;
 };

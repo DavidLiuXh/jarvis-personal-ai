@@ -49,6 +49,14 @@ export function loadAgentRegistry(): AgentCard[] {
         continue;
       }
 
+      // Warn if triggers is empty — agent will never auto-route
+      const triggers = Array.isArray(raw.triggers) ? raw.triggers : [];
+      if (triggers.length === 0) {
+        console.error(
+          `⚠️ [AgentRegistry] Agent ${raw.agentId} has no triggers — it will never be auto-routed`,
+        );
+      }
+
       cards.push({
         agentId: raw.agentId,
         name: raw.name,
@@ -56,7 +64,7 @@ export function loadAgentRegistry(): AgentCard[] {
         entrypoint,
         inputSchema: raw.inputSchema ?? {},
         estimatedDuration: raw.estimatedDuration ?? "unknown",
-        triggers: raw.triggers ?? [],
+        triggers,
       });
     } catch (e: any) {
       console.error(

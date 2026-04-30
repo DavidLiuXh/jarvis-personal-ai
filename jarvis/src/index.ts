@@ -438,6 +438,14 @@ class JarvisServer {
       const sessionId = req.query.sessionId as string | undefined;
       res.json(this.agentManager.listTasks(sessionId));
     });
+    this.app.get(
+      "/api/agent-tasks/:taskId/logs",
+      (req: Request, res: Response) => {
+        const task = this.agentManager.getTask(req.params.taskId);
+        if (!task) return res.status(404).json({ error: "task not found" });
+        res.json({ taskId: task.taskId, logs: task.logs });
+      },
+    );
 
     const uiPath = path.join(SOURCE_ROOT, "jarvis/ui");
     this.app.use(express.static(uiPath));
@@ -473,9 +481,23 @@ class JarvisServer {
             const agent = await this.manager.getAgent(sessionId);
             agent.provideConfirmationResponse(message.id, message.decision);
           } else if (message.type === "agent_input") {
-            this.agentManager.sendInput(message.taskId, message.value);
+            const t = this.agentManager.getTask(message.taskId);
+            if (t && t.sessionId === sessionId) {
+              this.agentManager.sendInput(message.taskId, message.value);
+            } else {
+              console.error(
+                `⚠️ [Jarvis] agent_input: task ${message.taskId} not found or session mismatch`,
+              );
+            }
           } else if (message.type === "agent_cancel") {
-            this.agentManager.cancel(message.taskId);
+            const t = this.agentManager.getTask(message.taskId);
+            if (t && t.sessionId === sessionId) {
+              this.agentManager.cancel(message.taskId);
+            } else {
+              console.error(
+                `⚠️ [Jarvis] agent_cancel: task ${message.taskId} not found or session mismatch`,
+              );
+            }
           } else if (message.type === "ping") {
             ws.send(JSON.stringify({ type: "pong" }));
           }

@@ -51,6 +51,17 @@ async function waitForReady(port: number): Promise<boolean> {
   return false;
 }
 
+// ── A2A event helpers ─────────────────────────────────────────────────────────
+
+/**
+ * Normalise A2A task state strings.
+ * The spec uses SCREAMING_SNAKE_CASE in proto and lower-kebab in JSON.
+ * We accept both.
+ */
+function normalizeState(raw: string): string {
+  return raw.toLowerCase().replace(/_/g, "-");
+}
+
 // ── A2A JSON-RPC helpers ─────────────────────────────────────────────────────
 
 type A2ATextPart = { kind: "text"; text: string };
@@ -111,6 +122,7 @@ export type LaunchCallbacks = {
   onComplete: (output: string) => void;
   onFailed: (error: string) => void;
   onInputRequired: (question: string, contextId: string) => void;
+  onLog?: (line: string) => void;
 };
 
 /**
@@ -141,16 +153,16 @@ export async function launchAgent(
 
     const pid = child.pid!;
 
-    child.stdout?.on("data", (d: Buffer) => {
-      console.error(
-        `[Agent:${card.agentId}:${pid}] stdout: ${d.toString().trim()}`,
-      );
-    });
-    child.stderr?.on("data", (d: Buffer) => {
-      console.error(
-        `[Agent:${card.agentId}:${pid}] stderr: ${d.toString().trim()}`,
-      );
-    });
+    const logLine = (line: string) => {
+      console.error(`[Agent:${card.agentId}:${pid}] ${line}`);
+      callbacks.onLog?.(line);
+    };
+    child.stdout?.on("data", (d: Buffer) =>
+      d.toString().split("\n").filter(Boolean).forEach(logLine),
+    );
+    child.stderr?.on("data", (d: Buffer) =>
+      d.toString().split("\n").filter(Boolean).forEach(logLine),
+    );
 
     let processExited = false;
     const exitPromise = new Promise<number | null>((resolve) => {
@@ -232,27 +244,25 @@ export async function launchAgent(
 
       // TaskStatusUpdateEvent
       if (e?.result?.status) {
-        const state: string = e.result.status.state ?? "";
+        const state = normalizeState(e.result.status.state ?? "");
 
-        if (state === "input-required" || state === "INPUT_REQUIRED") {
+        if (state === "input-required") {
           const msgParts: any[] = e.result.status.message?.parts ?? [];
           const question =
             msgParts.find((p: any) => p.kind === "text")?.text ??
             "Agent requires additional input.";
-          // contextId is required to resume the A2A session correctly
           const contextId: string =
             e.result.contextId ?? e.result.context_id ?? task.taskId;
           callbacks.onInputRequired(question, contextId);
-          // Don't kill process — it stays alive awaiting sendInput
           return { pid, port };
         }
 
-        if (state === "completed" || state === "COMPLETED") {
+        if (state === "completed") {
           taskCompleted = true;
           continue;
         }
 
-        if (state === "failed" || state === "FAILED") {
+        if (state === "failed" || state === "rejected") {
           const errMsg =
             e.result.status.message?.parts?.find((p: any) => p.kind === "text")
               ?.text ?? "Agent task failed";
@@ -345,6 +355,7 @@ export async function sendAgentInput(
     let finalOutput = "";
     for await (const event of parseSSE(response.body)) {
       const e = event as any;
+
       if (e?.result?.artifact) {
         for (const part of e.result.artifact.parts ?? []) {
           if (part.kind === "text" && part.text) {
@@ -353,8 +364,28 @@ export async function sendAgentInput(
           }
         }
       }
-      if (e?.result?.status?.state === "completed") {
-        break;
+
+      if (e?.result?.status) {
+        const state = normalizeState(e.result.status.state ?? "");
+        if (state === "completed") break;
+        if (state === "failed" || state === "rejected") {
+          const errMsg =
+            e.result.status.message?.parts?.find((p: any) => p.kind === "text")
+              ?.text ?? "Agent task failed";
+          callbacks.onFailed(errMsg);
+          return;
+        }
+        // Recursive INPUT_REQUIRED — agent needs another round of user input
+        if (state === "input-required") {
+          const msgParts: any[] = e.result.status.message?.parts ?? [];
+          const question =
+            msgParts.find((p: any) => p.kind === "text")?.text ??
+            "Agent requires additional input.";
+          const newContextId: string =
+            e.result.contextId ?? e.result.context_id ?? contextId;
+          callbacks.onInputRequired(question, newContextId);
+          return;
+        }
       }
     }
     callbacks.onComplete(finalOutput || "(no output)");

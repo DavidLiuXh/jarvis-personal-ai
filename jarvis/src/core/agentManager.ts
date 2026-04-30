@@ -25,9 +25,13 @@ import { launchAgent, sendAgentInput } from "./agentLauncher.js";
  * Actual process spawning and A2A communication is delegated to
  * AgentLauncher (Phase 2). During Phase 1 the launch is a no-op stub.
  */
+/** How long to wait for user input before auto-failing the task (ms) */
+const INPUT_REQUIRED_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes
+
 export class AgentManager extends EventEmitter {
   private tasks = new Map<string, AgentTask>();
   private registry: AgentCard[] = [];
+  private inputTimeouts = new Map<string, ReturnType<typeof setTimeout>>();
 
   constructor(registry: AgentCard[] = []) {
     super();
@@ -97,6 +101,7 @@ export class AgentManager extends EventEmitter {
       status: "pending",
       input,
       streamChunks: [],
+      logs: [],
       createdAt: Date.now(),
       updatedAt: Date.now(),
     };
@@ -148,6 +153,13 @@ export class AgentManager extends EventEmitter {
     }
     console.error(`📥 [AgentManager] User input received for task ${taskId}`);
 
+    // Clear the INPUT_REQUIRED timeout since user has responded
+    const timer = this.inputTimeouts.get(taskId);
+    if (timer) {
+      clearTimeout(timer);
+      this.inputTimeouts.delete(taskId);
+    }
+
     if (!task.port) {
       this.failTask(taskId, "Cannot resume: agent port unknown");
       return;
@@ -166,7 +178,10 @@ export class AgentManager extends EventEmitter {
           onChunk: (chunk) => this.appendChunk(taskId, chunk),
           onComplete: (output) => this.completeTask(taskId, output),
           onFailed: (error) => this.failTask(taskId, error),
-          onInputRequired: (question) => this.requireInput(taskId, question),
+          onInputRequired: (question, contextId) => {
+            task.a2aContextId = contextId;
+            this.requireInput(taskId, question);
+          },
         },
       ),
     );
@@ -216,9 +231,12 @@ export class AgentManager extends EventEmitter {
       onComplete: (output) => this.completeTask(task.taskId, output),
       onFailed: (error) => this.failTask(task.taskId, error),
       onInputRequired: (question, contextId) => {
-        // Store contextId so sendInput can resume the correct A2A session
         task.a2aContextId = contextId;
         this.requireInput(task.taskId, question);
+      },
+      onLog: (line) => {
+        task.logs.push(line);
+        if (task.logs.length > 200) task.logs.shift(); // cap at 200 lines
       },
     });
 
@@ -278,5 +296,23 @@ export class AgentManager extends EventEmitter {
       taskId,
       question,
     } satisfies AgentTaskEvent);
+
+    // Auto-fail after timeout — prevents tasks from hanging indefinitely
+    const timer = setTimeout(() => {
+      if (this.tasks.get(taskId)?.status === "input_required") {
+        this.failTask(
+          taskId,
+          `Timed out waiting for user input after ${INPUT_REQUIRED_TIMEOUT_MS / 60000} minutes`,
+        );
+        if (task.pid) {
+          try {
+            process.kill(task.pid, "SIGTERM");
+          } catch {
+            /* gone */
+          }
+        }
+      }
+    }, INPUT_REQUIRED_TIMEOUT_MS);
+    this.inputTimeouts.set(taskId, timer);
   }
 }
