@@ -877,6 +877,7 @@
 
             ws.onmessage = (event) => {
                 const msg = JSON.parse(event.data);
+                console.log('[ws-rx]', msg.type, Object.keys(msg));
 
                 if (msg.type === 'history') {
                     chatWindow.innerHTML = '';
