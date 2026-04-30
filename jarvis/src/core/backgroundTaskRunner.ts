@@ -189,7 +189,7 @@ export class BackgroundTaskRunner extends EventEmitter {
       task.completedAt = Date.now();
 
       console.error(
-        `✅ [BackgroundTask] Completed ${task.taskId} | chunks=${resultChunks.length} result_len=${result.length}`,
+        `✅ [BackgroundTask] Completed ${task.taskId} | chunks=${resultChunks.length} result_len=${result.length} result_preview=${JSON.stringify(result.slice(0, 80))}`,
       );
       this.emit("event", {
         type: "bg_task_done",
