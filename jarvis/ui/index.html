@@ -252,41 +252,41 @@
         .bg-task-result {
             align-self: flex-start;
             max-width: 90%;
-            border-radius: 1rem;
+            border-radius: 0.75rem;
             border-bottom-left-radius: 0.25rem;
             overflow: hidden;
             animation: fadeIn 0.3s ease-out;
-            border: 1px solid #1e3a5f;
-            background-color: #0f1e30;
+            border: 1px solid #3b82f6;
+            background-color: var(--bg-card);
         }
         .bg-task-result.failed {
-            border-color: #3b0f0f;
-            background-color: #1a0a0a;
+            border-color: var(--error);
         }
         .bg-task-header {
             display: flex;
             align-items: center;
             gap: 0.5rem;
             padding: 0.5rem 1rem;
-            background: #1e3a5f;
-            font-size: 0.78rem;
+            background: #1d4ed8;
+            font-size: 0.8rem;
             font-weight: 600;
-            color: #60a5fa;
-            letter-spacing: 0.02em;
+            color: #fff;
+            letter-spacing: 0.01em;
         }
         .bg-task-result.failed .bg-task-header {
-            background: #3b0f0f;
-            color: var(--error);
+            background: #dc2626;
+            color: #fff;
         }
         .bg-task-header .bg-task-id {
             font-family: monospace;
             font-weight: 400;
-            opacity: 0.7;
+            opacity: 0.75;
             font-size: 0.72rem;
         }
         .bg-task-body {
             padding: 1rem 1.25rem;
             line-height: 1.6;
+            color: var(--text-main);
         }
 
         /* ── Agent Tasks Panel ─────────────────────────────────── */
@@ -877,9 +877,6 @@
 
             ws.onmessage = (event) => {
                 const msg = JSON.parse(event.data);
-                if (msg.type && msg.type.startsWith('bg_')) {
-                    console.log('[bg-rx]', msg.type, JSON.stringify(msg).slice(0, 120));
-                }
 
                 if (msg.type === 'history') {
                     chatWindow.innerHTML = '';
