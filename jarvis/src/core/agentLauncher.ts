@@ -71,14 +71,15 @@ function normalizeState(raw: string): string {
 
 type A2ATextPart = { kind: "text"; text: string };
 type A2AMessage = {
-  role: "user";
+  role: "ROLE_USER";
   parts: A2ATextPart[];
   messageId: string;
 };
 
 function buildA2AMessage(text: string): A2AMessage {
   return {
-    role: "user",
+    // a2a-sdk uses protobuf enum names — "ROLE_USER" not "user"
+    role: "ROLE_USER",
     parts: [{ kind: "text", text }],
     messageId: crypto.randomUUID(),
   };
