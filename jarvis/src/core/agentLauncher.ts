@@ -69,19 +69,21 @@ function normalizeState(raw: string): string {
 
 // ── A2A JSON-RPC helpers ─────────────────────────────────────────────────────
 
-type A2ATextPart = { kind: "text"; text: string };
+// Protobuf field names (snake_case) as used by a2a-sdk's ParseDict:
+//   Message: message_id, role (enum: ROLE_USER), parts
+//   Part:    text (plain string, no "kind" discriminator)
+type A2ATextPart = { text: string };
 type A2AMessage = {
   role: "ROLE_USER";
   parts: A2ATextPart[];
-  messageId: string;
+  message_id: string;
 };
 
 function buildA2AMessage(text: string): A2AMessage {
   return {
-    // a2a-sdk uses protobuf enum names — "ROLE_USER" not "user"
     role: "ROLE_USER",
-    parts: [{ kind: "text", text }],
-    messageId: crypto.randomUUID(),
+    parts: [{ text }],
+    message_id: crypto.randomUUID(),
   };
 }
 
@@ -343,7 +345,7 @@ export async function sendAgentInput(
     id: crypto.randomUUID(),
     method: "SendStreamingMessage",
     params: {
-      message: { ...a2aMessage, taskId, contextId },
+      message: { ...a2aMessage, task_id: taskId, context_id: contextId },
       configuration: { acceptedOutputModes: ["text/plain"] },
     },
   });
