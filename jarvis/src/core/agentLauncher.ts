@@ -223,6 +223,7 @@ export async function launchAgent(
       headers: {
         "Content-Type": "application/json",
         Accept: "text/event-stream",
+        "A2A-Version": "1.0",
       },
       body: rpcBody,
       signal: AbortSignal.timeout(STREAM_TIMEOUT_MS),
@@ -356,6 +357,7 @@ export async function sendAgentInput(
       headers: {
         "Content-Type": "application/json",
         Accept: "text/event-stream",
+        "A2A-Version": "1.0",
       },
       body: rpcBody,
       signal: AbortSignal.timeout(STREAM_TIMEOUT_MS),
