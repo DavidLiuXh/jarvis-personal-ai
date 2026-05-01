@@ -7,17 +7,17 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { createServer } from "node:net";
 import type { AgentCard, AgentTask } from "./externalAgent.js";
+import crypto from "node:crypto";
 
 /** How long to wait for the agent process to become ready (ms) */
 const READY_TIMEOUT_MS = 30_000;
 /** How often to poll the health endpoint while waiting (ms) */
 const READY_POLL_INTERVAL_MS = 500;
 /** HTTP read timeout for A2A streaming calls (ms) */
-const STREAM_TIMEOUT_MS = 300_000; // 5 minutes
+const STREAM_TIMEOUT_MS = 600_000; // Increased to 10 minutes for deep analysis
 
 // ── Port allocation ──────────────────────────────────────────────────────────
 
-/** Finds a free TCP port on localhost. */
 function findFreePort(): Promise<number> {
   return new Promise((resolve, reject) => {
     const server = createServer();
@@ -31,10 +31,6 @@ function findFreePort(): Promise<number> {
 
 // ── Process health check ─────────────────────────────────────────────────────
 
-/**
- * Polls the agent's /.well-known/agent.json endpoint until it returns 200
- * or the timeout expires. Returns true when ready.
- */
 async function waitForReady(
   port: number,
   isExited: () => boolean,
@@ -43,13 +39,12 @@ async function waitForReady(
   const deadline = Date.now() + READY_TIMEOUT_MS;
 
   while (Date.now() < deadline) {
-    // Fast-fail: if the process already exited, no point continuing to poll
     if (isExited()) return false;
     try {
       const res = await fetch(url, { signal: AbortSignal.timeout(2000) });
       if (res.ok) return true;
     } catch {
-      // process not yet listening — wait and retry
+      // polling
     }
     await new Promise((r) => setTimeout(r, READY_POLL_INTERVAL_MS));
   }
@@ -58,28 +53,11 @@ async function waitForReady(
 
 // ── A2A event helpers ─────────────────────────────────────────────────────────
 
-/**
- * Normalise A2A task state strings.
- * The spec uses SCREAMING_SNAKE_CASE in proto and lower-kebab in JSON.
- * We accept both.
- */
 function normalizeState(raw: string): string {
   return raw.toLowerCase().replace(/_/g, "-");
 }
 
-// ── A2A JSON-RPC helpers ─────────────────────────────────────────────────────
-
-// Protobuf field names (snake_case) as used by a2a-sdk's ParseDict:
-//   Message: message_id, role (enum: ROLE_USER), parts
-//   Part:    text (plain string, no "kind" discriminator)
-type A2ATextPart = { text: string };
-type A2AMessage = {
-  role: "ROLE_USER";
-  parts: A2ATextPart[];
-  message_id: string;
-};
-
-function buildA2AMessage(text: string): A2AMessage {
+function buildA2AMessage(text: string): any {
   return {
     role: "ROLE_USER",
     parts: [{ text }],
@@ -89,7 +67,6 @@ function buildA2AMessage(text: string): A2AMessage {
 
 // ── Streaming SSE parser ─────────────────────────────────────────────────────
 
-/** Yields parsed JSON objects from an SSE stream body. */
 async function* parseSSE(
   body: ReadableStream<Uint8Array>,
 ): AsyncGenerator<unknown> {
@@ -114,7 +91,7 @@ async function* parseSSE(
         try {
           yield JSON.parse(payload);
         } catch {
-          // malformed SSE chunk — skip
+          // malformed SSE
         }
       }
     }
@@ -133,10 +110,6 @@ export type LaunchCallbacks = {
   onLog?: (line: string) => void;
 };
 
-/**
- * Spawns an ADK agent process, waits until it is ready, sends the task via
- * A2A streaming, relays chunks back through callbacks, then kills the process.
- */
 export async function launchAgent(
   card: AgentCard,
   task: AgentTask,
@@ -146,9 +119,6 @@ export async function launchAgent(
   let port = 0;
 
   try {
-    // ── 1. Allocate port + Spawn Python process ──────────────────────────────
-    // findFreePort is inside try so port-allocation failures call onFailed
-    // instead of propagating as an unhandled rejection.
     port = await findFreePort();
     child = spawn("python3", [card.entrypoint], {
       env: {
@@ -159,11 +129,9 @@ export async function launchAgent(
         JARVIS_SESSION_ID: task.sessionId,
       },
       stdio: ["ignore", "pipe", "pipe"],
-      detached: false,
     });
 
     const pid = child.pid!;
-
     const logLine = (line: string) => {
       console.error(`[Agent:${card.agentId}:${pid}] ${line}`);
       callbacks.onLog?.(line);
@@ -183,41 +151,23 @@ export async function launchAgent(
       });
     });
 
-    console.error(
-      `🚀 [AgentLauncher] Spawned ${card.agentId} (pid=${pid}, port=${port})`,
-    );
-
-    // ── 2. Wait for agent to be ready ────────────────────────────────────────
     const ready = await waitForReady(port, () => processExited);
     if (!ready || processExited) {
-      const msg = processExited
-        ? `Agent process exited before becoming ready`
-        : `Agent did not become ready within ${READY_TIMEOUT_MS}ms`;
-      callbacks.onFailed(msg);
+      callbacks.onFailed("Agent failed to start or become ready.");
       child.kill();
       return null;
     }
-
-    console.error(
-      `✅ [AgentLauncher] Agent ${card.agentId} ready on port ${port}`,
-    );
-
-    // ── 3. Build A2A request payload ─────────────────────────────────────────
-    // Serialize task input as a human-readable text message
-    const inputText = JSON.stringify(task.input, null, 2);
-    const a2aMessage = buildA2AMessage(inputText);
 
     const rpcBody = JSON.stringify({
       jsonrpc: "2.0",
       id: task.taskId,
       method: "SendStreamingMessage",
       params: {
-        message: a2aMessage,
+        message: buildA2AMessage(JSON.stringify(task.input)),
         configuration: { acceptedOutputModes: ["text/plain"] },
       },
     });
 
-    // ── 4. Call agent via A2A streaming ──────────────────────────────────────
     const response = await fetch(`http://127.0.0.1:${port}/`, {
       method: "POST",
       headers: {
@@ -230,109 +180,73 @@ export async function launchAgent(
     });
 
     if (!response.ok || !response.body) {
-      callbacks.onFailed(`A2A call failed: HTTP ${response.status}`);
+      callbacks.onFailed(`A2A failed: HTTP ${response.status}`);
       child.kill();
       return null;
     }
 
-    // ── 5. Stream SSE events ─────────────────────────────────────────────────
     let finalOutput = "";
-    let taskCompleted = false;
-
     for await (const event of parseSSE(response.body)) {
       const e = event as any;
+      const res = e?.result ?? {};
 
-      // TaskArtifactUpdateEvent — streaming text chunk
-      if (e?.result?.artifact) {
-        const parts: any[] = e.result.artifact.parts ?? [];
-        for (const part of parts) {
-          if (part.kind === "text" && part.text) {
-            callbacks.onChunk(part.text);
-            finalOutput += part.text;
+      // ── Handle Content (Artifacts) ────────────────────────────────────────
+      // Support both legacy "artifact" and modern "artifactUpdate"
+      const artifact = res.artifactUpdate?.artifact ?? res.artifact;
+      if (artifact?.parts) {
+        for (const p of artifact.parts) {
+          if (p.text) {
+            callbacks.onChunk(p.text);
+            finalOutput += p.text;
           }
         }
-        continue;
       }
 
-      // TaskStatusUpdateEvent
-      if (e?.result?.status) {
-        const state = normalizeState(e.result.status.state ?? "");
-
+      // ── Handle Status ─────────────────────────────────────────────────────
+      // Support both legacy "status" and modern "statusUpdate"
+      const statusUpdate = res.statusUpdate?.status ?? res.status;
+      if (statusUpdate) {
+        const state = normalizeState(statusUpdate.state ?? "");
         if (state === "input-required") {
-          const msgParts: any[] = e.result.status.message?.parts ?? [];
           const question =
-            msgParts.find((p: any) => p.kind === "text")?.text ??
-            "Agent requires additional input.";
-          const contextId: string =
-            e.result.contextId ?? e.result.context_id ?? task.taskId;
-          callbacks.onInputRequired(question, contextId);
-          // Cancel the response body to release the HTTP connection.
-          // The process stays alive; sendAgentInput will open a new request.
-          response.body?.cancel().catch(() => {});
+            statusUpdate.message?.parts?.find((p: any) => p.text)?.text ??
+            "Input required";
+          callbacks.onInputRequired(
+            question,
+            res.statusUpdate?.contextId || task.taskId,
+          );
           return { pid, port };
         }
-
-        if (state === "completed") {
-          taskCompleted = true;
+        if (state === "completed" || state === "task-state-completed") {
+          // Found a completion event, but we'll continue the loop to drain
+          // any remaining data chunks.
           continue;
         }
-
-        if (state === "failed" || state === "rejected") {
-          const errMsg =
-            e.result.status.message?.parts?.find((p: any) => p.kind === "text")
-              ?.text ?? "Agent task failed";
-          callbacks.onFailed(errMsg);
+        if (state === "failed" || state === "task-state-failed") {
+          callbacks.onFailed(
+            statusUpdate.message?.parts?.[0]?.text ?? "Task failed",
+          );
           child.kill();
           return null;
         }
       }
-
-      // Top-level Message result (non-streaming fallback)
-      if (e?.result?.parts) {
-        const parts: any[] = e.result.parts;
-        for (const part of parts) {
-          if (part.kind === "text" && part.text) {
-            finalOutput += part.text;
-          }
-        }
-        taskCompleted = true;
-      }
-    }
-
-    // ── 6. Finalize ──────────────────────────────────────────────────────────
-    if (!taskCompleted && !finalOutput) {
-      // Stream ended without a clear completion event — use what we got
-      console.error(
-        `⚠️ [AgentLauncher] Stream ended without explicit completion for task ${task.taskId}`,
-      );
     }
 
     callbacks.onComplete(finalOutput || "(no output)");
-
-    // Wait for process to exit cleanly, then kill if it doesn't
-    const exitCode = await Promise.race([
+    const code = await Promise.race([
       exitPromise,
-      new Promise<null>((r) => setTimeout(() => r(null), 5000)),
+      new Promise((r) => setTimeout(() => r(null), 2000)),
     ]);
-    if (exitCode === null) {
-      console.error(
-        `⚠️ [AgentLauncher] Agent did not exit within 5s, force-killing (pid=${pid})`,
-      );
-      child.kill("SIGKILL");
-    }
+    if (code === null) child.kill("SIGKILL");
 
     return { pid, port };
   } catch (err: any) {
-    callbacks.onFailed(`Launcher error: ${err.message}`);
+    callbacks.onFailed(err.message);
     child?.kill();
     return null;
   }
 }
 
-/**
- * Sends user input to an already-running agent task (INPUT_REQUIRED state).
- * Resumes the stream and relays remaining output through callbacks.
- */
 export async function sendAgentInput(
   port: number,
   taskId: string,
@@ -340,13 +254,16 @@ export async function sendAgentInput(
   value: string,
   callbacks: LaunchCallbacks,
 ): Promise<void> {
-  const a2aMessage = buildA2AMessage(value);
   const rpcBody = JSON.stringify({
     jsonrpc: "2.0",
     id: crypto.randomUUID(),
     method: "SendStreamingMessage",
     params: {
-      message: { ...a2aMessage, task_id: taskId, context_id: contextId },
+      message: {
+        ...buildA2AMessage(value),
+        task_id: taskId,
+        context_id: contextId,
+      },
       configuration: { acceptedOutputModes: ["text/plain"] },
     },
   });
@@ -371,41 +288,36 @@ export async function sendAgentInput(
     let finalOutput = "";
     for await (const event of parseSSE(response.body)) {
       const e = event as any;
+      const res = e?.result ?? {};
 
-      if (e?.result?.artifact) {
-        for (const part of e.result.artifact.parts ?? []) {
-          if (part.kind === "text" && part.text) {
-            callbacks.onChunk(part.text);
-            finalOutput += part.text;
+      const artifact = res.artifactUpdate?.artifact ?? res.artifact;
+      if (artifact?.parts) {
+        for (const p of artifact.parts) {
+          if (p.text) {
+            callbacks.onChunk(p.text);
+            finalOutput += p.text;
           }
         }
       }
 
-      if (e?.result?.status) {
-        const state = normalizeState(e.result.status.state ?? "");
-        if (state === "completed") break;
-        if (state === "failed" || state === "rejected") {
-          const errMsg =
-            e.result.status.message?.parts?.find((p: any) => p.kind === "text")
-              ?.text ?? "Agent task failed";
-          callbacks.onFailed(errMsg);
-          return;
-        }
-        // Recursive INPUT_REQUIRED — agent needs another round of user input
+      const statusUpdate = res.statusUpdate?.status ?? res.status;
+      if (statusUpdate?.state) {
+        const state = normalizeState(statusUpdate.state);
+        if (state === "completed" || state === "task-state-completed") break;
         if (state === "input-required") {
-          const msgParts: any[] = e.result.status.message?.parts ?? [];
-          const question =
-            msgParts.find((p: any) => p.kind === "text")?.text ??
-            "Agent requires additional input.";
-          const newContextId: string =
-            e.result.contextId ?? e.result.context_id ?? contextId;
-          callbacks.onInputRequired(question, newContextId);
+          const q =
+            statusUpdate.message?.parts?.find((p: any) => p.text)?.text ??
+            "Input needed";
+          callbacks.onInputRequired(
+            q,
+            res.statusUpdate?.contextId || contextId,
+          );
           return;
         }
       }
     }
     callbacks.onComplete(finalOutput || "(no output)");
   } catch (err: any) {
-    callbacks.onFailed(`sendAgentInput error: ${err.message}`);
+    callbacks.onFailed(err.message);
   }
 }
