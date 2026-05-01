@@ -69,21 +69,23 @@ function normalizeState(raw: string): string {
 
 // ── A2A JSON-RPC helpers ─────────────────────────────────────────────────────
 
-// Protobuf field names (snake_case) as used by a2a-sdk's ParseDict:
-//   Message: message_id, role (enum: ROLE_USER), parts
-//   Part:    text (plain string, no "kind" discriminator)
+// a2a-sdk serializes protobuf via json_format.MessageToDict which produces camelCase.
+// Verified format from official Python client (a2a-sdk 1.0.2):
+//   Message: { messageId, role: "ROLE_USER", parts: [{ text }] }
+//   StreamResponse: { statusUpdate: { status: { state: "TASK_STATE_*" } } }
+//                   { artifactUpdate: { artifact: { parts: [{ text }] } } }
 type A2ATextPart = { text: string };
 type A2AMessage = {
   role: "ROLE_USER";
   parts: A2ATextPart[];
-  message_id: string;
+  messageId: string;
 };
 
 function buildA2AMessage(text: string): A2AMessage {
   return {
     role: "ROLE_USER",
     parts: [{ text }],
-    message_id: crypto.randomUUID(),
+    messageId: crypto.randomUUID(),
   };
 }
 
@@ -236,17 +238,23 @@ export async function launchAgent(
     }
 
     // ── 5. Stream SSE events ─────────────────────────────────────────────────
+    // a2a-sdk 1.0 StreamResponse structure (camelCase from MessageToDict):
+    //   { result: { artifactUpdate: { artifact: { parts: [{ text }] } } } }
+    //   { result: { statusUpdate: { status: { state: "TASK_STATE_*" } } } }
+    //   { result: { task: { ... } } }  (initial task object)
     let finalOutput = "";
     let taskCompleted = false;
 
     for await (const event of parseSSE(response.body)) {
       const e = event as any;
+      const result = e?.result;
+      if (!result) continue;
 
       // TaskArtifactUpdateEvent — streaming text chunk
-      if (e?.result?.artifact) {
-        const parts: any[] = e.result.artifact.parts ?? [];
+      if (result.artifactUpdate) {
+        const parts: any[] = result.artifactUpdate.artifact?.parts ?? [];
         for (const part of parts) {
-          if (part.kind === "text" && part.text) {
+          if (part.text) {
             callbacks.onChunk(part.text);
             finalOutput += part.text;
           }
@@ -255,31 +263,38 @@ export async function launchAgent(
       }
 
       // TaskStatusUpdateEvent
-      if (e?.result?.status) {
-        const state = normalizeState(e.result.status.state ?? "");
+      if (result.statusUpdate) {
+        const state = normalizeState(result.statusUpdate.status?.state ?? "");
 
-        if (state === "input-required") {
-          const msgParts: any[] = e.result.status.message?.parts ?? [];
+        if (
+          state === "task-state-input-required" ||
+          state === "input-required"
+        ) {
+          const msgParts: any[] =
+            result.statusUpdate.status?.message?.parts ?? [];
           const question =
-            msgParts.find((p: any) => p.kind === "text")?.text ??
+            msgParts.find((p: any) => p.text)?.text ??
             "Agent requires additional input.";
           const contextId: string =
-            e.result.contextId ?? e.result.context_id ?? task.taskId;
+            result.statusUpdate.contextId ?? task.taskId;
           callbacks.onInputRequired(question, contextId);
-          // Cancel the response body to release the HTTP connection.
-          // The process stays alive; sendAgentInput will open a new request.
           response.body?.cancel().catch(() => {});
           return { pid, port };
         }
 
-        if (state === "completed") {
+        if (state === "task-state-completed" || state === "completed") {
           taskCompleted = true;
           continue;
         }
 
-        if (state === "failed" || state === "rejected") {
+        if (
+          state === "task-state-failed" ||
+          state === "failed" ||
+          state === "task-state-rejected" ||
+          state === "rejected"
+        ) {
           const errMsg =
-            e.result.status.message?.parts?.find((p: any) => p.kind === "text")
+            result.statusUpdate.status?.message?.parts?.find((p: any) => p.text)
               ?.text ?? "Agent task failed";
           callbacks.onFailed(errMsg);
           child.kill();
@@ -288,10 +303,10 @@ export async function launchAgent(
       }
 
       // Top-level Message result (non-streaming fallback)
-      if (e?.result?.parts) {
-        const parts: any[] = e.result.parts;
+      if (result.message?.parts) {
+        const parts: any[] = result.message.parts;
         for (const part of parts) {
-          if (part.kind === "text" && part.text) {
+          if (part.text) {
             finalOutput += part.text;
           }
         }
@@ -346,7 +361,7 @@ export async function sendAgentInput(
     id: crypto.randomUUID(),
     method: "SendStreamingMessage",
     params: {
-      message: { ...a2aMessage, task_id: taskId, context_id: contextId },
+      message: { ...a2aMessage, taskId, contextId },
       configuration: { acceptedOutputModes: ["text/plain"] },
     },
   });
@@ -371,34 +386,44 @@ export async function sendAgentInput(
     let finalOutput = "";
     for await (const event of parseSSE(response.body)) {
       const e = event as any;
+      const result = e?.result;
+      if (!result) continue;
 
-      if (e?.result?.artifact) {
-        for (const part of e.result.artifact.parts ?? []) {
-          if (part.kind === "text" && part.text) {
+      if (result.artifactUpdate) {
+        for (const part of result.artifactUpdate.artifact?.parts ?? []) {
+          if (part.text) {
             callbacks.onChunk(part.text);
             finalOutput += part.text;
           }
         }
       }
 
-      if (e?.result?.status) {
-        const state = normalizeState(e.result.status.state ?? "");
-        if (state === "completed") break;
-        if (state === "failed" || state === "rejected") {
+      if (result.statusUpdate) {
+        const state = normalizeState(result.statusUpdate.status?.state ?? "");
+        if (state === "task-state-completed" || state === "completed") break;
+        if (
+          state === "task-state-failed" ||
+          state === "failed" ||
+          state === "task-state-rejected" ||
+          state === "rejected"
+        ) {
           const errMsg =
-            e.result.status.message?.parts?.find((p: any) => p.kind === "text")
+            result.statusUpdate.status?.message?.parts?.find((p: any) => p.text)
               ?.text ?? "Agent task failed";
           callbacks.onFailed(errMsg);
           return;
         }
-        // Recursive INPUT_REQUIRED — agent needs another round of user input
-        if (state === "input-required") {
-          const msgParts: any[] = e.result.status.message?.parts ?? [];
+        if (
+          state === "task-state-input-required" ||
+          state === "input-required"
+        ) {
+          const msgParts: any[] =
+            result.statusUpdate.status?.message?.parts ?? [];
           const question =
-            msgParts.find((p: any) => p.kind === "text")?.text ??
+            msgParts.find((p: any) => p.text)?.text ??
             "Agent requires additional input.";
           const newContextId: string =
-            e.result.contextId ?? e.result.context_id ?? contextId;
+            result.statusUpdate.contextId ?? contextId;
           callbacks.onInputRequired(question, newContextId);
           return;
         }
