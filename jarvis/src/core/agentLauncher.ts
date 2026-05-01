@@ -207,7 +207,7 @@ export async function launchAgent(
     const rpcBody = JSON.stringify({
       jsonrpc: "2.0",
       id: task.taskId,
-      method: "agent.message/stream",
+      method: "agent.message_send_stream",
       params: {
         message: a2aMessage,
         configuration: { acceptedOutputModes: ["text/plain"] },
@@ -340,7 +340,7 @@ export async function sendAgentInput(
   const rpcBody = JSON.stringify({
     jsonrpc: "2.0",
     id: crypto.randomUUID(),
-    method: "agent.message/stream",
+    method: "agent.message_send_stream",
     params: {
       message: { ...a2aMessage, taskId, contextId },
       configuration: { acceptedOutputModes: ["text/plain"] },
