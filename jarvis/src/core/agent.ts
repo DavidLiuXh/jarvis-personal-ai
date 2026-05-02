@@ -41,7 +41,6 @@ import {
 } from "./sessionSummarizer.js";
 import { LocalModelRouter } from "./localModelRouter.js";
 import { type AgentManager } from "./agentManager.js";
-import { routeToAgent } from "./agentRouter.js";
 import {
   extractBackgroundPrompt,
   type BackgroundTaskRunner,
@@ -517,6 +516,56 @@ export class JarvisAgent extends EventEmitter {
     }
 
     await this.initialize();
+
+    // 🚀 NEW: EXPLICIT AGENT DISPATCHING (Local Routing)
+    // If the prompt starts with "agent:", we bypass the main LLM path entirely.
+    if (userPrompt.trimStart().toLowerCase().startsWith("agent:")) {
+      if (this.agentManager && this.localModelRouter) {
+        const rawPrompt = userPrompt.trimStart().slice("agent:".length).trim();
+        console.error(
+          `🤖 [Jarvis] Explicit agent request detected: "${rawPrompt}"`,
+        );
+
+        const route = await this.localModelRouter.routeAgentCall(
+          rawPrompt,
+          this.agentManager.getRegistry(),
+        );
+
+        if (route && route.agentId) {
+          const card = this.agentManager.getCard(route.agentId);
+          if (card) {
+            console.error(
+              `🤖 [Jarvis] Local router selected agent: ${route.agentId}`,
+            );
+            // 1. Send confirmation to UI
+            const msg = `🤖 已通过本地路由启动 **${card.name}**，正在分析您的请求...`;
+            this.emit(JarvisEventType.CONTENT, { type: "content", value: msg });
+            this.emit(JarvisEventType.DONE, "");
+
+            // 2. Launch the background task
+            this.agentManager.createTask(
+              route.agentId,
+              this.sessionId,
+              route.input,
+            );
+            this.isProcessing = false; // Reset early since we're exiting
+            return;
+          }
+        }
+
+        // If local routing fails or agent not found
+        const errorMsg =
+          "❌ 无法识别指定的 Agent 或参数提取失败。请确保 Agent 已加载。";
+        this.emit(JarvisEventType.CONTENT, {
+          type: "content",
+          value: errorMsg,
+        });
+        this.emit(JarvisEventType.DONE, "");
+        this.isProcessing = false;
+        return;
+      }
+    }
+
     this.isProcessing = true;
 
     try {
@@ -560,39 +609,6 @@ export class JarvisAgent extends EventEmitter {
             `🔀 [Jarvis] Local routing: ${result.decision} | subject=${result.querySubject} | time_window=${twLabel} | reason="${result.classifierReason}" (source=${result.source})`,
           );
         }
-
-        // ── External Agent routing ────────────────────────────────────────
-        // Check if this request should be dispatched to an ADK agent instead
-        // of going through the normal LLM path.
-        if (this.agentManager) {
-          const route = routeToAgent(
-            userPrompt,
-            this.agentManager.getRegistry(),
-          );
-          if (route.matched) {
-            console.error(
-              `🤖 [AgentRouter] Dispatching to agent=${route.agentId}, input=${JSON.stringify(route.input)}`,
-            );
-            try {
-              // Emit confirmation to user immediately (non-blocking)
-              this.emit(JarvisEventType.CONTENT, route.confirmationMessage);
-              this.emit(JarvisEventType.DONE, "");
-              // Start the agent task in the background
-              this.agentManager.createTask(
-                route.agentId,
-                this.sessionId,
-                route.input,
-              );
-              return; // Skip LLM path entirely
-            } catch (agentErr: any) {
-              // Validation or registry error — fall through to normal LLM path
-              console.error(
-                `⚠️ [AgentRouter] createTask failed (${agentErr.message}), falling back to LLM`,
-              );
-            }
-          }
-        }
-        // ── End external agent routing ────────────────────────────────────
 
         await this.refreshContext(
           userPrompt,
