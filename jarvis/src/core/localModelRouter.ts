@@ -299,4 +299,79 @@ export class LocalModelRouter {
       resolvedDateRange: preResolved,
     };
   }
+
+  async routeAgentCall(
+    userPrompt: string,
+    agents: any[],
+  ): Promise<{ agentId: string; input: Record<string, any> } | null> {
+    const prompt = `
+You are an expert intent router. A user wants to launch a specialized professional agent.
+Available Agents:
+${agents
+  .map(
+    (a) =>
+      `- ID: ${a.agentId}\n  Name: ${a.name}\n  Description: ${a.description}\n  Input Schema: ${JSON.stringify(a.inputSchema)}`,
+  )
+  .join("\n\n")}
+
+User request (starts with 'agent:' prefix): "${userPrompt}"
+
+Tasks:
+1. Identify which Agent ID best matches the user's request.
+2. Extract the required parameters for that agent according to its Input Schema.
+
+OUTPUT STRICTURE (CRITICAL):
+- Respond ONLY with a raw JSON object. 
+- NO Markdown code blocks (no \` \` \`json).
+- NO trailing commas.
+- NO comments.
+- NO explanation or text before/after the JSON.
+- If no agent matches, respond with: {"agentId": null, "input": {}}
+
+Correct Example:
+{"agentId": "investment-analysis", "input": {"ticker": "NVDA"}}
+`.trim();
+
+    try {
+      const raw = await ollamaGenerate(this.classifierModel, prompt, {
+        baseUrl: this.baseUrl,
+        timeoutMs: this.timeoutMs,
+      });
+
+      // 1. More robust JSON extraction
+      const start = raw.indexOf("{");
+      const end = raw.lastIndexOf("}");
+      if (start === -1 || end === -1 || end < start) {
+        throw new Error("No JSON object found in response");
+      }
+
+      const jsonText = raw
+        .substring(start, end + 1)
+        .replace(/\n/g, " ") // Remove newlines
+        .replace(/,\s*]/g, "]") // Fix trailing commas in arrays
+        .replace(/,\s*}/g, "}"); // Fix trailing commas in objects
+
+      try {
+        return JSON.parse(jsonText);
+      } catch (parseError: any) {
+        console.error(
+          `❌ [LocalModelRouter] JSON parse failed: ${parseError.message}`,
+        );
+        // Log diagnostic snippet around error position
+        const posMatch = parseError.message.match(/position (\d+)/);
+        if (posMatch) {
+          const p = parseInt(posMatch[1]);
+          console.error(
+            `Context: ...${jsonText.substring(Math.max(0, p - 40), Math.min(jsonText.length, p + 40))}...`,
+          );
+        } else {
+          console.error(`Raw text was: ${jsonText.substring(0, 200)}...`);
+        }
+        return null;
+      }
+    } catch (e: any) {
+      console.error(`⚠️ [LocalModelRouter] Agent routing failed: ${e.message}`);
+      return null;
+    }
+  }
 }

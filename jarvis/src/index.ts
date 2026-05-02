@@ -560,6 +560,41 @@ class JarvisServer {
   }
 
   private async handleChat(ws: WebSocket, sessionId: string, payload: string) {
+    const trimmed = payload.trim();
+
+    // 🤖 AGENT MANAGEMENT COMMANDS
+    if (trimmed.startsWith("!agent")) {
+      const parts = trimmed.split(/\s+/);
+      const subcommand = parts[1]?.toLowerCase();
+
+      if (subcommand === "list") {
+        const registry = this.agentManager.getRegistry();
+        let response = "🤖 **Available Jarvis Agents:**\n\n";
+        if (registry.length === 0) {
+          response += "_No agents loaded._";
+        } else {
+          response = registry
+            .map(
+              (c) =>
+                `- **${c.name}** (\`${c.agentId}\`)\n  ${c.description}\n  _Estimated: ${c.estimatedDuration}_`,
+            )
+            .join("\n\n");
+        }
+
+        if (ws.readyState === WebSocket.OPEN) {
+          ws.send(
+            JSON.stringify({
+              type: "stream",
+              sessionId,
+              payload: { type: "content", value: response },
+            }),
+          );
+          ws.send(JSON.stringify({ type: "done", sessionId }));
+        }
+        return;
+      }
+    }
+
     const agent = await this.manager.getAgent(sessionId);
 
     // 🛡️ CONFIRMATION INTERCEPTION: Check if this user is replying to a pending security prompt
