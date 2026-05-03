@@ -26,10 +26,6 @@ from .sub_agents.trading_analyst import trading_analyst_agent
 
 MODEL = "gemini-2.5-pro"
 
-os.environ.setdefault("GOOGLE_GENAI_USE_VERTEXAI", "False")
-os.environ.setdefault(
-    "GOOGLE_API_KEY", "AIzaSyCWHp1Q-iPczzWmZxgkpHgdsK4ubtgpa_Q")
-
 financial_coordinator = LlmAgent(
     name="financial_coordinator",
     model=MODEL,
