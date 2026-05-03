@@ -7,13 +7,27 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { createServer } from "node:net";
 import type { AgentCard, AgentTask } from "./externalAgent.js";
+import * as crypto from "node:crypto";
+import { Agent as UndiciAgent, setGlobalDispatcher } from "undici";
+
+// Configure a global dispatcher for A2A communication with extreme timeouts
+// This prevents "fetch failed" errors during long LLM silent periods
+const a2aDispatcher = new UndiciAgent({
+  connectTimeout: 600_000,
+  headersTimeout: 600_000,
+  bodyTimeout: 600_000,
+  keepAliveTimeout: 600_000,
+  keepAliveMaxTimeout: 600_000,
+});
+// Set it globally so all native fetch calls within this module use it
+setGlobalDispatcher(a2aDispatcher);
 
 /** How long to wait for the agent process to become ready (ms) */
 const READY_TIMEOUT_MS = 30_000;
 /** How often to poll the health endpoint while waiting (ms) */
 const READY_POLL_INTERVAL_MS = 500;
 /** HTTP read timeout for A2A streaming calls (ms) */
-const STREAM_TIMEOUT_MS = 300_000; // 5 minutes
+const STREAM_TIMEOUT_MS = 600_000; // Increased to 10 minutes for deep analysis
 
 // ── Port allocation ──────────────────────────────────────────────────────────
 
