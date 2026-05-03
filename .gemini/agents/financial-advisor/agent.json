@@ -1,0 +1,24 @@
+{
+  "agentId": "financial-advisor",
+  "name": "理财规划专家",
+  "description": "提供分步式的财务分析建议，包括市场数据、交易策略、执行方案及风险评估",
+  "entrypoint": "main.py",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "initial_query": {
+        "type": "string",
+        "description": "用户的理财诉求或感兴趣的股票代码"
+      }
+    }
+  },
+  "estimatedDuration": "3-5 分钟",
+  "triggers": [
+    "理财",
+    "投资策略",
+    "投资计划",
+    "financial advisor",
+    "financial advice",
+    "investment plan"
+  ]
+}
