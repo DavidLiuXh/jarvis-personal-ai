@@ -97,8 +97,11 @@ class FinancialAdvisorExecutor:
 def build_app() -> FastAPI:
     app = FastAPI()
     
-    # 1. Load Agent Metadata
-    with open("agent.json", "r") as f:
+    # 1. Load Agent Metadata using absolute path relative to this file
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    agent_json_path = os.path.join(base_dir, "agent.json")
+    
+    with open(agent_json_path, "r") as f:
         card_data = json.load(f)
     
     # 2. Instantiate V2 Handler with required stores
