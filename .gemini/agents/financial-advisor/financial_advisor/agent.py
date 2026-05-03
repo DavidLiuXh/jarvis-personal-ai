@@ -26,6 +26,8 @@ from .sub_agents.trading_analyst import trading_analyst_agent
 
 MODEL = "gemini-2.5-pro"
 
+os.environ.setdefault("GOOGLE_GENAI_USE_VERTEXAI", "False")
+
 financial_coordinator = LlmAgent(
     name="financial_coordinator",
     model=MODEL,
