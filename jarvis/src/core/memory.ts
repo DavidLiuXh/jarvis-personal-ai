@@ -43,6 +43,11 @@ export class MemoryService {
   private isBackfillingEntities = false; // guards backfillEntityLinks
   private isBackfillingSessionEvents = false; // guards backfillSessionEvents
   private isBackfillingSkills = false; // guards backfillSkillIndex
+  // Skills queued for backfill while embedContentFn was not yet available
+  private pendingSkillBackfill: Array<{
+    name: string;
+    description: string;
+  }> | null = null;
   private config: any;
   private lastConsolidatedCount = 0;
   private generateTextFn: ((prompt: string) => Promise<string>) | null = null;
@@ -347,6 +352,8 @@ export class MemoryService {
     this.embedContentFn = fn;
     // Store the promise so callers can await full backfill completion
     this._backfillPromise = this.autoBackfill();
+    // Drain any skill backfill that was queued while embedFn was unavailable
+    this.drainPendingSkillBackfill();
   }
 
   /**
@@ -356,6 +363,19 @@ export class MemoryService {
    */
   public setEmbedContentOnly(fn: (text: string) => Promise<number[]>) {
     this.embedContentFn = fn;
+    // Drain any skill backfill queued while embedFn was unavailable
+    this.drainPendingSkillBackfill();
+  }
+
+  private drainPendingSkillBackfill(): void {
+    if (this.pendingSkillBackfill && this.pendingSkillBackfill.length > 0) {
+      const pending = this.pendingSkillBackfill;
+      this.pendingSkillBackfill = null;
+      debugLogger.debug(
+        `[SkillIndex] embedFn now available — running deferred backfill for ${pending.length} skills`,
+      );
+      void this.backfillSkillIndex(pending);
+    }
   }
 
   /** Wait for the initial autoBackfill() to complete. */
@@ -3175,9 +3195,19 @@ Events:`;
 
     const embedFn = this.embedContentFn;
     if (!embedFn || skills.length === 0) {
+      // embedFn not yet available (agent not initialized) — queue for retry
+      // when setEmbedContent/setEmbedContentOnly is called later.
+      if (skills.length > 0) {
+        this.pendingSkillBackfill = skills;
+        debugLogger.debug(
+          `[SkillIndex] embedFn not ready — queued ${skills.length} skills for later backfill`,
+        );
+      }
       this.isBackfillingSkills = false;
       return;
     }
+    // Clear any pending queue since we're running now
+    this.pendingSkillBackfill = null;
 
     try {
       // ── 1. Remove stale entries (skills that no longer exist) ────────────────

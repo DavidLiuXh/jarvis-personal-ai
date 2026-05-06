@@ -2405,4 +2405,80 @@ describe("MemoryService skill index", () => {
 
     stub.mockRestore();
   });
+
+  it("backfillSkillIndex: queues skills when embedFn absent, runs when setEmbedContent called", async () => {
+    const embedCalls: string[] = [];
+    const embedFn = async (text: string) => {
+      embedCalls.push(text);
+      return [1, 0, 0, 0];
+    };
+
+    vi.doMock("sqlite-vec", () => ({
+      load: vi.fn((db: any) => {
+        db.exec(
+          `CREATE TABLE IF NOT EXISTS vec_skills (id INTEGER PRIMARY KEY, embedding BLOB);`,
+        );
+      }),
+    }));
+    vi.doMock("./configManager.js", () => ({
+      ConfigManager: {
+        getInstance: vi.fn().mockReturnValue({
+          get: vi.fn().mockReturnValue({
+            api: { key: "test-key", proxy: null },
+            models: {
+              embedding: "m",
+              embeddingDimension: 4,
+              distillation: "m",
+            },
+            memory: {
+              ingestionDelayMs: 0,
+              retrievalLimit: 5,
+              consolidationThreshold: 100,
+              dedupStrategy: "jaccard",
+              factRelevanceStrategy: "jaccard",
+              factRelevanceLimit: 3,
+              prewarmLimit: 3,
+              l1WriteMode: "batch",
+              vectorSimilarityWeight: 0.7,
+              importanceWeight: 0.3,
+            },
+          }),
+        }),
+      },
+    }));
+
+    const { MemoryService } = await import("./memory.js");
+    const tmpDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), "jarvis-skill-deferred-"),
+    );
+    const service = new (MemoryService as new (
+      root: string,
+      dbPath?: string,
+    ) => InstanceType<typeof MemoryService>)("", tmpDir);
+
+    // embedFn NOT set yet — simulates agent not yet initialized
+    const skills = [
+      { name: "dmii", description: "Decision framework" },
+      { name: "brainstorm", description: "Brainstorming" },
+    ];
+
+    // Should queue, not embed
+    await service.backfillSkillIndex(skills);
+    expect(embedCalls).toHaveLength(0);
+
+    const db = (service as unknown as Record<string, unknown>).db as any;
+    expect(db.prepare("SELECT COUNT(*) as c FROM skills_index").get().c).toBe(
+      0,
+    );
+
+    // Now set embedFn — should drain the queue and index skills
+    service.setEmbedContentOnly(embedFn);
+    // setEmbedContentOnly triggers drainPendingSkillBackfill which is async
+    await new Promise((r) => setTimeout(r, 50));
+
+    expect(embedCalls).toHaveLength(2);
+    expect(db.prepare("SELECT COUNT(*) as c FROM skills_index").get().c).toBe(
+      2,
+    );
+  });
 });
