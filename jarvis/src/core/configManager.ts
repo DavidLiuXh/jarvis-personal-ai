@@ -412,7 +412,7 @@ export class ConfigManager {
         useGlobalSession: false,
         globalSessionId: "jarvis-global-master",
         resumeOnStart: true,
-        recentTurnsOnResume: 3,
+        recentTurnsOnResume: 0,
         historyCompressionThreshold: 20,
         historyKeepRecentTurns: 3,
         codeHeavyThresholdMultiplier: 1.2,

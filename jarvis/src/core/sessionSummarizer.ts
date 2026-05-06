@@ -593,14 +593,31 @@ export function extractSummaryChunks(summary: string): string[] {
   return chunks;
 }
 
+export function summarizeChunkPreview(chunks: string[], limit = 4): string[] {
+  return chunks.slice(0, limit).map((chunk) => {
+    const cleaned = chunk.replace(/\s+/g, " ").trim();
+    return cleaned.length <= 80
+      ? cleaned
+      : `${cleaned.slice(0, 80).trimEnd()}…`;
+  });
+}
+
 export function buildSummarySectionFromChunks(chunks: string[]): string {
   if (chunks.length === 0) {
     return "";
   }
 
+  const compactSnippet = (text: string, maxLen = 120): string => {
+    const cleaned = text.replace(/\s+/g, " ").trim();
+    const firstSentence =
+      cleaned.split(/(?<=[。！？.!?；;])/u)[0]?.trim() ?? cleaned;
+    if (firstSentence.length <= maxLen) return firstSentence;
+    return `${firstSentence.slice(0, maxLen).trimEnd()}…`;
+  };
+
   return (
     "\n<relevant_session_summary>\n" +
-    chunks.map((item) => `- ${item}`).join("\n") +
+    chunks.map((item) => `- ${compactSnippet(item)}`).join("\n") +
     "\n</relevant_session_summary>"
   );
 }

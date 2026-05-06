@@ -15,7 +15,10 @@ import { HttpsProxyAgent } from "https-proxy-agent";
 import { debugLogger } from "../../../gemini-cli/packages/core/src/index.js";
 import { ConfigManager } from "./configManager.js";
 import { EntityExtractor, type EntityLink } from "./entityExtractor.js";
-import { extractSummaryChunks } from "./sessionSummarizer.js";
+import {
+  extractSummaryChunks,
+  summarizeChunkPreview,
+} from "./sessionSummarizer.js";
 import {
   ollamaGenerate,
   ollamaGenerateWithRetry,
@@ -3447,6 +3450,10 @@ Events:`;
       if (!embedFn) return;
 
       const chunks = extractSummaryChunks(summary);
+      const chunkPreview = summarizeChunkPreview(chunks, 4);
+      debugLogger.debug(
+        `[SummaryIndex] backfill session=${sessionId} chunks=${chunks.length} preview=${chunkPreview.length > 0 ? chunkPreview.join(" | ") : "none"}`,
+      );
       const desiredHashes = new Set(chunks.map((chunk) => hashText(chunk)));
       const existing = this.db
         .prepare(
@@ -3543,14 +3550,20 @@ Events:`;
       const strictDistance = Math.min(maxDistance, 0.72);
       if (rows[0].distance > strictDistance) {
         debugLogger.debug(
-          `[SummaryIndex] top hit too far (distance=${rows[0].distance.toFixed(3)} > ${strictDistance.toFixed(3)}), skipping summary injection`,
+          `[SummaryIndex] top hit too far (distance=${rows[0].distance.toFixed(3)} > ${strictDistance.toFixed(3)}), skipping summary injection; top=${rows[0].chunk_text.slice(0, 120).replace(/\s+/g, " ")}`,
         );
         return [];
       }
 
       const results = rows.slice(0, topK).map((row) => row.chunk_text);
       debugLogger.debug(
-        `[SummaryIndex] searchSummaryChunks("${query.slice(0, 50)}", topK=${topK}, maxDist=${maxDistance}) → ${results.length}`,
+        `[SummaryIndex] searchSummaryChunks("${query.slice(0, 50)}", topK=${topK}, maxDist=${maxDistance}) → ${results.length}; hits=${rows
+          .slice(0, topK)
+          .map(
+            (row) =>
+              `${row.distance.toFixed(3)}:${row.chunk_text.slice(0, 80).replace(/\s+/g, " ")}`,
+          )
+          .join(" | ")}`,
       );
       return results;
     } catch (e: any) {
