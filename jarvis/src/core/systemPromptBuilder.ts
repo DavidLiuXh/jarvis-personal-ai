@@ -45,9 +45,6 @@ Today's date is: ${today}
 - **Interactive Commands:** Prefer non-interactive commands (e.g. \`git --no-pager\`) unless a persistent process is specifically required.
 - **Confirmation Protocol:** If a tool call is declined or cancelled, respect the decision immediately. Do not re-attempt unless the user explicitly directs you to.
 
-## Memory
-- **save_memory (Jarvis internal):** Facts, preferences, and workflows are automatically distilled from conversations. You do not need to manually save them unless the user explicitly asks you to "remember" something specific.
-
 ## Tone & Style
 - Be concise and direct. Avoid conversational filler, preambles ("Okay, I will now..."), or postambles ("I have finished...").
 - Use GitHub-flavored Markdown. Responses are rendered in monospace.
@@ -217,7 +214,8 @@ export class SystemPromptBuilder {
       `If the user asks about past conversations: ` +
       `(1) First check <relevant_past_conversations> — if the answer is there, use it directly without calling any tool. ` +
       `(2) Only if <relevant_past_conversations> does not contain the needed information, call 'recall_memory' with the TOPIC keywords from the user's question as the query (e.g. user asks "did we discuss Hormuz?" → query="Hormuz"; user asks "what was my plan for the project?" → query="project plan"). ` +
-      `DO NOT HALLUCINATE.\n</memory_status>` +
+      `DO NOT HALLUCINATE. ` +
+      `save_memory: facts and preferences are auto-distilled — only call save_memory when the user explicitly says "remember this".\n</memory_status>` +
       `\n\n<persistent_context>\n${contextLines}\n</persistent_context>`;
 
     const protocols = selectProtocols(userPrompt);
@@ -236,7 +234,8 @@ export class SystemPromptBuilder {
       `If the user asks about past conversations: ` +
       `(1) First check <relevant_past_conversations> — if the answer is there, use it directly without calling any tool. ` +
       `(2) Only if <relevant_past_conversations> does not contain the needed information, call 'recall_memory' with the TOPIC keywords from the user's question as the query (e.g. user asks "did we discuss Hormuz?" → query="Hormuz"; user asks "what was my plan for the project?" → query="project plan"). ` +
-      `DO NOT HALLUCINATE.\n</memory_status>` +
+      `DO NOT HALLUCINATE. ` +
+      `save_memory: facts and preferences are auto-distilled — only call save_memory when the user explicitly says "remember this".\n</memory_status>` +
       `\n\n<persistent_context>\n${contextLines}\n</persistent_context>`;
 
     return this.framework(memoryContext, "", {
