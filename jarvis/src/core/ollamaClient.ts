@@ -35,11 +35,15 @@ export async function ollamaGenerate(
     /** Max output tokens. -1 means no limit (Ollama default is often 128 which
      *  truncates structured JSON responses). Set to -1 unless you need a cap. */
     numPredict?: number;
+    /** Context window size in tokens. Ollama defaults to 2048 which is too small
+     *  for structured JSON extraction prompts. Set higher for entity extraction. */
+    numCtx?: number;
   } = {},
 ): Promise<string> {
   const baseUrl = options.baseUrl ?? DEFAULT_BASE_URL;
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const numPredict = options.numPredict ?? -1; // -1 = unlimited
+  const numCtx = options.numCtx;
   const startTime = Date.now();
 
   const controller = new AbortController();
@@ -53,7 +57,10 @@ export async function ollamaGenerate(
         model,
         prompt,
         stream: false,
-        options: { num_predict: numPredict },
+        options: {
+          num_predict: numPredict,
+          ...(numCtx !== undefined ? { num_ctx: numCtx } : {}),
+        },
       }),
       signal: controller.signal,
       // @ts-expect-error - undici fetch dispatcher option
@@ -92,6 +99,7 @@ export async function ollamaGenerateWithRetry(
     baseUrl?: string;
     timeoutMs?: number;
     numPredict?: number;
+    numCtx?: number;
     maxRetries?: number;
     maxTimeoutMs?: number;
   } = {},

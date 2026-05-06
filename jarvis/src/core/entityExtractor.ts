@@ -101,6 +101,10 @@ export class EntityExtractor {
           timeoutMs: this.timeoutMs,
           maxRetries: 2,
           maxTimeoutMs: this.timeoutMs * 3,
+          // Ollama defaults to num_ctx=2048 which is too small for structured
+          // JSON extraction with long facts. Use 8192 to ensure the prompt +
+          // output JSON fit without truncation.
+          numCtx: 8192,
         });
       } else {
         if (!this.generateTextFn)
@@ -120,30 +124,42 @@ export class EntityExtractor {
 
       const rawJson = responseText.substring(start, end + 1);
 
-      // Apply repairs only when needed. Try direct parse first to avoid
-      // corrupting multi-line string values with the newline replacement.
-      const repaired = rawJson
-        .replace(/,\s*]/g, "]") // Fix trailing commas in arrays
-        .replace(/,\s*}/g, "}"); // Fix trailing commas in objects
-
-      // If repaired JSON still fails to parse, fall back to collapsing
-      // bare newlines (LLM sometimes emits unescaped newlines inside strings).
-      const jsonText = (() => {
+      // Apply repairs in order. Try each stage, stop at first successful parse.
+      const tryParse = (s: string) => {
         try {
-          JSON.parse(repaired);
-          return repaired;
+          return JSON.parse(s) as { found: boolean; links?: EntityLink[] };
         } catch {
-          // Only replace newlines that appear outside of quoted strings
-          // by collapsing runs of whitespace between tokens.
-          return repaired.replace(/\n/g, " ");
+          return null;
         }
-      })();
+      };
+
+      // Stage 1: trailing commas only
+      const stage1 = rawJson.replace(/,\s*]/g, "]").replace(/,\s*}/g, "}");
+
+      // Stage 2: also collapse newlines (LLM unescaped newlines inside strings)
+      const stage2 = stage1.replace(/\n/g, " ");
+
+      // Stage 3: truncation repair — if output was cut mid-array, find the last
+      // complete link object and close the JSON structure around it.
+      // Looks for the last complete `}` inside the "links" array, then appends `]}`.
+      const repairTruncated = (s: string): string => {
+        const linksStart = s.indexOf('"links"');
+        if (linksStart === -1) return s;
+        const lastCompleteObj = s.lastIndexOf("}");
+        if (lastCompleteObj === -1) return s;
+        return s.substring(0, lastCompleteObj + 1) + "]}";
+      };
+      const stage3 = repairTruncated(stage2);
+
+      const jsonText = tryParse(stage1)
+        ? stage1
+        : tryParse(stage2)
+          ? stage2
+          : stage3; // may or may not parse — handled below
 
       try {
-        const data = JSON.parse(jsonText) as {
-          found: boolean;
-          links?: EntityLink[];
-        };
+        const data = tryParse(jsonText);
+        if (!data) throw new SyntaxError("All repair stages failed");
 
         if (!data.found || !data.links) return [];
         return data.links.filter((l) => l.subject && l.relation && l.object);
