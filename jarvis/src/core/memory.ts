@@ -42,6 +42,7 @@ export class MemoryService {
   private isConsolidating = false; // guards consolidateFacts (separate to avoid竞态)
   private isBackfillingEntities = false; // guards backfillEntityLinks
   private isBackfillingSessionEvents = false; // guards backfillSessionEvents
+  private isBackfillingSkills = false; // guards backfillSkillIndex
   private config: any;
   private lastConsolidatedCount = 0;
   private generateTextFn: ((prompt: string) => Promise<string>) | null = null;
@@ -362,6 +363,12 @@ export class MemoryService {
     if (this._backfillPromise) {
       await this._backfillPromise;
     }
+  }
+
+  /** True while backfillSkillIndex() is running. Used by agent.ts to detect a
+   *  partial index and fall back to full skill injection. */
+  public get skillIndexBuilding(): boolean {
+    return this.isBackfillingSkills;
   }
 
   /**
@@ -3161,8 +3168,16 @@ Events:`;
   public async backfillSkillIndex(
     skills: Array<{ name: string; description: string }>,
   ): Promise<void> {
+    // Concurrency guard: prevent two concurrent calls (e.g. from setAvailableSkills
+    // being called twice quickly) from racing on the same DB rows.
+    if (this.isBackfillingSkills) return;
+    this.isBackfillingSkills = true;
+
     const embedFn = this.embedContentFn;
-    if (!embedFn || skills.length === 0) return;
+    if (!embedFn || skills.length === 0) {
+      this.isBackfillingSkills = false;
+      return;
+    }
 
     try {
       // ── 1. Remove stale entries (skills that no longer exist) ────────────────
@@ -3230,18 +3245,24 @@ Events:`;
       }
 
       // ── 4. Update changed skills ─────────────────────────────────────────────
+      // embedFn is awaited BEFORE the transaction so the async call stays outside
+      // the synchronous transaction block (better-sqlite3 transactions are sync).
       for (const skill of toUpdate) {
         const text = `${skill.name}: ${skill.description}`;
         const vec = await embedFn(text);
-        this.db
-          .prepare("UPDATE skills_index SET description = ? WHERE id = ?")
-          .run(skill.description, skill.id);
-        this.db
-          .prepare("DELETE FROM vec_skills WHERE id = ?")
-          .run(BigInt(skill.id));
-        this.db
-          .prepare("INSERT INTO vec_skills (id, embedding) VALUES (?, ?)")
-          .run(BigInt(skill.id), new Float32Array(vec));
+        // Wrap the three DB mutations atomically: if vec_skills INSERT fails,
+        // the UPDATE and DELETE are rolled back, keeping the index consistent.
+        this.db.transaction(() => {
+          this.db
+            .prepare("UPDATE skills_index SET description = ? WHERE id = ?")
+            .run(skill.description, skill.id);
+          this.db
+            .prepare("DELETE FROM vec_skills WHERE id = ?")
+            .run(BigInt(skill.id));
+          this.db
+            .prepare("INSERT INTO vec_skills (id, embedding) VALUES (?, ?)")
+            .run(BigInt(skill.id), new Float32Array(vec));
+        })();
       }
 
       console.error(
@@ -3249,6 +3270,8 @@ Events:`;
       );
     } catch (e: any) {
       console.error(`⚠️ [SkillIndex] backfillSkillIndex failed: ${e.message}`);
+    } finally {
+      this.isBackfillingSkills = false;
     }
   }
 

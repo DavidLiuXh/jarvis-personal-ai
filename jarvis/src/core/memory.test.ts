@@ -2187,4 +2187,222 @@ describe("MemoryService skill index", () => {
     const result = await service.searchSkills("analyze stocks", 3);
     expect(result).toEqual([]);
   });
+
+  it("backfillSkillIndex: concurrent calls are serialised (guard prevents double-insert)", async () => {
+    let embedCallCount = 0;
+    const embedFn = async () => {
+      embedCallCount++;
+      // Small delay to allow the second call to interleave if guard is absent
+      await new Promise((r) => setTimeout(r, 5));
+      return [1, 0, 0, 0];
+    };
+
+    vi.doMock("sqlite-vec", () => ({
+      load: vi.fn((db: any) => {
+        db.exec(
+          `CREATE TABLE IF NOT EXISTS vec_skills (id INTEGER PRIMARY KEY, embedding BLOB);`,
+        );
+      }),
+    }));
+    vi.doMock("./configManager.js", () => ({
+      ConfigManager: {
+        getInstance: vi.fn().mockReturnValue({
+          get: vi.fn().mockReturnValue({
+            api: { key: "test-key", proxy: null },
+            models: {
+              embedding: "m",
+              embeddingDimension: 4,
+              distillation: "m",
+            },
+            memory: {
+              ingestionDelayMs: 0,
+              retrievalLimit: 5,
+              consolidationThreshold: 100,
+              dedupStrategy: "jaccard",
+              factRelevanceStrategy: "jaccard",
+              factRelevanceLimit: 3,
+              prewarmLimit: 3,
+              l1WriteMode: "batch",
+              vectorSimilarityWeight: 0.7,
+              importanceWeight: 0.3,
+            },
+          }),
+        }),
+      },
+    }));
+
+    const { MemoryService } = await import("./memory.js");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "jarvis-skill-conc-"));
+    const service = new (MemoryService as new (
+      root: string,
+      dbPath?: string,
+    ) => InstanceType<typeof MemoryService>)("", tmpDir);
+    service.setEmbedContentOnly(embedFn);
+
+    const skills = [{ name: "dmii", description: "Decision framework" }];
+
+    // Fire two concurrent calls — guard should serialise them so only one runs
+    await Promise.all([
+      service.backfillSkillIndex(skills),
+      service.backfillSkillIndex(skills),
+    ]);
+
+    const db = (service as unknown as Record<string, unknown>).db as any;
+    // The skill should appear exactly once in skills_index
+    expect(db.prepare("SELECT COUNT(*) as c FROM skills_index").get().c).toBe(
+      1,
+    );
+    // embedFn should have been called exactly once (second call was blocked by guard)
+    expect(embedCallCount).toBe(1);
+  });
+
+  it("skillIndexBuilding returns true while backfill is running, false after", async () => {
+    let resolveEmbed!: () => void;
+    const embedFn = async () => {
+      await new Promise<void>((r) => {
+        resolveEmbed = r;
+      });
+      return [1, 0, 0, 0];
+    };
+
+    vi.doMock("sqlite-vec", () => ({
+      load: vi.fn((db: any) => {
+        db.exec(
+          `CREATE TABLE IF NOT EXISTS vec_skills (id INTEGER PRIMARY KEY, embedding BLOB);`,
+        );
+      }),
+    }));
+    vi.doMock("./configManager.js", () => ({
+      ConfigManager: {
+        getInstance: vi.fn().mockReturnValue({
+          get: vi.fn().mockReturnValue({
+            api: { key: "test-key", proxy: null },
+            models: {
+              embedding: "m",
+              embeddingDimension: 4,
+              distillation: "m",
+            },
+            memory: {
+              ingestionDelayMs: 0,
+              retrievalLimit: 5,
+              consolidationThreshold: 100,
+              dedupStrategy: "jaccard",
+              factRelevanceStrategy: "jaccard",
+              factRelevanceLimit: 3,
+              prewarmLimit: 3,
+              l1WriteMode: "batch",
+              vectorSimilarityWeight: 0.7,
+              importanceWeight: 0.3,
+            },
+          }),
+        }),
+      },
+    }));
+
+    const { MemoryService } = await import("./memory.js");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "jarvis-skill-flag-"));
+    const service = new (MemoryService as new (
+      root: string,
+      dbPath?: string,
+    ) => InstanceType<typeof MemoryService>)("", tmpDir);
+    service.setEmbedContentOnly(embedFn);
+
+    expect(service.skillIndexBuilding).toBe(false);
+
+    const backfillPromise = service.backfillSkillIndex([
+      { name: "test-skill", description: "desc" },
+    ]);
+
+    // Flag should be true while backfill is suspended at embedFn
+    expect(service.skillIndexBuilding).toBe(true);
+
+    // Unblock the embedFn
+    resolveEmbed();
+    await backfillPromise;
+
+    expect(service.skillIndexBuilding).toBe(false);
+  });
+
+  it("searchSkills: returns mapped results from skills_index JOIN", async () => {
+    // This test verifies the name/description mapping without vec0 by
+    // stubbing the db.prepare().all() call used inside searchSkills.
+    vi.doMock("sqlite-vec", () => ({ load: vi.fn() }));
+    vi.doMock("./configManager.js", () => ({
+      ConfigManager: {
+        getInstance: vi.fn().mockReturnValue({
+          get: vi.fn().mockReturnValue({
+            api: { key: "test-key", proxy: null },
+            models: {
+              embedding: "m",
+              embeddingDimension: 4,
+              distillation: "m",
+            },
+            memory: {
+              ingestionDelayMs: 0,
+              retrievalLimit: 5,
+              consolidationThreshold: 100,
+              dedupStrategy: "jaccard",
+              factRelevanceStrategy: "jaccard",
+              factRelevanceLimit: 3,
+              prewarmLimit: 3,
+              l1WriteMode: "batch",
+              vectorSimilarityWeight: 0.7,
+              importanceWeight: 0.3,
+            },
+          }),
+        }),
+      },
+    }));
+
+    const { MemoryService } = await import("./memory.js");
+    const tmpDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), "jarvis-skill-search-"),
+    );
+    const service = new (MemoryService as new (
+      root: string,
+      dbPath?: string,
+    ) => InstanceType<typeof MemoryService>)("", tmpDir);
+    service.setEmbedContentOnly(async () => [0.5, 0.5, 0.5, 0.5]);
+
+    // Inject skills into skills_index directly so COUNT(*) > 0
+    const db = (service as unknown as Record<string, unknown>).db as any;
+    db.prepare(
+      "INSERT INTO skills_index (name, description) VALUES (?, ?)",
+    ).run("dmii", "Decision framework");
+    db.prepare(
+      "INSERT INTO skills_index (name, description) VALUES (?, ?)",
+    ).run("brainstorm", "Brainstorming helper");
+
+    // Stub the prepare().all() to return mock rows (bypasses vec0 extension)
+    const originalPrepare = db.prepare.bind(db);
+    const stub = vi.spyOn(db, "prepare").mockImplementation((sql: string) => {
+      if (sql.includes("embedding MATCH")) {
+        return {
+          all: () => [
+            { name: "dmii", description: "Decision framework", distance: 0.1 },
+            {
+              name: "brainstorm",
+              description: "Brainstorming helper",
+              distance: 0.3,
+            },
+          ],
+        };
+      }
+      return originalPrepare(sql);
+    });
+
+    const results = await service.searchSkills("decision making", 5);
+
+    expect(results).toHaveLength(2);
+    expect(results[0]).toEqual({
+      name: "dmii",
+      description: "Decision framework",
+    });
+    expect(results[1]).toEqual({
+      name: "brainstorm",
+      description: "Brainstorming helper",
+    });
+
+    stub.mockRestore();
+  });
 });

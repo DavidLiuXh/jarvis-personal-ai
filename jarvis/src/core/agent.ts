@@ -369,20 +369,29 @@ export class JarvisAgent extends EventEmitter {
     }
 
     // Skill retrieval: search for relevant skills instead of injecting all.
-    // Falls back to full list when index is unavailable (cold start / no embedder).
+    // Falls back to full list when index is unavailable or building (cold start,
+    // no embedder, or backfill still in progress to avoid partial results).
     const skillSearchLimit = this.jarvisConfig.memory.skillSearchLimit ?? 5;
     let relevantSkills: SkillInfo[] = this.availableSkills;
     if (this.availableSkills.length > skillSearchLimit) {
-      const retrieved = await this.memoryService.searchSkills(
-        userPrompt,
-        skillSearchLimit,
-      );
-      // Fall back to full list only if retrieval returned nothing (index not ready)
-      if (retrieved.length > 0) {
-        relevantSkills = retrieved;
+      // Don't use retrieval while the index is still being built — a partial
+      // index would silently drop skills that haven't been embedded yet.
+      if (this.memoryService.skillIndexBuilding) {
         debugLogger.debug(
-          `[SkillRetrieval] ${retrieved.length}/${this.availableSkills.length} skills selected for prompt`,
+          `[SkillRetrieval] Index building — using full skill list (${this.availableSkills.length} skills)`,
         );
+      } else {
+        const retrieved = await this.memoryService.searchSkills(
+          userPrompt,
+          skillSearchLimit,
+        );
+        // Fall back to full list if retrieval returned nothing (index not ready)
+        if (retrieved.length > 0) {
+          relevantSkills = retrieved;
+          debugLogger.debug(
+            `[SkillRetrieval] ${retrieved.length}/${this.availableSkills.length} skills selected for prompt`,
+          );
+        }
       }
     }
 
