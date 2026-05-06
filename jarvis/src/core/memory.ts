@@ -3190,7 +3190,11 @@ Events:`;
   ): Promise<void> {
     // Concurrency guard: prevent two concurrent calls (e.g. from setAvailableSkills
     // being called twice quickly) from racing on the same DB rows.
-    if (this.isBackfillingSkills) return;
+    if (this.isBackfillingSkills) {
+      // Update pending so the next drain uses the latest skills list
+      if (skills.length > 0) this.pendingSkillBackfill = skills;
+      return;
+    }
     this.isBackfillingSkills = true;
 
     const embedFn = this.embedContentFn;

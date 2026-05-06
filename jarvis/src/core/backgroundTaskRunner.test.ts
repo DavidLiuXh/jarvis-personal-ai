@@ -5,7 +5,10 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { extractBackgroundPrompt } from "./backgroundTaskRunner.js";
+import {
+  extractBackgroundPrompt,
+  BackgroundTaskRunner,
+} from "./backgroundTaskRunner.js";
 
 describe("extractBackgroundPrompt", () => {
   it("detects '后台:' prefix", () => {
@@ -68,5 +71,49 @@ describe("extractBackgroundPrompt", () => {
     // prefix only, no actual task
     const result = extractBackgroundPrompt("后台:");
     expect(result).toBe("");
+  });
+});
+
+describe("BackgroundTaskRunner.setAvailableSkills", () => {
+  it("stores skills and exposes them via getTask (integration: skills snapshot)", () => {
+    // Verify that setAvailableSkills stores the list so execute() can pass it
+    // to the bg agent. We test the state directly since execute() is private.
+    const runner = new BackgroundTaskRunner(
+      "/fake/root",
+      {} as any, // memoryService not needed for this test
+    );
+
+    expect((runner as any).availableSkills).toEqual([]);
+
+    const skills = [
+      { name: "dmii", description: "Decision framework" },
+      { name: "brainstorm", description: "Brainstorming" },
+    ];
+    runner.setAvailableSkills(skills);
+
+    expect((runner as any).availableSkills).toHaveLength(2);
+    expect((runner as any).availableSkills[0].name).toBe("dmii");
+  });
+
+  it("replaces skill list on subsequent calls (reload scenario)", () => {
+    const runner = new BackgroundTaskRunner("/fake/root", {} as any);
+
+    runner.setAvailableSkills([{ name: "skill-a", description: "A" }]);
+    runner.setAvailableSkills([
+      { name: "skill-b", description: "B" },
+      { name: "skill-c", description: "C" },
+    ]);
+
+    const stored = (runner as any).availableSkills;
+    expect(stored).toHaveLength(2);
+    expect(stored[0].name).toBe("skill-b");
+    expect(stored[1].name).toBe("skill-c");
+  });
+
+  it("empty array clears the skill list", () => {
+    const runner = new BackgroundTaskRunner("/fake/root", {} as any);
+    runner.setAvailableSkills([{ name: "dmii", description: "d" }]);
+    runner.setAvailableSkills([]);
+    expect((runner as any).availableSkills).toHaveLength(0);
   });
 });

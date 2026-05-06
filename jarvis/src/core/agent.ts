@@ -162,9 +162,18 @@ export class JarvisAgent extends EventEmitter {
         routingCfg.threshold ?? 70,
         routingCfg.proModel ?? "gemini-2.5-pro",
         routingCfg.flashModel ?? "gemini-2.5-flash",
-        routingCfg.timeoutMs ??
-          this.jarvisConfig.ollama?.defaultTimeoutMs ??
-          30_000,
+        // Lightweight (bg) agents use a shorter routing timeout so a slow
+        // Ollama doesn't block task start for 30 seconds; fallback is fast.
+        this.lightweight
+          ? Math.min(
+              routingCfg.timeoutMs ??
+                this.jarvisConfig.ollama?.defaultTimeoutMs ??
+                30_000,
+              5_000,
+            )
+          : (routingCfg.timeoutMs ??
+            this.jarvisConfig.ollama?.defaultTimeoutMs ??
+            30_000),
         routingCfg.historyTurns ?? 5,
       );
       console.error(
@@ -622,7 +631,10 @@ export class JarvisAgent extends EventEmitter {
             ];
           });
           const result = await this.localModelRouter.route(userPrompt, history);
-          this.client.config.setModel(result.model);
+          // Use setActiveModel (not setModel) to avoid broadcasting on the
+          // global coreEvents singleton, which would disrupt all live
+          // GeminiClient instances including concurrent bg agents.
+          this.client.config.setActiveModel(result.model);
           querySubject = result.querySubject;
           timeWindowDays = result.timeWindowDays;
           resolvedDateRange = result.resolvedDateRange ?? null;
