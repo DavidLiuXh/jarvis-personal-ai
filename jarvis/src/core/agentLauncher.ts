@@ -6,12 +6,14 @@
 
 import { spawn, type ChildProcess } from "node:child_process";
 import { createServer } from "node:net";
+import { randomUUID } from "node:crypto";
+import { Agent as UndiciAgent } from "undici";
 import type { AgentCard, AgentTask } from "./externalAgent.js";
-import * as crypto from "node:crypto";
-import { Agent as UndiciAgent, setGlobalDispatcher } from "undici";
 
-// Configure a global dispatcher for A2A communication with extreme timeouts
-// This prevents "fetch failed" errors during long LLM silent periods
+// Per-request dispatcher for A2A fetch calls with extreme timeouts.
+// Using per-request dispatcher (not setGlobalDispatcher) so this does NOT
+// affect Gemini API calls, memory fetches, or any other global fetch traffic.
+// setGlobalDispatcher would be overwritten by config.initialize() anyway.
 const a2aDispatcher = new UndiciAgent({
   connectTimeout: 600_000,
   headersTimeout: 600_000,
@@ -19,8 +21,6 @@ const a2aDispatcher = new UndiciAgent({
   keepAliveTimeout: 600_000,
   keepAliveMaxTimeout: 600_000,
 });
-// Set it globally so all native fetch calls within this module use it
-setGlobalDispatcher(a2aDispatcher);
 
 /** How long to wait for the agent process to become ready (ms) */
 const READY_TIMEOUT_MS = 30_000;
@@ -60,7 +60,10 @@ async function waitForReady(
     // Fast-fail: if the process already exited, no point continuing to poll
     if (isExited()) return false;
     try {
-      const res = await fetch(url, { signal: AbortSignal.timeout(2000) });
+      const res = await fetch(url, {
+        signal: AbortSignal.timeout(2000),
+        dispatcher: a2aDispatcher,
+      } as any);
       if (res.ok) return true;
     } catch {
       // process not yet listening — wait and retry
@@ -99,7 +102,7 @@ function buildA2AMessage(text: string): A2AMessage {
   return {
     role: "ROLE_USER",
     parts: [{ text }],
-    messageId: crypto.randomUUID(),
+    messageId: randomUUID(),
   };
 }
 
@@ -243,7 +246,8 @@ export async function launchAgent(
       },
       body: rpcBody,
       signal: AbortSignal.timeout(STREAM_TIMEOUT_MS),
-    });
+      dispatcher: a2aDispatcher,
+    } as any);
 
     if (!response.ok || !response.body) {
       callbacks.onFailed(`A2A call failed: HTTP ${response.status}`);
@@ -390,7 +394,8 @@ export async function sendAgentInput(
       },
       body: rpcBody,
       signal: AbortSignal.timeout(STREAM_TIMEOUT_MS),
-    });
+      dispatcher: a2aDispatcher,
+    } as any);
 
     if (!response.ok || !response.body) {
       callbacks.onFailed(`A2A resume failed: HTTP ${response.status}`);

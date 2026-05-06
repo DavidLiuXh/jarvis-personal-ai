@@ -199,8 +199,12 @@ export class LocalModelRouter {
       .replace(/^```(?:json)?\s*/i, "")
       .replace(/\s*```\s*$/, "")
       .trim();
-    const match = stripped.match(/\{[\s\S]*?\}/);
-    if (!match) throw new Error("No JSON in classifier response");
+    // Use first-{ / last-} to handle nested braces in LLM string values
+    const _s = stripped.indexOf("{");
+    const _e = stripped.lastIndexOf("}");
+    if (_s === -1 || _e <= _s)
+      throw new Error("No JSON in classifier response");
+    const match = [stripped.slice(_s, _e + 1)];
 
     const parsed = JSON.parse(match[0]) as {
       complexity_score?: number;

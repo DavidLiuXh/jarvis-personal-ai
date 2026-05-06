@@ -64,11 +64,12 @@ export function loadAgentRegistry(cwd: string = process.cwd()): AgentCard[] {
           continue;
         }
 
-        // Warn if triggers is empty — agent will never auto-route
+        // triggers field is informational only (used by !agent list hints)
+        // Trigger-based auto-routing was removed; explicit "agent:" prefix is now required
         const triggers = Array.isArray(raw.triggers) ? raw.triggers : [];
         if (triggers.length === 0) {
           console.error(
-            `⚠️ [AgentRegistry] Agent ${raw.agentId} has no triggers — it will never be auto-routed`,
+            `ℹ️ [AgentRegistry] Agent ${raw.agentId} has no triggers defined`,
           );
         }
 

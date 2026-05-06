@@ -13,9 +13,16 @@ from google.genai import types
 
 from financial_advisor.prompt import FINANCIAL_COORDINATOR_PROMPT
 
+import sys
+
 app = FastAPI()
 
+# Fail-fast on startup — avoids accepting tasks that will silently fail later
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
+if not GEMINI_API_KEY:
+    print("[financial-advisor] FATAL: GEMINI_API_KEY (or GOOGLE_API_KEY) is not set",
+          flush=True, file=sys.stderr)
+    sys.exit(1)
 
 async def event_generator(task_id: str, user_input: str):
     """Generates Server-Sent Events conforming to A2A V1/V2 protocol in One-Shot mode."""
@@ -114,7 +121,8 @@ async def handle_jsonrpc(request: Request):
     message = params.get("message", {})
     parts = message.get("parts", [])
     
-    task_id = message.get("task_id") or data.get("id", str(uuid.uuid4()))
+    # agentLauncher sends task ID in the JSON-RPC "id" field (not message.task_id)
+    task_id = data.get("id") or str(uuid.uuid4())
     
     user_input = ""
     for p in parts:

@@ -573,7 +573,7 @@ class JarvisServer {
         if (registry.length === 0) {
           response += "_No agents loaded._";
         } else {
-          response = registry
+          response += registry
             .map(
               (c) =>
                 `- **${c.name}** (\`${c.agentId}\`)\n  ${c.description}\n  _Estimated: ${c.estimatedDuration}_`,
