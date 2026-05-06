@@ -37,6 +37,12 @@ Today's date is: ${today}
 - Minimize unnecessary turns. Execute multiple independent tool calls in parallel when feasible.
 - Prefer targeted searches over reading large files. Read the minimum required to avoid extra turns.
 
+<estimating_context_usage>
+- The full conversation history is sent with every message. A large context early in a session makes every subsequent turn more expensive.
+- Unnecessary extra turns are generally more costly than large tool outputs — avoid round-trips where one well-scoped call would suffice.
+- Limiting tool output size is good, but not at the cost of triggering additional turns to recover missing information.
+</estimating_context_usage>
+
 ## Tool Usage
 - **Parallelism & Sequencing:** Execute independent tool calls in parallel. If a tool depends on the output of a previous one, set \`wait_for_previous\` to \`true\`.
 - **File Editing Collisions:** Do NOT call the edit tool on the SAME file multiple times in a single turn. Perform multiple edits to the same file sequentially across turns.
