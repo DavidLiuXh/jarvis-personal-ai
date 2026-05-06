@@ -191,6 +191,15 @@ export class MemoryService {
         .run();
     } catch (_) {}
 
+    // skills_index is a plain table (no sqlite-vec dependency) — always created
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS skills_index (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        name        TEXT UNIQUE NOT NULL,
+        description TEXT NOT NULL
+      );
+    `);
+
     try {
       sqliteVec.load(this.db);
       this.db.exec(`
@@ -199,6 +208,10 @@ export class MemoryService {
           embedding FLOAT[${this.jarvisConfig.models.embeddingDimension}]
         );
         CREATE VIRTUAL TABLE IF NOT EXISTS vec_facts USING vec0(
+          id INTEGER PRIMARY KEY,
+          embedding FLOAT[${this.jarvisConfig.models.embeddingDimension}]
+        );
+        CREATE VIRTUAL TABLE IF NOT EXISTS vec_skills USING vec0(
           id INTEGER PRIMARY KEY,
           embedding FLOAT[${this.jarvisConfig.models.embeddingDimension}]
         );
@@ -3134,5 +3147,162 @@ Events:`;
       createdAt: r.created_at,
       updatedAt: r.updated_at,
     }));
+  }
+
+  // ── Skill Vector Index ───────────────────────────────────────────────────────
+
+  /**
+   * Incrementally builds/updates the vec_skills index from the given skill list.
+   * Safe to call on every startup — uses CREATE TABLE IF NOT EXISTS and only
+   * processes new/changed skills (upgrade-compatible, no migration scripts needed).
+   *
+   * @param skills  The full list of currently available skills.
+   */
+  public async backfillSkillIndex(
+    skills: Array<{ name: string; description: string }>,
+  ): Promise<void> {
+    const embedFn = this.embedContentFn;
+    if (!embedFn || skills.length === 0) return;
+
+    try {
+      // ── 1. Remove stale entries (skills that no longer exist) ────────────────
+      const currentNames = new Set(skills.map((s) => s.name));
+      const indexed = this.db
+        .prepare("SELECT id, name FROM skills_index")
+        .all() as Array<{ id: number; name: string }>;
+
+      const stale = indexed.filter((r) => !currentNames.has(r.name));
+      if (stale.length > 0) {
+        const staleIds = stale.map((r) => r.id);
+        this.db
+          .prepare(
+            `DELETE FROM skills_index WHERE id IN (${staleIds.map(() => "?").join(",")})`,
+          )
+          .run(...staleIds);
+        this.db
+          .prepare(
+            `DELETE FROM vec_skills WHERE id IN (${staleIds.map(() => "?").join(",")})`,
+          )
+          .run(...staleIds);
+        debugLogger.debug(
+          `[SkillIndex] Removed ${stale.length} stale skill(s): ${stale.map((r) => r.name).join(", ")}`,
+        );
+      }
+
+      // ── 2. Find skills that need indexing (new or description changed) ───────
+      const indexedMap = new Map(indexed.map((r) => [r.name, r.id]));
+      const toIndex: Array<{ name: string; description: string }> = [];
+      const toUpdate: Array<{ name: string; description: string; id: number }> =
+        [];
+
+      for (const skill of skills) {
+        const existingId = indexedMap.get(skill.name);
+        if (existingId === undefined) {
+          toIndex.push(skill);
+        } else {
+          // Check if description changed
+          const row = this.db
+            .prepare("SELECT description FROM skills_index WHERE id = ?")
+            .get(existingId) as { description: string } | undefined;
+          if (row?.description !== skill.description) {
+            toUpdate.push({ ...skill, id: existingId });
+          }
+        }
+      }
+
+      if (toIndex.length === 0 && toUpdate.length === 0) return;
+
+      console.error(
+        `🔍 [SkillIndex] Indexing ${toIndex.length} new + ${toUpdate.length} updated skill(s)...`,
+      );
+
+      // ── 3. Insert new skills ─────────────────────────────────────────────────
+      for (const skill of toIndex) {
+        const text = `${skill.name}: ${skill.description}`;
+        const vec = await embedFn(text);
+        const info = this.db
+          .prepare("INSERT INTO skills_index (name, description) VALUES (?, ?)")
+          .run(skill.name, skill.description);
+        const id = info.lastInsertRowid as number;
+        this.db
+          .prepare("INSERT INTO vec_skills (id, embedding) VALUES (?, ?)")
+          .run(BigInt(id), new Float32Array(vec));
+      }
+
+      // ── 4. Update changed skills ─────────────────────────────────────────────
+      for (const skill of toUpdate) {
+        const text = `${skill.name}: ${skill.description}`;
+        const vec = await embedFn(text);
+        this.db
+          .prepare("UPDATE skills_index SET description = ? WHERE id = ?")
+          .run(skill.description, skill.id);
+        this.db
+          .prepare("DELETE FROM vec_skills WHERE id = ?")
+          .run(BigInt(skill.id));
+        this.db
+          .prepare("INSERT INTO vec_skills (id, embedding) VALUES (?, ?)")
+          .run(BigInt(skill.id), new Float32Array(vec));
+      }
+
+      console.error(
+        `✅ [SkillIndex] Skill index up to date (${skills.length} total).`,
+      );
+    } catch (e: any) {
+      console.error(`⚠️ [SkillIndex] backfillSkillIndex failed: ${e.message}`);
+    }
+  }
+
+  /**
+   * Returns the top-K most relevant skills for the given query using
+   * vector similarity search on vec_skills.
+   * Falls back to returning all skills if embedding is unavailable.
+   *
+   * @param query   The user's message / intent string.
+   * @param topK    Maximum number of skills to return (default: 5).
+   */
+  public async searchSkills(
+    query: string,
+    topK: number = 5,
+  ): Promise<Array<{ name: string; description: string }>> {
+    const embedFn = this.embedContentFn;
+
+    // Count indexed skills — if none, fall back to returning empty
+    const indexedCount = (
+      this.db.prepare("SELECT COUNT(*) as c FROM skills_index").get() as {
+        c: number;
+      }
+    ).c;
+
+    if (!embedFn || indexedCount === 0) return [];
+
+    try {
+      const queryVec = await embedFn(query);
+      const rows = this.db
+        .prepare(
+          `SELECT s.name, s.description, v.distance
+           FROM skills_index s
+           JOIN (
+             SELECT id, distance FROM vec_skills
+             WHERE embedding MATCH ?
+             ORDER BY distance
+             LIMIT ?
+           ) v ON s.id = v.id
+           ORDER BY v.distance ASC`,
+        )
+        .all(new Float32Array(queryVec), topK) as Array<{
+        name: string;
+        description: string;
+        distance: number;
+      }>;
+
+      debugLogger.debug(
+        `[SkillIndex] searchSkills("${query.slice(0, 50)}", topK=${topK}) → ${rows.map((r) => `${r.name}(${r.distance.toFixed(3)})`).join(", ")}`,
+      );
+
+      return rows.map((r) => ({ name: r.name, description: r.description }));
+    } catch (e: any) {
+      console.error(`⚠️ [SkillIndex] searchSkills failed: ${e.message}`);
+      return [];
+    }
   }
 }

@@ -164,6 +164,13 @@ export interface JarvisConfig {
     /** Number of semantically similar past conversations to pre-warm into context each turn. 0 = disabled. Default: 3. */
     prewarmLimit: number;
     /**
+     * Maximum number of skills to inject into the system prompt per turn via
+     * semantic retrieval. When total installed skills exceed this limit, only the
+     * most relevant skills are injected. 0 or unset = inject all skills (legacy).
+     * Default: 5.
+     */
+    skillSearchLimit: number;
+    /**
      * Whether to store raw conversation pairs (user+assistant) in vec_memories.
      * With events extraction enabled, raw conversations add low signal.
      * Default: false (only events are stored).
@@ -346,6 +353,7 @@ export class ConfigManager {
         factRelevanceStrategy: "jaccard" as const,
         factRelevanceLimit: 5,
         prewarmLimit: 3,
+        skillSearchLimit: 5,
         ingestConversations: false,
         eventsExtractionInterval: 20,
         skipStartupEventsBackfill: false,

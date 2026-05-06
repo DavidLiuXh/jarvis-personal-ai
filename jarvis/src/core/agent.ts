@@ -368,10 +368,28 @@ export class JarvisAgent extends EventEmitter {
       );
     }
 
+    // Skill retrieval: search for relevant skills instead of injecting all.
+    // Falls back to full list when index is unavailable (cold start / no embedder).
+    const skillSearchLimit = this.jarvisConfig.memory.skillSearchLimit ?? 5;
+    let relevantSkills: SkillInfo[] = this.availableSkills;
+    if (this.availableSkills.length > skillSearchLimit) {
+      const retrieved = await this.memoryService.searchSkills(
+        userPrompt,
+        skillSearchLimit,
+      );
+      // Fall back to full list only if retrieval returned nothing (index not ready)
+      if (retrieved.length > 0) {
+        relevantSkills = retrieved;
+        debugLogger.debug(
+          `[SkillRetrieval] ${retrieved.length}/${this.availableSkills.length} skills selected for prompt`,
+        );
+      }
+    }
+
     const protocol = this.promptBuilder.buildFromFacts(
       facts,
       userPrompt,
-      this.availableSkills,
+      relevantSkills,
     );
     // Use Jarvis slim preamble — GEMINI.md (userMemory) intentionally excluded
     // as it is Gemini CLI global config irrelevant to personal assistant use
@@ -437,6 +455,8 @@ export class JarvisAgent extends EventEmitter {
   public setAvailableSkills(skills: SkillInfo[]): void {
     this.availableSkills = skills;
     this.skillCommandHandler?.setCurrentSkills(skills);
+    // Incrementally update the skill vector index (non-blocking)
+    void this.memoryService.backfillSkillIndex(skills);
   }
 
   public setSkillCommandHandler(handler: SkillCommandHandler): void {
