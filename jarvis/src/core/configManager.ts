@@ -69,13 +69,6 @@ export interface JarvisConfig {
     timeoutMs?: number;
     /** Number of recent conversation turns to include for context. Default: 5. */
     historyTurns?: number;
-    /**
-     * Model to use for background tasks (后台:/background: prefix).
-     * Background agents skip local routing entirely — this model is used directly.
-     * Defaults to flashModel if not set.
-     * Example: "gemini-2.5-pro" for high-quality background research tasks.
-     */
-    backgroundModel?: string;
   };
   /**
    * Session summarizer configuration.

@@ -77,14 +77,11 @@ export class JarvisAgent extends EventEmitter {
     null;
   private lightweight: boolean;
 
-  private forceModel: string | undefined;
-
   constructor(options: JarvisAgentOptions) {
     super();
     this.sessionId = options.sessionId;
     this.memoryService = options.memoryService;
     this.lightweight = options.lightweight ?? false;
-    this.forceModel = options.forceModel;
     this.dynamicRegistry = new DynamicToolRegistry(options.cwd);
     this.agentInitializer = new AgentInitializer(
       options.sessionId,
@@ -103,11 +100,6 @@ export class JarvisAgent extends EventEmitter {
     );
     this.client = client;
     this.scheduler = scheduler;
-
-    // Apply forced model immediately after init so all subsequent calls use it
-    if (this.forceModel) {
-      this.client.config.setModel(this.forceModel);
-    }
 
     const generateText = async (prompt: string): Promise<string> => {
       const generator = this.client.config.getContentGenerator();
@@ -162,9 +154,8 @@ export class JarvisAgent extends EventEmitter {
     );
 
     // Initialize local model router if configured.
-    // Skipped in lightweight mode — bg agents use the default model directly.
     const routingCfg = this.jarvisConfig.routing;
-    if (!this.lightweight && routingCfg?.enabled && routingCfg.model) {
+    if (routingCfg?.enabled && routingCfg.model) {
       this.localModelRouter = new LocalModelRouter(
         this.jarvisConfig.ollama?.baseUrl ?? "http://localhost:11434",
         routingCfg.model,
