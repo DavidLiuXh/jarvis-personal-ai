@@ -44,10 +44,10 @@ Today's date is: ${today}
 </estimating_context_usage>
 
 ## Tool Usage
-- **Parallelism & Sequencing:** Execute independent tool calls in parallel. If a tool depends on the output of a previous one, set \`wait_for_previous\` to \`true\`.
-- **File Editing Collisions:** Do NOT call the edit tool on the SAME file multiple times in a single turn. Perform multiple edits to the same file sequentially across turns.
+- **Parallelism & Sequencing:** Execute independent tool calls in parallel when feasible. If one action depends on a previous tool result, wait for that result before issuing the next action.
+- **File Editing Collisions:** Avoid overlapping edits to the same file at the same time. Prefer one coherent edit path per file so changes remain stable and reviewable.
 - **Command Execution:** Use the shell tool for running commands. Before executing commands that modify the file system or system state, briefly explain the command's purpose and impact.
-- **Background Processes:** To run a command in the background, set the \`is_background\` parameter to \`true\`.
+- **Background Processes:** Use the runtime's supported background-task mechanism when work should continue asynchronously without blocking the current conversation.
 - **Interactive Commands:** Prefer non-interactive commands (e.g. \`git --no-pager\`) unless a persistent process is specifically required.
 - **Confirmation Protocol:** If a tool call is declined or cancelled, respect the decision immediately. Do not re-attempt unless the user explicitly directs you to.
 
@@ -90,57 +90,117 @@ function deriveStyleFromIdentity(identityFacts: FactRecord[]): string | null {
   return null;
 }
 
-const PUSH_KEYWORDS = [
+const PUSH_STRONG_PATTERNS = [
+  "发到微信",
+  "发到飞书",
+  "推送到微信",
+  "推送到飞书",
+  "send to wechat",
+  "send to feishu",
+  "push to wechat",
+  "push to feishu",
+  "share on wechat",
+  "share on feishu",
+];
+
+const PUSH_ACTION_KEYWORDS = [
   "发到",
   "推送到",
-  "推送",
   "send to",
   "push to",
-  "push",
-  "微信",
-  "飞书",
-  "wechat",
-  "feishu",
   "share on",
 ];
-const TASK_KEYWORDS = [
+const PUSH_TARGET_KEYWORDS = ["微信", "飞书", "wechat", "feishu"];
+
+const TASK_STRONG_PATTERNS = [
   "每天",
   "每周",
   "每月",
+  "每日",
   "定时",
   "每隔",
-  "任务",
-  "task",
   "scheduled",
   "cron",
-  "remind",
-  "提醒",
-  "自动",
-  "automatically",
-  "每日",
 ];
-const CODE_KEYWORDS = [
+
+const TASK_TIME_KEYWORDS = [
+  "每天",
+  "每周",
+  "每月",
+  "每日",
+  "定时",
+  "每隔",
+  "scheduled",
+  "cron",
+  "automatically",
+];
+
+const TASK_ACTION_KEYWORDS = [
+  "提醒",
+  "remind",
+  "自动执行",
+  "自动发送",
+  "自动汇总",
+];
+
+const CODE_STRONG_PATTERNS = [
+  "修改代码",
+  "重写代码",
+  "编辑代码",
+  "重构",
+  "refactor",
+  "rewrite this",
+  "implement",
+  "实现这个",
+];
+
+const CODE_ACTION_KEYWORDS = [
   "修改",
   "重写",
   "编辑",
-  "代码",
+  "重构",
+  "实现",
   "edit",
   "modify",
   "refactor",
   "rewrite",
-  "file",
-  "文件",
-  "function",
-  "函数",
-  "class",
-  "类",
   "implement",
-  "实现",
 ];
+
+const CODE_TARGET_KEYWORDS = ["代码", "函数", "方法", "模块", "接口", "code"];
 
 function matchesAny(text: string, keywords: string[]): boolean {
   const lower = text.toLowerCase();
   return keywords.some((kw) => lower.includes(kw));
+}
+
+function countMatches(text: string, keywords: string[]): number {
+  const lower = text.toLowerCase();
+  return keywords.filter((kw) => lower.includes(kw)).length;
+}
+
+function shouldInjectPushProtocol(text: string): boolean {
+  return (
+    matchesAny(text, PUSH_STRONG_PATTERNS) ||
+    (countMatches(text, PUSH_ACTION_KEYWORDS) > 0 &&
+      countMatches(text, PUSH_TARGET_KEYWORDS) > 0)
+  );
+}
+
+function shouldInjectTaskProtocol(text: string): boolean {
+  return (
+    matchesAny(text, TASK_STRONG_PATTERNS) ||
+    (countMatches(text, TASK_TIME_KEYWORDS) > 0 &&
+      countMatches(text, TASK_ACTION_KEYWORDS) > 0)
+  );
+}
+
+function shouldInjectCodeProtocol(text: string): boolean {
+  return (
+    matchesAny(text, CODE_STRONG_PATTERNS) ||
+    (countMatches(text, CODE_ACTION_KEYWORDS) > 0 &&
+      countMatches(text, CODE_TARGET_KEYWORDS) > 0)
+  );
 }
 
 type ProtocolSet = {
@@ -158,9 +218,9 @@ function selectProtocols(userPrompt?: string): ProtocolSet {
     };
   }
   return {
-    pushToChannel: matchesAny(userPrompt, PUSH_KEYWORDS),
-    taskManagement: matchesAny(userPrompt, TASK_KEYWORDS),
-    codeModification: matchesAny(userPrompt, CODE_KEYWORDS),
+    pushToChannel: shouldInjectPushProtocol(userPrompt),
+    taskManagement: shouldInjectTaskProtocol(userPrompt),
+    codeModification: shouldInjectCodeProtocol(userPrompt),
   };
 }
 
@@ -262,9 +322,10 @@ export class SystemPromptBuilder {
 
     if (protocols.codeModification) {
       sections.push(`${n++}. **CODE_MODIFICATION_PROTOCOL (Anti-Logic-Loss)**:
-   - NEVER rewrite an entire file if it exceeds 50 lines.
-   - ALWAYS use targeted edits (search/replace blocks) to preserve existing logic.
-   - Ensure all imports, error handling, and existing comments remain untouched unless explicitly targeted.`);
+   - Prefer the smallest coherent change that fully solves the user's request.
+   - Preserve unrelated logic, imports, error handling, and comments unless the task requires changing them.
+   - Before making broad structural edits, first understand the surrounding code so you do not remove behavior the user did not ask to change.
+   - If a large rewrite is genuinely the clearest solution, keep the behavior consistent and make the scope of the rewrite intentional rather than incidental.`);
     }
 
     if (protocols.pushToChannel) {
