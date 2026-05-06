@@ -3265,9 +3265,15 @@ Events:`;
         })();
       }
 
-      console.error(
-        `✅ [SkillIndex] Skill index up to date (${skills.length} total).`,
-      );
+      if (toIndex.length > 0 || toUpdate.length > 0 || stale.length > 0) {
+        console.error(
+          `✅ [SkillIndex] Index updated: +${toIndex.length} new, ~${toUpdate.length} updated, -${stale.length} removed (${skills.length} total).`,
+        );
+      } else {
+        debugLogger.debug(
+          `[SkillIndex] No changes (${skills.length} skills already indexed).`,
+        );
+      }
     } catch (e: any) {
       console.error(`⚠️ [SkillIndex] backfillSkillIndex failed: ${e.message}`);
     } finally {
@@ -3319,7 +3325,7 @@ Events:`;
       }>;
 
       debugLogger.debug(
-        `[SkillIndex] searchSkills("${query.slice(0, 50)}", topK=${topK}) → ${rows.map((r) => `${r.name}(${r.distance.toFixed(3)})`).join(", ")}`,
+        `[SkillIndex] searchSkills("${query.slice(0, 50)}", topK=${topK}) → ${rows.map((r) => `${r.name}(d=${r.distance.toFixed(3)})`).join(", ")}`,
       );
 
       return rows.map((r) => ({ name: r.name, description: r.description }));

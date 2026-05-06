@@ -377,19 +377,23 @@ export class JarvisAgent extends EventEmitter {
       // Don't use retrieval while the index is still being built — a partial
       // index would silently drop skills that haven't been embedded yet.
       if (this.memoryService.skillIndexBuilding) {
-        debugLogger.debug(
-          `[SkillRetrieval] Index building — using full skill list (${this.availableSkills.length} skills)`,
+        console.error(
+          `🔍 [SkillRetrieval] Index building — using full skill list (${this.availableSkills.length} skills)`,
         );
       } else {
         const retrieved = await this.memoryService.searchSkills(
           userPrompt,
           skillSearchLimit,
         );
-        // Fall back to full list if retrieval returned nothing (index not ready)
         if (retrieved.length > 0) {
           relevantSkills = retrieved;
-          debugLogger.debug(
-            `[SkillRetrieval] ${retrieved.length}/${this.availableSkills.length} skills selected for prompt`,
+          console.error(
+            `🔍 [SkillRetrieval] ${retrieved.length}/${this.availableSkills.length} skills injected: ${retrieved.map((s) => s.name).join(", ")}`,
+          );
+        } else {
+          // Index ready but returned nothing — fall back to full list
+          console.error(
+            `🔍 [SkillRetrieval] No results from index — using full skill list (${this.availableSkills.length} skills)`,
           );
         }
       }
