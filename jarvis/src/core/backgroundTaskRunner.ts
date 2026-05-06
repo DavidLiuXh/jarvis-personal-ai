@@ -13,6 +13,7 @@ import type { MemoryService } from "./memory.js";
 import type { AgentManager } from "./agentManager.js";
 import type { ChannelRegistry } from "./channelRegistry.js";
 import type { TaskCommandHandler } from "./taskCommandHandler.js";
+import type { SkillInfo } from "./systemPromptBuilder.js";
 
 /** Maximum time a background task may run before being force-failed (ms). */
 const BG_TASK_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes
@@ -73,6 +74,7 @@ export function extractBackgroundPrompt(userPrompt: string): string | null {
  */
 export class BackgroundTaskRunner extends EventEmitter {
   private tasks = new Map<string, BackgroundTask>();
+  private availableSkills: SkillInfo[] = [];
 
   constructor(
     private readonly sourceRoot: string,
@@ -94,6 +96,11 @@ export class BackgroundTaskRunner extends EventEmitter {
 
   setTaskCommandHandler(h: TaskCommandHandler): void {
     this.taskCommandHandler = h;
+  }
+
+  /** Keep bg agent skills in sync with the main agent's skill list. */
+  setAvailableSkills(skills: SkillInfo[]): void {
+    this.availableSkills = skills;
   }
 
   /**
@@ -162,6 +169,9 @@ export class BackgroundTaskRunner extends EventEmitter {
     if (this.channelRegistry) agent.setChannelRegistry(this.channelRegistry);
     if (this.taskCommandHandler)
       agent.setTaskCommandHandler(this.taskCommandHandler);
+    // Sync skills so bg agent has the same SKILL_ACTIVATION context as fg agent
+    if (this.availableSkills.length > 0)
+      agent.setAvailableSkills(this.availableSkills);
 
     const resultChunks: string[] = [];
 

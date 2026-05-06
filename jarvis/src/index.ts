@@ -353,6 +353,7 @@ class JarvisServer {
       // Load skills and set up dynamic reload
       void this.loadAvailableSkills(SOURCE_ROOT).then((skills) => {
         agent.setAvailableSkills(skills);
+        this.backgroundTaskRunner.setAvailableSkills(skills);
         if (skills.length > 0) {
           console.error(
             `📚 [Jarvis] ${skills.length} skill(s) loaded: ${skills.map((s) => s.name).join(", ")}`,
@@ -379,7 +380,10 @@ class JarvisServer {
         };
 
         const skillCommandHandler = new SkillCommandHandler(
-          (newSkills) => agent.setAvailableSkills(newSkills),
+          (newSkills) => {
+            agent.setAvailableSkills(newSkills);
+            this.backgroundTaskRunner.setAvailableSkills(newSkills);
+          },
           reloadSkillManager,
           () => this.loadAvailableSkills(SOURCE_ROOT),
           skills,
