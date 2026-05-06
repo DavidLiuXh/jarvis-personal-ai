@@ -3326,6 +3326,7 @@ Events:`;
   public async searchSkills(
     query: string,
     topK: number = 5,
+    maxDistance: number = 0.9,
   ): Promise<Array<{ name: string; description: string }>> {
     const embedFn = this.embedContentFn;
 
@@ -3350,19 +3351,26 @@ Events:`;
              ORDER BY distance
              LIMIT ?
            ) v ON s.id = v.id
+           WHERE v.distance < ?
            ORDER BY v.distance ASC`,
         )
-        .all(new Float32Array(queryVec), topK) as Array<{
+        .all(new Float32Array(queryVec), topK * 2, maxDistance) as Array<{
         name: string;
         description: string;
         distance: number;
       }>;
 
+      // Apply topK after distance filtering
+      const filtered = rows.slice(0, topK);
+
       debugLogger.debug(
-        `[SkillIndex] searchSkills("${query.slice(0, 50)}", topK=${topK}) → ${rows.map((r) => `${r.name}(d=${r.distance.toFixed(3)})`).join(", ")}`,
+        `[SkillIndex] searchSkills("${query.slice(0, 50)}", topK=${topK}, maxDist=${maxDistance}) → ${filtered.length > 0 ? filtered.map((r) => `${r.name}(d=${r.distance.toFixed(3)})`).join(", ") : "none"}`,
       );
 
-      return rows.map((r) => ({ name: r.name, description: r.description }));
+      return filtered.map((r) => ({
+        name: r.name,
+        description: r.description,
+      }));
     } catch (e: any) {
       console.error(`⚠️ [SkillIndex] searchSkills failed: ${e.message}`);
       return [];

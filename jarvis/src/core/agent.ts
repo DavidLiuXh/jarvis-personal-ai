@@ -363,6 +363,7 @@ export class JarvisAgent extends EventEmitter {
     // Falls back to full list when index is unavailable or building (cold start,
     // no embedder, or backfill still in progress to avoid partial results).
     const skillSearchLimit = this.jarvisConfig.memory.skillSearchLimit ?? 5;
+    const skillMaxDistance = this.jarvisConfig.memory.skillMaxDistance ?? 0.9;
     let relevantSkills: SkillInfo[] = this.availableSkills;
     if (this.availableSkills.length > skillSearchLimit) {
       // Don't use retrieval while the index is still being built — a partial
@@ -375,6 +376,7 @@ export class JarvisAgent extends EventEmitter {
         const retrieved = await this.memoryService.searchSkills(
           userPrompt,
           skillSearchLimit,
+          skillMaxDistance,
         );
         if (retrieved.length > 0) {
           relevantSkills = retrieved;
@@ -382,9 +384,11 @@ export class JarvisAgent extends EventEmitter {
             `🔍 [SkillRetrieval] ${retrieved.length}/${this.availableSkills.length} skills injected: ${retrieved.map((s) => s.name).join(", ")}`,
           );
         } else {
-          // Index ready but returned nothing — fall back to full list
+          // No skills met the relevance threshold — inject none.
+          // Low-relevance skills add noise without value (e.g. "Hi Jarvis").
+          relevantSkills = [];
           console.error(
-            `🔍 [SkillRetrieval] No results from index — using full skill list (${this.availableSkills.length} skills)`,
+            `🔍 [SkillRetrieval] No relevant skills found — skipping skill injection`,
           );
         }
       }

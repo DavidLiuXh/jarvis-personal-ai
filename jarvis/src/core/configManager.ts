@@ -164,6 +164,13 @@ export interface JarvisConfig {
      */
     skillSearchLimit: number;
     /**
+     * Maximum vector distance for skill retrieval. Skills with distance >=
+     * this threshold are considered irrelevant and not injected into the prompt.
+     * Uses the same L2 distance scale as factMaxDistance (bge-m3).
+     * Default: 0.9 (stricter than facts/memories at 1.0).
+     */
+    skillMaxDistance: number;
+    /**
      * Whether to store raw conversation pairs (user+assistant) in vec_memories.
      * With events extraction enabled, raw conversations add low signal.
      * Default: false (only events are stored).
@@ -347,6 +354,7 @@ export class ConfigManager {
         factRelevanceLimit: 5,
         prewarmLimit: 3,
         skillSearchLimit: 5,
+        skillMaxDistance: 0.9,
         ingestConversations: false,
         eventsExtractionInterval: 20,
         skipStartupEventsBackfill: false,
