@@ -36,9 +36,11 @@ import { ConfigManager } from "./configManager.js";
 import { type ChannelRegistry } from "./channelRegistry.js";
 import {
   buildIncrementalSummary,
-  buildHistoryWithSummary,
+  buildRelevantSummarySectionFallback,
+  buildSummarySectionFromChunks,
   type SessionMessage,
 } from "./sessionSummarizer.js";
+import { buildHistoryFromMessages } from "./resumeFromDisk.js";
 import { LocalModelRouter } from "./localModelRouter.js";
 import { type AgentManager } from "./agentManager.js";
 import {
@@ -76,6 +78,7 @@ export class JarvisAgent extends EventEmitter {
   private summarizerGenerateText: ((prompt: string) => Promise<string>) | null =
     null;
   private lightweight: boolean;
+  private conversationSummary = "";
 
   constructor(options: JarvisAgentOptions) {
     super();
@@ -100,6 +103,13 @@ export class JarvisAgent extends EventEmitter {
     );
     this.client = client;
     this.scheduler = scheduler;
+    this.conversationSummary = this.agentInitializer.getConversationSummary();
+    if (this.conversationSummary.trim()) {
+      void this.memoryService.backfillSummaryChunkIndex(
+        this.sessionId,
+        this.conversationSummary,
+      );
+    }
 
     const generateText = async (prompt: string): Promise<string> => {
       const generator = this.client.config.getContentGenerator();
@@ -397,39 +407,33 @@ export class JarvisAgent extends EventEmitter {
 
       if (messages.length === 0) return;
 
-      // Extract existing summary if history starts with one
-      let existingSummary: string | null = null;
-      const firstUserText =
-        toCompress[0]?.parts?.map((p: any) => p.text ?? "").join("") ?? "";
-      if (firstUserText.startsWith("[CONVERSATION HISTORY SUMMARY]")) {
-        existingSummary = firstUserText
-          .replace("[CONVERSATION HISTORY SUMMARY]\n", "")
-          .trim();
-      }
-
       const newSummary = await buildIncrementalSummary(
         messages,
-        existingSummary,
+        this.conversationSummary || null,
         this.summarizerGenerateText,
         { maxRetries: 2, retryDelayMs: 1000 },
       );
 
       if (!newSummary.trim()) return;
 
-      // Rebuild history: summary pair + recent raw turns
-      const compressedHistory = buildHistoryWithSummary(
-        newSummary,
-        toKeep
-          .map((turn) => ({
-            type: turn.role === "user" ? "user" : "gemini",
-            content: turn.parts?.map((p: any) => p.text ?? "").join("") ?? "",
-          }))
-          .filter((m) => m.content.trim()) as SessionMessage[],
-      );
+      const recentMessages = toKeep
+        .map((turn) => ({
+          type: turn.role === "user" ? "user" : "gemini",
+          content: turn.parts?.map((p: any) => p.text ?? "").join("") ?? "",
+        }))
+        .filter((m) => m.content.trim()) as SessionMessage[];
 
+      // Rebuild history with only recent raw turns; summary is held separately
+      const compressedHistory = buildHistoryFromMessages(recentMessages);
+
+      this.conversationSummary = newSummary;
+      void this.memoryService.backfillSummaryChunkIndex(
+        this.sessionId,
+        this.conversationSummary,
+      );
       this.client.getChat().setHistory(compressedHistory);
       console.error(
-        `🗜️ [Jarvis] History compressed: ${turnCount} turns → summary + ${keepRecent} recent turns.`,
+        `🗜️ [Jarvis] History compressed: ${turnCount} turns → ${keepRecent} recent turns, summary retained separately.`,
       );
     } catch (e: any) {
       console.error(`⚠️ [Jarvis] History compression failed: ${e.message}`);
@@ -635,14 +639,35 @@ export class JarvisAgent extends EventEmitter {
       }
     }
 
+    let relevantSummarySection = "";
+    if (querySubject !== "external" && this.conversationSummary.trim()) {
+      const summaryChunks = await this.memoryService.searchSummaryChunks(
+        this.sessionId,
+        userPrompt,
+        3,
+        1.0,
+      );
+      relevantSummarySection =
+        summaryChunks.length > 0
+          ? buildSummarySectionFromChunks(summaryChunks)
+          : buildRelevantSummarySectionFallback(
+              this.conversationSummary,
+              userPrompt,
+            );
+    }
+
     this.client
       .getChat()
       .setSystemInstruction(
-        defaultInstruction + "\n" + protocol + prewarmSection,
+        defaultInstruction +
+          "\n" +
+          protocol +
+          relevantSummarySection +
+          prewarmSection,
       );
 
     console.error(
-      `🔄 [Jarvis] System Prompt Refreshed (subject=${querySubject}). Facts injected: ${facts.length}. Prewarmed memories: ${prewarmLimit > 0 ? prewarmedCount : "disabled"}.`,
+      `🔄 [Jarvis] System Prompt Refreshed (subject=${querySubject}). Facts injected: ${facts.length}. Summary bullets: ${relevantSummarySection ? (relevantSummarySection.match(/\n- /g)?.length ?? 0) : 0}. Prewarmed memories: ${prewarmLimit > 0 ? (prewarmSection ? prewarmSection.split("[Long-term Memory ").length - 1 : 0) : "disabled"}.`,
     );
   }
 

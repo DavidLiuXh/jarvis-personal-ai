@@ -30,10 +30,10 @@ import {
   loadSummaryState,
   saveSummaryState,
   buildIncrementalSummary,
-  buildHistoryWithSummary,
   getNewOrUpdatedFiles,
   type SessionMessage,
 } from "./sessionSummarizer.js";
+import { buildHistoryFromMessages } from "./resumeFromDisk.js";
 
 type DynamicRegistryHandle = {
   getDynamicToolSchemas: () => unknown[];
@@ -95,6 +95,7 @@ export class AgentInitializer {
   // Stored after initialize() so triggerSkillExtraction() can reuse it
   private config: any = null;
   private isExtractingSkills = false;
+  private conversationSummary = "";
 
   constructor(
     private sessionId: string,
@@ -518,6 +519,10 @@ export class AgentInitializer {
     return { client, scheduler };
   }
 
+  public getConversationSummary(): string {
+    return this.conversationSummary;
+  }
+
   /**
    * Runs confucius (SkillExtractionAgent) against Jarvis session history.
    * Writes new SKILL.md files to ~/.gemini/skills/ so they are immediately
@@ -766,16 +771,16 @@ export class AgentInitializer {
 
             // maxSummaryLength: re-compress if summary exceeds limit
             const maxLen =
-              this.jarvisConfig.summarizer?.maxSummaryLength ?? 3000;
+              this.jarvisConfig.summarizer?.maxSummaryLength ?? 1200;
             if (maxLen > 0 && summary.length > maxLen) {
               console.error(
                 `🧠 [Jarvis] Summary too long (${summary.length} > ${maxLen} chars) — re-compressing...`,
               );
               try {
                 const recompressed = await generateText(
-                  `The following is a session summary. Compress it to under ${maxLen} characters ` +
-                    `while preserving the most important facts, decisions, and context. ` +
-                    `Remove redundant details, greetings, and low-signal content.\n\n${summary}`,
+                  `Compress the following session summary to under ${maxLen} characters. ` +
+                    `Keep only durable preferences, important decisions, active project context, recurring behaviors, and unresolved follow-ups. ` +
+                    `Remove filler, repeated analysis, and temporary details.\n\n${summary}`,
                 );
                 if (
                   recompressed.trim().length > 0 &&
@@ -843,7 +848,8 @@ export class AgentInitializer {
       const recentMessages = allMessages.slice(-recentTurns);
 
       // 7. Build history: compressed history prefix + recent raw turns
-      const history = buildHistoryWithSummary(summary, recentMessages);
+      const history = buildHistoryFromMessages(recentMessages);
+      this.conversationSummary = summary;
 
       // 8. Use the latest session file as the active recording target
       const latestFile = allFiles[allFiles.length - 1];
@@ -882,7 +888,7 @@ export class AgentInitializer {
       console.error(
         `📂 [Jarvis] Session restored: ${allFiles.length} session files, ${totalMsgs} total messages ` +
           `(${userTurns} user / ${modelTurns} model / ${toolCalls} tool calls) | ` +
-          `${earliest} → ${latest} | injected: summary + ${recentMessages.length} recent turns`,
+          `${earliest} → ${latest} | injected: ${recentMessages.length} recent turns, summary loaded separately`,
       );
     } catch (e) {
       console.error(

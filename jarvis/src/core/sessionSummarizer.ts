@@ -4,10 +4,10 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import fs from 'node:fs';
-import path from 'node:path';
-import type { Content } from '../../../gemini-cli/packages/core/src/index.js';
-import { buildHistoryFromMessages } from './resumeFromDisk.js';
+import fs from "node:fs";
+import path from "node:path";
+import type { Content } from "../../../gemini-cli/packages/core/src/index.js";
+import { buildHistoryFromMessages } from "./resumeFromDisk.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -25,14 +25,14 @@ export type SessionMessage = {
 // ---------------------------------------------------------------------------
 
 export type StructuredEntity = {
-  type: string;       // 'person' | 'system' | 'tool' | etc.
+  type: string; // 'person' | 'system' | 'tool' | etc.
   name: string;
   attrs: Record<string, unknown>;
 };
 
 export type StructuredBehavior = {
   content: string;
-  confidence: 'high' | 'medium' | 'low';
+  confidence: "high" | "medium" | "low";
 };
 
 export type StructuredDecision = {
@@ -60,7 +60,11 @@ export type StructuredContext = {
 };
 
 export const EMPTY_STRUCTURED_CONTEXT: StructuredContext = {
-  entities: [], behaviors: [], decisions: [], preferences: [], projects: [],
+  entities: [],
+  behaviors: [],
+  decisions: [],
+  preferences: [],
+  projects: [],
 };
 
 export type SummaryState = {
@@ -88,7 +92,7 @@ export function getNewOrUpdatedFiles(
 ): Array<{ name: string; mtime: number }> {
   if (!state) return files;
   const recorded = state.processedFileMtimes ?? {};
-  return files.filter(f => {
+  return files.filter((f) => {
     const lastMtime = recorded[f.name];
     return lastMtime === undefined || f.mtime > lastMtime;
   });
@@ -98,13 +102,13 @@ export function getNewOrUpdatedFiles(
 // Persistence
 // ---------------------------------------------------------------------------
 
-const SUMMARY_FILENAME = 'session_summary.json';
+const SUMMARY_FILENAME = "session_summary.json";
 
 export function loadSummaryState(memoryDir: string): SummaryState | null {
   const filePath = path.join(memoryDir, SUMMARY_FILENAME);
   try {
     if (!fs.existsSync(filePath)) return null;
-    return JSON.parse(fs.readFileSync(filePath, 'utf8')) as SummaryState;
+    return JSON.parse(fs.readFileSync(filePath, "utf8")) as SummaryState;
   } catch (_e) {
     return null;
   }
@@ -141,7 +145,7 @@ export async function buildIncrementalSummary(
   options: SummaryOptions = {},
 ): Promise<string> {
   if (newMessages.length === 0) {
-    return existingSummary ?? '';
+    return existingSummary ?? "";
   }
 
   const newConversation = messagesToText(newMessages);
@@ -166,16 +170,13 @@ Update the compressed history by integrating the new conversation. Follow these 
 
 1. **Time Priority (CRITICAL)**: If new information contradicts or supersedes the existing summary, overwrite the older facts with the newer ones. Never keep conflicting information.
 
-2. **Key Domains**: Ensure updates are captured across:
-   - Personal (habits, preferences, hobbies, lifestyle changes)
-   - Technical (active projects, stack decisions, architectural choices, project rules)
-   - Strategic (decisions, investment philosophies, long-term plans, outcomes)
+2. **Keep Only Durable Signal**: Keep stable preferences, important decisions, active project context, recurring behaviors, and unresolved follow-ups. Drop greetings, filler, repeated analysis, and temporary details that are unlikely to matter later.
 
-3. **Synthesis**: Do not just append. Re-write sections to maintain a coherent, third-person Markdown narrative grouped by topic or theme.
+3. **Format**: Rewrite into compact Markdown bullets grouped by topic. Do not write a narrative paragraph.
 
-4. **Causal Relationships**: Preserve why things happened, not just what happened. Include decisions, outcomes, and the reasoning behind them.
+4. **Causal Relationships**: Preserve why something matters only when it changes future behavior, decisions, or constraints.
 
-5. **Constraint**: Maximum 600 words. Concise and professional English. Remove filler and trivial exchanges.
+5. **Constraint**: Maximum 250 words. Prefer 6-12 bullets total. Concise professional English.
 </task>
 
 Updated compressed history (Markdown):
@@ -191,17 +192,18 @@ ${newConversation}
 </new_conversation>
 
 <task>
-Compress this conversation into structured Markdown grouped by topic or theme.
+Compress this conversation into compact Markdown bullets grouped by topic.
 
-Cover these key domains where applicable:
-- Personal (habits, preferences, hobbies, lifestyle)
-- Technical (projects, stack decisions, architectural choices, project rules)
-- Strategic (decisions, investment philosophies, long-term plans, outcomes)
+Keep only durable signal:
+- stable preferences
+- important decisions
+- active project context
+- recurring behaviors
+- unresolved follow-ups
 
-For each topic, preserve: what was discussed, decisions made, outcomes reached.
-Keep causal relationships — why things happened, not just what happened.
-Remove filler, greetings, and trivial exchanges.
-Maximum 600 words.
+Drop greetings, filler, repeated analysis, and temporary details.
+Keep causal context only when it affects future behavior, decisions, or constraints.
+Maximum 250 words. Prefer 6-12 bullets total.
 </task>
 
 Compressed history (Markdown):
@@ -216,24 +218,29 @@ Compressed history (Markdown):
     } catch (e: any) {
       const isLast = attempt === maxRetries;
       if (isLast) {
-        console.error(`⚠️ [SessionSummarizer] Summary generation failed after ${maxRetries} attempts: ${e.message}. Using existing summary.`);
-        return existingSummary ?? '';
+        console.error(
+          `⚠️ [SessionSummarizer] Summary generation failed after ${maxRetries} attempts: ${e.message}. Using existing summary.`,
+        );
+        return existingSummary ?? "";
       }
-      console.error(`⚠️ [SessionSummarizer] Attempt ${attempt} failed: ${e.message}. Retrying in ${retryDelayMs}ms...`);
-      await new Promise(r => setTimeout(r, retryDelayMs));
+      console.error(
+        `⚠️ [SessionSummarizer] Attempt ${attempt} failed: ${e.message}. Retrying in ${retryDelayMs}ms...`,
+      );
+      await new Promise((r) => setTimeout(r, retryDelayMs));
     }
   }
-  return existingSummary ?? '';
+  return existingSummary ?? "";
 }
 
 // ---------------------------------------------------------------------------
 // Structured context
 // ---------------------------------------------------------------------------
 
-const STRUCTURED_CONTEXT_PROMPT = (conversation: string, existing: string) => `
+const STRUCTURED_CONTEXT_PROMPT = (conversation: string, existing: string) =>
+  `
 You are extracting structured knowledge about the USER from a conversation with Jarvis (an AI assistant).
 
-${existing ? `Current knowledge (merge/update this, do not duplicate):\n${existing}\n\n` : ''}New conversation to process:
+${existing ? `Current knowledge (merge/update this, do not duplicate):\n${existing}\n\n` : ""}New conversation to process:
 ${conversation}
 
 Output ONLY valid JSON with this exact structure. No markdown, no explanation, no extra keys.
@@ -287,7 +294,7 @@ export async function buildStructuredContext(
   }
 
   const conversation = messagesToText(newMessages);
-  const existingJson = existing ? JSON.stringify(existing, null, 2) : '';
+  const existingJson = existing ? JSON.stringify(existing, null, 2) : "";
   const prompt = STRUCTURED_CONTEXT_PROMPT(conversation, existingJson);
 
   const maxRetries = options.maxRetries ?? 3;
@@ -298,10 +305,11 @@ export async function buildStructuredContext(
       const raw = await generateText(prompt);
       // Extract JSON from response (may have surrounding text)
       const match = raw.match(/\{[\s\S]*\}/);
-      if (!match) throw new Error('No JSON object found in response');
+      if (!match) throw new Error("No JSON object found in response");
       const parsed = JSON.parse(match[0]) as StructuredContext;
       // Validate required fields
-      if (!Array.isArray(parsed.entities)) throw new Error('Invalid structure: missing entities');
+      if (!Array.isArray(parsed.entities))
+        throw new Error("Invalid structure: missing entities");
       return {
         entities: parsed.entities ?? [],
         behaviors: parsed.behaviors ?? [],
@@ -312,10 +320,12 @@ export async function buildStructuredContext(
     } catch (e: any) {
       const isLast = attempt === maxRetries;
       if (isLast) {
-        console.error(`⚠️ [SessionSummarizer] Structured context generation failed: ${e.message}. Using existing.`);
+        console.error(
+          `⚠️ [SessionSummarizer] Structured context generation failed: ${e.message}. Using existing.`,
+        );
         return existing ?? { ...EMPTY_STRUCTURED_CONTEXT };
       }
-      await new Promise(r => setTimeout(r, retryDelayMs));
+      await new Promise((r) => setTimeout(r, retryDelayMs));
     }
   }
   return existing ?? { ...EMPTY_STRUCTURED_CONTEXT };
@@ -340,7 +350,9 @@ export function mergeStructuredContext(
   }
 
   // Merge behaviors: deduplicate by content similarity (exact match for now)
-  const behaviorSet = new Set(existing.behaviors.map(b => b.content.toLowerCase()));
+  const behaviorSet = new Set(
+    existing.behaviors.map((b) => b.content.toLowerCase()),
+  );
   const behaviors = [...existing.behaviors];
   for (const b of incoming.behaviors) {
     if (!behaviorSet.has(b.content.toLowerCase())) {
@@ -350,7 +362,9 @@ export function mergeStructuredContext(
   }
 
   // Merge decisions: deduplicate by topic+content
-  const decisionSet = new Set(existing.decisions.map(d => `${d.topic}:${d.content}`));
+  const decisionSet = new Set(
+    existing.decisions.map((d) => `${d.topic}:${d.content}`),
+  );
   const decisions = [...existing.decisions];
   for (const d of incoming.decisions) {
     if (!decisionSet.has(`${d.topic}:${d.content}`)) {
@@ -359,7 +373,9 @@ export function mergeStructuredContext(
   }
 
   // Merge preferences: deduplicate by content
-  const prefSet = new Set(existing.preferences.map(p => p.content.toLowerCase()));
+  const prefSet = new Set(
+    existing.preferences.map((p) => p.content.toLowerCase()),
+  );
   const preferences = [...existing.preferences];
   for (const p of incoming.preferences) {
     if (!prefSet.has(p.content.toLowerCase())) {
@@ -368,13 +384,17 @@ export function mergeStructuredContext(
   }
 
   // Merge projects: same name → update
-  const projectMap = new Map(existing.projects.map(p => [p.name.toLowerCase(), { ...p }]));
+  const projectMap = new Map(
+    existing.projects.map((p) => [p.name.toLowerCase(), { ...p }]),
+  );
   for (const p of incoming.projects) {
     const key = p.name.toLowerCase();
     if (projectMap.has(key)) {
       const existing = projectMap.get(key)!;
       existing.status = p.status;
-      existing.key_rules = [...new Set([...existing.key_rules, ...p.key_rules])];
+      existing.key_rules = [
+        ...new Set([...existing.key_rules, ...p.key_rules]),
+      ];
     } else {
       projectMap.set(key, { ...p });
     }
@@ -398,33 +418,42 @@ export function renderStructuredContext(ctx: StructuredContext): string {
 
   if (ctx.entities.length > 0) {
     for (const e of ctx.entities) {
-      const attrs = Object.entries(e.attrs).map(([k, v]) => `${k}: ${v}`).join(', ');
-      lines.push(`${e.type === 'person' ? '👤' : '🔧'} ${e.name}${attrs ? ` (${attrs})` : ''}`);
+      const attrs = Object.entries(e.attrs)
+        .map(([k, v]) => `${k}: ${v}`)
+        .join(", ");
+      lines.push(
+        `${e.type === "person" ? "👤" : "🔧"} ${e.name}${attrs ? ` (${attrs})` : ""}`,
+      );
     }
   }
 
   if (ctx.behaviors.length > 0) {
-    lines.push('Behaviors: ' + ctx.behaviors.map(b => b.content).join('; '));
+    lines.push("Behaviors: " + ctx.behaviors.map((b) => b.content).join("; "));
   }
 
   if (ctx.preferences.length > 0) {
-    lines.push('Preferences: ' + ctx.preferences.map(p => p.content).join('; '));
+    lines.push(
+      "Preferences: " + ctx.preferences.map((p) => p.content).join("; "),
+    );
   }
 
   if (ctx.decisions.length > 0) {
     for (const d of ctx.decisions) {
-      lines.push(`Decision [${d.topic}${d.date ? ', ' + d.date : ''}]: ${d.content}`);
+      lines.push(
+        `Decision [${d.topic}${d.date ? ", " + d.date : ""}]: ${d.content}`,
+      );
     }
   }
 
   if (ctx.projects.length > 0) {
     for (const p of ctx.projects) {
-      const rules = p.key_rules.length > 0 ? ` — rules: ${p.key_rules.join(', ')}` : '';
+      const rules =
+        p.key_rules.length > 0 ? ` — rules: ${p.key_rules.join(", ")}` : "";
       lines.push(`Project: ${p.name} (${p.status})${rules}`);
     }
   }
 
-  return lines.join('\n');
+  return lines.join("\n");
 }
 
 // ---------------------------------------------------------------------------
@@ -446,12 +475,16 @@ export function buildHistoryWithSummary(
 
   if (summary.trim()) {
     history.push({
-      role: 'user',
+      role: "user",
       parts: [{ text: `[CONVERSATION HISTORY SUMMARY]\n${summary}` }],
     });
     history.push({
-      role: 'model',
-      parts: [{ text: 'Understood — I have the compressed history of our previous conversations.' }],
+      role: "model",
+      parts: [
+        {
+          text: "Understood. I will use this prior conversation summary as context.",
+        },
+      ],
     });
   }
 
@@ -466,20 +499,152 @@ export function buildHistoryWithSummary(
 // Helpers
 // ---------------------------------------------------------------------------
 
+const SUMMARY_STOPWORDS = new Set([
+  "the",
+  "a",
+  "an",
+  "and",
+  "or",
+  "to",
+  "of",
+  "in",
+  "on",
+  "for",
+  "with",
+  "is",
+  "are",
+  "was",
+  "were",
+  "be",
+  "as",
+  "at",
+  "by",
+  "from",
+  "this",
+  "that",
+  "it",
+  "user",
+  "jarvis",
+  "请",
+  "帮",
+  "一下",
+  "一个",
+  "我们",
+  "你",
+  "我",
+]);
+
+function tokenizeForRelevance(text: string): string[] {
+  const matches = text.toLowerCase().match(/[\p{L}\p{N}_]{2,}/gu) ?? [];
+  const tokens: string[] = [];
+
+  for (const rawToken of matches) {
+    if (SUMMARY_STOPWORDS.has(rawToken)) continue;
+    tokens.push(rawToken);
+
+    if (/^\p{Script=Han}+$/u.test(rawToken) && rawToken.length > 2) {
+      for (let size = 2; size <= Math.min(4, rawToken.length); size++) {
+        for (let i = 0; i <= rawToken.length - size; i++) {
+          tokens.push(rawToken.slice(i, i + size));
+        }
+      }
+    }
+  }
+
+  return [...new Set(tokens)];
+}
+
+export function extractSummaryChunks(summary: string): string[] {
+  const lines = summary
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
+
+  const chunks: string[] = [];
+  let currentHeading = "";
+
+  for (const line of lines) {
+    if (/^#{1,6}\s+/.test(line)) {
+      currentHeading = line.replace(/^#{1,6}\s+/, "").trim();
+      continue;
+    }
+
+    const bullet = line.replace(/^[-*]\s+/, "").trim();
+    if (!bullet) continue;
+
+    chunks.push(currentHeading ? `${currentHeading}: ${bullet}` : bullet);
+  }
+
+  if (chunks.length === 0 && summary.trim()) {
+    chunks.push(summary.trim());
+  }
+
+  return chunks;
+}
+
+export function buildSummarySectionFromChunks(chunks: string[]): string {
+  if (chunks.length === 0) {
+    return "";
+  }
+
+  return (
+    "\n<relevant_session_summary>\n" +
+    chunks.map((item) => `- ${item}`).join("\n") +
+    "\n</relevant_session_summary>"
+  );
+}
+
+export function buildRelevantSummarySectionFallback(
+  summary: string,
+  userPrompt: string,
+  maxItems = 3,
+): string {
+  if (!summary.trim() || !userPrompt.trim() || maxItems <= 0) {
+    return "";
+  }
+
+  const promptTokens = new Set(tokenizeForRelevance(userPrompt));
+  if (promptTokens.size === 0) {
+    return "";
+  }
+
+  const rankedChunks = extractSummaryChunks(summary)
+    .map((chunk, index) => {
+      const lowerChunk = chunk.toLowerCase();
+      let score = 0;
+      for (const token of promptTokens) {
+        if (lowerChunk.includes(token)) {
+          score += token.length >= 4 ? 3 : 2;
+        }
+      }
+      return { chunk, score, index };
+    })
+    .filter((item) => item.score > 0)
+    .sort((a, b) => b.score - a.score || a.index - b.index)
+    .slice(0, maxItems);
+
+  if (rankedChunks.length === 0) {
+    return "";
+  }
+
+  return buildSummarySectionFromChunks(rankedChunks.map((item) => item.chunk));
+}
+
 function messagesToText(messages: SessionMessage[]): string {
   return messages
-    .map(m => {
-      const role = m.type === 'user' ? 'User' : 'Jarvis';
-      const text = typeof m.content === 'string'
-        ? m.content
-        : Array.isArray(m.content)
-          ? (m.content as any[]).map(p => p.text ?? '').join(' ')
-          : '';
+    .map((m) => {
+      const role = m.type === "user" ? "User" : "Jarvis";
+      const text =
+        typeof m.content === "string"
+          ? m.content
+          : Array.isArray(m.content)
+            ? (m.content as any[]).map((p) => p.text ?? "").join(" ")
+            : "";
       const toolInfo = m.toolCalls?.length
-        ? ` [called tools: ${m.toolCalls.map(tc => tc.name).join(', ')}]`
-        : '';
+        ? ` [called tools: ${m.toolCalls.map((tc) => tc.name).join(", ")}]`
+        : "";
       return text.trim() ? `${role}: ${text}${toolInfo}` : null;
     })
     .filter(Boolean)
-    .join('\n');
+    .join("\n");
 }

@@ -101,7 +101,7 @@ export interface JarvisConfig {
     summaryWindowDays?: number;
     /**
      * Max characters for session summary. If exceeded, trigger re-compression.
-     * 0 = no limit. Default: 3000.
+     * 0 = no limit. Default: 1200.
      */
     maxSummaryLength?: number;
   };
@@ -391,6 +391,13 @@ export class ConfigManager {
       security: {
         jailbreak: false,
       },
+      summarizer: {
+        provider: "gemini" as const,
+        timeoutMs: 120_000,
+        chunkSize: 100,
+        summaryWindowDays: 30,
+        maxSummaryLength: 1200,
+      },
       feishu: {
         enabled: false,
         appId: "",
@@ -407,8 +414,8 @@ export class ConfigManager {
         resumeOnStart: true,
         recentTurnsOnResume: 3,
         historyCompressionThreshold: 20,
-        historyKeepRecentTurns: 5,
-        codeHeavyThresholdMultiplier: 2.0,
+        historyKeepRecentTurns: 3,
+        codeHeavyThresholdMultiplier: 1.2,
       },
       routing: {
         enabled: true,
@@ -435,6 +442,10 @@ export class ConfigManager {
           reflection: {
             ...defaults.reflection,
             ...saved.reflection,
+          },
+          summarizer: {
+            ...defaults.summarizer,
+            ...saved.summarizer,
           },
           entityExtraction: {
             ...defaults.entityExtraction,

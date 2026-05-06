@@ -9,11 +9,13 @@ import * as sqliteVec from "sqlite-vec";
 import path from "node:path";
 import fs from "node:fs";
 import os from "node:os";
+import crypto from "node:crypto";
 import * as genai from "@google/genai";
 import { HttpsProxyAgent } from "https-proxy-agent";
 import { debugLogger } from "../../../gemini-cli/packages/core/src/index.js";
 import { ConfigManager } from "./configManager.js";
 import { EntityExtractor, type EntityLink } from "./entityExtractor.js";
+import { extractSummaryChunks } from "./sessionSummarizer.js";
 import {
   ollamaGenerate,
   ollamaGenerateWithRetry,
@@ -27,6 +29,10 @@ function toLocalDateString(ms: number): string {
   const m = String(d.getMonth() + 1).padStart(2, "0");
   const day = String(d.getDate()).padStart(2, "0");
   return `${y}-${m}-${day}`;
+}
+
+function hashText(text: string): string {
+  return crypto.createHash("sha1").update(text).digest("hex");
 }
 
 export class MemoryService {
@@ -43,6 +49,7 @@ export class MemoryService {
   private isBackfillingEntities = false; // guards backfillEntityLinks
   private isBackfillingSessionEvents = false; // guards backfillSessionEvents
   private isBackfillingSkills = false; // guards backfillSkillIndex
+  private isBackfillingSummaryChunks = false; // guards summary chunk indexing
   // Skills queued for backfill while embedContentFn was not yet available
   private pendingSkillBackfill: Array<{
     name: string;
@@ -204,6 +211,13 @@ export class MemoryService {
         name        TEXT UNIQUE NOT NULL,
         description TEXT NOT NULL
       );
+      CREATE TABLE IF NOT EXISTS summary_chunks_index (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        session_id  TEXT NOT NULL,
+        chunk_hash  TEXT NOT NULL,
+        chunk_text  TEXT NOT NULL,
+        UNIQUE(session_id, chunk_hash)
+      );
     `);
 
     try {
@@ -218,6 +232,10 @@ export class MemoryService {
           embedding FLOAT[${this.jarvisConfig.models.embeddingDimension}]
         );
         CREATE VIRTUAL TABLE IF NOT EXISTS vec_skills USING vec0(
+          id INTEGER PRIMARY KEY,
+          embedding FLOAT[${this.jarvisConfig.models.embeddingDimension}]
+        );
+        CREATE VIRTUAL TABLE IF NOT EXISTS vec_summary_chunks USING vec0(
           id INTEGER PRIMARY KEY,
           embedding FLOAT[${this.jarvisConfig.models.embeddingDimension}]
         );
@@ -3393,6 +3411,140 @@ Events:`;
       }));
     } catch (e: any) {
       console.error(`⚠️ [SkillIndex] searchSkills failed: ${e.message}`);
+      return [];
+    }
+  }
+
+  public async backfillSummaryChunkIndex(
+    sessionId: string,
+    summary: string,
+  ): Promise<void> {
+    if (this.isBackfillingSummaryChunks) return;
+    const embedFn = this.embedContentFn;
+
+    this.isBackfillingSummaryChunks = true;
+    try {
+      if (!summary.trim()) {
+        const existing = this.db
+          .prepare("SELECT id FROM summary_chunks_index WHERE session_id = ?")
+          .all(sessionId) as Array<{ id: number }>;
+        if (existing.length > 0) {
+          const ids = existing.map((row) => row.id);
+          this.db
+            .prepare(
+              `DELETE FROM summary_chunks_index WHERE id IN (${ids.map(() => "?").join(",")})`,
+            )
+            .run(...ids);
+          this.db
+            .prepare(
+              `DELETE FROM vec_summary_chunks WHERE id IN (${ids.map(() => "?").join(",")})`,
+            )
+            .run(...ids.map((id) => BigInt(id)));
+        }
+        return;
+      }
+
+      if (!embedFn) return;
+
+      const chunks = extractSummaryChunks(summary);
+      const desiredHashes = new Set(chunks.map((chunk) => hashText(chunk)));
+      const existing = this.db
+        .prepare(
+          "SELECT id, chunk_hash, chunk_text FROM summary_chunks_index WHERE session_id = ?",
+        )
+        .all(sessionId) as Array<{
+        id: number;
+        chunk_hash: string;
+        chunk_text: string;
+      }>;
+
+      const stale = existing.filter(
+        (row) => !desiredHashes.has(row.chunk_hash),
+      );
+      if (stale.length > 0) {
+        const staleIds = stale.map((row) => row.id);
+        this.db
+          .prepare(
+            `DELETE FROM summary_chunks_index WHERE id IN (${staleIds.map(() => "?").join(",")})`,
+          )
+          .run(...staleIds);
+        this.db
+          .prepare(
+            `DELETE FROM vec_summary_chunks WHERE id IN (${staleIds.map(() => "?").join(",")})`,
+          )
+          .run(...staleIds.map((id) => BigInt(id)));
+      }
+
+      const existingMap = new Map(existing.map((row) => [row.chunk_hash, row]));
+      const toInsert = chunks.filter(
+        (chunk) => !existingMap.has(hashText(chunk)),
+      );
+
+      for (const chunk of toInsert) {
+        const vec = await embedFn(chunk);
+        const info = this.db
+          .prepare(
+            "INSERT INTO summary_chunks_index (session_id, chunk_hash, chunk_text) VALUES (?, ?, ?)",
+          )
+          .run(sessionId, hashText(chunk), chunk);
+        const id = info.lastInsertRowid as number;
+        this.db
+          .prepare(
+            "INSERT INTO vec_summary_chunks (id, embedding) VALUES (?, ?)",
+          )
+          .run(BigInt(id), new Float32Array(vec));
+      }
+
+      if (toInsert.length > 0 || stale.length > 0) {
+        console.error(
+          `✅ [SummaryIndex] session=${sessionId} +${toInsert.length} new, -${stale.length} removed (${chunks.length} active).`,
+        );
+      }
+    } catch (e: any) {
+      console.error(`⚠️ [SummaryIndex] backfill failed: ${e.message}`);
+    } finally {
+      this.isBackfillingSummaryChunks = false;
+    }
+  }
+
+  public async searchSummaryChunks(
+    sessionId: string,
+    query: string,
+    topK: number = 3,
+    maxDistance: number = 1.0,
+  ): Promise<string[]> {
+    const embedFn = this.embedContentFn;
+    if (!embedFn || !query.trim()) return [];
+
+    try {
+      const queryVec = await embedFn(query);
+      const rows = this.db
+        .prepare(
+          `SELECT s.chunk_text, v.distance
+           FROM summary_chunks_index s
+           JOIN (
+             SELECT id, distance FROM vec_summary_chunks
+             WHERE embedding MATCH ?
+             ORDER BY distance
+             LIMIT ?
+           ) v ON s.id = v.id
+           WHERE s.session_id = ? AND v.distance < ?
+           ORDER BY v.distance ASC`,
+        )
+        .all(
+          new Float32Array(queryVec),
+          topK * 4,
+          sessionId,
+          maxDistance,
+        ) as Array<{ chunk_text: string; distance: number }>;
+
+      const results = rows.slice(0, topK).map((row) => row.chunk_text);
+      debugLogger.debug(
+        `[SummaryIndex] searchSummaryChunks("${query.slice(0, 50)}", topK=${topK}, maxDist=${maxDistance}) → ${results.length}`,
+      );
+      return results;
+    } catch (e: any) {
+      console.error(`⚠️ [SummaryIndex] search failed: ${e.message}`);
       return [];
     }
   }
