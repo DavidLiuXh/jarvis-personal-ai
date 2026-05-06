@@ -162,18 +162,9 @@ export class JarvisAgent extends EventEmitter {
         routingCfg.threshold ?? 70,
         routingCfg.proModel ?? "gemini-2.5-pro",
         routingCfg.flashModel ?? "gemini-2.5-flash",
-        // Lightweight (bg) agents use a shorter routing timeout so a slow
-        // Ollama doesn't block task start for 30 seconds; fallback is fast.
-        this.lightweight
-          ? Math.min(
-              routingCfg.timeoutMs ??
-                this.jarvisConfig.ollama?.defaultTimeoutMs ??
-                30_000,
-              5_000,
-            )
-          : (routingCfg.timeoutMs ??
-            this.jarvisConfig.ollama?.defaultTimeoutMs ??
-            30_000),
+        routingCfg.timeoutMs ??
+          this.jarvisConfig.ollama?.defaultTimeoutMs ??
+          30_000,
         routingCfg.historyTurns ?? 5,
       );
       console.error(
