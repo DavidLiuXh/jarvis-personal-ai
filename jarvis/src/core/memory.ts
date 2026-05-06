@@ -3538,6 +3538,16 @@ Events:`;
           maxDistance,
         ) as Array<{ chunk_text: string; distance: number }>;
 
+      if (rows.length === 0) return [];
+
+      const strictDistance = Math.min(maxDistance, 0.72);
+      if (rows[0].distance > strictDistance) {
+        debugLogger.debug(
+          `[SummaryIndex] top hit too far (distance=${rows[0].distance.toFixed(3)} > ${strictDistance.toFixed(3)}), skipping summary injection`,
+        );
+        return [];
+      }
+
       const results = rows.slice(0, topK).map((row) => row.chunk_text);
       debugLogger.debug(
         `[SummaryIndex] searchSummaryChunks("${query.slice(0, 50)}", topK=${topK}, maxDist=${maxDistance}) → ${results.length}`,

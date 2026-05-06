@@ -563,6 +563,14 @@ export function extractSummaryChunks(summary: string): string[] {
   const chunks: string[] = [];
   let currentHeading = "";
 
+  const splitBullet = (text: string): string[] => {
+    const parts = text
+      .split(/(?<=[。！？.!?；;])\s+|(?:\s+[-•]\s+)/u)
+      .map((part) => part.trim())
+      .filter(Boolean);
+    return parts.length > 0 ? parts : [text.trim()];
+  };
+
   for (const line of lines) {
     if (/^#{1,6}\s+/.test(line)) {
       currentHeading = line.replace(/^#{1,6}\s+/, "").trim();
@@ -572,7 +580,10 @@ export function extractSummaryChunks(summary: string): string[] {
     const bullet = line.replace(/^[-*]\s+/, "").trim();
     if (!bullet) continue;
 
-    chunks.push(currentHeading ? `${currentHeading}: ${bullet}` : bullet);
+    for (const part of splitBullet(bullet)) {
+      if (part.length < 8) continue;
+      chunks.push(currentHeading ? `${currentHeading}: ${part}` : part);
+    }
   }
 
   if (chunks.length === 0 && summary.trim()) {
@@ -598,6 +609,7 @@ export function buildRelevantSummarySectionFallback(
   summary: string,
   userPrompt: string,
   maxItems = 3,
+  minScore = 4,
 ): string {
   if (!summary.trim() || !userPrompt.trim() || maxItems <= 0) {
     return "";
@@ -619,7 +631,7 @@ export function buildRelevantSummarySectionFallback(
       }
       return { chunk, score, index };
     })
-    .filter((item) => item.score > 0)
+    .filter((item) => item.score >= minScore)
     .sort((a, b) => b.score - a.score || a.index - b.index)
     .slice(0, maxItems);
 

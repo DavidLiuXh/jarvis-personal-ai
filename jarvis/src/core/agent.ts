@@ -644,8 +644,8 @@ export class JarvisAgent extends EventEmitter {
       const summaryChunks = await this.memoryService.searchSummaryChunks(
         this.sessionId,
         userPrompt,
-        3,
-        1.0,
+        2,
+        0.78,
       );
       relevantSummarySection =
         summaryChunks.length > 0
