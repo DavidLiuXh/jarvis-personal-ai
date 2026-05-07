@@ -231,10 +231,14 @@ export class JarvisAgent extends EventEmitter {
   }
 
   /**
-   * Remove thoughtSignature from all history turns except the active loop.
-   * The active loop starts at the last user turn containing text (not a function
-   * response). Turns before that index are "old history" and their thoughtSignature
-   * fields serve no purpose — they only waste tokens.
+   * For history turns before the active loop:
+   * - Remove thoughtSignature fields (not needed by the API for old turns).
+   * - Remove functionCall and functionResponse parts (tool exchange noise that
+   *   wastes tokens; the active loop requires them but old turns do not).
+   *   Turns that become empty after stripping are removed entirely.
+   *
+   * The active loop starts at the last user turn containing a text part
+   * (not a pure functionResponse turn).
    */
   private stripThoughtSignaturesFromOldHistory(): void {
     if (!this.client) return;
@@ -257,24 +261,45 @@ export class JarvisAgent extends EventEmitter {
       }
     }
 
-    // Strip from all turns before the active loop
     const cutoff = activeLoopStart === -1 ? history.length : activeLoopStart;
-    let stripped = 0;
+    let strippedSigs = 0;
+    let strippedToolParts = 0;
+    const indicesToRemove: number[] = [];
+
     for (let i = 0; i < cutoff; i++) {
       const turn = history[i];
       if (!turn.parts) continue;
-      for (let j = 0; j < turn.parts.length; j++) {
-        if ("thoughtSignature" in turn.parts[j]) {
-          // eslint-disable-next-line @typescript-eslint/no-dynamic-delete
-          delete turn.parts[j]["thoughtSignature"];
-          stripped++;
+
+      // Remove tool-related parts and thoughtSignature from remaining parts
+      const kept: Array<Record<string, unknown>> = [];
+      for (const part of turn.parts) {
+        if ("functionCall" in part || "functionResponse" in part) {
+          strippedToolParts++;
+          continue;
         }
+        if ("thoughtSignature" in part) {
+          // eslint-disable-next-line @typescript-eslint/no-dynamic-delete
+          delete part["thoughtSignature"];
+          strippedSigs++;
+        }
+        kept.push(part);
+      }
+
+      if (kept.length === 0) {
+        indicesToRemove.push(i);
+      } else {
+        turn.parts = kept;
       }
     }
 
-    if (stripped > 0) {
+    // Remove now-empty turns in reverse order to preserve indices
+    for (let i = indicesToRemove.length - 1; i >= 0; i--) {
+      history.splice(indicesToRemove[i], 1);
+    }
+
+    if (strippedSigs > 0 || strippedToolParts > 0) {
       debugLogger.debug(
-        `[Jarvis] Stripped ${stripped} thoughtSignature(s) from old history (cutoff=${cutoff}).`,
+        `[Jarvis] Old history stripped: ${strippedSigs} thoughtSignature(s), ${strippedToolParts} tool part(s), ${indicesToRemove.length} empty turn(s) removed (cutoff=${cutoff}).`,
       );
     }
   }
