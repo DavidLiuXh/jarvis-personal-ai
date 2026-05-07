@@ -34,6 +34,7 @@ export type MemoryServiceHandle = {
     limit: number,
     timeWindowDays?: number | null,
     dateRange?: { from: number; to: number } | null,
+    maxDistanceOverride?: number,
   ) => Promise<string[]>;
   searchFacts: (
     query: string,

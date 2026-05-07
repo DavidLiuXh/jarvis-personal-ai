@@ -69,6 +69,12 @@ export interface JarvisConfig {
     timeoutMs?: number;
     /** Number of recent conversation turns to include for context. Default: 5. */
     historyTurns?: number;
+    /**
+     * Rewrite the user query into an optimized memory search query before prewarm.
+     * Uses the same Ollama model. Only applies to personal queries.
+     * Default: false.
+     */
+    queryRewrite?: boolean;
   };
   /**
    * Session summarizer configuration.
@@ -156,6 +162,18 @@ export interface JarvisConfig {
     factRelevanceLimit: number;
     /** Number of semantically similar past conversations to pre-warm into context each turn. 0 = disabled. Default: 3. */
     prewarmLimit: number;
+    /**
+     * prewarmLimit override for mixed queries (personal + external intent).
+     * Mixed queries have higher noise risk, so a tighter limit reduces context adhesion.
+     * Default: 1.
+     */
+    prewarmLimitMixed: number;
+    /**
+     * Stricter memoryMaxDistance override for mixed queries.
+     * Only memories with distance < this value are injected when querySubject=mixed.
+     * Default: 0.6 (vs memoryMaxDistance=1.0 for personal).
+     */
+    prewarmMaxDistanceMixed: number;
     /**
      * Maximum number of skills to inject into the system prompt per turn via
      * semantic retrieval. When total installed skills exceed this limit, only the
@@ -353,6 +371,8 @@ export class ConfigManager {
         factRelevanceStrategy: "jaccard" as const,
         factRelevanceLimit: 5,
         prewarmLimit: 3,
+        prewarmLimitMixed: 1,
+        prewarmMaxDistanceMixed: 0.6,
         skillSearchLimit: 5,
         skillMaxDistance: 0.9,
         ingestConversations: false,

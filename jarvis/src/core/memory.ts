@@ -1090,12 +1090,13 @@ ${factsText}
     } catch (e) {}
   }
 
-  public async search(
+  public async searchWithScore(
     query: string,
     limit: number = 5,
     timeWindowDays: number | null = null,
     dateRange: { from: number; to: number } | null = null,
-  ): Promise<string[]> {
+    maxDistanceOverride?: number,
+  ): Promise<Array<{ text: string; score: number }>> {
     if (!query?.trim()) return [];
     if (!this.embedContentFn && !this.client) return [];
     try {
@@ -1145,7 +1146,9 @@ ${factsText}
       // vec0 KNN requires LIMIT in the subquery; distance filter applied
       // in the outer WHERE clause after JOIN to avoid vec0 syntax issues.
       const memoryMaxDistance =
-        this.jarvisConfig.memory.memoryMaxDistance ?? 1.0;
+        maxDistanceOverride ??
+        this.jarvisConfig.memory.memoryMaxDistance ??
+        1.0;
 
       const rows = (
         timeWindow
@@ -1212,7 +1215,7 @@ ${factsText}
       });
 
       scored.sort((a, b) => b.score - a.score);
-      const results = scored.slice(0, limit).map((r) => r.text);
+      const results = scored.slice(0, limit);
       console.error(
         `🔍 [search] rows=${rows.length}, scored=${scored.length}, returned=${results.length}`,
       );
@@ -1221,6 +1224,23 @@ ${factsText}
       console.error(`⚠️ [search] failed: ${e?.message}`);
       return [];
     }
+  }
+
+  public async search(
+    query: string,
+    limit: number = 5,
+    timeWindowDays: number | null = null,
+    dateRange: { from: number; to: number } | null = null,
+    maxDistanceOverride?: number,
+  ): Promise<string[]> {
+    const results = await this.searchWithScore(
+      query,
+      limit,
+      timeWindowDays,
+      dateRange,
+      maxDistanceOverride,
+    );
+    return results.map((r) => r.text);
   }
 
   /**

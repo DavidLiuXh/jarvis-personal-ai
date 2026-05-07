@@ -304,6 +304,53 @@ export class LocalModelRouter {
     };
   }
 
+  /**
+   * Rewrite the user query into a concise memory search query.
+   * Takes the current prompt + last N turns and produces focused keywords
+   * that resolve pronouns/references and expand relevant terms.
+   * Returns null on failure so the caller can fall back to the original query.
+   */
+  async rewriteMemoryQuery(
+    userPrompt: string,
+    recentHistory: ConversationTurn[],
+  ): Promise<string | null> {
+    const turns = recentHistory.slice(-6); // last 3 pairs
+    const historyText =
+      turns.length > 0
+        ? turns
+            .map(
+              (t) =>
+                `${t.role === "user" ? "User" : "Assistant"}: ${t.content.slice(0, 200)}`,
+            )
+            .join("\n")
+        : "(no prior context)";
+
+    const prompt =
+      `You are a memory retrieval assistant. Given a conversation snippet and the latest user message, produce a concise search query (under 20 words) that captures the key entities, topics, and intent for searching personal memory records. Resolve any pronouns or vague references using the conversation context.
+
+Conversation context:
+${historyText}
+
+Latest user message: ${userPrompt}
+
+Output ONLY the search query string. No explanation, no quotes, no JSON.`.trim();
+
+    try {
+      const raw = await ollamaGenerate(this.classifierModel, prompt, {
+        baseUrl: this.baseUrl,
+        timeoutMs: Math.min(this.timeoutMs, 10_000),
+        numPredict: 60,
+      });
+      const rewritten = raw.trim().replace(/^["']|["']$/g, "");
+      if (rewritten.length > 0 && rewritten.length < 300) {
+        return rewritten;
+      }
+      return null;
+    } catch {
+      return null;
+    }
+  }
+
   async routeAgentCall(
     userPrompt: string,
     agents: any[],

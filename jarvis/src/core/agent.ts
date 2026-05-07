@@ -335,6 +335,10 @@ export class JarvisAgent extends EventEmitter {
     querySubject: "personal" | "external" | "mixed" = "mixed",
     timeWindowDays: number | null = null,
     resolvedDateRange: { from: number; to: number } | null = null,
+    conversationHistory: Array<{
+      role: "user" | "assistant";
+      content: string;
+    }> = [],
   ) {
     // For external queries (pure world knowledge), skip personal facts entirely —
     // they add noise and no value. For personal/mixed, use symmetric embedding:
@@ -404,27 +408,115 @@ export class JarvisAgent extends EventEmitter {
     const defaultInstruction = buildJarvisPreamble();
 
     // vec_memories pre-warm: inject semantically similar past conversations
-    // Also skip for external queries to avoid Context Adhesion
+    // external: skip entirely (context adhesion risk)
+    // mixed: conservative limit + stricter distance threshold
+    // personal: full prewarmLimit + standard memoryMaxDistance
     const prewarmLimit = this.jarvisConfig.memory.prewarmLimit ?? 3;
+    const prewarmLimitMixed = this.jarvisConfig.memory.prewarmLimitMixed ?? 1;
+    const prewarmMaxDistanceMixed =
+      this.jarvisConfig.memory.prewarmMaxDistanceMixed ?? 0.6;
     let prewarmSection = "";
+    let prewarmedCount = 0;
     if (prewarmLimit > 0 && querySubject !== "external") {
-      const similarMemories = await this.memoryService.search(
-        userPrompt,
-        prewarmLimit,
+      const effectiveLimit =
+        querySubject === "mixed" ? prewarmLimitMixed : prewarmLimit;
+      const effectiveMaxDistance =
+        querySubject === "mixed"
+          ? prewarmMaxDistanceMixed
+          : (this.jarvisConfig.memory.memoryMaxDistance ?? 1.0);
+      // Query rewriting: for personal queries, expand/de-reference the query
+      // before vector search to improve retrieval accuracy.
+      let searchQuery = userPrompt;
+      const queryRewriteEnabled =
+        this.jarvisConfig.routing?.queryRewrite === true;
+      if (queryRewriteEnabled && !this.localModelRouter) {
+        console.error(
+          "⚠️ [prewarm] routing.queryRewrite=true but localModelRouter is not initialized — query rewrite skipped. Set routing.enabled=true and routing.model to enable.",
+        );
+      }
+      if (
+        queryRewriteEnabled &&
+        querySubject === "personal" &&
+        this.localModelRouter
+      ) {
+        const rewritten = await this.localModelRouter.rewriteMemoryQuery(
+          userPrompt,
+          conversationHistory,
+        );
+        if (rewritten) {
+          searchQuery = rewritten;
+          console.error(
+            `🔍 [prewarm] query rewrite: "${userPrompt.slice(0, 80)}" → "${rewritten}"`,
+          );
+        }
+      }
+
+      const scoredMemories = await this.memoryService.searchWithScore(
+        searchQuery,
+        effectiveLimit,
         timeWindowDays,
         resolvedDateRange,
+        effectiveMaxDistance,
       );
-      if (similarMemories.length > 0) {
+
+      // top-1 margin filter: skip injection when retrieval confidence is low
+      const MIN_TOP1_SCORE = 0.5;
+      const MIN_MARGIN = 0.1;
+      let toInject = scoredMemories;
+      if (scoredMemories.length > 0) {
+        if (scoredMemories[0].score < MIN_TOP1_SCORE) {
+          console.error(
+            `🧠 [prewarm] top-1 score ${scoredMemories[0].score.toFixed(3)} < ${MIN_TOP1_SCORE}, skipping injection`,
+          );
+          toInject = [];
+        } else if (
+          scoredMemories.length > 1 &&
+          scoredMemories[0].score - scoredMemories[1].score < MIN_MARGIN
+        ) {
+          // Low margin: only inject top-1
+          toInject = scoredMemories.slice(0, 1);
+          console.error(
+            `🧠 [prewarm] low margin (${(scoredMemories[0].score - scoredMemories[1].score).toFixed(3)}), capping to top-1`,
+          );
+        }
+      }
+
+      if (toInject.length > 0) {
+        prewarmedCount = toInject.length;
+        const VERIFIED_THRESHOLD = 0.7;
+        const verified = toInject.filter((m) => m.score >= VERIFIED_THRESHOLD);
+        const uncertain = toInject.filter((m) => m.score < VERIFIED_THRESHOLD);
+        let memoryContent = "";
+        let memoryIndex = 1;
+        if (verified.length > 0) {
+          memoryContent +=
+            "<verified_memories>\n" +
+            verified
+              .map((m) => `[Memory ${memoryIndex++}]: ${m.text}`)
+              .join("\n") +
+            "\n</verified_memories>";
+        }
+        if (uncertain.length > 0) {
+          memoryContent +=
+            (memoryContent ? "\n" : "") +
+            "<possibly_relevant_memories>\n" +
+            "(Low confidence — treat as hints only, not facts. Use only if directly matching the question.)\n" +
+            uncertain
+              .map((m) => `[Memory ${memoryIndex++}]: ${m.text}`)
+              .join("\n") +
+            "\n</possibly_relevant_memories>";
+        }
         prewarmSection =
           "\n<relevant_past_conversations>\n" +
-          similarMemories
-            .map((m, i) => `[Long-term Memory ${i + 1}]: ${m}`)
-            .join("\n") +
+          memoryContent +
           "\n</relevant_past_conversations>";
         console.error(
-          `🧠 [prewarm] ${similarMemories.length} memories injected:\n` +
-            similarMemories
-              .map((m, i) => `  [${i + 1}] ${m.slice(0, 120)}`)
+          `🧠 [prewarm] subject=${querySubject}, limit=${effectiveLimit}, maxDist=${effectiveMaxDistance}, injected=${toInject.length}:\n` +
+            toInject
+              .map(
+                (m, i) =>
+                  `  [${i + 1}] score=${m.score.toFixed(3)} ${m.text.slice(0, 100)}`,
+              )
               .join("\n"),
         );
       }
@@ -437,7 +529,7 @@ export class JarvisAgent extends EventEmitter {
       );
 
     console.error(
-      `🔄 [Jarvis] System Prompt Refreshed (subject=${querySubject}). Facts injected: ${facts.length}. Prewarmed memories: ${prewarmLimit > 0 ? (prewarmSection ? prewarmSection.split("[Long-term Memory ").length - 1 : 0) : "disabled"}.`,
+      `🔄 [Jarvis] System Prompt Refreshed (subject=${querySubject}). Facts injected: ${facts.length}. Prewarmed memories: ${prewarmLimit > 0 ? prewarmedCount : "disabled"}.`,
     );
   }
 
@@ -610,6 +702,10 @@ export class JarvisAgent extends EventEmitter {
         let querySubject: "personal" | "external" | "mixed" = "mixed";
         let timeWindowDays: number | null = null;
         let resolvedDateRange: { from: number; to: number } | null = null;
+        let conversationHistory: Array<{
+          role: "user" | "assistant";
+          content: string;
+        }> = [];
         if (this.localModelRouter) {
           const rawHistory = this.client.getChat().getHistory();
           const history = rawHistory.flatMap((turn) => {
@@ -625,6 +721,7 @@ export class JarvisAgent extends EventEmitter {
               },
             ];
           });
+          conversationHistory = history;
           const result = await this.localModelRouter.route(userPrompt, history);
           // Use setActiveModel (not setModel) to avoid broadcasting on the
           // global coreEvents singleton, which would disrupt all live
@@ -652,6 +749,7 @@ export class JarvisAgent extends EventEmitter {
           querySubject,
           timeWindowDays,
           resolvedDateRange,
+          conversationHistory,
         );
 
         const abortController = new AbortController();
