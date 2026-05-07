@@ -231,6 +231,55 @@ export class JarvisAgent extends EventEmitter {
   }
 
   /**
+   * Remove thoughtSignature from all history turns except the active loop.
+   * The active loop starts at the last user turn containing text (not a function
+   * response). Turns before that index are "old history" and their thoughtSignature
+   * fields serve no purpose — they only waste tokens.
+   */
+  private stripThoughtSignaturesFromOldHistory(): void {
+    if (!this.client) return;
+    const history = this.client.getChat().getHistory() as Array<{
+      role: string;
+      parts?: Array<Record<string, unknown>>;
+    }>;
+    if (history.length === 0) return;
+
+    // Find active loop start: last user turn with a text part
+    let activeLoopStart = -1;
+    for (let i = history.length - 1; i >= 0; i--) {
+      const turn = history[i];
+      if (
+        turn.role === "user" &&
+        turn.parts?.some((p) => typeof p["text"] === "string")
+      ) {
+        activeLoopStart = i;
+        break;
+      }
+    }
+
+    // Strip from all turns before the active loop
+    const cutoff = activeLoopStart === -1 ? history.length : activeLoopStart;
+    let stripped = 0;
+    for (let i = 0; i < cutoff; i++) {
+      const turn = history[i];
+      if (!turn.parts) continue;
+      for (let j = 0; j < turn.parts.length; j++) {
+        if ("thoughtSignature" in turn.parts[j]) {
+          // eslint-disable-next-line @typescript-eslint/no-dynamic-delete
+          delete turn.parts[j]["thoughtSignature"];
+          stripped++;
+        }
+      }
+    }
+
+    if (stripped > 0) {
+      debugLogger.debug(
+        `[Jarvis] Stripped ${stripped} thoughtSignature(s) from old history (cutoff=${cutoff}).`,
+      );
+    }
+  }
+
+  /**
    * Compress in-memory chat history when it exceeds historyCompressionThreshold turns.
    * Summarizes older turns and keeps only the most recent historyKeepRecentTurns raw.
    * Automatically scales the threshold for code-heavy conversations.
@@ -340,6 +389,13 @@ export class JarvisAgent extends EventEmitter {
       content: string;
     }> = [],
   ) {
+    // Strip thoughtSignature from historical turns to reduce token usage.
+    // The active loop (turns after the last user text message) must keep
+    // thoughtSignature for API validation; older turns have no such requirement.
+    // ensureActiveLoopHasThoughtSignatures() in gemini-cli restores synthetic
+    // signatures where needed, so stripping old ones is safe.
+    this.stripThoughtSignaturesFromOldHistory();
+
     // For external queries (pure world knowledge), skip personal facts entirely —
     // they add noise and no value. For personal/mixed, use symmetric embedding:
     // prepend the same "PRIVATE_USER_DATA: User Query - " prefix to the query
