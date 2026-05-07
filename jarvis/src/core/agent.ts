@@ -592,6 +592,10 @@ export class JarvisAgent extends EventEmitter {
           value: `✅ 已清空 ${Math.floor(history.length / 2)} 轮对话历史。`,
         });
       } else {
+        this.emit(JarvisEventType.CONTENT, {
+          type: "content",
+          value: `⏳ 正在压缩 ${Math.floor(history.length / 2)} 轮对话历史，请稍候...`,
+        });
         try {
           const messages: SessionMessage[] = history
             .map((turn) => {
