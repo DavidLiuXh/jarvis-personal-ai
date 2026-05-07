@@ -261,16 +261,43 @@ export class JarvisAgent extends EventEmitter {
       }
     }
 
-    const cutoff = activeLoopStart === -1 ? history.length : activeLoopStart;
+    // If the turn just before the active loop is a tool-only model turn, its
+    // paired functionResponse sits at activeLoopStart (the preserved boundary).
+    // Stripping the functionCall without also removing the functionResponse
+    // would orphan it and cause a 400. Extend the cutoff one step earlier in
+    // that case to leave the pair intact.
+    let cutoff = activeLoopStart === -1 ? history.length : activeLoopStart;
+    if (cutoff > 0 && cutoff < history.length) {
+      const turnBeforeCutoff = history[cutoff - 1];
+      const isToolOnly =
+        turnBeforeCutoff.parts?.length > 0 &&
+        turnBeforeCutoff.parts.every(
+          (p) => "functionCall" in p || "functionResponse" in p,
+        );
+      if (isToolOnly) cutoff -= 1;
+    }
+
     let strippedSigs = 0;
     let strippedToolParts = 0;
-    const indicesToRemove: number[] = [];
+    const newHistory: Array<{
+      role: string;
+      parts?: Array<Record<string, unknown>>;
+    }> = [];
 
-    for (let i = 0; i < cutoff; i++) {
+    for (let i = 0; i < history.length; i++) {
       const turn = history[i];
-      if (!turn.parts) continue;
+      if (i >= cutoff) {
+        // Active loop — keep as-is
+        newHistory.push(turn);
+        continue;
+      }
 
-      // Remove tool-related parts and thoughtSignature from remaining parts
+      if (!turn.parts) {
+        newHistory.push(turn);
+        continue;
+      }
+
+      // Remove tool-related parts; strip thoughtSignature from remaining parts
       const kept: Array<Record<string, unknown>> = [];
       for (const part of turn.parts) {
         if ("functionCall" in part || "functionResponse" in part) {
@@ -285,21 +312,26 @@ export class JarvisAgent extends EventEmitter {
         kept.push(part);
       }
 
-      if (kept.length === 0) {
-        indicesToRemove.push(i);
-      } else {
+      if (kept.length > 0) {
         turn.parts = kept;
+        newHistory.push(turn);
+        // else: turn is empty after stripping — drop it entirely
       }
     }
 
-    // Remove now-empty turns in reverse order to preserve indices
-    for (let i = indicesToRemove.length - 1; i >= 0; i--) {
-      history.splice(indicesToRemove[i], 1);
+    const removedTurns = history.length - newHistory.length;
+    if (removedTurns > 0) {
+      // Use setHistory to commit the filtered array back into gemini-cli's state
+      this.client
+        .getChat()
+        .setHistory(
+          newHistory as unknown as import("../../../gemini-cli/packages/core/src/index.js").Content[],
+        );
     }
 
-    if (strippedSigs > 0 || strippedToolParts > 0) {
+    if (strippedSigs > 0 || strippedToolParts > 0 || removedTurns > 0) {
       debugLogger.debug(
-        `[Jarvis] Old history stripped: ${strippedSigs} thoughtSignature(s), ${strippedToolParts} tool part(s), ${indicesToRemove.length} empty turn(s) removed (cutoff=${cutoff}).`,
+        `[Jarvis] Old history stripped: ${strippedSigs} thoughtSignature(s), ${strippedToolParts} tool part(s), ${removedTurns} empty turn(s) removed (cutoff=${cutoff}).`,
       );
     }
   }
@@ -658,6 +690,14 @@ export class JarvisAgent extends EventEmitter {
   ) {
     // Intercept !clear — compress current history into summary, drop all raw turns
     if (userPrompt.trim() === "!clear") {
+      if (this.isProcessing) {
+        this.emit(JarvisEventType.CONTENT, {
+          type: "content",
+          value: "⚠️ 任务进行中，请等待完成后再清空历史。",
+        });
+        this.emit(JarvisEventType.DONE);
+        return;
+      }
       await this.initialize();
       const history = this.client?.getChat().getHistory() ?? [];
       if (history.length === 0) {

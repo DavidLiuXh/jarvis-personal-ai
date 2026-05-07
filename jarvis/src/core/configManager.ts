@@ -406,8 +406,8 @@ export class ConfigManager {
         globalSessionId: "jarvis-global-master",
         resumeOnStart: true,
         recentTurnsOnResume: 3,
-        historyCompressionThreshold: 12,
-        historyKeepRecentTurns: 3,
+        historyCompressionThreshold: 20,
+        historyKeepRecentTurns: 5,
         codeHeavyThresholdMultiplier: 2.0,
       },
       routing: {
