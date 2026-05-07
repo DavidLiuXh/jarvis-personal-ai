@@ -575,6 +575,67 @@ export class JarvisAgent extends EventEmitter {
     userPrompt: string,
     imageAttachment?: { data: Buffer; mimeType: string },
   ) {
+    // Intercept !clear — compress current history into summary, drop all raw turns
+    if (userPrompt.trim() === "!clear") {
+      await this.initialize();
+      const history = this.client?.getChat().getHistory() ?? [];
+      if (history.length === 0) {
+        this.emit(JarvisEventType.CONTENT, {
+          type: "content",
+          value: "✅ 对话历史已清空。",
+        });
+      } else if (!this.summarizerGenerateText) {
+        // No summarizer — just wipe history entirely
+        this.client.getChat().setHistory([]);
+        this.emit(JarvisEventType.CONTENT, {
+          type: "content",
+          value: `✅ 已清空 ${Math.floor(history.length / 2)} 轮对话历史。`,
+        });
+      } else {
+        try {
+          const messages: SessionMessage[] = history
+            .map((turn) => {
+              const text =
+                turn.parts?.map((p: any) => p.text ?? "").join("") ?? "";
+              if (!text.trim()) return null;
+              return {
+                type: turn.role === "user" ? "user" : "gemini",
+                content: text,
+              } as SessionMessage;
+            })
+            .filter((m): m is SessionMessage => m !== null);
+
+          const summary = await buildIncrementalSummary(
+            messages,
+            null,
+            this.summarizerGenerateText,
+            { maxRetries: 2, retryDelayMs: 1000 },
+          );
+
+          if (summary.trim()) {
+            // Keep summary as context, no raw turns
+            this.client
+              .getChat()
+              .setHistory(buildHistoryWithSummary(summary, []));
+          } else {
+            this.client.getChat().setHistory([]);
+          }
+          this.emit(JarvisEventType.CONTENT, {
+            type: "content",
+            value: `✅ 已将 ${Math.floor(history.length / 2)} 轮对话压缩为摘要，上下文已重置。`,
+          });
+        } catch (e: any) {
+          this.client.getChat().setHistory([]);
+          this.emit(JarvisEventType.CONTENT, {
+            type: "content",
+            value: `✅ 已清空对话历史（摘要生成失败: ${e.message}）。`,
+          });
+        }
+      }
+      this.emit(JarvisEventType.DONE);
+      return;
+    }
+
     // Intercept !task commands — no LLM, no memory operations needed
     if (userPrompt.trimStart().startsWith("!task") && this.taskCommandHandler) {
       const result = await this.taskCommandHandler.handle(userPrompt);
