@@ -938,6 +938,19 @@ export class JarvisAgent extends EventEmitter {
           // global coreEvents singleton, which would disrupt all live
           // GeminiClient instances including concurrent bg agents.
           this.client.config.setActiveModel(result.model);
+
+          // 🛡️ CRITICAL FIX: The underlying gemini-cli-core `client.js` routing logic
+          // (specifically `OverrideStrategy`) forcefully reads `config.getModel()`
+          // during `processTurn`, completely ignoring `setActiveModel`.
+          // To ensure our local routing decision actually takes effect, we temporarily
+          // hijack `getModel()` for this client instance.
+          const originalGetModel = this.client.config.getModel;
+          this.client.config.getModel = () => result.model;
+
+          // Store the original method so we can restore it when the turn is done.
+          // We attach it to the current scope so we can clean up in the finally block.
+          (this as any)._originalGetModel = originalGetModel;
+
           querySubject = result.querySubject;
           timeWindowDays = result.timeWindowDays;
           resolvedDateRange = result.resolvedDateRange ?? null;
@@ -1160,6 +1173,11 @@ export class JarvisAgent extends EventEmitter {
       this.emit(JarvisEventType.ERROR, error);
     } finally {
       this.isProcessing = false;
+      // 🛡️ Cleanup the getModel hijack if we applied it
+      if (this.client && (this as any)._originalGetModel) {
+        this.client.config.getModel = (this as any)._originalGetModel;
+        delete (this as any)._originalGetModel;
+      }
     }
   }
 
