@@ -29,6 +29,12 @@ Jarvis classifies every request locally before sending it to the cloud:
 - **Auto model selection** — Simple questions route to a fast Flash model; complex analysis routes to Pro. You save cost and latency without sacrificing quality where it matters.
 - **Temporal awareness** — Date references ("yesterday", "last week", "4月27日") are resolved to exact date ranges before memory search, enabling precise historical recall.
 
+### ⚡ Background Tasks & A2A Agent Network
+
+**Long-running tasks run in the background** — prefix any request with `bg:` / `后台:` / `async:` and Jarvis dispatches it to an isolated background agent. You get an immediate acknowledgment, and the result is pushed to your channel (WeChat/Feishu) when done. Complex research, data analysis, or multi-step workflows no longer block your conversation.
+
+**Agent-to-Agent (A2A) protocol** — Jarvis speaks the A2A standard, letting it invoke specialized agents on demand. Need deep investment analysis, market sentiment scoring, or a domain-specific workflow? Jarvis routes the request to the right agent and integrates the result — all within the same conversation flow.
+
 ### 💬 It Lives Where You Do
 
 Talk to Jarvis through **WeChat** or **Feishu** — apps already on your phone. No new interface to learn.
