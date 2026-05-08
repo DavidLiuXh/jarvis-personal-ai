@@ -952,8 +952,7 @@ export class JarvisAgent extends EventEmitter {
           conversationHistory = history;
           const detectShift =
             this.jarvisConfig.routing?.topicShiftDetection !== false &&
-            this.conversationTurnCount > 0 &&
-            history.length >= 2;
+            this.conversationTurnCount > 0;
           const result = await this.localModelRouter.route(
             userPrompt,
             history,

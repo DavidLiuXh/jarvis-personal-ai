@@ -359,7 +359,7 @@ Output ONLY a raw JSON object: {"shifted": true} or {"shifted": false}`.trim();
       const raw = await ollamaGenerate(this.classifierModel, prompt, {
         baseUrl: this.baseUrl,
         timeoutMs: Math.min(this.timeoutMs, 8_000),
-        numPredict: 20,
+        numPredict: 30,
       });
       const stripped = raw
         .replace(/^```(?:json)?\s*/i, "")
