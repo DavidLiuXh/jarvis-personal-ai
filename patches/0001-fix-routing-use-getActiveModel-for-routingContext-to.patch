@@ -1,0 +1,38 @@
+From 2de6f8f7bc05f58e01fdc2cc54fbd8f42b1422ed Mon Sep 17 00:00:00 2001
+From: liuwei <liuwei@MBP-D71QQDP2FR-2153.local>
+Date: Thu, 7 May 2026 17:17:51 +0800
+Subject: [PATCH 1/2] fix(routing): use getActiveModel() for routingContext to
+ honour setActiveModel()
+
+getModel() returns the base config model (e.g. 'auto'), so OverrideStrategy
+never fires and routing falls through to NumericalClassifier, ignoring the
+model selected by Jarvis's localModelRouter.
+
+getActiveModel() returns _activeModel ?? model, so setActiveModel() calls
+from Jarvis now take effect: OverrideStrategy sees a non-auto model, short-
+circuits the chain, and NumericalClassifier is never reached.
+
+Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
+---
+ packages/core/src/core/client.ts | 5 ++++-
+ 1 file changed, 4 insertions(+), 1 deletion(-)
+
+diff --git a/packages/core/src/core/client.ts b/packages/core/src/core/client.ts
+index ce544a0e3..4e7efbf39 100644
+--- a/packages/core/src/core/client.ts
++++ b/packages/core/src/core/client.ts
+@@ -739,7 +739,10 @@ export class GeminiClient {
+       history: this.getChat().getHistory(/*curated=*/ true),
+       request,
+       signal,
+-      requestedModel: this.config.getModel(),
++      // Use getActiveModel() so external callers (e.g. Jarvis localModelRouter)
++      // can override the model via setActiveModel() without broadcasting a
++      // model-changed event to all GeminiClient instances.
++      requestedModel: this.config.getActiveModel(),
+     };
+ 
+     let modelToUse: string;
+-- 
+2.50.1 (Apple Git-155)
+
