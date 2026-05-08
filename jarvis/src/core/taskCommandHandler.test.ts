@@ -183,6 +183,56 @@ describe("TaskCommandHandler", () => {
     });
   });
 
+  describe("!task reload", () => {
+    it("calls scheduler.reload() and reports exact task count", async () => {
+      const { handler, scheduler } = makeHandler({
+        tasks: [
+          { id: "task1", cron: "0 8 * * *", prompt: "Brief", enabled: true },
+        ],
+      });
+      const reloadSpy = vi.spyOn(scheduler, "reload");
+      const result = await handler.handle("!task reload");
+      expect(reloadSpy).toHaveBeenCalledOnce();
+      // nightly-reflection built-in + task1 = 2
+      expect(result).toContain("2 task(s) registered");
+    });
+
+    it("picks up tasks written externally to tasks.json after reload", async () => {
+      const { handler, tmpDir } = makeHandler();
+      // Write a new task directly to the file (simulating external mutation)
+      const config = readTasks(tmpDir);
+      config.tasks.push({
+        id: "external-task",
+        cron: "0 9 * * *",
+        prompt: "External",
+        enabled: true,
+      });
+      fs.writeFileSync(
+        path.join(tmpDir, "tasks.json"),
+        JSON.stringify(config, null, 2),
+      );
+      await handler.handle("!task reload");
+      const listResult = await handler.handle("!task list");
+      expect(listResult).toContain("external-task");
+    });
+
+    it("warns when reload finds zero tasks (loadConfig failure)", async () => {
+      const { handler, tmpDir } = makeHandler();
+      // Corrupt tasks.json so loadConfig() returns null
+      fs.writeFileSync(path.join(tmpDir, "tasks.json"), "not valid json");
+      const result = await handler.handle("!task reload");
+      expect(result).toContain("0 tasks found");
+    });
+
+    it("works with no user tasks (only built-in nightly-reflection)", async () => {
+      const { handler, scheduler } = makeHandler();
+      const reloadSpy = vi.spyOn(scheduler, "reload");
+      const result = await handler.handle("!task reload");
+      expect(reloadSpy).toHaveBeenCalledOnce();
+      expect(result).toContain("1 task(s) registered");
+    });
+  });
+
   describe("unknown commands", () => {
     it("returns help text for unknown subcommand", async () => {
       const { handler } = makeHandler();
@@ -277,5 +327,11 @@ describe("TaskCommandHandler — task_update and natural language cron", () => {
     expect(readTasks(tmpDir).tasks.find((t) => t.id === "task1")!.cron).toBe(
       "0 15 * * *",
     );
+  });
+
+  it("handleTool: reload is intentionally not exposed as an LLM tool action", async () => {
+    const { handler } = makeHandler();
+    const result = await handler.handleTool("reload", {});
+    expect(result).toContain("Unknown task action");
   });
 });

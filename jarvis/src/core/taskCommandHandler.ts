@@ -302,6 +302,10 @@ export class TaskCommandHandler {
   private reload(): string {
     this.taskScheduler.reload();
     const count = this.taskScheduler.getTasks().length;
+    if (count === 0) {
+      // loadConfig() failed silently — normally at least nightly-reflection is present
+      return `⚠️ Tasks reloaded but 0 tasks found. Check tasks.json for errors.`;
+    }
     return `🔄 Tasks reloaded. ${count} task(s) registered.`;
   }
 
