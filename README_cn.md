@@ -75,10 +75,12 @@ npx gemini login
 
 **方案 B：API Key**
 
-在项目根目录的 `.env` 文件中添加：
+在 `~/.gemini-jarvis/config.json` 中设置：
 
-```bash
-GOOGLE_API_KEY=你的_API_KEY
+```json
+"api": {
+  "key": "你的_API_KEY"
+}
 ```
 
 ### 安装与启动

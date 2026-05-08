@@ -75,10 +75,12 @@ npx gemini login
 
 **Option B: API Key**
 
-Add to `.env` in the project root:
+Set in `~/.gemini-jarvis/config.json`:
 
-```bash
-GOOGLE_API_KEY=your_api_key_here
+```json
+"api": {
+  "key": "your_api_key_here"
+}
 ```
 
 ### Install & Run
