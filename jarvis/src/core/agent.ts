@@ -906,6 +906,20 @@ export class JarvisAgent extends EventEmitter {
 
     this.isProcessing = true;
 
+    // On the first message of a new session, drop any restored history so the
+    // LLM starts with a clean context. Prior conversations are already
+    // captured in long-term memory via backfillSessionEvents, so the raw
+    // history adds noise rather than value.
+    if (this.conversationTurnCount === 0 && this.client) {
+      const historyLen = this.client.getChat().getHistory().length;
+      if (historyLen > 0) {
+        this.client.getChat().setHistory([]);
+        console.error(
+          `🧹 [Jarvis] First message of session — cleared ${Math.floor(historyLen / 2)} restored turn(s) from history.`,
+        );
+      }
+    }
+
     try {
       const pId = `jarvis-${this.sessionId}-${Date.now()}`;
 
@@ -956,6 +970,7 @@ export class JarvisAgent extends EventEmitter {
           timeWindowDays = result.timeWindowDays;
           resolvedDateRange = result.resolvedDateRange ?? null;
           this.toolRouter.setCurrentTimeWindow(timeWindowDays);
+          this.toolRouter.setCurrentUserPrompt(userPrompt);
           this.toolRouter.setCurrentDateRange(
             resolvedDateRange,
             result.dateFrom,
