@@ -255,10 +255,9 @@ export class FeishuChannel {
           return;
         }
         const jarvisConfig = ConfigManager.getInstance().get();
-        if (event.type === "content" && typeof event.value === "string") {
+        if (typeof event.value === "string") {
           accumulatedText += event.value;
         } else if (
-          event.type === "thought" &&
           jarvisConfig.feishu.showThoughts &&
           event.value &&
           typeof event.value === "object"

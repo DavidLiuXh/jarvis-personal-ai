@@ -333,9 +333,7 @@ export class WechatChannel {
         this.pendingConfirmations.set(sessionId, event.value);
         return;
       }
-      // Only accumulate plain text content — ignore tool call requests/responses
-      // and other structured events to prevent raw JSON leaking to the user.
-      if (event.type === "content" && typeof event.value === "string") {
+      if (typeof event.value === "string") {
         accumulatedText += event.value;
       }
     };
