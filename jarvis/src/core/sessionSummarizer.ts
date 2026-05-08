@@ -564,11 +564,25 @@ export function extractSummaryChunks(summary: string): string[] {
   let currentHeading = "";
 
   const splitBullet = (text: string): string[] => {
-    const parts = text
-      .split(/(?<=[。！？.!?；;])\s+|(?:\s+[-•]\s+)/u)
-      .map((part) => part.trim())
-      .filter(Boolean);
-    return parts.length > 0 ? parts : [text.trim()];
+    // Split on sentence-ending punctuation followed by whitespace.
+    // For " - " (hyphen), only split when both sides are long enough (>= 15
+    // chars) to avoid severing labels from values like "NVDA - target $1200".
+    const sentenceParts = text.split(/(?<=[。！？.!?；;])\s+/u);
+    const parts: string[] = [];
+    for (const part of sentenceParts) {
+      const dashSplit = part.split(/\s+-\s+/);
+      if (
+        dashSplit.length > 1 &&
+        dashSplit.every((s) => s.trim().length >= 15)
+      ) {
+        parts.push(...dashSplit.map((s) => s.trim()));
+      } else {
+        parts.push(part.trim());
+      }
+    }
+    return parts.filter(Boolean).length > 0
+      ? parts.filter(Boolean)
+      : [text.trim()];
   };
 
   for (const line of lines) {
@@ -607,7 +621,7 @@ export function buildSummarySectionFromChunks(chunks: string[]): string {
     return "";
   }
 
-  const compactSnippet = (text: string, maxLen = 120): string => {
+  const compactSnippet = (text: string, maxLen = 300): string => {
     const cleaned = text.replace(/\s+/g, " ").trim();
     const firstSentence =
       cleaned.split(/(?<=[。！？.!?；;])/u)[0]?.trim() ?? cleaned;
@@ -626,7 +640,7 @@ export function buildRelevantSummarySectionFallback(
   summary: string,
   userPrompt: string,
   maxItems = 3,
-  minScore = 4,
+  minScore = 2,
 ): string {
   if (!summary.trim() || !userPrompt.trim() || maxItems <= 0) {
     return "";

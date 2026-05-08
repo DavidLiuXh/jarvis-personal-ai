@@ -645,7 +645,7 @@ export class JarvisAgent extends EventEmitter {
         this.sessionId,
         userPrompt,
         2,
-        0.78,
+        0.72,
       );
       relevantSummarySection =
         summaryChunks.length > 0

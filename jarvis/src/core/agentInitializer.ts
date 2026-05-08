@@ -845,7 +845,9 @@ export class AgentInitializer {
           /* skip unreadable file */
         }
       }
-      const recentMessages = allMessages.slice(-recentTurns);
+      // slice(-0) === slice(0) returns the full array, so guard explicitly
+      const recentMessages =
+        recentTurns > 0 ? allMessages.slice(-recentTurns) : [];
 
       // 7. Build history: compressed history prefix + recent raw turns
       const history = buildHistoryFromMessages(recentMessages);

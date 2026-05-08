@@ -75,19 +75,8 @@ function deriveStyleFromIdentity(identityFacts: FactRecord[]): string | null {
   return null;
 }
 
-const PUSH_STRONG_PATTERNS = [
-  "发到微信",
-  "发到飞书",
-  "推送到微信",
-  "推送到飞书",
-  "send to wechat",
-  "send to feishu",
-  "push to wechat",
-  "push to feishu",
-  "share on wechat",
-  "share on feishu",
-];
-
+// Push: action keyword + target keyword both required (no separate strong
+// patterns needed — every combination is covered by the two-list check).
 const PUSH_ACTION_KEYWORDS = [
   "发到",
   "推送到",
@@ -97,17 +86,9 @@ const PUSH_ACTION_KEYWORDS = [
 ];
 const PUSH_TARGET_KEYWORDS = ["微信", "飞书", "wechat", "feishu"];
 
-const TASK_STRONG_PATTERNS = [
-  "每天",
-  "每周",
-  "每月",
-  "每日",
-  "定时",
-  "每隔",
-  "scheduled",
-  "cron",
-];
-
+// Task: only inject when BOTH a time keyword AND an action keyword are present.
+// TASK_STRONG_PATTERNS was previously a subset of TASK_TIME_KEYWORDS, which
+// caused the action-keyword requirement to be bypassed — removed.
 const TASK_TIME_KEYWORDS = [
   "每天",
   "每周",
@@ -128,6 +109,9 @@ const TASK_ACTION_KEYWORDS = [
   "自动汇总",
 ];
 
+// Code: strong patterns cover unambiguous single-word triggers; action+target
+// covers two-word combos. Duplicates between the two lists removed from
+// CODE_ACTION_KEYWORDS to avoid dead code.
 const CODE_STRONG_PATTERNS = [
   "修改代码",
   "重写代码",
@@ -143,13 +127,10 @@ const CODE_ACTION_KEYWORDS = [
   "修改",
   "重写",
   "编辑",
-  "重构",
   "实现",
   "edit",
   "modify",
-  "refactor",
   "rewrite",
-  "implement",
 ];
 
 const CODE_TARGET_KEYWORDS = ["代码", "函数", "方法", "模块", "接口", "code"];
@@ -159,32 +140,25 @@ function matchesAny(text: string, keywords: string[]): boolean {
   return keywords.some((kw) => lower.includes(kw));
 }
 
-function countMatches(text: string, keywords: string[]): number {
-  const lower = text.toLowerCase();
-  return keywords.filter((kw) => lower.includes(kw)).length;
-}
-
 function shouldInjectPushProtocol(text: string): boolean {
   return (
-    matchesAny(text, PUSH_STRONG_PATTERNS) ||
-    (countMatches(text, PUSH_ACTION_KEYWORDS) > 0 &&
-      countMatches(text, PUSH_TARGET_KEYWORDS) > 0)
+    matchesAny(text, PUSH_ACTION_KEYWORDS) &&
+    matchesAny(text, PUSH_TARGET_KEYWORDS)
   );
 }
 
 function shouldInjectTaskProtocol(text: string): boolean {
   return (
-    matchesAny(text, TASK_STRONG_PATTERNS) ||
-    (countMatches(text, TASK_TIME_KEYWORDS) > 0 &&
-      countMatches(text, TASK_ACTION_KEYWORDS) > 0)
+    matchesAny(text, TASK_TIME_KEYWORDS) &&
+    matchesAny(text, TASK_ACTION_KEYWORDS)
   );
 }
 
 function shouldInjectCodeProtocol(text: string): boolean {
   return (
     matchesAny(text, CODE_STRONG_PATTERNS) ||
-    (countMatches(text, CODE_ACTION_KEYWORDS) > 0 &&
-      countMatches(text, CODE_TARGET_KEYWORDS) > 0)
+    (matchesAny(text, CODE_ACTION_KEYWORDS) &&
+      matchesAny(text, CODE_TARGET_KEYWORDS))
   );
 }
 

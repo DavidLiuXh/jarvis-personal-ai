@@ -3547,10 +3547,9 @@ Events:`;
 
       if (rows.length === 0) return [];
 
-      const strictDistance = Math.min(maxDistance, 0.72);
-      if (rows[0].distance > strictDistance) {
+      if (rows[0].distance > maxDistance) {
         debugLogger.debug(
-          `[SummaryIndex] top hit too far (distance=${rows[0].distance.toFixed(3)} > ${strictDistance.toFixed(3)}), skipping summary injection; top=${rows[0].chunk_text.slice(0, 120).replace(/\s+/g, " ")}`,
+          `[SummaryIndex] top hit too far (distance=${rows[0].distance.toFixed(3)} > ${maxDistance.toFixed(3)}), skipping summary injection; top=${rows[0].chunk_text.slice(0, 120).replace(/\s+/g, " ")}`,
         );
         return [];
       }
