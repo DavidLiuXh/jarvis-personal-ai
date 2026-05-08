@@ -31,6 +31,7 @@ const HELP = `
   !task disable <id>                      — Disable a task
   !task delete <id>                       — Delete a task
   !task run <id>                          — Trigger a task immediately
+  !task reload                            — Reload tasks.json and re-register all cron jobs
 
 Cron supports natural language: "每天早上8点", "weekdays at 9am", "每隔2小时"
 
@@ -130,6 +131,8 @@ export class TaskCommandHandler {
         return this.delete(rest[0]);
       case "run":
         return this.run(rest[0]);
+      case "reload":
+        return this.reload();
       default:
         return `Unknown subcommand "${subcommand}".\n\n${HELP}`;
     }
@@ -294,6 +297,12 @@ export class TaskCommandHandler {
 
     this.taskScheduler.deleteTask(id);
     return `🗑️ Task deleted: ${id}`;
+  }
+
+  private reload(): string {
+    this.taskScheduler.reload();
+    const count = this.taskScheduler.getTasks().length;
+    return `🔄 Tasks reloaded. ${count} task(s) registered.`;
   }
 
   private async run(id: string): Promise<string> {
