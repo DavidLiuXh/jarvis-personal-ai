@@ -918,6 +918,8 @@ export class JarvisAgent extends EventEmitter {
           role: "user" | "assistant";
           content: string;
         }> = [];
+        // Declared here so the restore after the if-block can reference it.
+        let originalGetModel: (() => string) | null = null;
         if (this.localModelRouter) {
           const rawHistory = this.client.getChat().getHistory();
           const history = rawHistory.flatMap((turn) => {
@@ -940,17 +942,15 @@ export class JarvisAgent extends EventEmitter {
           // GeminiClient instances including concurrent bg agents.
           this.client.config.setActiveModel(result.model);
 
-          // 🛡️ CRITICAL FIX: The underlying gemini-cli-core `client.js` routing logic
-          // (specifically `OverrideStrategy`) forcefully reads `config.getModel()`
-          // during `processTurn`, completely ignoring `setActiveModel`.
-          // To ensure our local routing decision actually takes effect, we temporarily
-          // hijack `getModel()` for this client instance.
-          const originalGetModel = this.client.config.getModel;
+          // 🛡️ Patch getModel() for this turn so that resolvePolicyChain()
+          // (called inside applyModelSelection) sees the Jarvis-chosen model
+          // rather than the base config model. This prevents Gemini-3 model
+          // names from being hijacked by the auto policy chain.
+          // Stored as a closure-local variable — no cross-turn state on `this`.
+          originalGetModel = this.client.config.getModel.bind(
+            this.client.config,
+          );
           this.client.config.getModel = () => result.model;
-
-          // Store the original method so we can restore it when the turn is done.
-          // We attach it to the current scope so we can clean up in the finally block.
-          (this as any)._originalGetModel = originalGetModel;
 
           querySubject = result.querySubject;
           timeWindowDays = result.timeWindowDays;
@@ -967,6 +967,13 @@ export class JarvisAgent extends EventEmitter {
           console.error(
             `🔀 [Jarvis] Local routing: ${result.decision} | subject=${result.querySubject} | time_window=${twLabel} | reason="${result.classifierReason}" (source=${result.source})`,
           );
+        }
+
+        // Restore getModel() after routing context is no longer needed.
+        // Must happen after refreshContext() since it also reads config state,
+        // but before the turn ends so subsequent unrelated calls see the real model.
+        if (originalGetModel) {
+          this.client.config.getModel = originalGetModel;
         }
 
         await this.refreshContext(
@@ -1174,11 +1181,6 @@ export class JarvisAgent extends EventEmitter {
       this.emit(JarvisEventType.ERROR, error);
     } finally {
       this.isProcessing = false;
-      // 🛡️ Cleanup the getModel hijack if we applied it
-      if (this.client && (this as any)._originalGetModel) {
-        this.client.config.getModel = (this as any)._originalGetModel;
-        delete (this as any)._originalGetModel;
-      }
     }
   }
 
