@@ -75,6 +75,14 @@ export interface JarvisConfig {
      * Default: false.
      */
     queryRewrite?: boolean;
+    /**
+     * Detect topic shifts via local Ollama model. When the new message is
+     * unrelated to recent history, chat history is cleared before the turn
+     * so the LLM starts with a clean context (equivalent to !clear).
+     * Skipped on the first turn of a session (already cleared on startup).
+     * Default: true.
+     */
+    topicShiftDetection?: boolean;
   };
   /**
    * Session summarizer configuration.

@@ -91,6 +91,8 @@ export type RoutingResult = {
   dateTo: string | null;
   /** Pre-resolved date range as { from, to } ms timestamps. Preferred over dateFrom/dateTo strings. */
   resolvedDateRange: { from: number; to: number } | null;
+  /** Whether the local model detected a topic shift from recent history. */
+  topicShifted: boolean;
 };
 
 type ClassifyResult = {
@@ -126,8 +128,16 @@ export class LocalModelRouter {
   async route(
     userPrompt: string,
     history: ConversationTurn[] = [],
+    detectShift: boolean = false,
   ): Promise<RoutingResult> {
     try {
+      // Run complexity classification and topic shift detection in parallel
+      const [classified, topicShifted] = await Promise.all([
+        this.classify(userPrompt, history),
+        detectShift && history.length >= 2
+          ? this.detectTopicShift(userPrompt, history)
+          : Promise.resolve(false),
+      ]);
       const {
         score,
         reason,
@@ -136,7 +146,7 @@ export class LocalModelRouter {
         dateFrom,
         dateTo,
         resolvedDateRange,
-      } = await this.classify(userPrompt, history);
+      } = classified;
       const model = score >= this.threshold ? this.proModel : this.flashModel;
       return {
         model,
@@ -152,6 +162,7 @@ export class LocalModelRouter {
         dateFrom,
         dateTo,
         resolvedDateRange,
+        topicShifted,
       };
     } catch (e: any) {
       return {
@@ -165,6 +176,7 @@ export class LocalModelRouter {
         dateFrom: null,
         dateTo: null,
         resolvedDateRange: null,
+        topicShifted: false,
       };
     }
   }
@@ -310,6 +322,65 @@ export class LocalModelRouter {
    * that resolve pronouns/references and expand relevant terms.
    * Returns null on failure so the caller can fall back to the original query.
    */
+  /**
+   * Detect whether the new user message is about a completely different topic
+   * from the recent conversation. Returns true only when the shift is clear;
+   * defaults to false on any ambiguity or error (conservative — prefer false
+   * positives over incorrectly clearing history).
+   */
+  async detectTopicShift(
+    userPrompt: string,
+    recentHistory: ConversationTurn[],
+  ): Promise<boolean> {
+    const turns = recentHistory.slice(-6);
+    const historyText = turns
+      .map(
+        (t) =>
+          `${t.role === "user" ? "User" : "Assistant"}: ${t.content.slice(0, 200)}`,
+      )
+      .join("\n");
+
+    const prompt =
+      `You are a conversation analyst. Determine if the new user message is about a COMPLETELY DIFFERENT and UNRELATED topic compared to the recent conversation.
+
+Recent conversation:
+${historyText}
+
+New user message: ${userPrompt}
+
+Rules:
+- Answer true ONLY if the new message is clearly about an unrelated subject.
+- Answer false if the new message continues, follows up, asks a related question, or is even loosely connected to the recent conversation.
+- When in doubt, answer false.
+
+Output ONLY a raw JSON object: {"shifted": true} or {"shifted": false}`.trim();
+
+    try {
+      const raw = await ollamaGenerate(this.classifierModel, prompt, {
+        baseUrl: this.baseUrl,
+        timeoutMs: Math.min(this.timeoutMs, 8_000),
+        numPredict: 20,
+      });
+      const stripped = raw
+        .replace(/^```(?:json)?\s*/i, "")
+        .replace(/\s*```\s*$/, "")
+        .trim();
+      const s = stripped.indexOf("{");
+      const e = stripped.lastIndexOf("}");
+      if (s === -1 || e <= s) return false;
+      const parsed = JSON.parse(stripped.slice(s, e + 1)) as {
+        shifted?: boolean;
+      };
+      const result = parsed.shifted === true;
+      console.error(
+        `🔀 [TopicShift] "${userPrompt.slice(0, 60)}" → shifted=${result}`,
+      );
+      return result;
+    } catch {
+      return false;
+    }
+  }
+
   async rewriteMemoryQuery(
     userPrompt: string,
     recentHistory: ConversationTurn[],

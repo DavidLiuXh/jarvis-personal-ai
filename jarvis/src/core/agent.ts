@@ -950,7 +950,15 @@ export class JarvisAgent extends EventEmitter {
             ];
           });
           conversationHistory = history;
-          const result = await this.localModelRouter.route(userPrompt, history);
+          const detectShift =
+            this.jarvisConfig.routing?.topicShiftDetection !== false &&
+            this.conversationTurnCount > 0 &&
+            history.length >= 2;
+          const result = await this.localModelRouter.route(
+            userPrompt,
+            history,
+            detectShift,
+          );
           // Use setActiveModel (not setModel) to avoid broadcasting on the
           // global coreEvents singleton, which would disrupt all live
           // GeminiClient instances including concurrent bg agents.
@@ -982,6 +990,18 @@ export class JarvisAgent extends EventEmitter {
           console.error(
             `🔀 [Jarvis] Local routing: ${result.decision} | subject=${result.querySubject} | time_window=${twLabel} | reason="${result.classifierReason}" (source=${result.source})`,
           );
+
+          // Topic shift detected: clear history so LLM starts fresh on new topic.
+          // Prior conversations are captured in long-term memory via backfill.
+          if (result.topicShifted) {
+            const historyLen = this.client.getChat().getHistory().length;
+            if (historyLen > 0) {
+              this.client.getChat().setHistory([]);
+              console.error(
+                `🔄 [Jarvis] Topic shift detected — cleared ${Math.floor(historyLen / 2)} turn(s) from history.`,
+              );
+            }
+          }
         }
 
         // Restore getModel() after routing context is no longer needed.
