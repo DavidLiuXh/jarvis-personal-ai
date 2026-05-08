@@ -36,6 +36,7 @@ import { ConfigManager } from "./configManager.js";
 import { type ChannelRegistry } from "./channelRegistry.js";
 import {
   buildIncrementalSummary,
+  buildHistoryWithSummary,
   buildRelevantSummarySectionFallback,
   buildSummarySectionFromChunks,
   type SessionMessage,
