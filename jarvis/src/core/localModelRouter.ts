@@ -38,7 +38,7 @@ function buildClassifierPrompt(
 
   return `
 Today is ${todayStr} (${todayName}).
-You are a task analyst. Evaluate the user's request on THREE dimensions simultaneously.
+You are a task analyst. Evaluate the user's request on FIVE dimensions simultaneously.
 
 DIMENSION 1 — Knowledge Depth (1-100)
 1-25: Basic fact retrieval, simple summaries.
@@ -62,6 +62,10 @@ KEY RULE: "what did we discuss on Monday" → personal, even if the topic is ext
 DIMENSION 4 — Time Window
 ${timeNote}
 
+DIMENSION 5 — Topic Shift (only meaningful when conversation history is present)
+- true: The new request is about a COMPLETELY DIFFERENT and UNRELATED subject compared to the recent conversation history.
+- false: The new request continues, follows up, or is related to the recent conversation. When in doubt, output false.
+
 SCORING FORMULA
 complexity_score = knowledge_score * 0.6 + operation_score * 0.4 (round to integer)
 
@@ -70,7 +74,7 @@ OUTPUT RULES
 - All fields required. time_window_days / date_from / date_to may be null.
 
 Required schema:
-{"knowledge_score": <1-100>, "operation_score": <1-100>, "complexity_score": <1-100>, "complexity_reasoning": "<one sentence>", "query_subject": "personal"|"external"|"mixed", "time_window_days": <integer>|null, "date_from": "<YYYY-MM-DD>"|null, "date_to": "<YYYY-MM-DD>"|null}
+{"knowledge_score": <1-100>, "operation_score": <1-100>, "complexity_score": <1-100>, "complexity_reasoning": "<one sentence>", "query_subject": "personal"|"external"|"mixed", "time_window_days": <integer>|null, "date_from": "<YYYY-MM-DD>"|null, "date_to": "<YYYY-MM-DD>"|null, "topic_shifted": true|false}
 `.trim();
 }
 
@@ -103,6 +107,7 @@ type ClassifyResult = {
   dateFrom: string | null;
   dateTo: string | null;
   resolvedDateRange: { from: number; to: number } | null;
+  topicShifted: boolean;
 };
 
 export type ConversationTurn = {
@@ -128,20 +133,14 @@ export class LocalModelRouter {
   async route(
     userPrompt: string,
     history: ConversationTurn[] = [],
-    detectShift: boolean = false,
   ): Promise<RoutingResult> {
     try {
-      // Run complexity classification and topic shift detection in parallel
-      const [classified, topicShifted] = await Promise.all([
-        this.classify(userPrompt, history),
-        detectShift && history.length >= 2
-          ? this.detectTopicShift(userPrompt, history)
-          : Promise.resolve(false),
-      ]);
+      const classified = await this.classify(userPrompt, history);
       const {
         score,
         reason,
         querySubject,
+        topicShifted,
         timeWindowDays,
         dateFrom,
         dateTo,
@@ -227,6 +226,7 @@ export class LocalModelRouter {
       time_window_days?: number | null;
       date_from?: string | null;
       date_to?: string | null;
+      topic_shifted?: boolean;
     };
 
     // Validate complexity_score
@@ -309,6 +309,7 @@ export class LocalModelRouter {
       score,
       reason: `${parsed.complexity_reasoning ?? "(no reason)"}${breakdown}`,
       querySubject,
+      topicShifted: parsed.topic_shifted === true,
       timeWindowDays,
       dateFrom,
       dateTo,

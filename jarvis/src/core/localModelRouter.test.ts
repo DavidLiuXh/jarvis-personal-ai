@@ -45,7 +45,11 @@ function makeRouter() {
 }
 
 // Standard classify response
-function classifyResponse(score: number, subject = "external") {
+function classifyResponse(
+  score: number,
+  subject = "external",
+  topicShifted = false,
+) {
   return JSON.stringify({
     knowledge_score: score,
     operation_score: score,
@@ -55,6 +59,7 @@ function classifyResponse(score: number, subject = "external") {
     time_window_days: null,
     date_from: null,
     date_to: null,
+    topic_shifted: topicShifted,
   });
 }
 
@@ -103,47 +108,39 @@ describe("LocalModelRouter — detectTopicShift", () => {
   });
 });
 
-describe("LocalModelRouter — route() with detectShift=true", () => {
+describe("LocalModelRouter — route() topic_shifted via classify", () => {
   beforeEach(() => vi.clearAllMocks());
 
-  it("runs classify and detectTopicShift in parallel when detectShift=true and history>=2", async () => {
+  it("returns topicShifted=true when classifier returns topic_shifted=true", async () => {
     const router = makeRouter();
-    // First call = classify, second = detectTopicShift
-    mockGenerate
-      .mockResolvedValueOnce(classifyResponse(40))
-      .mockResolvedValueOnce('{"shifted": true}');
+    mockGenerate.mockResolvedValueOnce(classifyResponse(40, "external", true));
 
     const result = await router.route(
       "Tell me about investment strategies",
       HISTORY_CODING,
-      true,
     );
 
-    expect(mockGenerate).toHaveBeenCalledTimes(2);
+    expect(mockGenerate).toHaveBeenCalledTimes(1); // single call only
     expect(result.topicShifted).toBe(true);
-    expect(result.model).toBe("gemini-2.5-flash"); // score=40 < threshold=70
+    expect(result.model).toBe("gemini-2.5-flash");
   });
 
-  it("sets topicShifted=false when detectShift=false", async () => {
+  it("returns topicShifted=false when classifier returns topic_shifted=false", async () => {
     const router = makeRouter();
-    mockGenerate.mockResolvedValueOnce(classifyResponse(80));
+    mockGenerate.mockResolvedValueOnce(classifyResponse(80, "external", false));
 
-    const result = await router.route("new topic", HISTORY_CODING, false);
+    const result = await router.route("follow-up question", HISTORY_CODING);
 
-    expect(mockGenerate).toHaveBeenCalledTimes(1); // only classify
     expect(result.topicShifted).toBe(false);
   });
 
-  it("skips shift detection when history has fewer than 2 turns", async () => {
+  it("topicShifted=false when topic_shifted absent from classifier response", async () => {
     const router = makeRouter();
-    mockGenerate.mockResolvedValueOnce(classifyResponse(40));
+    // Response without topic_shifted field
+    mockGenerate.mockResolvedValueOnce(classifyResponse(50));
 
-    const shortHistory: ConversationTurn[] = [
-      { role: "user", content: "hello" },
-    ];
-    const result = await router.route("world", shortHistory, true);
+    const result = await router.route("hello", HISTORY_CODING);
 
-    expect(mockGenerate).toHaveBeenCalledTimes(1); // only classify
     expect(result.topicShifted).toBe(false);
   });
 
@@ -151,35 +148,9 @@ describe("LocalModelRouter — route() with detectShift=true", () => {
     const router = makeRouter();
     mockGenerate.mockRejectedValue(new Error("timeout"));
 
-    const result = await router.route("anything", HISTORY_CODING, true);
+    const result = await router.route("anything", HISTORY_CODING);
 
     expect(result.source).toBe("local-router/fallback");
     expect(result.topicShifted).toBe(false);
-  });
-
-  it("topicShifted=false when shift detection throws but classify succeeds", async () => {
-    const router = makeRouter();
-    mockGenerate
-      .mockResolvedValueOnce(classifyResponse(60))
-      .mockRejectedValueOnce(new Error("ollama down"));
-
-    const result = await router.route("anything", HISTORY_CODING, true);
-
-    expect(result.topicShifted).toBe(false);
-    expect(result.source).toBe("local-router/ollama");
-  });
-});
-
-describe("LocalModelRouter — route() topicShifted=false by default", () => {
-  beforeEach(() => vi.clearAllMocks());
-
-  it("route() without detectShift param always returns topicShifted=false", async () => {
-    const router = makeRouter();
-    mockGenerate.mockResolvedValueOnce(classifyResponse(50));
-
-    const result = await router.route("hello", HISTORY_CODING);
-
-    expect(result.topicShifted).toBe(false);
-    expect(mockGenerate).toHaveBeenCalledTimes(1);
   });
 });
