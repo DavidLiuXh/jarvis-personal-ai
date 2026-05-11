@@ -39,8 +39,8 @@ function hashText(text: string): string {
 }
 
 /**
- * Call the cross-encoder reranker service and return re-scored indices.
- * Returns null on any failure so callers can fall back to original ranking.
+ * Call the cross-encoder reranker service with timeout and retry.
+ * Returns null on all failures so callers fall back to original ranking.
  */
 async function callReranker(
   query: string,
@@ -48,26 +48,49 @@ async function callReranker(
   topK: number,
   baseUrl: string,
   timeoutMs: number,
+  maxRetries: number = 2,
 ): Promise<Array<{ text: string; score: number; index: number }> | null> {
   if (candidates.length === 0) return null;
-  try {
+  const url = `${baseUrl}/rerank_sorted`;
+  const body = JSON.stringify({ query, candidates, top_k: topK });
+
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
-    const res = await fetch(`${baseUrl}/rerank_sorted`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ query, candidates, top_k: topK }),
-      signal: controller.signal,
-    });
-    clearTimeout(timer);
-    if (!res.ok) return null;
-    const data = (await res.json()) as {
-      results: Array<{ text: string; score: number; index: number }>;
-    };
-    return data.results;
-  } catch {
-    return null;
+    try {
+      const res = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body,
+        signal: controller.signal,
+      });
+      clearTimeout(timer);
+      if (!res.ok) {
+        console.error(
+          `⚠️ [reranker] HTTP ${res.status} on attempt ${attempt + 1}/${maxRetries + 1}`,
+        );
+        continue;
+      }
+      const data = (await res.json()) as {
+        results: Array<{ text: string; score: number; index: number }>;
+      };
+      return data.results;
+    } catch (e: any) {
+      clearTimeout(timer);
+      const isTimeout = e?.name === "AbortError";
+      const reason = isTimeout ? `timeout(${timeoutMs}ms)` : e?.message;
+      if (attempt < maxRetries) {
+        console.error(
+          `⚠️ [reranker] attempt ${attempt + 1}/${maxRetries + 1} failed (${reason}), retrying...`,
+        );
+      } else {
+        console.error(
+          `⚠️ [reranker] all ${maxRetries + 1} attempts failed, last error: ${reason}`,
+        );
+      }
+    }
   }
+  return null;
 }
 
 export class MemoryService {
@@ -1279,6 +1302,7 @@ ${factsText}
         const rerankerUrl =
           rerankerCfgSearch.baseUrl ?? "http://localhost:7700";
         const rerankerTimeout = rerankerCfgSearch.timeoutMs ?? 5_000;
+        const rerankerMaxRetries = rerankerCfgSearch.maxRetries ?? 2;
         const beforeOrder = results.map((r) => r.text.slice(0, 60));
         const reranked = await callReranker(
           query,
@@ -1286,6 +1310,7 @@ ${factsText}
           results.length,
           rerankerUrl,
           rerankerTimeout,
+          rerankerMaxRetries,
         );
         if (reranked) {
           results = reranked.map((r) => ({ text: r.text, score: r.score }));
@@ -1923,6 +1948,7 @@ ${insightsSection}</knowledge>
       if (rerankerCfg?.enabled && ranked.length > 1) {
         const rerankerUrl = rerankerCfg.baseUrl ?? "http://localhost:7700";
         const rerankerTimeout = rerankerCfg.timeoutMs ?? 5_000;
+        const rerankerMaxRetries = rerankerCfg.maxRetries ?? 2;
         const beforeOrder = ranked.map(
           (f) => `[${f.category}] ${f.content.slice(0, 50)}`,
         );
@@ -1932,6 +1958,7 @@ ${insightsSection}</knowledge>
           ranked.length,
           rerankerUrl,
           rerankerTimeout,
+          rerankerMaxRetries,
         );
         if (reranked) {
           ranked = reranked.map((r) => ranked[r.index]);

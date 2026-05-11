@@ -155,8 +155,13 @@ export interface JarvisConfig {
     enabled: boolean;
     /** HTTP endpoint of the reranker service. Default: "http://localhost:7700". */
     baseUrl?: string;
-    /** Request timeout in milliseconds. Default: 5000. */
+    /** Request timeout per attempt in milliseconds. Default: 5000. */
     timeoutMs?: number;
+    /**
+     * Max retry attempts on timeout or network error.
+     * Each retry uses the same timeoutMs. Default: 2 (3 total attempts).
+     */
+    maxRetries?: number;
     /**
      * Number of candidates to fetch from bi-encoder before reranking.
      * Higher = better recall but slower reranking. Default: 20.
