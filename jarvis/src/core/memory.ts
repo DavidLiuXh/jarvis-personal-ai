@@ -1764,7 +1764,8 @@ ${insightsSection}</knowledge>
           // Filtering at the KNN stage keeps the signal clean — distance is
           // pure semantic similarity, unaffected by importance or decay.
           // bge-m3 L2 distance guide: <0.5 high, <1.0 medium, >1.5 noise.
-          const fetchLimit = Math.max(cap * 3, 20);
+          // fetchLimit must be >= biEncoderCap so reranker always has enough candidates.
+          const fetchLimit = Math.max(biEncoderCap * 2, 20);
           const maxDistance = this.jarvisConfig.memory.factMaxDistance ?? 1.0;
           // sqlite-vec requires 'k = ?' alongside distance filter —
           // LIMIT alone is not accepted when AND constraints are present.
