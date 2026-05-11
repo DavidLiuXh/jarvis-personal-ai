@@ -1272,10 +1272,14 @@ ${factsText}
 
       // Cross-encoder reranking of prewarm memories (optional, config-gated)
       const rerankerCfgSearch = this.jarvisConfig.reranker;
+      const searchRerankStrategy = rerankerCfgSearch?.enabled
+        ? "cross-encoder"
+        : "bi-encoder";
       if (rerankerCfgSearch?.enabled && results.length > 1) {
         const rerankerUrl =
           rerankerCfgSearch.baseUrl ?? "http://localhost:7700";
         const rerankerTimeout = rerankerCfgSearch.timeoutMs ?? 5_000;
+        const beforeOrder = results.map((r) => r.text.slice(0, 60));
         const reranked = await callReranker(
           query,
           results.map((r) => r.text),
@@ -1285,12 +1289,23 @@ ${factsText}
         );
         if (reranked) {
           results = reranked.map((r) => ({ text: r.text, score: r.score }));
-          debugLogger.debug(`[search] reranked ${results.length} memories`);
+          const afterOrder = results.map(
+            (r) => `${(r.score as number).toFixed(2)}:${r.text.slice(0, 60)}`,
+          );
+          console.error(
+            `🎯 [search] cross-encoder reranked ${results.length} memories\n` +
+              `   before: ${beforeOrder.join(" | ")}\n` +
+              `   after:  ${afterOrder.join(" | ")}`,
+          );
+        } else {
+          console.error(
+            `⚠️ [search] cross-encoder unavailable, using bi-encoder order`,
+          );
         }
       }
 
       console.error(
-        `🔍 [search] rows=${rows.length}, scored=${scored.length}, returned=${results.length}`,
+        `🔍 [search] strategy=${searchRerankStrategy}, rows=${rows.length}, scored=${scored.length}, returned=${results.length}`,
       );
       return results;
     } catch (e: any) {
@@ -1900,9 +1915,17 @@ ${insightsSection}</knowledge>
 
       // Cross-encoder reranking of candidateFacts (optional, config-gated)
       const rerankerCfg = this.jarvisConfig.reranker;
+      const factsRerankStrategy = rerankerCfg?.enabled
+        ? "cross-encoder"
+        : strategy === "embedding"
+          ? "bi-encoder(embedding)"
+          : "bi-encoder(jaccard)";
       if (rerankerCfg?.enabled && ranked.length > 1) {
         const rerankerUrl = rerankerCfg.baseUrl ?? "http://localhost:7700";
         const rerankerTimeout = rerankerCfg.timeoutMs ?? 5_000;
+        const beforeOrder = ranked.map(
+          (f) => `[${f.category}] ${f.content.slice(0, 50)}`,
+        );
         const reranked = await callReranker(
           query,
           ranked.map((f) => f.content),
@@ -1912,15 +1935,22 @@ ${insightsSection}</knowledge>
         );
         if (reranked) {
           ranked = reranked.map((r) => ranked[r.index]);
+          const afterOrder = reranked.map(
+            (r) =>
+              `${r.score.toFixed(2)}:[${ranked[reranked.indexOf(r)]?.category}] ${r.text.slice(0, 50)}`,
+          );
           console.error(
-            `🎯 [searchFacts] reranked(${ranked.length}): ${ranked.map((f) => `[${f.category}] ${f.content.slice(0, 50)}`).join(" | ")}`,
+            `🎯 [searchFacts] cross-encoder reranked ${ranked.length} facts\n` +
+              `   before: ${beforeOrder.join(" | ")}\n` +
+              `   after:  ${afterOrder.join(" | ")}`,
           );
         } else {
           console.error(
-            `⚠️ [searchFacts] reranker unavailable, using bi-encoder ranking`,
+            `⚠️ [searchFacts] cross-encoder unavailable, using ${factsRerankStrategy}`,
           );
         }
       }
+      console.error(`🔎 [searchFacts] strategy=${factsRerankStrategy}`);
 
       console.error(
         `🧠 [searchFacts] always(${alwaysOut.length}): ${alwaysOut.map((f) => `[${f.category}] ${f.content.slice(0, 50)}`).join(" | ")}`,
