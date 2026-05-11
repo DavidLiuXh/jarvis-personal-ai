@@ -200,6 +200,7 @@ export class ToolRouter {
   // Used when LLM calls recall_memory without time parameters.
   private currentTimeWindowDays: number | null = null;
   private currentDateRange: { from: number; to: number } | null = null;
+  private currentUserPrompt: string = "";
 
   constructor(
     private memoryService: MemoryServiceHandle,
@@ -213,6 +214,11 @@ export class ToolRouter {
   /** Called by agent.ts each turn with the routing result's relative time window. */
   public setCurrentTimeWindow(days: number | null): void {
     this.currentTimeWindowDays = days;
+  }
+
+  /** Called by agent.ts each turn so recall_memory can fall back to it when LLM omits query. */
+  public setCurrentUserPrompt(prompt: string): void {
+    this.currentUserPrompt = prompt;
   }
 
   /**
@@ -392,16 +398,16 @@ export class ToolRouter {
           dateRange = this.currentDateRange;
         }
 
-        if (!query) {
-          // LLM called recall_memory without a query — give actionable guidance
-          // so it retries with proper keywords instead of silently failing.
+        const effectiveQuery = query || this.currentUserPrompt;
+        if (!effectiveQuery) {
+          // Neither LLM nor router provided a query — give actionable guidance.
           output =
             `recall_memory requires a non-empty query. ` +
             `Extract the TOPIC keywords from the user's question and retry. ` +
             `Example: if user asked "did we discuss Anthropic yesterday?", use query="Anthropic". ` +
             `If user asked "what did we talk about recently?", use query="recent discussion".`;
           console.error(
-            `⚠️ [Jarvis] recall_memory called with empty query — returned guidance to LLM.`,
+            `⚠️ [Jarvis] recall_memory called with empty query and no user prompt fallback.`,
           );
         } else {
           const twSource =
@@ -418,11 +424,16 @@ export class ToolRouter {
             dateRange !== null
               ? `${new Date(dateRange.from).toISOString().slice(0, 10)}~${new Date(dateRange.to).toISOString().slice(0, 10)}`
               : (timeWindowDays ?? "all-time");
+          if (!query) {
+            console.error(
+              `⚠️ [Jarvis] recall_memory: empty query — falling back to user prompt: "${effectiveQuery.slice(0, 80)}"`,
+            );
+          }
           console.error(
-            `🧠 [Jarvis] Active Recall initiated for: "${query}" (TimeWindow: ${windowLabel}, source=${twSource})`,
+            `🧠 [Jarvis] Active Recall initiated for: "${effectiveQuery}" (TimeWindow: ${windowLabel}, source=${twSource})`,
           );
           const memories = await this.memoryService.search(
-            query,
+            effectiveQuery,
             limit,
             timeWindowDays,
             dateRange,
@@ -430,7 +441,7 @@ export class ToolRouter {
           output =
             memories.length > 0
               ? `LONG-TERM MEMORIES FOUND:\n${memories.map((m) => `- ${m}`).join("\n")}\n\nINSTRUCTION: Now synthesize this history into your final answer.`
-              : `NO SPECIFIC MEMORIES FOUND for "${query}". Proceed with current knowledge.`;
+              : `NO SPECIFIC MEMORIES FOUND for "${effectiveQuery}". Proceed with current knowledge.`;
         }
       } else if (req.name.startsWith("task_")) {
         const action = req.name.slice("task_".length);
