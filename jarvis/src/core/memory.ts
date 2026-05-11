@@ -38,6 +38,38 @@ function hashText(text: string): string {
   return crypto.createHash("sha1").update(text).digest("hex");
 }
 
+/**
+ * Call the cross-encoder reranker service and return re-scored indices.
+ * Returns null on any failure so callers can fall back to original ranking.
+ */
+async function callReranker(
+  query: string,
+  candidates: string[],
+  topK: number,
+  baseUrl: string,
+  timeoutMs: number,
+): Promise<Array<{ text: string; score: number; index: number }> | null> {
+  if (candidates.length === 0) return null;
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    const res = await fetch(`${baseUrl}/rerank_sorted`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ query, candidates, top_k: topK }),
+      signal: controller.signal,
+    });
+    clearTimeout(timer);
+    if (!res.ok) return null;
+    const data = (await res.json()) as {
+      results: Array<{ text: string; score: number; index: number }>;
+    };
+    return data.results;
+  } catch {
+    return null;
+  }
+}
+
 export class MemoryService {
   private db: Database.Database;
   private jarvisConfig = ConfigManager.getInstance().get();
@@ -1236,7 +1268,27 @@ ${factsText}
       });
 
       scored.sort((a, b) => b.score - a.score);
-      const results = scored.slice(0, limit);
+      let results = scored.slice(0, limit);
+
+      // Cross-encoder reranking of prewarm memories (optional, config-gated)
+      const rerankerCfgSearch = this.jarvisConfig.reranker;
+      if (rerankerCfgSearch?.enabled && results.length > 1) {
+        const rerankerUrl =
+          rerankerCfgSearch.baseUrl ?? "http://localhost:7700";
+        const rerankerTimeout = rerankerCfgSearch.timeoutMs ?? 5_000;
+        const reranked = await callReranker(
+          query,
+          results.map((r) => r.text),
+          results.length,
+          rerankerUrl,
+          rerankerTimeout,
+        );
+        if (reranked) {
+          results = reranked.map((r) => ({ text: r.text, score: r.score }));
+          debugLogger.debug(`[search] reranked ${results.length} memories`);
+        }
+      }
+
       console.error(
         `🔍 [search] rows=${rows.length}, scored=${scored.length}, returned=${results.length}`,
       );
@@ -1844,6 +1896,30 @@ ${insightsSection}</knowledge>
         const injectedInsightIds = rankedInsights.map((f) => f.id);
         const nowMs = Date.now();
         setImmediate(() => this.updateAccessStats(injectedInsightIds, nowMs));
+      }
+
+      // Cross-encoder reranking of candidateFacts (optional, config-gated)
+      const rerankerCfg = this.jarvisConfig.reranker;
+      if (rerankerCfg?.enabled && ranked.length > 1) {
+        const rerankerUrl = rerankerCfg.baseUrl ?? "http://localhost:7700";
+        const rerankerTimeout = rerankerCfg.timeoutMs ?? 5_000;
+        const reranked = await callReranker(
+          query,
+          ranked.map((f) => f.content),
+          ranked.length,
+          rerankerUrl,
+          rerankerTimeout,
+        );
+        if (reranked) {
+          ranked = reranked.map((r) => ranked[r.index]);
+          console.error(
+            `🎯 [searchFacts] reranked(${ranked.length}): ${ranked.map((f) => `[${f.category}] ${f.content.slice(0, 50)}`).join(" | ")}`,
+          );
+        } else {
+          console.error(
+            `⚠️ [searchFacts] reranker unavailable, using bi-encoder ranking`,
+          );
+        }
       }
 
       console.error(

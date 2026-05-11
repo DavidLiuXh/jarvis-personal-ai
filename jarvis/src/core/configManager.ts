@@ -145,6 +145,24 @@ export interface JarvisConfig {
      */
     batchSize?: number;
   };
+  /**
+   * Cross-encoder reranker for precision re-scoring of retrieval candidates.
+   * When enabled, candidates from bi-encoder search are re-ranked by a
+   * cross-encoder model before top-K selection.
+   */
+  reranker?: {
+    /** Enable cross-encoder reranking. Default: false. */
+    enabled: boolean;
+    /** HTTP endpoint of the reranker service. Default: "http://localhost:7700". */
+    baseUrl?: string;
+    /** Request timeout in milliseconds. Default: 5000. */
+    timeoutMs?: number;
+    /**
+     * Number of candidates to fetch from bi-encoder before reranking.
+     * Higher = better recall but slower reranking. Default: 20.
+     */
+    candidatePool?: number;
+  };
   network: {
     /** Max retry attempts for network errors (fetch failed, ECONNRESET, etc.). Default: 3. */
     maxRetries: number;
