@@ -1741,8 +1741,9 @@ ${insightsSection}</knowledge>
         this.jarvisConfig.memory.factRelevanceStrategy ?? "jaccard";
       // When reranker is enabled, fetch a larger pool from bi-encoder so the
       // cross-encoder can rerank across more candidates before slicing to cap.
-      const rerankerPool = this.jarvisConfig.reranker?.enabled
-        ? (this.jarvisConfig.reranker.candidatePool ?? 20)
+      const useReranker = !!this.jarvisConfig.reranker?.enabled;
+      const rerankerPool = useReranker
+        ? (this.jarvisConfig.reranker!.candidatePool ?? 20)
         : cap;
       const biEncoderCap = Math.max(cap, rerankerPool);
 
@@ -1826,7 +1827,9 @@ ${insightsSection}</knowledge>
             }
 
             // RRF fusion: rrfScore = 1/(k+rank_vec) + 1/(k+rank_bm25)
-            // Then add importance and decay on top
+            // When reranker is enabled, use pure semantic score for candidate
+            // selection — cross-encoder handles final ranking so importance/decay
+            // proxies are unnecessary and could exclude relevant-but-low-weight facts.
             const scoredRows = vecRows
               .map((r, vecIdx) => {
                 const fact = factById.get(r.id);
@@ -1841,12 +1844,17 @@ ${insightsSection}</knowledge>
                 const vecRank = vecIdx + 1;
                 const bm25Rank = bm25RankMap.get(r.id) ?? fetchLimit + 1;
                 const rrfScore = 1 / (rrfK + vecRank) + 1 / (rrfK + bm25Rank);
-                const daysSince = fact.last_accessed
-                  ? (nowMs - fact.last_accessed) / 86_400_000
-                  : 0;
-                const decay = Math.exp(-lambda * daysSince);
-                const fusedScore =
-                  rrfScore + beta * (fact.importance / 10) + gamma * decay;
+                const fusedScore = useReranker
+                  ? rrfScore
+                  : (() => {
+                      const daysSince = fact.last_accessed
+                        ? (nowMs - fact.last_accessed) / 86_400_000
+                        : 0;
+                      const decay = Math.exp(-lambda * daysSince);
+                      return (
+                        rrfScore + beta * (fact.importance / 10) + gamma * decay
+                      );
+                    })();
                 return {
                   id: r.id,
                   category: fact.category,
@@ -1874,14 +1882,19 @@ ${insightsSection}</knowledge>
                 if (!f.embedding) return { ...f, score: 0 };
                 const vec = Array.from(new Float32Array(f.embedding.buffer));
                 const cosineSim = this.cosineSimilarity(queryVec, vec);
-                const daysSince = f.last_accessed
-                  ? (nowMs - f.last_accessed) / 86_400_000
-                  : 0;
-                const decay = Math.exp(-lambda * daysSince);
-                const fusedScore =
-                  alpha * cosineSim +
-                  beta * (f.importance / 10) +
-                  gamma * decay;
+                const fusedScore = useReranker
+                  ? cosineSim
+                  : (() => {
+                      const daysSince = f.last_accessed
+                        ? (nowMs - f.last_accessed) / 86_400_000
+                        : 0;
+                      const decay = Math.exp(-lambda * daysSince);
+                      return (
+                        alpha * cosineSim +
+                        beta * (f.importance / 10) +
+                        gamma * decay
+                      );
+                    })();
                 return { ...f, score: fusedScore };
               })
               .sort((a, b) => (b as any).score - (a as any).score)
