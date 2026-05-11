@@ -25,6 +25,13 @@ MODEL_DIR = os.environ.get(
 )
 PORT = int(os.environ.get("RERANKER_PORT", "7700"))
 MAX_LENGTH = 256
+MAX_CANDIDATES = int(os.environ.get("RERANKER_MAX_CANDIDATES", "100"))
+
+# Startup validation — fail fast with a clear message
+if not os.path.isdir(MODEL_DIR):
+    raise RuntimeError(f"RERANKER_MODEL_DIR not found: {MODEL_DIR!r}")
+if not os.path.isfile(os.path.join(MODEL_DIR, "model.onnx")):
+    raise RuntimeError(f"model.onnx not found in {MODEL_DIR!r}")
 
 app = FastAPI()
 tokenizer = AutoTokenizer.from_pretrained(MODEL_DIR)
@@ -32,6 +39,8 @@ session = ort.InferenceSession(
     os.path.join(MODEL_DIR, "model.onnx"),
     providers=["CPUExecutionProvider"],
 )
+# Determine required input names from the model (handles both BERT and RoBERTa)
+_input_names = {inp.name for inp in session.get_inputs()}
 
 
 class RerankRequest(BaseModel):
@@ -48,24 +57,22 @@ class RerankSortedRequest(BaseModel):
 def score_pairs(query: str, candidates: list[str]) -> list[float]:
     if not candidates:
         return []
-    pairs = [(query, doc) for doc in candidates]
+    if len(candidates) > MAX_CANDIDATES:
+        raise ValueError(
+            f"Too many candidates: {len(candidates)} > {MAX_CANDIDATES}"
+        )
     inputs = tokenizer(
-        [p[0] for p in pairs],
-        [p[1] for p in pairs],
+        [query] * len(candidates),
+        candidates,
         return_tensors="np",
         truncation=True,
         padding=True,
         max_length=MAX_LENGTH,
     )
-    outputs = session.run(
-        None,
-        {
-            "input_ids": inputs["input_ids"],
-            "attention_mask": inputs["attention_mask"],
-            "token_type_ids": inputs["token_type_ids"],
-        },
-    )
-    # Raw logits — higher = more relevant
+    # Only pass inputs the model actually expects (BERT has token_type_ids, RoBERTa doesn't)
+    feed = {k: inputs[k] for k in _input_names if k in inputs}
+    outputs = session.run(None, feed)
+    # outputs[0] shape: [batch_size, 1] — raw logit, higher = more relevant
     scores = outputs[0][:, 0].tolist()
     return scores
 
@@ -89,10 +96,10 @@ def rerank_sorted(req: RerankSortedRequest):
         key=lambda x: x["score"],
         reverse=True,
     )
-    top_k = req.top_k or len(ranked)
+    top_k = req.top_k if req.top_k is not None else len(ranked)
     return {"results": ranked[:top_k]}
 
 
 if __name__ == "__main__":
     print(f"Starting reranker service on port {PORT}, model={MODEL_DIR}")
-    uvicorn.run(app, host="0.0.0.0", port=PORT)
+    uvicorn.run(app, host="127.0.0.1", port=PORT)

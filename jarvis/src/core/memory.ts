@@ -1739,6 +1739,12 @@ ${insightsSection}</knowledge>
       const cap = limit ?? this.jarvisConfig.memory.factRelevanceLimit ?? 5;
       const strategy =
         this.jarvisConfig.memory.factRelevanceStrategy ?? "jaccard";
+      // When reranker is enabled, fetch a larger pool from bi-encoder so the
+      // cross-encoder can rerank across more candidates before slicing to cap.
+      const rerankerPool = this.jarvisConfig.reranker?.enabled
+        ? (this.jarvisConfig.reranker.candidatePool ?? 20)
+        : cap;
+      const biEncoderCap = Math.max(cap, rerankerPool);
 
       let ranked: Array<{ category: string; content: string }>;
       let rankedIdsForGraph: number[] = [];
@@ -1849,7 +1855,7 @@ ${insightsSection}</knowledge>
               })
               .filter((r): r is NonNullable<typeof r> => r !== null)
               .sort((a, b) => b.score - a.score)
-              .slice(0, cap);
+              .slice(0, biEncoderCap);
 
             ranked = scoredRows.map(({ category, content }) => ({
               category,
@@ -1878,7 +1884,7 @@ ${insightsSection}</knowledge>
                 return { ...f, score: fusedScore };
               })
               .sort((a, b) => (b as any).score - (a as any).score)
-              .slice(0, cap);
+              .slice(0, biEncoderCap);
 
             ranked = scoredFallback.map(({ category, content }) => ({
               category,
@@ -1892,10 +1898,10 @@ ${insightsSection}</knowledge>
           console.error(
             `⚠️ [searchFacts] embedding strategy failed, falling back to jaccard: ${_e?.message}`,
           );
-          ranked = this.rankByJaccard(query, candidateFacts, cap);
+          ranked = this.rankByJaccard(query, candidateFacts, biEncoderCap);
         }
       } else {
-        ranked = this.rankByJaccard(query, candidateFacts, cap);
+        ranked = this.rankByJaccard(query, candidateFacts, biEncoderCap);
       }
 
       // Rank insights using the same strategy as other facts, cap at INSIGHT_INJECT_LIMIT
@@ -1955,7 +1961,7 @@ ${insightsSection}</knowledge>
         const reranked = await callReranker(
           query,
           ranked.map((f) => f.content),
-          ranked.length,
+          cap,
           rerankerUrl,
           rerankerTimeout,
           rerankerMaxRetries,
@@ -1963,21 +1969,26 @@ ${insightsSection}</knowledge>
         if (reranked) {
           ranked = reranked.map((r) => ranked[r.index]);
           const afterOrder = reranked.map(
-            (r) =>
-              `${r.score.toFixed(2)}:[${ranked[reranked.indexOf(r)]?.category}] ${r.text.slice(0, 50)}`,
+            (r, i) =>
+              `${r.score.toFixed(2)}:[${ranked[i]?.category}] ${r.text.slice(0, 50)}`,
           );
           console.error(
-            `🎯 [searchFacts] cross-encoder reranked ${ranked.length} facts\n` +
+            `🎯 [searchFacts] cross-encoder reranked ${biEncoderCap}→${ranked.length} facts\n` +
               `   before: ${beforeOrder.join(" | ")}\n` +
               `   after:  ${afterOrder.join(" | ")}`,
           );
         } else {
           console.error(
-            `⚠️ [searchFacts] cross-encoder unavailable, using ${factsRerankStrategy}`,
+            `⚠️ [searchFacts] cross-encoder unavailable, falling back to bi-encoder`,
           );
+          ranked = ranked.slice(0, cap);
         }
+      } else {
+        ranked = ranked.slice(0, cap);
       }
-      console.error(`🔎 [searchFacts] strategy=${factsRerankStrategy}`);
+      console.error(
+        `🔎 [searchFacts] strategy=${factsRerankStrategy}, pool=${biEncoderCap}, cap=${cap}`,
+      );
 
       console.error(
         `🧠 [searchFacts] always(${alwaysOut.length}): ${alwaysOut.map((f) => `[${f.category}] ${f.content.slice(0, 50)}`).join(" | ")}`,
