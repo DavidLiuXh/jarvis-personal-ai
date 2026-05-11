@@ -134,10 +134,22 @@ describe("LocalModelRouter — route() topic_shifted via classify", () => {
     expect(result.topicShifted).toBe(false);
   });
 
-  it("topicShifted=false when topic_shifted absent from classifier response", async () => {
+  it("topicShifted=false when topic_shifted field is missing from JSON", async () => {
     const router = makeRouter();
-    // Response without topic_shifted field
-    mockGenerate.mockResolvedValueOnce(classifyResponse(50));
+    // Explicitly omit topic_shifted from the response JSON
+    mockGenerate.mockResolvedValueOnce(
+      JSON.stringify({
+        knowledge_score: 50,
+        operation_score: 50,
+        complexity_score: 50,
+        complexity_reasoning: "test",
+        query_subject: "external",
+        time_window_days: null,
+        date_from: null,
+        date_to: null,
+        // topic_shifted intentionally omitted — parsed.topic_shifted === undefined
+      }),
+    );
 
     const result = await router.route("hello", HISTORY_CODING);
 

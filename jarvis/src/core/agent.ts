@@ -1000,13 +1000,6 @@ export class JarvisAgent extends EventEmitter {
           }
         }
 
-        // Restore getModel() after routing context is no longer needed.
-        // Must happen after refreshContext() since it also reads config state,
-        // but before the turn ends so subsequent unrelated calls see the real model.
-        if (originalGetModel) {
-          this.client.config.getModel = originalGetModel;
-        }
-
         await this.refreshContext(
           userPrompt,
           querySubject,
@@ -1014,6 +1007,13 @@ export class JarvisAgent extends EventEmitter {
           resolvedDateRange,
           conversationHistory,
         );
+
+        // Restore getModel() after refreshContext() — it reads config state
+        // during skill/fact retrieval and must see the Jarvis-chosen model.
+        // Restored before the main LLM turn so subsequent calls see real model.
+        if (originalGetModel) {
+          this.client.config.getModel = originalGetModel;
+        }
 
         const abortController = new AbortController();
         let currentQueryParts: Part[] = [{ text: userPrompt }];

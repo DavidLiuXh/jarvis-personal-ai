@@ -324,10 +324,13 @@ export class LocalModelRouter {
    * Returns null on failure so the caller can fall back to the original query.
    */
   /**
+   * @deprecated topic_shifted is now a dimension in classify() — no separate
+   * Ollama call needed. This method exists only for standalone unit testing.
+   * Do not call it in production code; use the topicShifted field from route().
+   *
    * Detect whether the new user message is about a completely different topic
    * from the recent conversation. Returns true only when the shift is clear;
-   * defaults to false on any ambiguity or error (conservative — prefer false
-   * positives over incorrectly clearing history).
+   * defaults to false on any ambiguity or error.
    */
   async detectTopicShift(
     userPrompt: string,
