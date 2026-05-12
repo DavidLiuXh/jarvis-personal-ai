@@ -1691,10 +1691,11 @@ ${insightsSection}</knowledge>
     "interaction_style",
   ]);
 
-  // Max number of insights to inject per turn (conservative quota)
+  // Max number of insights to inject per turn when reranker is disabled.
+  // When reranker is enabled, insights compete with other facts for the cap.
   private static readonly INSIGHT_INJECT_LIMIT = 2;
   // Minimum importance for an insight to be eligible for injection
-  private static readonly INSIGHT_MIN_IMPORTANCE = 7;
+  private static readonly INSIGHT_MIN_IMPORTANCE = 3;
 
   /**
    * Returns facts relevant to the given query.
@@ -1958,36 +1959,47 @@ ${insightsSection}</knowledge>
         setImmediate(() => this.updateAccessStats(injectedInsightIds, nowMs));
       }
 
-      // Cross-encoder reranking of candidateFacts (optional, config-gated)
+      // Cross-encoder reranking (optional, config-gated)
+      // When reranker is enabled: merge insights into the candidate pool so they
+      // compete with other facts for the cap slots — unified ranking, no separate quota.
+      // When reranker is disabled: keep the existing separate insight path.
       const rerankerCfg = this.jarvisConfig.reranker;
       const factsRerankStrategy = rerankerCfg?.enabled
         ? "cross-encoder"
         : strategy === "embedding"
           ? "bi-encoder(embedding)"
           : "bi-encoder(jaccard)";
-      if (rerankerCfg?.enabled && ranked.length > 1) {
+      if (rerankerCfg?.enabled) {
         const rerankerUrl = rerankerCfg.baseUrl ?? "http://localhost:7700";
         const rerankerTimeout = rerankerCfg.timeoutMs ?? 5_000;
         const rerankerMaxRetries = rerankerCfg.maxRetries ?? 2;
-        const beforeOrder = ranked.map(
+        // Merge insights into the pool for unified reranking
+        const insightPool = insightCandidates.map(({ category, content }) => ({
+          category,
+          content,
+        }));
+        const mergedPool = [...ranked, ...insightPool];
+        const beforeOrder = mergedPool.map(
           (f) => `[${f.category}] ${f.content.slice(0, 50)}`,
         );
         const reranked = await callReranker(
           query,
-          ranked.map((f) => f.content),
+          mergedPool.map((f) => f.content),
           cap,
           rerankerUrl,
           rerankerTimeout,
           rerankerMaxRetries,
         );
         if (reranked) {
-          ranked = reranked.map((r) => ranked[r.index]);
+          ranked = reranked.map((r) => mergedPool[r.index]);
+          // Insights that won slots are now in ranked; clear separate insightOut
+          insightOut.length = 0;
           const afterOrder = reranked.map(
             (r, i) =>
               `${r.score.toFixed(2)}:[${ranked[i]?.category}] ${r.text.slice(0, 50)}`,
           );
           console.error(
-            `🎯 [searchFacts] cross-encoder reranked ${biEncoderCap}→${ranked.length} facts\n` +
+            `🎯 [searchFacts] cross-encoder reranked ${mergedPool.length}→${ranked.length} facts+insights\n` +
               `   before: ${beforeOrder.join(" | ")}\n` +
               `   after:  ${afterOrder.join(" | ")}`,
           );
@@ -2001,7 +2013,7 @@ ${insightsSection}</knowledge>
         ranked = ranked.slice(0, cap);
       }
       console.error(
-        `🔎 [searchFacts] strategy=${factsRerankStrategy}, pool=${biEncoderCap}, cap=${cap}`,
+        `🔎 [searchFacts] strategy=${factsRerankStrategy}, pool=${biEncoderCap}(+${insightCandidates.length} insights), cap=${cap}`,
       );
 
       console.error(
