@@ -3024,9 +3024,15 @@ ${insightsSection}</knowledge>
             : allMessages;
 
         if (newMessages.length === 0) {
-          // No new messages — mark as current (update events_last_msg_time if needed)
-          if (lastMsgTime === 0 && allMessages.length > 0) {
-            const lastTs = this.getLastMsgTime(allMessages);
+          // No new messages — always update last_mtime so this file is not
+          // re-queued on next startup just because its mtime changed.
+          const lastTs =
+            lastMsgTime > 0
+              ? lastMsgTime
+              : allMessages.length > 0
+                ? this.getLastMsgTime(allMessages)
+                : 0;
+          if (lastTs > 0 || allMessages.length === 0) {
             this.upsertEventsState(file, filePath, lastTs);
           }
           continue;
