@@ -604,11 +604,15 @@ export class JarvisAgent extends EventEmitter {
 
       if (toInject.length > 0) {
         prewarmedCount = toInject.length;
-        // When reranker is enabled, all results are cross-encoder ranked and
-        // trustworthy — skip the bi-encoder score threshold and treat all as verified.
+        // When reranker is enabled, filter by cross-encoder logit threshold and
+        // treat all passing results as verified (no "possibly relevant" tier).
+        // The threshold guards against injecting irrelevant memories that happen
+        // to rank above the bi-encoder distance cutoff.
         const VERIFIED_THRESHOLD = 0.7;
+        const RERANKER_THRESHOLD =
+          this.jarvisConfig.reranker?.memoryRelevanceThreshold ?? 6;
         const verified = rerankerEnabled
-          ? toInject
+          ? toInject.filter((m) => m.score >= RERANKER_THRESHOLD)
           : toInject.filter((m) => m.score >= VERIFIED_THRESHOLD);
         const uncertain = rerankerEnabled
           ? []

@@ -167,6 +167,13 @@ export interface JarvisConfig {
      * Higher = better recall but slower reranking. Default: 20.
      */
     candidatePool?: number;
+    /**
+     * Minimum cross-encoder logit score for a memory to be injected into context.
+     * ms-marco-MiniLM-L6-v2 guide: >5 high relevance, 0-5 relevant, <0 not relevant.
+     * Results below this threshold are discarded rather than injected as low-confidence.
+     * Default: 6.
+     */
+    memoryRelevanceThreshold?: number;
   };
   network: {
     /** Max retry attempts for network errors (fetch failed, ECONNRESET, etc.). Default: 3. */

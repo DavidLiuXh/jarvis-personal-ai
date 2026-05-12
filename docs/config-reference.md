@@ -171,6 +171,12 @@ Configuration file location: `~/.gemini-jarvis/config.json`
     // The reranker returns the top factRelevanceLimit from this pool.
     // Default: 20
     "candidatePool": 20,
+
+    // Minimum cross-encoder logit score for a memory to be injected into context.
+    // Results below this threshold are discarded entirely (not injected as low-confidence).
+    // ms-marco-MiniLM-L6-v2 guide: >5 high relevance, 0-5 relevant, <0 not relevant.
+    // Default: 6
+    "memoryRelevanceThreshold": 6,
   },
 
   // ─────────────────────────────────────────────

@@ -165,6 +165,12 @@
     // 越大则召回率越高，但 cross-encoder 需要评分的候选越多。
     // cross-encoder 最终从中返回 factRelevanceLimit 条。默认：20
     "candidatePool": 20,
+
+    // 记忆注入的最低 cross-encoder logit 分数门槛。
+    // 低于此值的结果直接丢弃，不以"低置信度"形式注入。
+    // ms-marco-MiniLM-L6-v2 参考：> 5 高度相关，0-5 相关，< 0 不相关。
+    // 默认：6
+    "memoryRelevanceThreshold": 6,
   },
 
   // ─────────────────────────────────────────────
