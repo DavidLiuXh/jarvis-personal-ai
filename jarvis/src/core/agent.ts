@@ -577,11 +577,14 @@ export class JarvisAgent extends EventEmitter {
         effectiveMaxDistance,
       );
 
-      // top-1 margin filter: skip injection when retrieval confidence is low
+      // top-1 margin filter: skip injection when retrieval confidence is low.
+      // Skipped when reranker is enabled — cross-encoder logits have a different
+      // scale from bi-encoder cosine similarity, making these thresholds meaningless.
+      const rerankerEnabled = this.jarvisConfig.reranker?.enabled === true;
       const MIN_TOP1_SCORE = 0.5;
       const MIN_MARGIN = 0.1;
       let toInject = scoredMemories;
-      if (scoredMemories.length > 0) {
+      if (!rerankerEnabled && scoredMemories.length > 0) {
         if (scoredMemories[0].score < MIN_TOP1_SCORE) {
           console.error(
             `🧠 [prewarm] top-1 score ${scoredMemories[0].score.toFixed(3)} < ${MIN_TOP1_SCORE}, skipping injection`,
@@ -601,9 +604,15 @@ export class JarvisAgent extends EventEmitter {
 
       if (toInject.length > 0) {
         prewarmedCount = toInject.length;
+        // When reranker is enabled, all results are cross-encoder ranked and
+        // trustworthy — skip the bi-encoder score threshold and treat all as verified.
         const VERIFIED_THRESHOLD = 0.7;
-        const verified = toInject.filter((m) => m.score >= VERIFIED_THRESHOLD);
-        const uncertain = toInject.filter((m) => m.score < VERIFIED_THRESHOLD);
+        const verified = rerankerEnabled
+          ? toInject
+          : toInject.filter((m) => m.score >= VERIFIED_THRESHOLD);
+        const uncertain = rerankerEnabled
+          ? []
+          : toInject.filter((m) => m.score < VERIFIED_THRESHOLD);
         let memoryContent = "";
         let memoryIndex = 1;
         if (verified.length > 0) {
