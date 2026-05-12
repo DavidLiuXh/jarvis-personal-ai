@@ -1991,17 +1991,25 @@ ${insightsSection}</knowledge>
           rerankerMaxRetries,
         );
         if (reranked) {
-          ranked = reranked.map((r) => mergedPool[r.index]);
+          // Apply relevance threshold — discard results below minimum logit score
+          const relevanceThreshold = rerankerCfg.memoryRelevanceThreshold ?? 6;
+          const filtered = reranked.filter(
+            (r) => r.score >= relevanceThreshold,
+          );
+          ranked = filtered.map((r) => mergedPool[r.index]);
           // Insights that won slots are now in ranked; clear separate insightOut
           insightOut.length = 0;
           const afterOrder = reranked.map(
             (r, i) =>
-              `${r.score.toFixed(2)}:[${ranked[i]?.category}] ${r.text.slice(0, 50)}`,
+              `${r.score.toFixed(2)}:[${mergedPool[r.index]?.category}] ${r.text.slice(0, 50)}`,
           );
+          const filteredOut = reranked.length - filtered.length;
           console.error(
-            `🎯 [searchFacts] cross-encoder reranked ${mergedPool.length}→${ranked.length} facts+insights\n` +
-              `   before: ${beforeOrder.join(" | ")}\n` +
-              `   after:  ${afterOrder.join(" | ")}`,
+            `🎯 [searchFacts] cross-encoder reranked ${mergedPool.length}→${ranked.length} facts+insights` +
+              (filteredOut > 0
+                ? ` (${filteredOut} below threshold=${relevanceThreshold})`
+                : "") +
+              `\n   before: ${beforeOrder.join(" | ")}\n   after:  ${afterOrder.join(" | ")}`,
           );
         } else {
           console.error(
