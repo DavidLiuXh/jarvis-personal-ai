@@ -130,6 +130,47 @@ Configuration file location: `~/.gemini-jarvis/config.json`
     // Number of recent conversation turns included in the classifier prompt
     // for context-aware scoring (e.g. "continue the analysis"). Default: 5
     "historyTurns": 5,
+
+    // Rewrite the user query into an optimized memory search query before prewarm.
+    // Uses the same Ollama model. Only applies to personal queries.
+    // Default: false
+    "queryRewrite": false,
+
+    // Detect topic shifts via the local classifier. When the new message is
+    // unrelated to recent history, chat history is cleared before the turn
+    // (equivalent to !clear). Skipped on the first turn of a session.
+    // Default: true
+    "topicShiftDetection": true,
+  },
+
+  // ─────────────────────────────────────────────
+  // Reranker — cross-encoder precision reranking
+  // A local FastAPI service (jarvis/reranker/reranker_service.py) re-scores
+  // bi-encoder candidates with ms-marco-MiniLM-L6-v2 via ONNX Runtime.
+  // Start with: RERANKER_MODEL_DIR=/path/to/onnx_model ./jarvis/reranker/start_reranker.sh
+  // ─────────────────────────────────────────────
+  "reranker": {
+    // Enable cross-encoder reranking for searchFacts and prewarm memories.
+    // When enabled, bi-encoder importance/decay signals are bypassed for
+    // candidate selection — the cross-encoder handles final ranking instead.
+    // Default: false
+    "enabled": false,
+
+    // URL of the reranker service. Default: "http://localhost:7700"
+    "baseUrl": "http://localhost:7700",
+
+    // Request timeout per attempt in milliseconds. Default: 5000
+    "timeoutMs": 5000,
+
+    // Max retry attempts on timeout or network error.
+    // Each retry uses the same timeoutMs. Default: 2 (3 total attempts)
+    "maxRetries": 2,
+
+    // Number of candidates to fetch from bi-encoder before reranking.
+    // Higher = better recall but more candidates for the cross-encoder to score.
+    // The reranker returns the top factRelevanceLimit from this pool.
+    // Default: 20
+    "candidatePool": 20,
   },
 
   // ─────────────────────────────────────────────
@@ -255,6 +296,26 @@ Configuration file location: `~/.gemini-jarvis/config.json`
     // Number of semantically similar memory items pre-warmed into context
     // each turn via vec_memories (events prioritized over conversations). 0 = disabled. Default: 3
     "prewarmLimit": 3,
+
+    // prewarmLimit override for mixed queries (personal + external intent).
+    // Mixed queries carry higher noise risk; a tighter limit reduces context adhesion.
+    // Default: 1
+    "prewarmLimitMixed": 1,
+
+    // Stricter memoryMaxDistance for mixed queries.
+    // Only memories with distance < this value are injected when querySubject=mixed.
+    // Default: 0.6
+    "prewarmMaxDistanceMixed": 0.6,
+
+    // Max number of skills to inject into the system prompt per turn via semantic retrieval.
+    // When total installed skills exceed this limit, only the most relevant are injected.
+    // 0 = inject all skills. Default: 5
+    "skillSearchLimit": 5,
+
+    // Maximum vector distance for skill retrieval.
+    // Skills with distance >= this threshold are not injected.
+    // Default: 0.9
+    "skillMaxDistance": 0.9,
 
     // Whether to store raw conversation pairs (user+assistant) in vec_memories.
     // With events extraction enabled, raw conversations add low signal.

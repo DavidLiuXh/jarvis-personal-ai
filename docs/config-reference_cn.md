@@ -128,6 +128,43 @@
     // 传入分类器 prompt 的最近对话轮数，用于上下文感知打分
     // （例如"继续上面的分析"这类依赖上下文的请求）。默认：5
     "historyTurns": 5,
+
+    // 在 prewarm 之前将用户 query 改写为优化后的记忆搜索关键词。
+    // 使用与分类器相同的 Ollama 模型。仅对 personal 类型请求生效。默认：false
+    "queryRewrite": false,
+
+    // 通过本地分类器检测话题切换。当新消息与近期历史无关时，
+    // 在本轮开始前自动清空对话历史（等效于 !clear）。第一轮不触发。
+    // 默认：true
+    "topicShiftDetection": true,
+  },
+
+  // ─────────────────────────────────────────────
+  // Reranker — cross-encoder 精排服务
+  // 通过本地 FastAPI 服务（jarvis/reranker/reranker_service.py）对 bi-encoder 候选
+  // 使用 ms-marco-MiniLM-L6-v2（ONNX Runtime）进行精确重排序。
+  // 启动方式：RERANKER_MODEL_DIR=/path/to/onnx_model ./jarvis/reranker/start_reranker.sh
+  // ─────────────────────────────────────────────
+  "reranker": {
+    // 是否启用 cross-encoder 精排（用于 searchFacts 和 prewarm 记忆）。
+    // 启用后，bi-encoder 阶段仅使用纯语义相关性选候选（importance/decay 不参与），
+    // 最终排序由 cross-encoder 完成。默认：false
+    "enabled": false,
+
+    // 精排服务地址。默认："http://localhost:7700"
+    "baseUrl": "http://localhost:7700",
+
+    // 每次请求的超时时间（毫秒）。默认：5000
+    "timeoutMs": 5000,
+
+    // 超时或网络错误时的最大重试次数。
+    // 每次重试使用相同的 timeoutMs。默认：2（共尝试 3 次）
+    "maxRetries": 2,
+
+    // bi-encoder 阶段获取的候选数量（在 cross-encoder 精排之前）。
+    // 越大则召回率越高，但 cross-encoder 需要评分的候选越多。
+    // cross-encoder 最终从中返回 factRelevanceLimit 条。默认：20
+    "candidatePool": 20,
   },
 
   // ─────────────────────────────────────────────
@@ -249,6 +286,22 @@
     // 每轮对话从 vec_memories 预热的相似记忆条数（events 优先于 conversation）。
     // 0 = 禁用。默认：3
     "prewarmLimit": 3,
+
+    // mixed 类型请求的 prewarmLimit 覆盖值（personal + external 混合意图）。
+    // mixed 请求噪声风险更高，收紧此值可减少 Context Adhesion 问题。默认：1
+    "prewarmLimitMixed": 1,
+
+    // mixed 类型请求时更严格的 memoryMaxDistance 门槛。
+    // 距离 >= 此值的记忆在 mixed 请求时不注入。默认：0.6
+    "prewarmMaxDistanceMixed": 0.6,
+
+    // 每轮通过语义检索注入 system prompt 的最大 skills 数量。
+    // 安装的 skills 超过此数时，只注入最相关的几个。0 = 全部注入。默认：5
+    "skillSearchLimit": 5,
+
+    // skill 检索的最大向量距离门槛。
+    // 距离 >= 此值的 skills 不注入。默认：0.9
+    "skillMaxDistance": 0.9,
 
     // 是否将原始对话对（user+assistant）存入 vec_memories。
     // 启用事件提取后，原始对话信噪比低，建议关闭。默认：false
