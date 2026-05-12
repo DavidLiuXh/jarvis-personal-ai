@@ -603,7 +603,7 @@ export class JarvisAgent extends EventEmitter {
       }
 
       if (toInject.length > 0) {
-        prewarmedCount = toInject.length;
+        prewarmedCount = toInject.length; // will be corrected after threshold filter
         // When reranker is enabled, filter by cross-encoder logit threshold and
         // treat all passing results as verified (no "possibly relevant" tier).
         // The threshold guards against injecting irrelevant memories that happen
@@ -637,13 +637,20 @@ export class JarvisAgent extends EventEmitter {
               .join("\n") +
             "\n</possibly_relevant_memories>";
         }
-        prewarmSection =
-          "\n<relevant_past_conversations>\n" +
-          memoryContent +
-          "\n</relevant_past_conversations>";
+        if (memoryContent) {
+          prewarmSection =
+            "\n<relevant_past_conversations>\n" +
+            memoryContent +
+            "\n</relevant_past_conversations>";
+        }
+        const actualInjected = verified.length + uncertain.length;
+        prewarmedCount = actualInjected; // correct count after threshold filter
+        const filteredOut = toInject.length - actualInjected;
         console.error(
-          `🧠 [prewarm] subject=${querySubject}, limit=${effectiveLimit}, maxDist=${effectiveMaxDistance}, injected=${toInject.length}:\n` +
-            toInject
+          `🧠 [prewarm] subject=${querySubject}, limit=${effectiveLimit}, maxDist=${effectiveMaxDistance}, injected=${actualInjected}` +
+            (filteredOut > 0 ? ` (${filteredOut} below threshold)` : "") +
+            ":\n" +
+            [...verified, ...uncertain]
               .map(
                 (m, i) =>
                   `  [${i + 1}] score=${m.score.toFixed(3)} ${m.text.slice(0, 100)}`,
