@@ -1291,23 +1291,26 @@ ${factsText}
       });
 
       scored.sort((a, b) => b.score - a.score);
-      let results = scored.slice(0, limit);
 
       // Cross-encoder reranking of prewarm memories (optional, config-gated)
+      // When reranker is enabled, pass ALL scored candidates so the cross-encoder
+      // can correct bi-encoder ranking errors before slicing to limit.
       const rerankerCfgSearch = this.jarvisConfig.reranker;
       const searchRerankStrategy = rerankerCfgSearch?.enabled
         ? "cross-encoder"
         : "bi-encoder";
-      if (rerankerCfgSearch?.enabled && results.length > 1) {
+      let results: Array<{ text: string; score: number }>;
+      if (rerankerCfgSearch?.enabled && scored.length > 1) {
         const rerankerUrl =
           rerankerCfgSearch.baseUrl ?? "http://localhost:7700";
         const rerankerTimeout = rerankerCfgSearch.timeoutMs ?? 5_000;
         const rerankerMaxRetries = rerankerCfgSearch.maxRetries ?? 2;
-        const beforeOrder = results.map((r) => r.text.slice(0, 60));
+        const pool = scored; // pass full scored pool to reranker
+        const beforeOrder = pool.slice(0, 5).map((r) => r.text.slice(0, 60));
         const reranked = await callReranker(
           query,
-          results.map((r) => r.text),
-          results.length,
+          pool.map((r) => r.text),
+          limit,
           rerankerUrl,
           rerankerTimeout,
           rerankerMaxRetries,
@@ -1318,15 +1321,18 @@ ${factsText}
             (r) => `${(r.score as number).toFixed(2)}:${r.text.slice(0, 60)}`,
           );
           console.error(
-            `🎯 [search] cross-encoder reranked ${results.length} memories\n` +
-              `   before: ${beforeOrder.join(" | ")}\n` +
+            `🎯 [search] cross-encoder reranked ${pool.length}→${results.length} memories\n` +
+              `   before(top5): ${beforeOrder.join(" | ")}\n` +
               `   after:  ${afterOrder.join(" | ")}`,
           );
         } else {
           console.error(
             `⚠️ [search] cross-encoder unavailable, using bi-encoder order`,
           );
+          results = scored.slice(0, limit);
         }
+      } else {
+        results = scored.slice(0, limit);
       }
 
       console.error(
