@@ -11,7 +11,9 @@
 #   python3 -m venv ~/onnx_env
 #   ~/onnx_env/bin/pip install onnxruntime transformers fastapi uvicorn optimum[onnxruntime]
 #
-#   # Option A: BAAI/bge-reranker-base (recommended — multilingual, Chinese+English)
+#   # Option A: BAAI/bge-reranker-large (recommended — best multilingual accuracy, ~1.3GB)
+#   #           model_id = 'BAAI/bge-reranker-large'
+#   # Option A2: BAAI/bge-reranker-base (lighter — ~400MB, slightly lower accuracy)
 #   ~/onnx_env/bin/python3 -c "
 #     from optimum.onnxruntime import ORTModelForSequenceClassification
 #     from transformers import AutoTokenizer
