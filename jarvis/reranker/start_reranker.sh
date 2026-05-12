@@ -9,16 +9,26 @@
 #
 # First-time setup:
 #   python3 -m venv ~/onnx_env
-#   ~/onnx_env/bin/pip install onnxruntime transformers fastapi uvicorn
-#   # Export model (run once):
-#   ~/onnx_env/bin/pip install optimum[onnxruntime]
+#   ~/onnx_env/bin/pip install onnxruntime transformers fastapi uvicorn optimum[onnxruntime]
+#
+#   # Option A: BAAI/bge-reranker-base (recommended — multilingual, Chinese+English)
+#   ~/onnx_env/bin/python3 -c "
+#     from optimum.onnxruntime import ORTModelForSequenceClassification
+#     from transformers import AutoTokenizer
+#     model_id = 'BAAI/bge-reranker-base'
+#     m = ORTModelForSequenceClassification.from_pretrained(model_id, export=True)
+#     m.save_pretrained(os.path.expanduser('~/onnx_model'))
+#     AutoTokenizer.from_pretrained(model_id).save_pretrained(os.path.expanduser('~/onnx_model'))
+#   "
+#
+#   # Option B: cross-encoder/ms-marco-MiniLM-L6-v2 (English only, faster)
 #   ~/onnx_env/bin/python3 -c "
 #     from optimum.onnxruntime import ORTModelForSequenceClassification
 #     from transformers import AutoTokenizer
 #     model_id = 'cross-encoder/ms-marco-MiniLM-L6-v2'
 #     m = ORTModelForSequenceClassification.from_pretrained(model_id, export=True)
-#     m.save_pretrained('~/onnx_model')
-#     AutoTokenizer.from_pretrained(model_id).save_pretrained('~/onnx_model')
+#     m.save_pretrained(os.path.expanduser('~/onnx_model'))
+#     AutoTokenizer.from_pretrained(model_id).save_pretrained(os.path.expanduser('~/onnx_model'))
 #   "
 #
 # Jarvis config to enable reranking (~/.gemini-jarvis/config.json):

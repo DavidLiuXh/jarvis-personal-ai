@@ -610,7 +610,7 @@ export class JarvisAgent extends EventEmitter {
         // to rank above the bi-encoder distance cutoff.
         const VERIFIED_THRESHOLD = 0.7;
         const RERANKER_THRESHOLD =
-          this.jarvisConfig.reranker?.memoryRelevanceThreshold ?? 6;
+          this.jarvisConfig.reranker?.memoryRelevanceThreshold ?? -2;
         const verified = rerankerEnabled
           ? toInject.filter((m) => m.score >= RERANKER_THRESHOLD)
           : toInject.filter((m) => m.score >= VERIFIED_THRESHOLD);

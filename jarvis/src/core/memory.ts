@@ -1992,7 +1992,7 @@ ${insightsSection}</knowledge>
         );
         if (reranked) {
           // Apply relevance threshold — discard results below minimum logit score
-          const relevanceThreshold = rerankerCfg.memoryRelevanceThreshold ?? 6;
+          const relevanceThreshold = rerankerCfg.memoryRelevanceThreshold ?? -2;
           const filtered = reranked.filter(
             (r) => r.score >= relevanceThreshold,
           );

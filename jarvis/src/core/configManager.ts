@@ -169,9 +169,13 @@ export interface JarvisConfig {
     candidatePool?: number;
     /**
      * Minimum cross-encoder logit score for a memory to be injected into context.
-     * ms-marco-MiniLM-L6-v2 guide: >5 high relevance, 0-5 relevant, <0 not relevant.
      * Results below this threshold are discarded rather than injected as low-confidence.
-     * Default: 6.
+     * Score range varies by model:
+     *   BAAI/bge-reranker-base: ~-3 to 3 for relevant content, -10 for irrelevant.
+     *     Recommended: -2
+     *   cross-encoder/ms-marco-MiniLM-L6-v2: ~0 to 10 for relevant, <0 for irrelevant.
+     *     Recommended: 6
+     * Default: -2 (tuned for bge-reranker-base)
      */
     memoryRelevanceThreshold?: number;
   };
