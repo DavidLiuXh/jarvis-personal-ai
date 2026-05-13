@@ -1695,6 +1695,7 @@ ${insightsSection}</knowledge>
   //          only injected when importance >= 7 and query-relevant
   private static readonly ALWAYS_INJECT_CATEGORIES = new Set([
     "interaction_style",
+    "identity",
   ]);
 
   // Max number of insights to inject per turn when reranker is disabled.
