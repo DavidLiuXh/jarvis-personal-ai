@@ -184,7 +184,10 @@ export class TaskScheduler {
       }
 
       const job = cron.schedule(task.cron, () => {
-        console.error(`⏰ [TaskScheduler] Task triggered: ${task.id}`);
+        const now = new Date();
+        console.error(
+          `⏰ [TaskScheduler] Task triggered: ${task.id} at ${now.toLocaleString()} (${now.toISOString()})`,
+        );
         const triggered: TriggeredTask = {
           ...task,
           channel: task.channel ?? defaultChannel,
@@ -195,9 +198,15 @@ export class TaskScheduler {
         }
       });
 
+      // Log next scheduled execution time for diagnostics
+      const nextDate =
+        (job as any).nextDate?.() ?? (job as any).getNextDate?.();
+      const nextStr = nextDate
+        ? `next: ${new Date(nextDate).toLocaleString()}`
+        : "next: unknown";
       this.jobs.push(job);
       console.error(
-        `✅ [TaskScheduler] Scheduled task "${task.id}" (${task.cron})`,
+        `✅ [TaskScheduler] Scheduled task "${task.id}" (${task.cron}) — ${nextStr}`,
       );
     }
 
