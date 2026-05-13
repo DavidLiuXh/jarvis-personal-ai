@@ -159,8 +159,8 @@ Configuration file location: `~/.gemini-jarvis/config.json`
     // URL of the reranker service. Default: "http://localhost:7700"
     "baseUrl": "http://localhost:7700",
 
-    // Request timeout per attempt in milliseconds. Default: 5000
-    "timeoutMs": 5000,
+    // Request timeout per attempt in milliseconds. Default: 15000
+    "timeoutMs": 15000,
 
     // Max retry attempts on timeout or network error.
     // Each retry uses the same timeoutMs. Default: 2 (3 total attempts)

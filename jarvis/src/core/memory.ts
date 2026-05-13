@@ -1303,7 +1303,7 @@ ${factsText}
       if (rerankerCfgSearch?.enabled && scored.length > 1) {
         const rerankerUrl =
           rerankerCfgSearch.baseUrl ?? "http://localhost:7700";
-        const rerankerTimeout = rerankerCfgSearch.timeoutMs ?? 5_000;
+        const rerankerTimeout = rerankerCfgSearch.timeoutMs ?? 15_000;
         const rerankerMaxRetries = rerankerCfgSearch.maxRetries ?? 2;
         const pool = scored; // pass full scored pool to reranker
         const beforeOrder = pool.slice(0, 5).map((r) => r.text.slice(0, 60));
@@ -1978,7 +1978,7 @@ ${insightsSection}</knowledge>
           : "bi-encoder(jaccard)";
       if (rerankerCfg?.enabled) {
         const rerankerUrl = rerankerCfg.baseUrl ?? "http://localhost:7700";
-        const rerankerTimeout = rerankerCfg.timeoutMs ?? 5_000;
+        const rerankerTimeout = rerankerCfg.timeoutMs ?? 15_000;
         const rerankerMaxRetries = rerankerCfg.maxRetries ?? 2;
         // Merge insights into the pool for unified reranking
         const insightPool = insightCandidates.map(({ category, content }) => ({
