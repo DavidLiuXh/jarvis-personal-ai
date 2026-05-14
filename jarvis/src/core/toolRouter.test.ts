@@ -398,7 +398,8 @@ describe("ToolRouter", () => {
     expect(twDays).toBeNull();
     expect(dateRange).not.toBeNull();
     expect(dateRange.from).toBe(new Date("2026-04-27").getTime());
-    expect(dateRange.to).toBe(new Date("2026-04-27").getTime());
+    // date-only date_to → exclusive upper bound (start of next day)
+    expect(dateRange.to).toBe(new Date("2026-04-28").getTime());
   });
 
   it("recall_memory: invalid date_from/date_to falls back to null dateRange", async () => {

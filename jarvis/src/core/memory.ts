@@ -1240,7 +1240,7 @@ ${factsText}
                  ) v ON m.id = v.id
                  WHERE v.distance < ?
                    AND m.timestamp >= ?
-                   AND m.timestamp <= ?`,
+                   AND m.timestamp < ?`,
               )
               .all(
                 new Float32Array(queryVec),

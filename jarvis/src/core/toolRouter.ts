@@ -384,10 +384,20 @@ export class ToolRouter {
             typeof dateFromArg === "number"
               ? dateFromArg
               : new Date(dateFromArg).getTime();
-          const toMs =
-            typeof dateToArg === "number"
-              ? dateToArg
-              : new Date(dateToArg).getTime();
+          // For date-only strings (YYYY-MM-DD), use start-of-next-day as the
+          // exclusive upper bound — matching dateRange.ts half-open interval
+          // semantics so SQL can use `timestamp < to` without missing same-day records.
+          const DATE_ONLY_RE = /^\d{4}-\d{2}-\d{2}$/;
+          let toMs: number;
+          if (typeof dateToArg === "number") {
+            toMs = dateToArg;
+          } else if (DATE_ONLY_RE.test(dateToArg)) {
+            const d = new Date(dateToArg);
+            d.setDate(d.getDate() + 1); // advance to start of next day
+            toMs = d.getTime();
+          } else {
+            toMs = new Date(dateToArg).getTime();
+          }
           if (!isNaN(fromMs) && !isNaN(toMs)) {
             dateRange = { from: fromMs, to: toMs };
           }
