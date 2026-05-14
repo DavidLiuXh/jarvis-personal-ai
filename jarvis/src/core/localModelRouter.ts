@@ -67,7 +67,8 @@ DIMENSION 5 — Topic Shift (only meaningful when conversation history is presen
 Step 1 — Summarize: What is the main topic/domain of the recent history? (1 phrase)
 Step 2 — Identify: What is the domain/intent of the new request? (1 phrase)
 Step 3 — Check references: Does the new request use pronouns or references pointing to the history?
-  Anaphoric words that indicate NO shift: 它/他/她/这个/那个/上面/刚才/之前/继续/接着/另外/补充/再说/that/it/this/they/those/above/continue/also/follow up
+  Strong anaphora (almost certainly refers back): 它/这个/那个/这些/那些/上述/刚才/this/that/these/those/follow-up
+  Weak connectors (check intent — may or may not refer back): 他/她/继续/接着/另外/补充/再说/also/continue/above
 Step 4 — Decide:
   - true (SHIFT): The new request introduces a domain that is NEITHER referenced in history NOR a natural continuation. Both the topic AND the intent are different.
   - false (NO SHIFT): The new request uses anaphoric references, follows up, clarifies, or shares the same domain or workflow as the history.
@@ -199,8 +200,10 @@ export class LocalModelRouter {
     // Pre-filter: if the prompt contains anaphoric pronouns/references pointing
     // to the previous conversation, it cannot be a topic shift regardless of
     // what the LLM decides. This is deterministic and takes priority.
+    // Only unambiguous anaphoric pronouns/references — words that can ONLY
+    // refer back to prior context (not topic-switching connectors like 另外/补充).
     const ANAPHORA_RE =
-      /它|他|她|这个|那个|这些|那些|上面|上述|刚才|之前说的|继续|接着|另外|补充|再说|this|they|those|that|above|continue|follow[- ]?up/i;
+      /它|这个|那个|这些|那些|上述|刚才|this\b|that\b|these\b|those\b|follow[- ]?up/i;
     const hasAnaphoricRef = history.length > 0 && ANAPHORA_RE.test(prompt);
     if (hasAnaphoricRef) {
       console.error(
