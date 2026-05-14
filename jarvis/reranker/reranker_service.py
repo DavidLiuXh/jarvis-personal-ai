@@ -1,6 +1,7 @@
 """
 Lightweight cross-encoder reranker service.
-Uses ONNX Runtime for fast CPU inference with ms-marco-MiniLM-L6-v2.
+Uses ONNX Runtime for fast CPU inference with any ONNX sequence-classification
+cross-encoder model (e.g. BAAI/bge-reranker-large, BAAI/bge-reranker-base).
 
 POST /rerank
   Body: { "query": "...", "candidates": ["doc1", "doc2", ...] }
