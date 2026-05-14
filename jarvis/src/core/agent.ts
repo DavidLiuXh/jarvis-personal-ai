@@ -1000,7 +1000,7 @@ export class JarvisAgent extends EventEmitter {
             ? `${result.dateFrom}~${result.dateTo}`
             : (result.timeWindowDays ?? "none");
           console.error(
-            `🔀 [Jarvis] Local routing: ${result.decision} | subject=${result.querySubject} | time_window=${twLabel} | reason="${result.classifierReason}" (source=${result.source})`,
+            `🔀 [Jarvis] Local routing: ${result.decision} | subject=${result.querySubject} | topic_shifted=${result.topicShifted} | time_window=${twLabel} | reason="${result.classifierReason}" (source=${result.source})`,
           );
 
           // Topic shift detected: clear history so LLM starts fresh on new topic.
