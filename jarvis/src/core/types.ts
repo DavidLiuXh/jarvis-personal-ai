@@ -88,6 +88,8 @@ export interface JarvisAskUserResponseMessage {
   type: "ask_user_response";
   id: string;
   answers: Record<string, string>;
+  /** true when the user dismissed the form without answering */
+  cancelled?: boolean;
   sessionId?: string;
 }
 

@@ -82,8 +82,17 @@ export class JarvisAgent extends EventEmitter {
   private conversationSummary = "";
   private pendingAskUsers = new Map<
     string,
-    (answers: Record<string, string>) => void
+    {
+      resolve: (answers: Record<string, string>) => void;
+      reject: (e: Error) => void;
+    }
   >();
+  // Stored so setAskUserHandler called before initialize() still takes effect
+  // once toolRouter is created inside initialize().
+  private pendingAskUserWs: {
+    readyState: number;
+    send: (data: string) => void;
+  } | null = null;
 
   constructor(options: JarvisAgentOptions) {
     super();
@@ -167,6 +176,10 @@ export class JarvisAgent extends EventEmitter {
       this.taskCommandHandler,
       this.channelRegistry,
     );
+    // If setAskUserHandler was called before initialize(), apply it now.
+    if (this.pendingAskUserWs !== null) {
+      this._applyAskUserWs(this.pendingAskUserWs);
+    }
 
     // Initialize local model router if configured.
     const routingCfg = this.jarvisConfig.routing;
@@ -1293,15 +1306,21 @@ export class JarvisAgent extends EventEmitter {
     });
   }
 
-  /** Deliver user's ask_user answers back to the pending handler. */
+  /** Deliver user's ask_user answers back to the pending handler.
+   *  Pass cancelled=true when the user dismisses the form without answering. */
   public provideAskUserResponse(
     id: string,
     answers: Record<string, string>,
+    cancelled = false,
   ): void {
-    const resolve = this.pendingAskUsers.get(id);
-    if (resolve) {
+    const entry = this.pendingAskUsers.get(id);
+    if (entry) {
       this.pendingAskUsers.delete(id);
-      resolve(answers);
+      if (cancelled) {
+        entry.reject(new Error("user cancelled"));
+      } else {
+        entry.resolve(answers);
+      }
     }
   }
 
@@ -1310,15 +1329,27 @@ export class JarvisAgent extends EventEmitter {
    * When the LLM calls ask_user, an ask_user_request event is emitted so
    * the UI can display a form. The handler waits up to 300s for a response
    * before timing out with a cancelled payload.
+   * Safe to call before initialize() — the ws is stored and applied once
+   * toolRouter is created.
    */
   public setAskUserHandler(
     ws: { readyState: number; send: (data: string) => void } | null,
   ): void {
+    this.pendingAskUserWs = ws;
+    if (this.toolRouter) {
+      this._applyAskUserWs(ws);
+    }
+    // else: initialize() will call _applyAskUserWs when toolRouter is ready
+  }
+
+  private _applyAskUserWs(
+    ws: { readyState: number; send: (data: string) => void } | null,
+  ): void {
     if (!ws) {
-      this.toolRouter?.setAskUserHandler(null);
+      this.toolRouter.setAskUserHandler(null);
       return;
     }
-    this.toolRouter?.setAskUserHandler(
+    this.toolRouter.setAskUserHandler(
       (questions: AskUserQuestion[]) =>
         new Promise<Record<string, string>>((resolve, reject) => {
           if (ws.readyState !== 1 /* OPEN */) {
@@ -1331,9 +1362,12 @@ export class JarvisAgent extends EventEmitter {
             reject(new Error("user did not respond within 300s"));
           }, 300_000);
 
-          this.pendingAskUsers.set(id, (answers) => {
-            clearTimeout(timer);
-            resolve(answers);
+          this.pendingAskUsers.set(id, {
+            resolve,
+            reject: (e) => {
+              clearTimeout(timer);
+              reject(e);
+            },
           });
 
           this.emit(JarvisEventType.CONTENT, {

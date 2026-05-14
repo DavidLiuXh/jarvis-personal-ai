@@ -492,4 +492,31 @@ describe("ToolRouter", () => {
     const responseText = resp3?.result ?? resp3?.content ?? "";
     expect(responseText).toContain("cancelled");
   });
+
+  it("ask_user: setAskUserHandler(null) reverts to auto-select fallback", async () => {
+    const { router } = makeRouter();
+    const questions = [
+      {
+        question: "Q?",
+        header: "Q",
+        options: [{ label: "A", description: "Recommended default" }],
+      },
+    ];
+
+    const handler = vi.fn().mockResolvedValue({});
+    router.setAskUserHandler(handler);
+    router.setAskUserHandler(null);
+
+    const req = makeReq("ask_user", { questions });
+    const parts = await router.route(
+      [req],
+      new AbortController().signal,
+      vi.fn(),
+    );
+
+    expect(handler).not.toHaveBeenCalled();
+    const resp = parts[0]?.functionResponse?.response as any;
+    const responseText = resp?.result ?? resp?.content ?? "";
+    expect(responseText).toContain("AUTO-SELECTED");
+  });
 });

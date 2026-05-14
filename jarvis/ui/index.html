@@ -690,7 +690,7 @@
 
         btnAskCancel.addEventListener('click', () => {
             if (activeAskUserId && ws) {
-                ws.send(JSON.stringify({ type: 'ask_user_response', id: activeAskUserId, answers: {} }));
+                ws.send(JSON.stringify({ type: 'ask_user_response', id: activeAskUserId, answers: {}, cancelled: true }));
             }
             hideAskUser();
         });

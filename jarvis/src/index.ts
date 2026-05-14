@@ -516,7 +516,11 @@ class JarvisServer {
             await this.handleRestore(ws, sessionId);
           } else if (message.type === "ask_user_response") {
             const agent = await this.manager.getAgent(sessionId);
-            agent.provideAskUserResponse(message.id, message.answers ?? {});
+            agent.provideAskUserResponse(
+              message.id,
+              message.answers ?? {},
+              message.cancelled === true,
+            );
           } else if (message.type === "confirmation") {
             const agent = await this.manager.getAgent(sessionId);
             agent.provideConfirmationResponse(message.id, message.decision);
