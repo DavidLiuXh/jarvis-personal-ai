@@ -165,4 +165,42 @@ describe("LocalModelRouter — route() topic_shifted via classify", () => {
     expect(result.source).toBe("local-router/fallback");
     expect(result.topicShifted).toBe(false);
   });
+
+  it("topicShifted=false forced by anaphoric pre-filter (Chinese pronoun)", async () => {
+    const router = makeRouter();
+    // LLM says topic_shifted=true, but prompt has anaphoric reference → must be false
+    mockGenerate.mockResolvedValueOnce(classifyResponse(50, "external", true));
+
+    const result = await router.route("它的性能怎么样", HISTORY_CODING);
+
+    expect(result.topicShifted).toBe(false);
+  });
+
+  it("topicShifted=false when LLM has_reference=true even if topic_shifted=true", async () => {
+    const router = makeRouter();
+    // LLM reports has_reference=true but also topic_shifted=true (contradictory) → has_reference wins
+    mockGenerate.mockResolvedValueOnce(
+      JSON.stringify({
+        knowledge_score: 50,
+        operation_score: 50,
+        complexity_score: 50,
+        complexity_reasoning: "test",
+        query_subject: "external",
+        time_window_days: null,
+        date_from: null,
+        date_to: null,
+        history_topic: "TypeScript development",
+        new_topic: "follow-up on tests",
+        has_reference: true,
+        topic_shifted: true,
+      }),
+    );
+
+    const result = await router.route(
+      "What about those tests?",
+      HISTORY_CODING,
+    );
+
+    expect(result.topicShifted).toBe(false);
+  });
 });

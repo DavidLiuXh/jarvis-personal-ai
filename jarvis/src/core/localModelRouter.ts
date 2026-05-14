@@ -63,8 +63,20 @@ DIMENSION 4 — Time Window
 ${timeNote}
 
 DIMENSION 5 — Topic Shift (only meaningful when conversation history is present)
-- true: The new request is about a COMPLETELY DIFFERENT and UNRELATED subject compared to the recent conversation history.
-- false: The new request continues, follows up, or is related to the recent conversation. When in doubt, output false.
+
+Step 1 — Summarize: What is the main topic/domain of the recent history? (1 phrase)
+Step 2 — Identify: What is the domain/intent of the new request? (1 phrase)
+Step 3 — Check references: Does the new request use pronouns or references pointing to the history?
+  Anaphoric words that indicate NO shift: 它/他/她/这个/那个/上面/刚才/之前/继续/接着/另外/补充/再说/that/it/this/they/those/above/continue/also/follow up
+Step 4 — Decide:
+  - true (SHIFT): The new request introduces a domain that is NEITHER referenced in history NOR a natural continuation. Both the topic AND the intent are different.
+  - false (NO SHIFT): The new request uses anaphoric references, follows up, clarifies, or shares the same domain or workflow as the history.
+
+Examples:
+  History: "严格避免幻觉" | New: "帮我获取下之前讨论onnx的总结" → history_topic="写作规范", new_topic="历史检索/onnx", has_reference=false, topic_shifted=true
+  History: "分析英伟达财报" | New: "超微电脑股价呢" → history_topic="英伟达财报", new_topic="超微股价", has_reference=true ("呢" references prior context), topic_shifted=false
+  History: "实现reranker功能" | New: "继续" → history_topic="reranker开发", new_topic="继续上一个任务", has_reference=true, topic_shifted=false
+  History: "今天天气怎么样" | New: "帮我写一份投资分析报告" → history_topic="天气查询", new_topic="投资分析", has_reference=false, topic_shifted=true
 
 SCORING FORMULA
 complexity_score = knowledge_score * 0.6 + operation_score * 0.4 (round to integer)
@@ -74,7 +86,7 @@ OUTPUT RULES
 - All fields required. time_window_days / date_from / date_to may be null.
 
 Required schema:
-{"knowledge_score": <1-100>, "operation_score": <1-100>, "complexity_score": <1-100>, "complexity_reasoning": "<one sentence>", "query_subject": "personal"|"external"|"mixed", "time_window_days": <integer>|null, "date_from": "<YYYY-MM-DD>"|null, "date_to": "<YYYY-MM-DD>"|null, "topic_shifted": true|false}
+{"knowledge_score": <1-100>, "operation_score": <1-100>, "complexity_score": <1-100>, "complexity_reasoning": "<one sentence>", "query_subject": "personal"|"external"|"mixed", "time_window_days": <integer>|null, "date_from": "<YYYY-MM-DD>"|null, "date_to": "<YYYY-MM-DD>"|null, "history_topic": "<1 phrase>", "new_topic": "<1 phrase>", "has_reference": true|false, "topic_shifted": true|false}
 `.trim();
 }
 
@@ -184,6 +196,18 @@ export class LocalModelRouter {
     prompt: string,
     history: ConversationTurn[],
   ): Promise<ClassifyResult> {
+    // Pre-filter: if the prompt contains anaphoric pronouns/references pointing
+    // to the previous conversation, it cannot be a topic shift regardless of
+    // what the LLM decides. This is deterministic and takes priority.
+    const ANAPHORA_RE =
+      /它|他|她|这个|那个|这些|那些|上面|上述|刚才|之前说的|继续|接着|另外|补充|再说|this|they|those|that|above|continue|follow[- ]?up/i;
+    const hasAnaphoricRef = history.length > 0 && ANAPHORA_RE.test(prompt);
+    if (hasAnaphoricRef) {
+      console.error(
+        `🔗 [LocalModelRouter] Anaphoric reference detected in prompt — topic_shifted forced false`,
+      );
+    }
+
     // Step 1: resolve date range in code — deterministic, no LLM needed.
     const now = new Date();
     const preResolved = extractDateRange(prompt, now);
@@ -226,6 +250,9 @@ export class LocalModelRouter {
       time_window_days?: number | null;
       date_from?: string | null;
       date_to?: string | null;
+      history_topic?: string;
+      new_topic?: string;
+      has_reference?: boolean;
       topic_shifted?: boolean;
     };
 
@@ -305,11 +332,23 @@ export class LocalModelRouter {
         ? ` [knowledge=${knowledgeScore}, operation=${operationScore}]`
         : "";
 
+    // has_reference=true (LLM) or hasAnaphoricRef (code pre-filter) → always false
+    const topicShifted =
+      hasAnaphoricRef || parsed.has_reference === true
+        ? false
+        : parsed.topic_shifted === true;
+
+    if (parsed.history_topic || parsed.new_topic) {
+      console.error(
+        `🔍 [LocalModelRouter] topic analysis: history="${parsed.history_topic ?? "?"}" new="${parsed.new_topic ?? "?"}" has_reference=${parsed.has_reference ?? "?"} → topic_shifted=${topicShifted}`,
+      );
+    }
+
     return {
       score,
       reason: `${parsed.complexity_reasoning ?? "(no reason)"}${breakdown}`,
       querySubject,
-      topicShifted: parsed.topic_shifted === true,
+      topicShifted,
       timeWindowDays,
       dateFrom,
       dateTo,
