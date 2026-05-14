@@ -91,8 +91,7 @@ export class JarvisAgent extends EventEmitter {
   // Stored so setAskUserHandler called before initialize() still takes effect
   // once toolRouter is created inside initialize().
   private pendingAskUserWs: {
-    readyState: number;
-    send: (data: string) => void;
+    ws: { readyState: number; send: (data: string) => void };
     ownerId: string;
   } | null = null;
 
@@ -1363,7 +1362,7 @@ export class JarvisAgent extends EventEmitter {
     ws: { readyState: number; send: (data: string) => void } | null,
     ownerId = "",
   ): void {
-    this.pendingAskUserWs = ws ? { ...ws, ownerId } : null;
+    this.pendingAskUserWs = ws ? { ws, ownerId } : null;
     if (this.toolRouter) {
       this._applyAskUserWs(this.pendingAskUserWs);
     }
@@ -1371,17 +1370,16 @@ export class JarvisAgent extends EventEmitter {
   }
 
   private _applyAskUserWs(
-    ws: {
-      readyState: number;
-      send: (data: string) => void;
+    entry: {
+      ws: { readyState: number; send: (data: string) => void };
       ownerId: string;
     } | null,
   ): void {
-    if (!ws) {
+    if (!entry) {
       this.toolRouter.setAskUserHandler(null);
       return;
     }
-    const { ownerId } = ws;
+    const { ws, ownerId } = entry;
     this.toolRouter.setAskUserHandler(
       (questions: AskUserQuestion[]) =>
         new Promise<Record<string, string>>((resolve, reject) => {
