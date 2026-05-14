@@ -305,20 +305,6 @@ class JarvisServer {
     });
     this.taskScheduler.start();
 
-    // Watchdog: node-cron v4 uses a setTimeout chain that can silently break
-    // after long uptime. Check every 5 minutes and reload if jobs are stopped.
-    setInterval(
-      () => {
-        if (!this.taskScheduler.areJobsRunning()) {
-          console.error(
-            "⚠️ [Jarvis] Task scheduler watchdog: jobs stopped unexpectedly, reloading...",
-          );
-          this.taskScheduler.reload();
-        }
-      },
-      5 * 60 * 1000,
-    );
-
     // Inject /task command handler into the global agent
     const taskCommandHandler = new TaskCommandHandler(
       this.taskScheduler,

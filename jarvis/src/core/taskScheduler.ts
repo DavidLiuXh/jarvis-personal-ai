@@ -227,12 +227,6 @@ export class TaskScheduler {
     console.error(`🛑 [TaskScheduler] All tasks stopped.`);
   }
 
-  /** Returns true if all scheduled jobs are still running (heartbeat active). */
-  public areJobsRunning(): boolean {
-    if (this.jobs.length === 0) return true; // nothing to check
-    return this.jobs.every((job) => (job as any).isStarted?.() ?? true);
-  }
-
   /** Reload tasks.json and re-register all cron jobs. */
   public reload(): void {
     this.stop();
