@@ -164,4 +164,67 @@ describe("TaskScheduler", () => {
 
     expect(stopFn).toHaveBeenCalledOnce();
   });
+
+  it("reload() with corrupted tasks.json keeps existing jobs running and returns false", async () => {
+    const stopFn = vi.fn();
+    const cron = await import("node-cron");
+    (cron.default.schedule as any).mockReturnValue({ stop: stopFn });
+
+    writeTasks(tmpDir, {
+      defaultChannel: "feishu",
+      defaultChatId: "oc_test",
+      tasks: [
+        { id: "task1", cron: "0 8 * * *", prompt: "Brief", enabled: true },
+      ],
+    });
+
+    const scheduler = new TaskScheduler(tmpDir);
+    scheduler.start();
+
+    // Overwrite tasks.json with invalid JSON
+    fs.writeFileSync(path.join(tmpDir, "tasks.json"), "{ broken json");
+
+    const result = scheduler.reload();
+
+    // reload must return false and not stop existing jobs
+    expect(result).toBe(false);
+    expect(stopFn).not.toHaveBeenCalled();
+    // Config must still be the original (task1 still accessible)
+    expect(scheduler.getTasks().some((t) => t.id === "task1")).toBe(true);
+  });
+
+  it("reload() with valid tasks.json swaps config and returns true", async () => {
+    const stopFn = vi.fn();
+    const cron = await import("node-cron");
+    (cron.default.schedule as any).mockReturnValue({ stop: stopFn });
+
+    writeTasks(tmpDir, {
+      defaultChannel: "feishu",
+      defaultChatId: "oc_test",
+      tasks: [
+        { id: "task1", cron: "0 8 * * *", prompt: "Brief", enabled: true },
+      ],
+    });
+
+    const scheduler = new TaskScheduler(tmpDir);
+    scheduler.start();
+
+    // Write a new valid config
+    writeTasks(tmpDir, {
+      defaultChannel: "wechat",
+      defaultChatId: "oc_new",
+      tasks: [
+        { id: "task2", cron: "0 9 * * *", prompt: "New task", enabled: true },
+      ],
+    });
+
+    const result = scheduler.reload();
+
+    expect(result).toBe(true);
+    // Old jobs were stopped during swap (task1 + nightly-reflection default)
+    expect(stopFn).toHaveBeenCalled();
+    // Config updated to new task
+    expect(scheduler.getTasks().some((t) => t.id === "task2")).toBe(true);
+    expect(scheduler.getTasks().some((t) => t.id === "task1")).toBe(false);
+  });
 });

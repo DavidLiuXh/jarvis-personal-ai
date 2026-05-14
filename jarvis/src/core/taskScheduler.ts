@@ -227,11 +227,22 @@ export class TaskScheduler {
     console.error(`🛑 [TaskScheduler] All tasks stopped.`);
   }
 
-  /** Reload tasks.json and re-register all cron jobs. */
-  public reload(): void {
+  /** Reload tasks.json and re-register all cron jobs.
+   * If the new config fails to load, keeps the existing jobs running and
+   * returns false so the caller knows the reload did not take effect.
+   */
+  public reload(): boolean {
+    const newConfig = this.loadConfig();
+    if (!newConfig) {
+      console.error(
+        `⚠️ [TaskScheduler] Reload aborted — failed to load tasks.json. Existing jobs unchanged.`,
+      );
+      return false;
+    }
     this.stop();
-    this.config = this.loadConfig();
+    this.config = newConfig;
     this.start();
     console.error(`🔄 [TaskScheduler] Reloaded.`);
+    return true;
   }
 }
