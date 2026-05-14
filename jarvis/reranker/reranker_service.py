@@ -12,7 +12,7 @@ POST /rerank_sorted
 """
 
 import onnxruntime as ort
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from transformers import AutoTokenizer
 from typing import Optional
@@ -58,8 +58,9 @@ def score_pairs(query: str, candidates: list[str]) -> list[float]:
     if not candidates:
         return []
     if len(candidates) > MAX_CANDIDATES:
-        raise ValueError(
-            f"Too many candidates: {len(candidates)} > {MAX_CANDIDATES}"
+        raise HTTPException(
+            status_code=400,
+            detail=f"Too many candidates: {len(candidates)} > {MAX_CANDIDATES}",
         )
     inputs = tokenizer(
         [query] * len(candidates),

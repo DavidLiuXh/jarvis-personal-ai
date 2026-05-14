@@ -66,6 +66,13 @@ async function callReranker(
       });
       clearTimeout(timer);
       if (!res.ok) {
+        // 4xx = client error (bad request, too many candidates, etc.) — do not retry
+        if (res.status >= 400 && res.status < 500) {
+          console.error(
+            `⚠️ [reranker] HTTP ${res.status} (client error, no retry): ${await res.text().catch(() => "")}`,
+          );
+          break;
+        }
         console.error(
           `⚠️ [reranker] HTTP ${res.status} on attempt ${attempt + 1}/${maxRetries + 1}`,
         );
