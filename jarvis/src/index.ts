@@ -566,7 +566,18 @@ class JarvisServer {
       };
 
       ws.on("message", messageHandler);
-      ws.on("close", () => {});
+      ws.on("close", async () => {
+        const sessionId = jarvisConfig.session.useGlobalSession
+          ? jarvisConfig.session.globalSessionId
+          : connectionId;
+        try {
+          const agent = await this.manager.getAgent(sessionId);
+          agent.setAskUserHandler(null);
+          agent.rejectAllPendingAskUsers();
+        } catch {
+          // agent may not exist if connection closed before first message
+        }
+      });
     });
   }
 

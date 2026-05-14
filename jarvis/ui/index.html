@@ -635,7 +635,7 @@
                 const label = document.createElement('label');
                 label.textContent = q.question;
 
-                if (q.options && q.options.length > 0) {
+                if ((q.type === 'select' || (q.options && q.options.length > 0)) && q.options && q.options.length > 0) {
                     const radioGroup = document.createElement('div');
                     radioGroup.className = 'radio-group';
                     q.options.forEach((opt, j) => {
@@ -655,7 +655,7 @@
                     const textarea = document.createElement('textarea');
                     textarea.name = `ask_q_${i}`;
                     textarea.rows = 2;
-                    textarea.placeholder = q.header || '';
+                    textarea.placeholder = q.placeholder || q.header || '';
                     div.appendChild(label);
                     div.appendChild(textarea);
                 }

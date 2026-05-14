@@ -141,6 +141,9 @@ type ChannelRegistryHandle = {
 export type AskUserQuestion = {
   question: string;
   header?: string;
+  /** "text" (default) renders a textarea; "select" renders radio buttons */
+  type?: "text" | "select";
+  placeholder?: string;
   options?: Array<{ label: string; description?: string }>;
 };
 

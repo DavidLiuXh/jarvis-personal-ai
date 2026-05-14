@@ -1306,6 +1306,14 @@ export class JarvisAgent extends EventEmitter {
     });
   }
 
+  /** Reject all pending ask_user requests (e.g. WebSocket disconnected). */
+  public rejectAllPendingAskUsers(reason = "WebSocket disconnected"): void {
+    for (const [id, entry] of this.pendingAskUsers) {
+      this.pendingAskUsers.delete(id);
+      entry.reject(new Error(reason));
+    }
+  }
+
   /** Deliver user's ask_user answers back to the pending handler.
    *  Pass cancelled=true when the user dismisses the form without answering. */
   public provideAskUserResponse(
@@ -1362,10 +1370,14 @@ export class JarvisAgent extends EventEmitter {
             reject(new Error("user did not respond within 300s"));
           }, 300_000);
 
+          const cleanup = () => clearTimeout(timer);
           this.pendingAskUsers.set(id, {
-            resolve,
+            resolve: (answers) => {
+              cleanup();
+              resolve(answers);
+            },
             reject: (e) => {
-              clearTimeout(timer);
+              cleanup();
               reject(e);
             },
           });
