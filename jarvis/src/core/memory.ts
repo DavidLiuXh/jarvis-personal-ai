@@ -2004,6 +2004,17 @@ ${insightsSection}</knowledge>
             (r) => r.score >= relevanceThreshold,
           );
           ranked = filtered.map((r) => mergedPool[r.index]);
+          // Rebuild rankedIdsForGraph from only the facts that passed the threshold.
+          // Without this, graph expansion would still use bi-encoder candidates that
+          // were filtered out by the reranker, bypassing the relevance gate.
+          const contentToId = new Map<string, number>();
+          for (const f of allFacts) contentToId.set(f.content, f.id);
+          rankedIdsForGraph = ranked
+            .map((f) => contentToId.get(f.content))
+            .filter((id): id is number => {
+              if (id === undefined) return false;
+              return factById.get(id)?.category !== "insight";
+            });
           // Insights that won slots are now in ranked; clear separate insightOut
           insightOut.length = 0;
           const afterOrder = reranked.map(
