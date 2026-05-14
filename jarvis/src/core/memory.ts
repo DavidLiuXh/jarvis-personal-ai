@@ -3161,6 +3161,7 @@ Events:`;
           `INSERT INTO processed_files (filename, last_mtime, events_extracted, events_last_msg_time)
            VALUES (?, ?, 1, ?)
            ON CONFLICT(filename) DO UPDATE SET
+             last_mtime = excluded.last_mtime,
              events_extracted = 1,
              events_last_msg_time = ?`,
         )

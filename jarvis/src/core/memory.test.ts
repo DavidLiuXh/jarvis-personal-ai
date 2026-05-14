@@ -2406,6 +2406,79 @@ describe("MemoryService skill index", () => {
     stub.mockRestore();
   });
 
+  it("upsertEventsState: ON CONFLICT updates last_mtime (regression for missing last_mtime=excluded.last_mtime)", async () => {
+    // Verify that calling upsertEventsState on an already-existing row
+    // correctly updates last_mtime. Before the fix, the ON CONFLICT branch
+    // only updated events_extracted/events_last_msg_time, so last_mtime stayed
+    // stale and the file would be re-queued on next startup.
+    vi.doMock("sqlite-vec", () => ({ load: vi.fn() }));
+    vi.doMock("./configManager.js", () => ({
+      ConfigManager: {
+        getInstance: vi.fn().mockReturnValue({
+          get: vi.fn().mockReturnValue({
+            api: { key: "test-key", proxy: null },
+            models: {
+              embedding: "m",
+              embeddingDimension: 4,
+              distillation: "m",
+            },
+            memory: {
+              ingestionDelayMs: 0,
+              retrievalLimit: 5,
+              consolidationThreshold: 100,
+              dedupStrategy: "jaccard",
+              factRelevanceStrategy: "jaccard",
+              factRelevanceLimit: 3,
+              prewarmLimit: 3,
+              l1WriteMode: "batch",
+              vectorSimilarityWeight: 0.7,
+              importanceWeight: 0.3,
+            },
+          }),
+        }),
+      },
+    }));
+
+    const { MemoryService } = await import("./memory.js");
+    const tmpDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), "jarvis-upsert-mtime-"),
+    );
+    const service = new (MemoryService as new (
+      root: string,
+      dbPath?: string,
+    ) => InstanceType<typeof MemoryService>)("", tmpDir);
+    const db = (service as unknown as Record<string, unknown>).db as any;
+
+    // Insert an existing processed_files row with old mtime
+    const oldMtime = Date.now() - 10_000;
+    db.prepare(
+      "INSERT INTO processed_files (filename, last_mtime, events_extracted, events_last_msg_time) VALUES (?, ?, 1, ?)",
+    ).run("2026-05-14.json", oldMtime, 1000);
+
+    // Create a real file so fs.statSync() inside upsertEventsState works
+    const fakeFile = path.join(tmpDir, "2026-05-14.json");
+    fs.writeFileSync(fakeFile, "[]");
+    const newMtime = fs.statSync(fakeFile).mtimeMs;
+
+    // Call upsertEventsState via the private method — cast to any
+    (service as any).upsertEventsState("2026-05-14.json", fakeFile, 2000);
+
+    const row = db
+      .prepare(
+        "SELECT last_mtime, events_last_msg_time FROM processed_files WHERE filename = ?",
+      )
+      .get("2026-05-14.json") as {
+      last_mtime: number;
+      events_last_msg_time: number;
+    };
+
+    // last_mtime must be updated to the current file mtime (not the old stale value)
+    expect(row.last_mtime).toBe(newMtime);
+    expect(row.last_mtime).not.toBe(oldMtime);
+    // events_last_msg_time must also be updated
+    expect(row.events_last_msg_time).toBe(2000);
+  });
+
   it("backfillSkillIndex: queues skills when embedFn absent, runs when setEmbedContent called", async () => {
     const embedCalls: string[] = [];
     const embedFn = async (text: string) => {
