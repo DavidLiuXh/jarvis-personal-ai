@@ -66,18 +66,21 @@ DIMENSION 5 — Topic Shift (only meaningful when conversation history is presen
 
 Step 1 — Summarize: What is the main topic/domain of the recent history? (1 phrase)
 Step 2 — Identify: What is the domain/intent of the new request? (1 phrase)
-Step 3 — Check references: Does the new request use pronouns or references pointing to the history?
-  Strong anaphora (almost certainly refers back): 它/这个/那个/这些/那些/上述/刚才/this/that/these/those/follow-up
-  Weak connectors (check intent — may or may not refer back): 他/她/继续/接着/另外/补充/再说/also/continue/above
+Step 3 — Check: Does the new request directly reference something in the CURRENT recent history?
+  YES (references_recent_history=true): Uses pronouns/references pointing to what was JUST discussed.
+    e.g. 它/这个/那个/这些/那些/上述/this/that/these/those/follow-up on what you just said
+  NO (references_recent_history=false): Mentions past time ("之前"/"以前"/"上次") to REQUEST retrieval of older history, OR introduces a new subject with no tie to the current exchange.
+  KEY DISTINCTION: "你之前说的那个方案" → references recent history (true). "帮我获取之前讨论的xxx" → requests retrieval of older history, not referencing this conversation (false).
 Step 4 — Decide:
-  - true (SHIFT): The new request introduces a domain that is NEITHER referenced in history NOR a natural continuation. Both the topic AND the intent are different.
-  - false (NO SHIFT): The new request uses anaphoric references, follows up, clarifies, or shares the same domain or workflow as the history.
+  - true (SHIFT): references_recent_history=false AND the new domain/intent differs from recent history.
+  - false (NO SHIFT): references_recent_history=true, OR the new request continues/follows up the same domain.
 
 Examples:
-  History: "严格避免幻觉" | New: "帮我获取下之前讨论onnx的总结" → history_topic="写作规范", new_topic="历史检索/onnx", has_reference=false, topic_shifted=true
-  History: "分析英伟达财报" | New: "超微电脑股价呢" → history_topic="英伟达财报", new_topic="超微股价", has_reference=true ("呢" references prior context), topic_shifted=false
-  History: "实现reranker功能" | New: "继续" → history_topic="reranker开发", new_topic="继续上一个任务", has_reference=true, topic_shifted=false
-  History: "今天天气怎么样" | New: "帮我写一份投资分析报告" → history_topic="天气查询", new_topic="投资分析", has_reference=false, topic_shifted=true
+  History: "严格避免幻觉" | New: "帮我获取下之前讨论onnx的总结" → history_topic="写作规范", new_topic="历史检索/onnx", references_recent_history=false, topic_shifted=true
+  History: "分析英伟达财报" | New: "超微电脑股价呢" → history_topic="英伟达财报", new_topic="超微股价", references_recent_history=true ("呢" refers to prior context), topic_shifted=false
+  History: "实现reranker功能" | New: "继续" → history_topic="reranker开发", new_topic="继续上一任务", references_recent_history=true, topic_shifted=false
+  History: "今天天气怎么样" | New: "帮我写一份投资分析报告" → history_topic="天气查询", new_topic="投资分析", references_recent_history=false, topic_shifted=true
+  History: "讨论onnx部署" | New: "你之前说的那个超时参数怎么设" → history_topic="onnx部署", new_topic="超时参数配置", references_recent_history=true, topic_shifted=false
 
 SCORING FORMULA
 complexity_score = knowledge_score * 0.6 + operation_score * 0.4 (round to integer)
@@ -87,7 +90,7 @@ OUTPUT RULES
 - All fields required. time_window_days / date_from / date_to may be null.
 
 Required schema:
-{"knowledge_score": <1-100>, "operation_score": <1-100>, "complexity_score": <1-100>, "complexity_reasoning": "<one sentence>", "query_subject": "personal"|"external"|"mixed", "time_window_days": <integer>|null, "date_from": "<YYYY-MM-DD>"|null, "date_to": "<YYYY-MM-DD>"|null, "history_topic": "<1 phrase>", "new_topic": "<1 phrase>", "has_reference": true|false, "topic_shifted": true|false}
+{"knowledge_score": <1-100>, "operation_score": <1-100>, "complexity_score": <1-100>, "complexity_reasoning": "<one sentence>", "query_subject": "personal"|"external"|"mixed", "time_window_days": <integer>|null, "date_from": "<YYYY-MM-DD>"|null, "date_to": "<YYYY-MM-DD>"|null, "history_topic": "<1 phrase>", "new_topic": "<1 phrase>", "references_recent_history": true|false, "topic_shifted": true|false}
 `.trim();
 }
 
@@ -255,7 +258,7 @@ export class LocalModelRouter {
       date_to?: string | null;
       history_topic?: string;
       new_topic?: string;
-      has_reference?: boolean;
+      references_recent_history?: boolean;
       topic_shifted?: boolean;
     };
 
@@ -335,15 +338,15 @@ export class LocalModelRouter {
         ? ` [knowledge=${knowledgeScore}, operation=${operationScore}]`
         : "";
 
-    // has_reference=true (LLM) or hasAnaphoricRef (code pre-filter) → always false
+    // references_recent_history=true (LLM) or hasAnaphoricRef (code pre-filter) → always false
     const topicShifted =
-      hasAnaphoricRef || parsed.has_reference === true
+      hasAnaphoricRef || parsed.references_recent_history === true
         ? false
         : parsed.topic_shifted === true;
 
     if (parsed.history_topic || parsed.new_topic) {
       console.error(
-        `🔍 [LocalModelRouter] topic analysis: history="${parsed.history_topic ?? "?"}" new="${parsed.new_topic ?? "?"}" has_reference=${parsed.has_reference ?? "?"} → topic_shifted=${topicShifted}`,
+        `🔍 [LocalModelRouter] topic analysis: history="${parsed.history_topic ?? "?"}" new="${parsed.new_topic ?? "?"}" references_recent=${parsed.references_recent_history ?? "?"} → topic_shifted=${topicShifted}`,
       );
     }
 

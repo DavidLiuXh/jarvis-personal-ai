@@ -176,9 +176,9 @@ describe("LocalModelRouter — route() topic_shifted via classify", () => {
     expect(result.topicShifted).toBe(false);
   });
 
-  it("topicShifted=false when LLM has_reference=true even if topic_shifted=true", async () => {
+  it("topicShifted=false when LLM references_recent_history=true even if topic_shifted=true", async () => {
     const router = makeRouter();
-    // LLM reports has_reference=true but also topic_shifted=true (contradictory) → has_reference wins
+    // LLM reports references_recent_history=true but also topic_shifted=true (contradictory) → references_recent_history wins
     mockGenerate.mockResolvedValueOnce(
       JSON.stringify({
         knowledge_score: 50,
@@ -191,7 +191,7 @@ describe("LocalModelRouter — route() topic_shifted via classify", () => {
         date_to: null,
         history_topic: "TypeScript development",
         new_topic: "follow-up on tests",
-        has_reference: true,
+        references_recent_history: true,
         topic_shifted: true,
       }),
     );
