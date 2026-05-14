@@ -12,9 +12,19 @@
 #   ~/onnx_env/bin/pip install onnxruntime transformers fastapi uvicorn optimum[onnxruntime]
 #
 #   # Option A: BAAI/bge-reranker-large (recommended — best multilingual accuracy, ~1.3GB)
-#   #           model_id = 'BAAI/bge-reranker-large'
+#   ~/onnx_env/bin/python3 -c "
+#     import os
+#     from optimum.onnxruntime import ORTModelForSequenceClassification
+#     from transformers import AutoTokenizer
+#     model_id = 'BAAI/bge-reranker-large'
+#     m = ORTModelForSequenceClassification.from_pretrained(model_id, export=True)
+#     m.save_pretrained(os.path.expanduser('~/onnx_model'))
+#     AutoTokenizer.from_pretrained(model_id).save_pretrained(os.path.expanduser('~/onnx_model'))
+#   "
+#
 #   # Option A2: BAAI/bge-reranker-base (lighter — ~400MB, slightly lower accuracy)
 #   ~/onnx_env/bin/python3 -c "
+#     import os
 #     from optimum.onnxruntime import ORTModelForSequenceClassification
 #     from transformers import AutoTokenizer
 #     model_id = 'BAAI/bge-reranker-base'
@@ -25,6 +35,7 @@
 #
 #   # Option B: cross-encoder/ms-marco-MiniLM-L6-v2 (English only, faster)
 #   ~/onnx_env/bin/python3 -c "
+#     import os
 #     from optimum.onnxruntime import ORTModelForSequenceClassification
 #     from transformers import AutoTokenizer
 #     model_id = 'cross-encoder/ms-marco-MiniLM-L6-v2'
