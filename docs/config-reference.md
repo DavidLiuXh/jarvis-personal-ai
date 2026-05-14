@@ -174,9 +174,11 @@ Configuration file location: `~/.gemini-jarvis/config.json`
 
     // Minimum cross-encoder logit score for a memory to be injected into context.
     // Results below this threshold are discarded entirely (not injected as low-confidence).
-    // BAAI/bge-reranker-base: ~-3 to 3 relevant, -10 irrelevant. Recommended: -2
+    // BAAI/bge-reranker-large (recommended): relevant ~-2 to 3, irrelevant ~-10. Recommended: -2
+    // BAAI/bge-reranker-base: similar range. Recommended: -2
     // ms-marco-MiniLM-L6-v2: >5 high relevance, 0-5 relevant, <0 irrelevant. Recommended: 6
-    // Default: -2 (tuned for bge-reranker-base)\n    "memoryRelevanceThreshold": -2,
+    // Default: -2 (tuned for bge-reranker-large/base)
+    "memoryRelevanceThreshold": -2,
   },
 
   // ─────────────────────────────────────────────

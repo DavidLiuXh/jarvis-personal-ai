@@ -168,9 +168,11 @@
 
     // 记忆注入的最低 cross-encoder logit 分数门槛。
     // 低于此值的结果直接丢弃，不以"低置信度"形式注入。
-    // ms-marco-MiniLM-L6-v2 参考：> 5 高度相关，0-5 相关，< 0 不相关。
-    // 默认：6
-    "memoryRelevanceThreshold": 6,
+    // BAAI/bge-reranker-large（推荐）：相关 ~-2 到 3，不相关 ~-10。推荐值：-2
+    // BAAI/bge-reranker-base：范围相近。推荐值：-2
+    // ms-marco-MiniLM-L6-v2：> 5 高度相关，0-5 相关，< 0 不相关。推荐值：6
+    // 默认：-2（针对 bge-reranker-large/base 调校）
+    "memoryRelevanceThreshold": -2,
   },
 
   // ─────────────────────────────────────────────
