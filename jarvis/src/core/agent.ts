@@ -747,6 +747,7 @@ export class JarvisAgent extends EventEmitter {
       await this.initialize();
       const history = this.client?.getChat().getHistory() ?? [];
       if (history.length === 0) {
+        this.conversationTurnCount = Math.max(1, this.conversationTurnCount);
         this.emit(JarvisEventType.CONTENT, {
           type: "content",
           value: "✅ 对话历史已清空。",
@@ -754,6 +755,8 @@ export class JarvisAgent extends EventEmitter {
       } else if (!this.summarizerGenerateText) {
         // No summarizer — just wipe history entirely
         this.client.getChat().setHistory([]);
+        this.conversationSummary = "";
+        this.conversationTurnCount = Math.max(1, this.conversationTurnCount);
         this.emit(JarvisEventType.CONTENT, {
           type: "content",
           value: `✅ 已清空 ${Math.floor(history.length / 2)} 轮对话历史。`,
@@ -788,15 +791,25 @@ export class JarvisAgent extends EventEmitter {
             this.client
               .getChat()
               .setHistory(buildHistoryWithSummary(summary, []));
+            // Persist summary in agent state so prewarm/searchSummaryChunks
+            // can use it, and so it survives the first-message history-clear
+            // guard on the next turn.
+            this.conversationSummary = summary;
           } else {
             this.client.getChat().setHistory([]);
+            this.conversationSummary = "";
           }
+          // Advance turn count so the next real message does not trigger the
+          // first-message history-clear logic (conversationTurnCount === 0).
+          this.conversationTurnCount = Math.max(1, this.conversationTurnCount);
           this.emit(JarvisEventType.CONTENT, {
             type: "content",
             value: `✅ 已将 ${Math.floor(history.length / 2)} 轮对话压缩为摘要，上下文已重置。`,
           });
         } catch (e: any) {
           this.client.getChat().setHistory([]);
+          this.conversationSummary = "";
+          this.conversationTurnCount = Math.max(1, this.conversationTurnCount);
           this.emit(JarvisEventType.CONTENT, {
             type: "content",
             value: `✅ 已清空对话历史（摘要生成失败: ${e.message}）。`,
