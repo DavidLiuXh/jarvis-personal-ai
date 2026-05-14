@@ -635,7 +635,7 @@
                 const label = document.createElement('label');
                 label.textContent = q.question;
 
-                if ((q.type === 'select' || (q.options && q.options.length > 0)) && q.options && q.options.length > 0) {
+                if (q.options && q.options.length > 0) {
                     const radioGroup = document.createElement('div');
                     radioGroup.className = 'radio-group';
                     q.options.forEach((opt, j) => {

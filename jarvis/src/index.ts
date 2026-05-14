@@ -499,6 +499,9 @@ class JarvisServer {
   private setupWebSocket() {
     this.wss.on("connection", (ws: WebSocket) => {
       const connectionId = uuidv4();
+      // Track the last resolved sessionId so the close handler can target the
+      // correct agent (message.sessionId may differ from connectionId).
+      let lastSessionId: string = connectionId;
       const messageHandler = async (data: string) => {
         try {
           const message = JSON.parse(data.toString()) as JarvisIncomingMessage;
@@ -509,6 +512,7 @@ class JarvisServer {
           if (jarvisConfig.session.useGlobalSession) {
             sessionId = jarvisConfig.session.globalSessionId;
           }
+          lastSessionId = sessionId;
 
           if (message.type === "chat") {
             await this.handleChat(ws, sessionId, message.payload);
@@ -567,11 +571,8 @@ class JarvisServer {
 
       ws.on("message", messageHandler);
       ws.on("close", async () => {
-        const sessionId = jarvisConfig.session.useGlobalSession
-          ? jarvisConfig.session.globalSessionId
-          : connectionId;
         try {
-          const agent = await this.manager.getAgent(sessionId);
+          const agent = await this.manager.getAgent(lastSessionId);
           agent.setAskUserHandler(null);
           agent.rejectAllPendingAskUsers();
         } catch {
