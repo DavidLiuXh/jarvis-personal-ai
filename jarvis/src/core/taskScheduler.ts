@@ -42,7 +42,7 @@ export type TriggeredTask = TaskConfig & {
   channel: string;
 };
 
-type TriggerCallback = (task: TriggeredTask) => void;
+type TriggerCallback = (task: TriggeredTask) => void | Promise<void>;
 
 const TASKS_FILENAME = "tasks.json";
 
@@ -183,24 +183,22 @@ export class TaskScheduler {
         continue;
       }
 
-      const job = cron.schedule(task.cron, () => {
-        try {
-          const now = new Date();
-          console.error(
-            `⏰ [TaskScheduler] Task triggered: ${task.id} at ${now.toLocaleString()} (${now.toISOString()})`,
-          );
-          const triggered: TriggeredTask = {
-            ...task,
-            channel: task.channel ?? defaultChannel,
-            chatId: task.chatId ?? defaultChatId,
-          };
-          for (const cb of this.triggerCallbacks) {
-            cb(triggered);
-          }
-        } catch (e: any) {
-          console.error(
-            `⚠️ [TaskScheduler] Task "${task.id}" callback threw: ${e?.message ?? e}`,
-          );
+      const job = cron.schedule(task.cron, async () => {
+        const now = new Date();
+        console.error(
+          `⏰ [TaskScheduler] Task triggered: ${task.id} at ${now.toLocaleString()} (${now.toISOString()})`,
+        );
+        const triggered: TriggeredTask = {
+          ...task,
+          channel: task.channel ?? defaultChannel,
+          chatId: task.chatId ?? defaultChatId,
+        };
+        for (const cb of this.triggerCallbacks) {
+          await Promise.resolve(cb(triggered)).catch((e: any) => {
+            console.error(
+              `⚠️ [TaskScheduler] Task "${task.id}" callback failed: ${e?.message ?? e}`,
+            );
+          });
         }
       });
 
