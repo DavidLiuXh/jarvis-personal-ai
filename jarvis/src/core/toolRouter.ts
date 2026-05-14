@@ -141,10 +141,14 @@ type ChannelRegistryHandle = {
 export type AskUserQuestion = {
   question: string;
   header?: string;
-  /** "text" (default) renders a textarea; "select" renders radio buttons */
-  type?: "text" | "select";
+  /** Mirrors gemini-cli core QuestionType:
+   *  "choice" — radio/checkbox with options (default when options present)
+   *  "text"   — free-form textarea (default when no options)
+   *  "yesno"  — Yes / No buttons with optional Other feedback */
+  type?: "choice" | "text" | "yesno";
   placeholder?: string;
   options?: Array<{ label: string; description?: string }>;
+  multiSelect?: boolean;
 };
 
 /** Converts ask_user answers map into LLM-readable text. */

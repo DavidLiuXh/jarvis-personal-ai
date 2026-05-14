@@ -83,6 +83,7 @@ export class JarvisAgent extends EventEmitter {
   private pendingAskUsers = new Map<
     string,
     {
+      ownerId: string;
       resolve: (answers: Record<string, string>) => void;
       reject: (e: Error) => void;
     }
@@ -92,6 +93,7 @@ export class JarvisAgent extends EventEmitter {
   private pendingAskUserWs: {
     readyState: number;
     send: (data: string) => void;
+    ownerId: string;
   } | null = null;
 
   constructor(options: JarvisAgentOptions) {
@@ -1306,11 +1308,28 @@ export class JarvisAgent extends EventEmitter {
     });
   }
 
-  /** Reject all pending ask_user requests (e.g. WebSocket disconnected). */
-  public rejectAllPendingAskUsers(reason = "WebSocket disconnected"): void {
+  /** Clear the ask_user handler only if it was registered by this owner.
+   *  Prevents a closing tab from clearing another tab's active handler. */
+  public clearAskUserHandlerIfOwner(ownerId: string): void {
+    if (this.pendingAskUserWs?.ownerId === ownerId) {
+      this.pendingAskUserWs = null;
+      if (this.toolRouter) {
+        this.toolRouter.setAskUserHandler(null);
+      }
+    }
+  }
+
+  /** Reject pending ask_user requests owned by the given connection.
+   *  Other connections' pending entries are left untouched. */
+  public rejectPendingAskUsersForOwner(
+    ownerId: string,
+    reason = "WebSocket disconnected",
+  ): void {
     for (const [id, entry] of this.pendingAskUsers) {
-      this.pendingAskUsers.delete(id);
-      entry.reject(new Error(reason));
+      if (entry.ownerId === ownerId) {
+        this.pendingAskUsers.delete(id);
+        entry.reject(new Error(reason));
+      }
     }
   }
 
@@ -1342,21 +1361,27 @@ export class JarvisAgent extends EventEmitter {
    */
   public setAskUserHandler(
     ws: { readyState: number; send: (data: string) => void } | null,
+    ownerId = "",
   ): void {
-    this.pendingAskUserWs = ws;
+    this.pendingAskUserWs = ws ? { ...ws, ownerId } : null;
     if (this.toolRouter) {
-      this._applyAskUserWs(ws);
+      this._applyAskUserWs(this.pendingAskUserWs);
     }
     // else: initialize() will call _applyAskUserWs when toolRouter is ready
   }
 
   private _applyAskUserWs(
-    ws: { readyState: number; send: (data: string) => void } | null,
+    ws: {
+      readyState: number;
+      send: (data: string) => void;
+      ownerId: string;
+    } | null,
   ): void {
     if (!ws) {
       this.toolRouter.setAskUserHandler(null);
       return;
     }
+    const { ownerId } = ws;
     this.toolRouter.setAskUserHandler(
       (questions: AskUserQuestion[]) =>
         new Promise<Record<string, string>>((resolve, reject) => {
@@ -1372,6 +1397,7 @@ export class JarvisAgent extends EventEmitter {
 
           const cleanup = () => clearTimeout(timer);
           this.pendingAskUsers.set(id, {
+            ownerId,
             resolve: (answers) => {
               cleanup();
               resolve(answers);

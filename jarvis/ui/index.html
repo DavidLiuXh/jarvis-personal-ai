@@ -635,22 +635,41 @@
                 const label = document.createElement('label');
                 label.textContent = q.question;
 
-                if (q.options && q.options.length > 0) {
-                    const radioGroup = document.createElement('div');
-                    radioGroup.className = 'radio-group';
-                    q.options.forEach((opt, j) => {
+                const qType = q.type || (q.options && q.options.length > 0 ? 'choice' : 'text');
+
+                if (qType === 'yesno') {
+                    const btnGroup = document.createElement('div');
+                    btnGroup.className = 'radio-group';
+                    ['Yes', 'No'].forEach((val, j) => {
                         const optLabel = document.createElement('label');
                         const radio = document.createElement('input');
                         radio.type = 'radio';
                         radio.name = `ask_q_${i}`;
-                        radio.value = opt.label;
+                        radio.value = val;
                         if (j === 0) radio.checked = true;
                         optLabel.appendChild(radio);
-                        optLabel.appendChild(document.createTextNode(` ${opt.label}${opt.description ? ' — ' + opt.description : ''}`));
-                        radioGroup.appendChild(optLabel);
+                        optLabel.appendChild(document.createTextNode(` ${val}`));
+                        btnGroup.appendChild(optLabel);
                     });
                     div.appendChild(label);
-                    div.appendChild(radioGroup);
+                    div.appendChild(btnGroup);
+                } else if (qType === 'choice' && q.options && q.options.length > 0) {
+                    const inputType = q.multiSelect ? 'checkbox' : 'radio';
+                    const group = document.createElement('div');
+                    group.className = 'radio-group';
+                    q.options.forEach((opt, j) => {
+                        const optLabel = document.createElement('label');
+                        const input = document.createElement('input');
+                        input.type = inputType;
+                        input.name = `ask_q_${i}`;
+                        input.value = opt.label;
+                        if (!q.multiSelect && j === 0) input.checked = true;
+                        optLabel.appendChild(input);
+                        optLabel.appendChild(document.createTextNode(` ${opt.label}${opt.description ? ' — ' + opt.description : ''}`));
+                        group.appendChild(optLabel);
+                    });
+                    div.appendChild(label);
+                    div.appendChild(group);
                 } else {
                     const textarea = document.createElement('textarea');
                     textarea.name = `ask_q_${i}`;
@@ -680,9 +699,14 @@
             const answers = {};
             activeAskUserQuestions.forEach((q, i) => {
                 const key = `${i}_${q.header || q.question.slice(0, 20)}`;
-                const radio = askUserForm.querySelector(`input[name="ask_q_${i}"]:checked`);
-                const textarea = askUserForm.querySelector(`textarea[name="ask_q_${i}"]`);
-                answers[key] = radio ? radio.value : (textarea ? textarea.value.trim() : '');
+                if (q.multiSelect) {
+                    const checked = [...askUserForm.querySelectorAll(`input[name="ask_q_${i}"]:checked`)];
+                    answers[key] = checked.map(el => el.value).join(', ');
+                } else {
+                    const radio = askUserForm.querySelector(`input[name="ask_q_${i}"]:checked`);
+                    const textarea = askUserForm.querySelector(`textarea[name="ask_q_${i}"]`);
+                    answers[key] = radio ? radio.value : (textarea ? textarea.value.trim() : '');
+                }
             });
             ws.send(JSON.stringify({ type: 'ask_user_response', id: activeAskUserId, answers }));
             hideAskUser();

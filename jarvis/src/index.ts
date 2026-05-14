@@ -515,7 +515,7 @@ class JarvisServer {
           lastSessionId = sessionId;
 
           if (message.type === "chat") {
-            await this.handleChat(ws, sessionId, message.payload);
+            await this.handleChat(ws, sessionId, message.payload, connectionId);
           } else if (message.type === "restore") {
             await this.handleRestore(ws, sessionId);
           } else if (message.type === "ask_user_response") {
@@ -573,8 +573,10 @@ class JarvisServer {
       ws.on("close", async () => {
         try {
           const agent = await this.manager.getAgent(lastSessionId);
-          agent.setAskUserHandler(null);
-          agent.rejectAllPendingAskUsers();
+          // Only clear the handler if this connection is still the owner.
+          // Another tab may have since become the active handler.
+          agent.clearAskUserHandlerIfOwner(connectionId);
+          agent.rejectPendingAskUsersForOwner(connectionId);
         } catch {
           // agent may not exist if connection closed before first message
         }
@@ -582,7 +584,12 @@ class JarvisServer {
     });
   }
 
-  private async handleChat(ws: WebSocket, sessionId: string, payload: string) {
+  private async handleChat(
+    ws: WebSocket,
+    sessionId: string,
+    payload: string,
+    connectionId = "",
+  ) {
     const trimmed = payload.trim();
 
     // 🤖 AGENT MANAGEMENT COMMANDS
@@ -664,8 +671,8 @@ class JarvisServer {
     }
 
     // Bind ask_user handler to this WebSocket connection for this turn.
-    // Re-bound each chat so the ws reference stays current (reconnects, etc.).
-    agent.setAskUserHandler(ws);
+    // Pass connectionId as ownerId so close can reject only this connection's pending.
+    agent.setAskUserHandler(ws, connectionId);
 
     const onContent = (event: any) => {
       if (event.type === "ask_user_request") {
@@ -742,7 +749,7 @@ class JarvisServer {
     };
 
     const cleanup = () => {
-      agent.setAskUserHandler(null);
+      agent.clearAskUserHandlerIfOwner(connectionId);
       agent.off(JarvisEventType.CONTENT, onContent);
       agent.off(JarvisEventType.TOOL_CALL_RESPONSE, onToolResponse);
       agent.off(JarvisEventType.SUBAGENT_ACTIVITY, onSubAgentActivity);
