@@ -944,6 +944,10 @@ export class JarvisAgent extends EventEmitter {
       const pId = `jarvis-${this.sessionId}-${Date.now()}`;
 
       await promptIdContext.run(pId, async () => {
+        // Always set current user prompt so recall_memory empty-query fallback
+        // works regardless of whether local routing is enabled.
+        this.toolRouter.setCurrentUserPrompt(userPrompt);
+
         // Local model routing: classify complexity + query subject, set model
         let querySubject: "personal" | "external" | "mixed" = "mixed";
         let timeWindowDays: number | null = null;
@@ -990,7 +994,6 @@ export class JarvisAgent extends EventEmitter {
           timeWindowDays = result.timeWindowDays;
           resolvedDateRange = result.resolvedDateRange ?? null;
           this.toolRouter.setCurrentTimeWindow(timeWindowDays);
-          this.toolRouter.setCurrentUserPrompt(userPrompt);
           this.toolRouter.setCurrentDateRange(
             resolvedDateRange,
             result.dateFrom,
