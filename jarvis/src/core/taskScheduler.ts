@@ -184,17 +184,23 @@ export class TaskScheduler {
       }
 
       const job = cron.schedule(task.cron, () => {
-        const now = new Date();
-        console.error(
-          `⏰ [TaskScheduler] Task triggered: ${task.id} at ${now.toLocaleString()} (${now.toISOString()})`,
-        );
-        const triggered: TriggeredTask = {
-          ...task,
-          channel: task.channel ?? defaultChannel,
-          chatId: task.chatId ?? defaultChatId,
-        };
-        for (const cb of this.triggerCallbacks) {
-          cb(triggered);
+        try {
+          const now = new Date();
+          console.error(
+            `⏰ [TaskScheduler] Task triggered: ${task.id} at ${now.toLocaleString()} (${now.toISOString()})`,
+          );
+          const triggered: TriggeredTask = {
+            ...task,
+            channel: task.channel ?? defaultChannel,
+            chatId: task.chatId ?? defaultChatId,
+          };
+          for (const cb of this.triggerCallbacks) {
+            cb(triggered);
+          }
+        } catch (e: any) {
+          console.error(
+            `⚠️ [TaskScheduler] Task "${task.id}" callback threw: ${e?.message ?? e}`,
+          );
         }
       });
 
@@ -221,6 +227,12 @@ export class TaskScheduler {
     }
     this.jobs = [];
     console.error(`🛑 [TaskScheduler] All tasks stopped.`);
+  }
+
+  /** Returns true if all scheduled jobs are still running (heartbeat active). */
+  public areJobsRunning(): boolean {
+    if (this.jobs.length === 0) return true; // nothing to check
+    return this.jobs.every((job) => (job as any).isStarted?.() ?? true);
   }
 
   /** Reload tasks.json and re-register all cron jobs. */
