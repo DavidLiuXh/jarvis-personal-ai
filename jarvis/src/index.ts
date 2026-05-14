@@ -514,6 +514,9 @@ class JarvisServer {
             await this.handleChat(ws, sessionId, message.payload);
           } else if (message.type === "restore") {
             await this.handleRestore(ws, sessionId);
+          } else if (message.type === "ask_user_response") {
+            const agent = await this.manager.getAgent(sessionId);
+            agent.provideAskUserResponse(message.id, message.answers ?? {});
           } else if (message.type === "confirmation") {
             const agent = await this.manager.getAgent(sessionId);
             agent.provideConfirmationResponse(message.id, message.decision);
@@ -644,7 +647,18 @@ class JarvisServer {
       }
     }
 
+    // Bind ask_user handler to this WebSocket connection for this turn.
+    // Re-bound each chat so the ws reference stays current (reconnects, etc.).
+    agent.setAskUserHandler(ws);
+
     const onContent = (event: any) => {
+      if (event.type === "ask_user_request") {
+        console.error(
+          `❓ [Jarvis] ask_user_request → WebSocket (id=${event.value?.id})`,
+        );
+        // Falls through to the ws.send below — no extra handling needed.
+      }
+
       // Route confirmation_request to Feishu/WeChat if session has a channel prefix
       if (event.type === "confirmation_request") {
         const { id, message } = event.value;
@@ -712,6 +726,7 @@ class JarvisServer {
     };
 
     const cleanup = () => {
+      agent.setAskUserHandler(null);
       agent.off(JarvisEventType.CONTENT, onContent);
       agent.off(JarvisEventType.TOOL_CALL_RESPONSE, onToolResponse);
       agent.off(JarvisEventType.SUBAGENT_ACTIVITY, onSubAgentActivity);

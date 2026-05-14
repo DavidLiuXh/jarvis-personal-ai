@@ -27,7 +27,7 @@ import {
   type SkillInfo,
 } from "./systemPromptBuilder.js";
 import { BackgroundDistiller } from "./backgroundDistiller.js";
-import { ToolRouter } from "./toolRouter.js";
+import { ToolRouter, type AskUserQuestion } from "./toolRouter.js";
 import { AgentInitializer } from "./agentInitializer.js";
 import { type TaskCommandHandler } from "./taskCommandHandler.js";
 import { type SkillCommandHandler } from "./skillCommandHandler.js";
@@ -80,6 +80,10 @@ export class JarvisAgent extends EventEmitter {
     null;
   private lightweight: boolean;
   private conversationSummary = "";
+  private pendingAskUsers = new Map<
+    string,
+    (answers: Record<string, string>) => void
+  >();
 
   constructor(options: JarvisAgentOptions) {
     super();
@@ -1287,5 +1291,56 @@ export class JarvisAgent extends EventEmitter {
           ? ToolConfirmationOutcome.ProceedOnce
           : ToolConfirmationOutcome.Cancel,
     });
+  }
+
+  /** Deliver user's ask_user answers back to the pending handler. */
+  public provideAskUserResponse(
+    id: string,
+    answers: Record<string, string>,
+  ): void {
+    const resolve = this.pendingAskUsers.get(id);
+    if (resolve) {
+      this.pendingAskUsers.delete(id);
+      resolve(answers);
+    }
+  }
+
+  /**
+   * Bind a WebSocket connection to the ask_user flow for this agent.
+   * When the LLM calls ask_user, an ask_user_request event is emitted so
+   * the UI can display a form. The handler waits up to 300s for a response
+   * before timing out with a cancelled payload.
+   */
+  public setAskUserHandler(
+    ws: { readyState: number; send: (data: string) => void } | null,
+  ): void {
+    if (!ws) {
+      this.toolRouter?.setAskUserHandler(null);
+      return;
+    }
+    this.toolRouter?.setAskUserHandler(
+      (questions: AskUserQuestion[]) =>
+        new Promise<Record<string, string>>((resolve, reject) => {
+          if (ws.readyState !== 1 /* OPEN */) {
+            reject(new Error("WebSocket closed"));
+            return;
+          }
+          const id = `ask-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+          const timer = setTimeout(() => {
+            this.pendingAskUsers.delete(id);
+            reject(new Error("user did not respond within 300s"));
+          }, 300_000);
+
+          this.pendingAskUsers.set(id, (answers) => {
+            clearTimeout(timer);
+            resolve(answers);
+          });
+
+          this.emit(JarvisEventType.CONTENT, {
+            type: "ask_user_request",
+            value: { id, questions },
+          });
+        }),
+    );
   }
 }

@@ -138,11 +138,26 @@ type ChannelRegistryHandle = {
   pushSafe: (channel: string, chatId: string, text: string) => Promise<boolean>;
 };
 
-type AskUserQuestion = {
+export type AskUserQuestion = {
   question: string;
   header?: string;
   options?: Array<{ label: string; description?: string }>;
 };
+
+/** Converts ask_user answers map into LLM-readable text. */
+function buildAnswersText(
+  questions: AskUserQuestion[],
+  answers: Record<string, string>,
+): string {
+  const lines = ["User provided the following answers:"];
+  questions.forEach((q, i) => {
+    const key = `${i}_${q.header ?? q.question.slice(0, 20)}`;
+    const val = answers[key] ?? answers[String(i)] ?? "(no answer)";
+    lines.push(`  ${q.header ?? `Q${i + 1}`}: ${val}`);
+  });
+  lines.push("", "Please continue with the task using these answers.");
+  return lines.join("\n");
+}
 
 /**
  * Converts an ask_user tool call into a structured prompt that lets the LLM
@@ -201,6 +216,19 @@ export class ToolRouter {
   private currentTimeWindowDays: number | null = null;
   private currentDateRange: { from: number; to: number } | null = null;
   private currentUserPrompt: string = "";
+  private askUserHandler:
+    | ((questions: AskUserQuestion[]) => Promise<Record<string, string>>)
+    | null = null;
+
+  /** Inject a WebSocket-backed ask_user handler. When set, ask_user waits for
+   *  real user input instead of auto-selecting. Pass null to remove. */
+  public setAskUserHandler(
+    fn:
+      | ((questions: AskUserQuestion[]) => Promise<Record<string, string>>)
+      | null,
+  ): void {
+    this.askUserHandler = fn;
+  }
 
   constructor(
     private memoryService: MemoryServiceHandle,
@@ -464,10 +492,25 @@ export class ToolRouter {
         }
       } else if (req.name === "ask_user") {
         const questions = (req.args.questions ?? []) as AskUserQuestion[];
-        console.error(
-          `❓ [Jarvis] ask_user intercepted — auto-selecting recommended options.`,
-        );
-        output = buildAskUserResponse(questions);
+        if (this.askUserHandler) {
+          console.error(
+            `❓ [Jarvis] ask_user — awaiting user input via handler.`,
+          );
+          try {
+            const answers = await this.askUserHandler(questions);
+            output = buildAnswersText(questions, answers);
+          } catch (e: any) {
+            output = JSON.stringify({
+              cancelled: true,
+              reason: e?.message ?? "user did not respond",
+            });
+          }
+        } else {
+          console.error(
+            `❓ [Jarvis] ask_user intercepted — auto-selecting recommended options.`,
+          );
+          output = buildAskUserResponse(questions);
+        }
       } else if (req.name === "push_to_channel") {
         const channel = req.args.channel as string;
         const content = req.args.content as string;

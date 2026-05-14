@@ -83,6 +83,14 @@ export interface JarvisBgCancelMessage {
   sessionId?: string;
 }
 
+/** User submits answers to an ask_user_request form */
+export interface JarvisAskUserResponseMessage {
+  type: "ask_user_response";
+  id: string;
+  answers: Record<string, string>;
+  sessionId?: string;
+}
+
 export type JarvisIncomingMessage =
   | JarvisChatMessage
   | JarvisPingMessage
@@ -90,4 +98,5 @@ export type JarvisIncomingMessage =
   | JarvisConfirmationMessage
   | JarvisAgentInputMessage
   | JarvisAgentCancelMessage
-  | JarvisBgCancelMessage;
+  | JarvisBgCancelMessage
+  | JarvisAskUserResponseMessage;

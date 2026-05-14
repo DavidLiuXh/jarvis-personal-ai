@@ -248,6 +248,74 @@
         .btn-deny { background-color: var(--bg-hover); }
         .btn-allow { background-color: var(--error); }
 
+        /* Ask-user form modal */
+        .ask-user-overlay {
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(0, 0, 0, 0.7);
+            display: none;
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
+            backdrop-filter: blur(4px);
+        }
+        .ask-user-card {
+            background: var(--bg-card);
+            border: 1px solid var(--bg-hover);
+            border-radius: 1rem;
+            padding: 2rem;
+            max-width: 560px;
+            width: 94%;
+            box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.3);
+        }
+        .ask-user-title {
+            font-size: 1.1rem;
+            font-weight: bold;
+            margin-bottom: 1.2rem;
+            color: var(--accent);
+        }
+        .ask-user-question {
+            margin-bottom: 1.2rem;
+        }
+        .ask-user-question label {
+            display: block;
+            font-size: 0.9rem;
+            color: var(--text-muted);
+            margin-bottom: 0.4rem;
+        }
+        .ask-user-question textarea,
+        .ask-user-question input[type="text"] {
+            width: 100%;
+            background: #011627;
+            border: 1px solid var(--bg-hover);
+            border-radius: 0.5rem;
+            color: var(--text);
+            padding: 0.6rem 0.8rem;
+            font-size: 0.95rem;
+            resize: vertical;
+            box-sizing: border-box;
+        }
+        .ask-user-question .radio-group {
+            display: flex;
+            flex-direction: column;
+            gap: 0.4rem;
+        }
+        .ask-user-question .radio-group label {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            cursor: pointer;
+            color: var(--text);
+        }
+        .ask-user-actions {
+            display: flex;
+            gap: 1rem;
+            justify-content: flex-end;
+            margin-top: 1.5rem;
+        }
+        .btn-ask-cancel { background-color: var(--bg-hover); }
+        .btn-ask-submit { background-color: var(--accent); color: #000; }
+
         /* ── Background Task Result Bubble ─────────────────────────── */
         .bg-task-result {
             max-width: 90%;
@@ -473,6 +541,19 @@
     </style>
 </head>
 <body>
+    <div id="ask-user-modal" class="ask-user-overlay">
+        <div class="ask-user-card">
+            <div class="ask-user-title">❓ Jarvis needs more information</div>
+            <form id="ask-user-form">
+                <div id="ask-user-questions"></div>
+                <div class="ask-user-actions">
+                    <button type="button" id="btn-ask-cancel" class="btn-ask-cancel">Cancel</button>
+                    <button type="submit" id="btn-ask-submit" class="btn-ask-submit">Submit</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
     <div id="confirmation-modal" class="confirmation-overlay">
         <div class="confirmation-card">
             <div class="confirmation-title">⚠️ Security Confirmation Required</div>
@@ -533,6 +614,87 @@
         const confirmationText = document.getElementById('confirmation-text');
         const btnAllow = document.getElementById('btn-allow');
         const btnDeny = document.getElementById('btn-deny');
+
+        // ── ask_user form ────────────────────────────────────────────────────
+        const askUserModal = document.getElementById('ask-user-modal');
+        const askUserForm = document.getElementById('ask-user-form');
+        const askUserQuestions = document.getElementById('ask-user-questions');
+        const btnAskCancel = document.getElementById('btn-ask-cancel');
+
+        let activeAskUserId = null;
+        let activeAskUserQuestions = [];
+
+        function showAskUser(id, questions) {
+            activeAskUserId = id;
+            activeAskUserQuestions = questions;
+            askUserQuestions.innerHTML = '';
+
+            questions.forEach((q, i) => {
+                const div = document.createElement('div');
+                div.className = 'ask-user-question';
+                const label = document.createElement('label');
+                label.textContent = q.question;
+
+                if (q.options && q.options.length > 0) {
+                    const radioGroup = document.createElement('div');
+                    radioGroup.className = 'radio-group';
+                    q.options.forEach((opt, j) => {
+                        const optLabel = document.createElement('label');
+                        const radio = document.createElement('input');
+                        radio.type = 'radio';
+                        radio.name = `ask_q_${i}`;
+                        radio.value = opt.label;
+                        if (j === 0) radio.checked = true;
+                        optLabel.appendChild(radio);
+                        optLabel.appendChild(document.createTextNode(` ${opt.label}${opt.description ? ' — ' + opt.description : ''}`));
+                        radioGroup.appendChild(optLabel);
+                    });
+                    div.appendChild(label);
+                    div.appendChild(radioGroup);
+                } else {
+                    const textarea = document.createElement('textarea');
+                    textarea.name = `ask_q_${i}`;
+                    textarea.rows = 2;
+                    textarea.placeholder = q.header || '';
+                    div.appendChild(label);
+                    div.appendChild(textarea);
+                }
+                askUserQuestions.appendChild(div);
+            });
+
+            askUserModal.style.display = 'flex';
+            // Focus first input
+            const first = askUserQuestions.querySelector('textarea, input[type="text"]');
+            if (first) first.focus();
+        }
+
+        function hideAskUser() {
+            activeAskUserId = null;
+            activeAskUserQuestions = [];
+            askUserModal.style.display = 'none';
+        }
+
+        askUserForm.addEventListener('submit', (e) => {
+            e.preventDefault();
+            if (!activeAskUserId || !ws) return;
+            const answers = {};
+            activeAskUserQuestions.forEach((q, i) => {
+                const key = `${i}_${q.header || q.question.slice(0, 20)}`;
+                const radio = askUserForm.querySelector(`input[name="ask_q_${i}"]:checked`);
+                const textarea = askUserForm.querySelector(`textarea[name="ask_q_${i}"]`);
+                answers[key] = radio ? radio.value : (textarea ? textarea.value.trim() : '');
+            });
+            ws.send(JSON.stringify({ type: 'ask_user_response', id: activeAskUserId, answers }));
+            hideAskUser();
+        });
+
+        btnAskCancel.addEventListener('click', () => {
+            if (activeAskUserId && ws) {
+                ws.send(JSON.stringify({ type: 'ask_user_response', id: activeAskUserId, answers: {} }));
+            }
+            hideAskUser();
+        });
+        // ────────────────────────────────────────────────────────────────────
 
         let activeConfirmationId = null;
 
@@ -897,6 +1059,10 @@
                     // 🛡️ GLOBAL UI EVENTS (Do not create a message bubble)
                     if (eventData.type === 'confirmation_request') {
                         showConfirmation(eventData.value.id, eventData.value.message);
+                        return; // Exit early, no bubble needed
+                    }
+                    if (eventData.type === 'ask_user_request') {
+                        showAskUser(eventData.value.id, eventData.value.questions ?? []);
                         return; // Exit early, no bubble needed
                     }
 

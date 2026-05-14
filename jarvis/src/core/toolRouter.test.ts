@@ -416,4 +416,80 @@ describe("ToolRouter", () => {
     const [, , , dateRange] = search.mock.calls[0];
     expect(dateRange).toBeNull();
   });
+
+  // ── ask_user async handler ──────────────────────────────────────────────────
+
+  it("ask_user: calls askUserHandler and returns formatted answers to LLM", async () => {
+    const { router } = makeRouter();
+    const questions = [
+      { question: "分析框架是什么？", header: "分析框架" },
+      { question: "具体事件是什么？", header: "事件详情" },
+    ];
+
+    const answers = {
+      "0_分析框架": "DMII分析法",
+      "1_事件详情": "特朗普访问中东",
+    };
+    const handler = vi.fn().mockResolvedValue(answers);
+    router.setAskUserHandler(handler);
+
+    const req = makeReq("ask_user", { questions });
+    const parts = await router.route(
+      [req],
+      new AbortController().signal,
+      vi.fn(),
+    );
+
+    expect(handler).toHaveBeenCalledOnce();
+    expect(handler).toHaveBeenCalledWith(questions);
+    // The tool response must include the answers text so LLM can continue
+    const resp = parts[0]?.functionResponse?.response as any;
+    const responseText = resp?.result ?? resp?.content ?? "";
+    expect(responseText).toContain("DMII分析法");
+    expect(responseText).toContain("特朗普访问中东");
+  });
+
+  it("ask_user: falls back to auto-select when no handler registered", async () => {
+    const { router } = makeRouter();
+    const questions = [
+      {
+        question: "选择方案",
+        header: "方案",
+        options: [
+          { label: "A", description: "Recommended default" },
+          { label: "B", description: "Alternative" },
+        ],
+      },
+    ];
+
+    const req = makeReq("ask_user", { questions });
+    const parts = await router.route(
+      [req],
+      new AbortController().signal,
+      vi.fn(),
+    );
+
+    const resp2 = parts[0]?.functionResponse?.response as any;
+    const responseText = resp2?.result ?? resp2?.content ?? "";
+    expect(responseText).toContain("AUTO-SELECTED");
+  });
+
+  it("ask_user: returns cancelled response when handler rejects", async () => {
+    const { router } = makeRouter();
+    const handler = vi.fn().mockRejectedValue(new Error("timeout"));
+    router.setAskUserHandler(handler);
+
+    const req = makeReq("ask_user", {
+      questions: [{ question: "Q?", header: "Q" }],
+    });
+    const parts = await router.route(
+      [req],
+      new AbortController().signal,
+      vi.fn(),
+    );
+
+    const resp3 = parts[0]?.functionResponse?.response as any;
+    const responseText = resp3?.result ?? resp3?.content ?? "";
+    expect(responseText).toContain("cancelled");
+  });
 });
