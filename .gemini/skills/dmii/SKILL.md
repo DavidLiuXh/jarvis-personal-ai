@@ -1,6 +1,6 @@
 ---
 name: dmii
-description: "DMII (Decomposition, Modeling, Integration, Iteration) framework for complex technical decision-making and problem-solving."
+description: "DMII (Decomposition, Modeling, Integration, Iteration) framework for structured analysis and decision-making. Use when the user explicitly mentions DMII, or requests deep analysis of complex problems in any domain — technical, investment, geopolitical, strategic, etc."
 version: "1.0.0"
 author: "Jarvis"
 tags:
