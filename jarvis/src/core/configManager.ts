@@ -155,6 +155,12 @@ export interface JarvisConfig {
     enabled: boolean;
     /** HTTP endpoint of the reranker service. Default: "http://localhost:7700". */
     baseUrl?: string;
+    /**
+     * Model name passed to the reranker service.
+     * Required when using onnx-manager (POST /v1/rerank expects a "model" field).
+     * Ignored by the legacy reranker_service.py. Default: "BAAI/bge-reranker-large".
+     */
+    model?: string;
     /** Request timeout per attempt in milliseconds. Default: 5000. */
     timeoutMs?: number;
     /**

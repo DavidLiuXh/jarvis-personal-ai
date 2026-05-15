@@ -49,10 +49,20 @@ async function callReranker(
   baseUrl: string,
   timeoutMs: number,
   maxRetries: number = 2,
+  model?: string,
 ): Promise<Array<{ text: string; score: number; index: number }> | null> {
   if (candidates.length === 0) return null;
-  const url = `${baseUrl}/rerank_sorted`;
-  const body = JSON.stringify({ query, candidates, top_k: topK });
+
+  // onnx-manager uses POST /v1/rerank with {model, query, documents, top_n}.
+  // Legacy reranker_service.py uses POST /rerank_sorted with {query, candidates, top_k}.
+  // Auto-detect by presence of the model field.
+  const useOnnxManager = !!model;
+  const url = useOnnxManager
+    ? `${baseUrl}/v1/rerank`
+    : `${baseUrl}/rerank_sorted`;
+  const body = useOnnxManager
+    ? JSON.stringify({ model, query, documents: candidates, top_n: topK })
+    : JSON.stringify({ query, candidates, top_k: topK });
 
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     const controller = new AbortController();
@@ -78,10 +88,23 @@ async function callReranker(
         );
         continue;
       }
-      const data = (await res.json()) as {
-        results: Array<{ text: string; score: number; index: number }>;
-      };
-      return data.results;
+      if (useOnnxManager) {
+        // onnx-manager response: { model, results: [{index, score, document}] }
+        const data = (await res.json()) as {
+          results: Array<{ index: number; score: number; document: string }>;
+        };
+        return data.results.map((r) => ({
+          text: r.document,
+          score: r.score,
+          index: r.index,
+        }));
+      } else {
+        // legacy response: { results: [{text, score, index}] }
+        const data = (await res.json()) as {
+          results: Array<{ text: string; score: number; index: number }>;
+        };
+        return data.results;
+      }
     } catch (e: any) {
       clearTimeout(timer);
       const isTimeout = e?.name === "AbortError";
@@ -1312,6 +1335,7 @@ ${factsText}
           rerankerCfgSearch.baseUrl ?? "http://localhost:7700";
         const rerankerTimeout = rerankerCfgSearch.timeoutMs ?? 15_000;
         const rerankerMaxRetries = rerankerCfgSearch.maxRetries ?? 2;
+        const rerankerModel = rerankerCfgSearch.model;
         const pool = scored; // pass full scored pool to reranker
         const beforeOrder = pool.slice(0, 5).map((r) => r.text.slice(0, 60));
         const reranked = await callReranker(
@@ -1321,6 +1345,7 @@ ${factsText}
           rerankerUrl,
           rerankerTimeout,
           rerankerMaxRetries,
+          rerankerModel,
         );
         if (reranked) {
           results = reranked.map((r) => ({ text: r.text, score: r.score }));
@@ -1987,6 +2012,7 @@ ${insightsSection}</knowledge>
         const rerankerUrl = rerankerCfg.baseUrl ?? "http://localhost:7700";
         const rerankerTimeout = rerankerCfg.timeoutMs ?? 15_000;
         const rerankerMaxRetries = rerankerCfg.maxRetries ?? 2;
+        const rerankerModel = rerankerCfg.model;
         // Merge insights into the pool for unified reranking
         const insightPool = insightCandidates.map(({ category, content }) => ({
           category,
@@ -2003,6 +2029,7 @@ ${insightsSection}</knowledge>
           rerankerUrl,
           rerankerTimeout,
           rerankerMaxRetries,
+          rerankerModel,
         );
         if (reranked) {
           // Apply relevance threshold — discard results below minimum logit score
