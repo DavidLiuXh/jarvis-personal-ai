@@ -640,7 +640,7 @@
                 if (qType === 'yesno') {
                     const btnGroup = document.createElement('div');
                     btnGroup.className = 'radio-group';
-                    ['Yes', 'No'].forEach((val, j) => {
+                    ['Yes', 'No', 'Other'].forEach((val, j) => {
                         const optLabel = document.createElement('label');
                         const radio = document.createElement('input');
                         radio.type = 'radio';
@@ -651,8 +651,20 @@
                         optLabel.appendChild(document.createTextNode(` ${val}`));
                         btnGroup.appendChild(optLabel);
                     });
+                    // "Other" text input — shown only when Other is selected
+                    const otherInput = document.createElement('textarea');
+                    otherInput.name = `ask_q_${i}_other`;
+                    otherInput.rows = 2;
+                    otherInput.placeholder = q.placeholder || '请输入补充信息…';
+                    otherInput.style.display = 'none';
+                    otherInput.style.marginTop = '0.5rem';
+                    btnGroup.querySelectorAll && btnGroup.addEventListener('change', (e) => {
+                        const checked = btnGroup.querySelector('input[type="radio"]:checked');
+                        otherInput.style.display = checked && checked.value === 'Other' ? 'block' : 'none';
+                    });
                     div.appendChild(label);
                     div.appendChild(btnGroup);
+                    div.appendChild(otherInput);
                 } else if (qType === 'choice' && q.options && q.options.length > 0) {
                     const inputType = q.multiSelect ? 'checkbox' : 'radio';
                     const group = document.createElement('div');
@@ -705,7 +717,12 @@
                 } else {
                     const radio = askUserForm.querySelector(`input[name="ask_q_${i}"]:checked`);
                     const textarea = askUserForm.querySelector(`textarea[name="ask_q_${i}"]`);
-                    answers[key] = radio ? radio.value : (textarea ? textarea.value.trim() : '');
+                    const otherTextarea = askUserForm.querySelector(`textarea[name="ask_q_${i}_other"]`);
+                    if (radio && radio.value === 'Other' && otherTextarea && otherTextarea.value.trim()) {
+                        answers[key] = otherTextarea.value.trim();
+                    } else {
+                        answers[key] = radio ? radio.value : (textarea ? textarea.value.trim() : '');
+                    }
                 }
             });
             ws.send(JSON.stringify({ type: 'ask_user_response', id: activeAskUserId, answers }));
