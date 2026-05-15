@@ -145,6 +145,20 @@
   // 使用 ms-marco-MiniLM-L6-v2（ONNX Runtime）进行精确重排序。
   // 启动方式：RERANKER_MODEL_DIR=/path/to/onnx_model ./jarvis/reranker/start_reranker.sh
   // ─────────────────────────────────────────────
+  // ─────────────────────────────────────────────
+  // Reranker — cross-encoder 精排
+  //
+  // 两种后端方案：
+  //
+  //   方案 A：onnx-manager（推荐）
+  //     启动：onnx serve --port 7700
+  //     拉取：onnx pull onnx-community/gte-multilingual-reranker-base
+  //     需设置 "baseUrl" 指向 onnx-manager 地址，并设置 "model" 字段。
+  //
+  //   方案 B：内置 reranker_service.py（旧版）
+  //     启动：./jarvis/reranker/start_reranker.sh
+  //     不设置 "model" 字段，自动使用旧版路径。
+  // ─────────────────────────────────────────────
   "reranker": {
     // 是否启用 cross-encoder 精排（用于 searchFacts 和 prewarm 记忆）。
     // 启用后，bi-encoder 阶段仅使用纯语义相关性选候选（importance/decay 不参与），
@@ -154,7 +168,13 @@
     // 精排服务地址。默认："http://localhost:7700"
     "baseUrl": "http://localhost:7700",
 
-    // 每次请求的超时时间（毫秒）。默认：5000
+    // 发送给 onnx-manager 的模型名称（POST /v1/rerank）。
+    // 设置此字段时使用 onnx-manager API；不设置时使用旧版 reranker_service.py
+    // （POST /rerank_sorted，无需 model 字段）。
+    // 默认：不设置（旧版模式）
+    "model": "onnx-community/gte-multilingual-reranker-base",
+
+    // 每次请求的超时时间（毫秒）。默认：15000
     "timeoutMs": 15000,
 
     // 超时或网络错误时的最大重试次数。
@@ -166,13 +186,35 @@
     // cross-encoder 最终从中返回 factRelevanceLimit 条。默认：20
     "candidatePool": 20,
 
-    // 记忆注入的最低 cross-encoder logit 分数门槛。
-    // 低于此值的结果直接丢弃，不以"低置信度"形式注入。
-    // BAAI/bge-reranker-large（推荐）：相关 ~-2 到 3，不相关 ~-10。推荐值：-2
-    // BAAI/bge-reranker-base：范围相近。推荐值：-2
-    // ms-marco-MiniLM-L6-v2：> 5 高度相关，0-5 相关，< 0 不相关。推荐值：6
-    // 默认：-2（针对 bge-reranker-large/base 调校）
-    "memoryRelevanceThreshold": -2,
+    // 记忆注入的最低分数门槛，低于此值的结果直接丢弃。
+    //
+    // 不同模型的分数范围不同，需对应调整：
+    //
+    //   Sigmoid 输出（0–1 范围）— onnx-manager 模型：
+    //     onnx-community/gte-multilingual-reranker-base  【推荐】
+    //       SOTA 多语言精排模型，306M 参数，8192 上下文，支持 75+ 种语言。
+    //       分数：>0.5 高度相关，0.2–0.5 相关，<0.1 不相关。
+    //       推荐阈值：0.1
+    //
+    //   Softmax 输出（0–1 范围）— 旧版 reranker_service.py：
+    //     BAAI/bge-reranker-large
+    //       强多语言模型，560M 参数，512 上下文。
+    //       分数：>0.9 高度相关，0.5–0.9 相关，<0.1 不相关。
+    //       推荐阈值：0.3
+    //     BAAI/bge-reranker-base
+    //       bge-large 轻量版，分数范围相近。
+    //       推荐阈值：0.3
+    //
+    //   Raw logit 输出 — 旧版 reranker_service.py（bge 直接 ONNX 导出）：
+    //     BAAI/bge-reranker-large（raw logit 变体）：
+    //       分数：~-2 到 3 相关，~-10 不相关。
+    //       推荐阈值：-2
+    //     cross-encoder/ms-marco-MiniLM-L6-v2（仅英文，速度更快）：
+    //       分数：>5 高度相关，0–5 相关，<0 不相关。
+    //       推荐阈值：6
+    //
+    // 默认：-2（匹配旧版 bge raw logit 模式）
+    "memoryRelevanceThreshold": 0.1,
   },
 
   // ─────────────────────────────────────────────

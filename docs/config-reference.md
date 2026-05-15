@@ -144,10 +144,18 @@ Configuration file location: `~/.gemini-jarvis/config.json`
   },
 
   // ─────────────────────────────────────────────
-  // Reranker — cross-encoder precision reranking
-  // A local FastAPI service (jarvis/reranker/reranker_service.py) re-scores
-  // bi-encoder candidates with ms-marco-MiniLM-L6-v2 via ONNX Runtime.
-  // Start with: RERANKER_MODEL_DIR=/path/to/onnx_model ./jarvis/reranker/start_reranker.sh
+  // Reranker — cross-encoder precision re-scoring of retrieval candidates.
+  //
+  // Two backend options:
+  //
+  //   Option A: onnx-manager (recommended)
+  //     Start: onnx serve --port 7700
+  //     Pull:  onnx pull onnx-community/gte-multilingual-reranker-base
+  //     Set "baseUrl" to onnx-manager address and "model" to the model id.
+  //
+  //   Option B: legacy reranker_service.py (bundled)
+  //     Start: ./jarvis/reranker/start_reranker.sh
+  //     Omit the "model" field — legacy path is used automatically.
   // ─────────────────────────────────────────────
   "reranker": {
     // Enable cross-encoder reranking for searchFacts and prewarm memories.
@@ -158,6 +166,12 @@ Configuration file location: `~/.gemini-jarvis/config.json`
 
     // URL of the reranker service. Default: "http://localhost:7700"
     "baseUrl": "http://localhost:7700",
+
+    // Model name sent to onnx-manager (POST /v1/rerank).
+    // When set, onnx-manager API is used; when omitted, legacy reranker_service.py
+    // is used (POST /rerank_sorted — no model field needed).
+    // Default: unset (legacy mode)
+    "model": "onnx-community/gte-multilingual-reranker-base",
 
     // Request timeout per attempt in milliseconds. Default: 15000
     "timeoutMs": 15000,
@@ -172,13 +186,35 @@ Configuration file location: `~/.gemini-jarvis/config.json`
     // Default: 20
     "candidatePool": 20,
 
-    // Minimum cross-encoder logit score for a memory to be injected into context.
-    // Results below this threshold are discarded entirely (not injected as low-confidence).
-    // BAAI/bge-reranker-large (recommended): relevant ~-2 to 3, irrelevant ~-10. Recommended: -2
-    // BAAI/bge-reranker-base: similar range. Recommended: -2
-    // ms-marco-MiniLM-L6-v2: >5 high relevance, 0-5 relevant, <0 irrelevant. Recommended: 6
-    // Default: -2 (tuned for bge-reranker-large/base)
-    "memoryRelevanceThreshold": -2,
+    // Minimum score threshold — results below this are discarded entirely.
+    //
+    // Score ranges differ by model and output type:
+    //
+    //   Sigmoid output (0–1 range) — onnx-manager models:
+    //     onnx-community/gte-multilingual-reranker-base  [RECOMMENDED]
+    //       SOTA multilingual reranker, 306M params, 8192 ctx, 75+ languages.
+    //       Score: >0.5 highly relevant, 0.2–0.5 related, <0.1 irrelevant.
+    //       Recommended threshold: 0.1
+    //
+    //   Softmax output (0–1 range) — legacy reranker_service.py:
+    //     BAAI/bge-reranker-large
+    //       Strong multilingual model, 560M params, 512 ctx.
+    //       Score: >0.9 highly relevant, 0.5–0.9 related, <0.1 irrelevant.
+    //       Recommended threshold: 0.3
+    //     BAAI/bge-reranker-base
+    //       Lighter version of bge-large, similar score range.
+    //       Recommended threshold: 0.3
+    //
+    //   Raw logit output — legacy reranker_service.py (bge direct ONNX export):
+    //     BAAI/bge-reranker-large (raw logit variant):
+    //       Score: ~-2 to 3 relevant, ~-10 irrelevant.
+    //       Recommended threshold: -2
+    //     cross-encoder/ms-marco-MiniLM-L6-v2 (English only, faster):
+    //       Score: >5 highly relevant, 0–5 relevant, <0 irrelevant.
+    //       Recommended threshold: 6
+    //
+    // Default: -2 (matches legacy bge raw logit mode)
+    "memoryRelevanceThreshold": 0.1,
   },
 
   // ─────────────────────────────────────────────
