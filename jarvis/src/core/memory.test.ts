@@ -468,15 +468,15 @@ describe("MemoryService.searchFacts", () => {
     const results = await service.searchFacts("TypeScript project setup", 2);
 
     // 'project uses TypeScript' should rank highest for this query
-    // limit=2 applies to identity/specification candidates only (preference/behavior always included)
-    const nonStyleFacts = results.filter(
-      (f) => f.category !== "interaction_style" && f.category !== "behavior",
+    // limit=2 applies to relevance-ranked facts; only top identity facts bypass it.
+    const rankedNonAlwaysFacts = results.filter(
+      (f) => f.category !== "identity" && f.category !== "interaction_style",
     );
-    expect(nonStyleFacts.length).toBeLessThanOrEqual(2);
+    expect(rankedNonAlwaysFacts.length).toBeLessThanOrEqual(2);
     expect(results.some((f) => f.content.includes("TypeScript"))).toBe(true);
   });
 
-  it("always includes preference facts regardless of relevance, behavior is ranked like others", async () => {
+  it("injects style facts only for style-related queries", async () => {
     const { service } = await createServiceWithFacts([
       {
         category: "identity",
@@ -500,17 +500,17 @@ describe("MemoryService.searchFacts", () => {
       },
     ]);
 
-    // Query is about cooking — unrelated to all facts, limit=1
     const results = await service.searchFacts("cooking recipes", 1);
 
-    // preference must always be included (style instructions needed every turn)
-    expect(results.some((f) => f.category === "interaction_style")).toBe(true);
-    // behavior is NOT guaranteed — it competes with identity/specification for the limit
-    // With limit=1, only the top-1 non-preference fact is included
-    const nonPrefFacts = results.filter(
-      (f) => f.category !== "interaction_style",
+    expect(results.some((f) => f.category === "interaction_style")).toBe(false);
+
+    const styleResults = await service.searchFacts(
+      "please use concise format",
+      1,
     );
-    expect(nonPrefFacts.length).toBeLessThanOrEqual(1);
+    expect(styleResults.some((f) => f.category === "interaction_style")).toBe(
+      true,
+    );
   });
 
   it("embedding: uses embedContentFn to rank facts by cosine similarity", async () => {
@@ -575,9 +575,9 @@ describe("MemoryService.searchFacts", () => {
 
     const results = await service.searchFacts("TypeScript setup", 1);
 
-    // TypeScript fact should be top result; preference always included
+    // TypeScript fact should be top result; unrelated style preference is not forced in
     expect(results.some((f) => f.content.includes("TypeScript"))).toBe(true);
-    expect(results.some((f) => f.category === "interaction_style")).toBe(true);
+    expect(results.some((f) => f.category === "interaction_style")).toBe(false);
     // behavior competes with others under the limit, not guaranteed
   });
 });
@@ -892,7 +892,7 @@ describe("MemoryService — conservative insight mode", () => {
     const results = await service.searchFacts("discipline", 5);
 
     expect(results.some((f) => f.category === "insight")).toBe(false);
-    expect(results.some((f) => f.category === "interaction_style")).toBe(true);
+    expect(results.some((f) => f.category === "interaction_style")).toBe(false);
   });
 
   it("searchFacts: insight with importance >= 7 IS injected when query-relevant", async () => {
@@ -1413,7 +1413,7 @@ describe("MemoryService.searchFacts — L3 weighted fusion", () => {
     );
   });
 
-  it("embedding: preference always included; insight only when importance >= 7", async () => {
+  it("embedding: style facts injected only for style queries; insight only when importance >= 7", async () => {
     const { service } = await createFusionService();
     const db = (service as any).db;
 
@@ -1436,8 +1436,12 @@ describe("MemoryService.searchFacts — L3 weighted fusion", () => {
 
     const results = await service.searchFacts("discipline", 5);
     expect(results.some((f: any) => f.category === "interaction_style")).toBe(
-      true,
+      false,
     );
+    const styleResults = await service.searchFacts("answer style", 5);
+    expect(
+      styleResults.some((f: any) => f.category === "interaction_style"),
+    ).toBe(true);
     // Only the importance=7 insight should appear
     const injectedInsights = results.filter(
       (f: any) => f.category === "insight",
@@ -1548,6 +1552,108 @@ describe("MemoryService.searchFacts — L3 weighted fusion", () => {
     // At most 2 insights, and the closer one should rank first
     expect(insightResults.length).toBeGreaterThanOrEqual(1);
     expect(insightResults[0].content).toBe("Insight close to query");
+  });
+});
+
+describe("MemoryService.search — reranker threshold filtering", () => {
+  afterEach(() => {
+    vi.resetModules();
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+  });
+
+  it("filters reranked memories below memoryRelevanceThreshold", async () => {
+    vi.doMock("./configManager.js", () => ({
+      ConfigManager: {
+        getInstance: vi.fn().mockReturnValue({
+          get: vi.fn().mockReturnValue({
+            api: { key: "test-key", proxy: null },
+            models: {
+              embedding: "test-model",
+              embeddingDimension: 4,
+              distillation: "test-model",
+            },
+            memory: {
+              ingestionDelayMs: 0,
+              retrievalLimit: 5,
+              consolidationThreshold: 100,
+              dedupStrategy: "jaccard",
+              factRelevanceStrategy: "jaccard",
+              factRelevanceLimit: 5,
+              prewarmLimit: 3,
+              l1WriteMode: "batch",
+              vectorSimilarityWeight: 0.7,
+              importanceWeight: 0.3,
+            },
+            reranker: {
+              enabled: true,
+              baseUrl: "http://localhost:7700",
+              model: "test-reranker",
+              timeoutMs: 100,
+              maxRetries: 0,
+              memoryRelevanceThreshold: 0.3,
+            },
+          }),
+        }),
+      },
+    }));
+
+    const { MemoryService } = await import("./memory.js");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "jarvis-search-"));
+    const service = new (MemoryService as new (
+      root: string,
+      dbPath?: string,
+    ) => InstanceType<typeof MemoryService>)("", tmpDir);
+    service.setEmbedContentOnly(async () => [1, 0, 0, 0]);
+
+    (service as any).db = {
+      prepare: (sql: string) => {
+        if (sql.includes("vec_memories")) {
+          return {
+            all: () => [
+              {
+                text: "The U.S. stock market is currently at an interesting point",
+                source: "conversation",
+                timestamp: Date.now(),
+                distance: 0.1,
+              },
+              {
+                text: "Jarvis will research current AI application cases",
+                source: "conversation",
+                timestamp: Date.now(),
+                distance: 0.2,
+              },
+            ],
+          } as any;
+        }
+        throw new Error(`Unexpected SQL in test: ${sql}`);
+      },
+    };
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          results: [
+            {
+              index: 0,
+              score: 0.14,
+              document:
+                "The U.S. stock market is currently at an interesting point",
+            },
+            {
+              index: 1,
+              score: 0.1,
+              document: "Jarvis will research current AI application cases",
+            },
+          ],
+        }),
+      }),
+    );
+
+    const results = await service.search("market update", 2);
+    expect(results).toEqual([]);
   });
 });
 

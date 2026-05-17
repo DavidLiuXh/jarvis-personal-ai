@@ -152,11 +152,6 @@ export async function buildIncrementalSummary(
 
   const prompt = existingSummary
     ? `
-<system_role>
-You are the Memory Engine for Jarvis, an advanced personal AI assistant.
-Your goal is to maintain a coherent, evolving compressed history of the user's conversations.
-</system_role>
-
 <existing_summary>
 ${existingSummary}
 </existing_summary>
@@ -166,47 +161,33 @@ ${newConversation}
 </new_conversation>
 
 <task>
-Update the compressed history by integrating the new conversation. Follow these rules:
-
-1. **Time Priority (CRITICAL)**: If new information contradicts or supersedes the existing summary, overwrite the older facts with the newer ones. Never keep conflicting information.
-
-2. **Keep Only Durable Signal**: Keep stable preferences, important decisions, active personal/technical/strategic project context, recurring behaviors, and unresolved follow-ups. Drop greetings, filler, repeated analysis, and temporary details that are unlikely to matter later.
-
-3. **Format**: Rewrite into compact Markdown bullets grouped by topic. Do not write a narrative paragraph.
-
-4. **Causal Relationships**: Preserve why something matters only when it changes future behavior, decisions, or constraints.
-
-5. **Constraint**: Maximum 250 words. Prefer 6-12 bullets total. Concise professional English.
+Update Jarvis memory summary.
+- Merge existing_summary + new_conversation.
+- Newer facts overwrite older contradictions.
+- Keep only durable signal: preferences, decisions, active personal/technical/strategic context, recurring behaviors, unresolved follow-ups.
+- Keep causal context only when it affects future behavior or constraints.
+- Drop greetings, filler, repeated analysis, temporary details.
+- Output compact Markdown bullets grouped by topic. No prose.
+- Max 250 words; prefer 6-12 bullets; concise English.
 </task>
 
-Updated compressed history (Markdown):
+Updated compressed structured summary:
 `.trim()
     : `
-<system_role>
-You are the Memory Engine for Jarvis, an advanced personal AI assistant.
-Your goal is to create a compressed history of the user's conversations.
-</system_role>
-
 <new_conversation>
 ${newConversation}
 </new_conversation>
 
 <task>
-Compress this conversation into compact Markdown bullets grouped by topic.
-
-Keep only durable signal:
-- stable preferences
-- important decisions
-- active personal, technical, or strategic project context
-- recurring behaviors
-- unresolved follow-ups
-
-Drop greetings, filler, repeated analysis, and temporary details.
-Keep causal context only when it affects future behavior, decisions, or constraints.
-Maximum 250 words. Prefer 6-12 bullets total.
+Create Jarvis memory summary.
+- Keep only durable signal: preferences, decisions, active personal/technical/strategic context, recurring behaviors, unresolved follow-ups.
+- Keep causal context only when it affects future behavior or constraints.
+- Drop greetings, filler, repeated analysis, temporary details.
+- Output compact Markdown bullets grouped by topic. No prose.
+- Max 250 words; prefer 6-12 bullets; concise English.
 </task>
 
-Compressed history (Markdown):
+Compressed structured summary:
 `.trim();
 
   const maxRetries = options.maxRetries ?? 3;

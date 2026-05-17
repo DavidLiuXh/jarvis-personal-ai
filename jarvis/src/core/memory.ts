@@ -1354,14 +1354,22 @@ ${factsText}
           rerankerModel,
         );
         if (reranked) {
-          results = reranked.map((r) => ({ text: r.text, score: r.score }));
+          const relevanceThreshold =
+            rerankerCfgSearch.memoryRelevanceThreshold ?? -2;
+          const { filtered, filteredOut } =
+            MemoryService.applyRerankerThreshold(reranked, relevanceThreshold);
+          results = filtered.map((r) => ({ text: r.text, score: r.score }));
           const afterOrder = results.map(
             (r) => `${(r.score as number).toFixed(2)}:${r.text.slice(0, 60)}`,
           );
           console.error(
-            `🎯 [search] cross-encoder reranked ${pool.length}→${results.length} memories\n` +
+            `🎯 [search] cross-encoder reranked ${pool.length}→${results.length} memories` +
+              (filteredOut > 0
+                ? ` (${filteredOut} below threshold=${relevanceThreshold})`
+                : "") +
+              `\n` +
               `   before(top5): ${beforeOrder.join(" | ")}\n` +
-              `   after:  ${afterOrder.join(" | ")}`,
+              `   after:  ${afterOrder.join(" | ") || "(none)"}`,
           );
         } else {
           console.error(
@@ -1728,24 +1736,32 @@ ${insightsSection}</knowledge>
     }
   }
 
-  // preference: response style — always needed every turn
-  // insight: moved to conservative mode — ranked by relevance, max 2 per turn,
-  //          only injected when importance >= 7 and query-relevant
-  private static readonly ALWAYS_INJECT_CATEGORIES = new Set([
-    "interaction_style",
-    "identity",
-  ]);
+  // Stable identity is useful every turn, but only the top few identity facts
+  // should bypass relevance ranking. Style preferences are injected only when
+  // the current query is about response style/format; otherwise they are
+  // skipped to keep the prompt focused.
+  private static readonly ALWAYS_INJECT_CATEGORIES = new Set(["identity"]);
+  private static readonly IDENTITY_ALWAYS_INJECT_LIMIT = 2;
 
   // Max number of insights to inject per turn when reranker is disabled.
   // When reranker is enabled, insights compete with other facts for the cap.
   private static readonly INSIGHT_INJECT_LIMIT = 2;
   // Minimum importance for an insight to be eligible for injection
-  private static readonly INSIGHT_MIN_IMPORTANCE = 3;
+  private static readonly INSIGHT_MIN_IMPORTANCE = 7;
+
+  private static applyRerankerThreshold<T extends { score: number }>(
+    reranked: T[],
+    threshold: number,
+  ): { filtered: T[]; filteredOut: number } {
+    const filtered = reranked.filter((r) => r.score >= threshold);
+    return { filtered, filteredOut: reranked.length - filtered.length };
+  }
 
   /**
    * Returns facts relevant to the given query.
-   * preference and insight facts are always included.
-   * All other facts are ranked by relevance and capped at factRelevanceLimit.
+   * Top identity facts bypass relevance ranking. Interaction style facts are
+   * injected only for style/format intents. Insights use a stricter importance
+   * threshold and either a small separate quota or the reranker cap.
    */
   public async searchFacts(
     query: string,
@@ -1767,9 +1783,11 @@ ${insightsSection}</knowledge>
         access_count: number | null;
       }>;
 
-      const alwaysFacts = allFacts.filter((f) =>
-        MemoryService.ALWAYS_INJECT_CATEGORIES.has(f.category),
-      );
+      const alwaysFacts = allFacts
+        .filter((f) => MemoryService.ALWAYS_INJECT_CATEGORIES.has(f.category))
+        .slice(0, MemoryService.IDENTITY_ALWAYS_INJECT_LIMIT);
+      const alwaysIds = new Set(alwaysFacts.map((f) => f.id));
+      const includeStyleFacts = this.shouldInjectStyleFacts(query);
       // insight is no longer always-inject; handle separately below
       const insightCandidates = allFacts.filter(
         (f) =>
@@ -1778,8 +1796,9 @@ ${insightsSection}</knowledge>
       );
       const candidateFacts = allFacts.filter(
         (f) =>
-          !MemoryService.ALWAYS_INJECT_CATEGORIES.has(f.category) &&
-          f.category !== "insight",
+          !alwaysIds.has(f.id) &&
+          f.category !== "insight" &&
+          f.category !== "interaction_style",
       );
 
       const cap = limit ?? this.jarvisConfig.memory.factRelevanceLimit ?? 5;
@@ -1880,11 +1899,12 @@ ${insightsSection}</knowledge>
               .map((r, vecIdx) => {
                 const fact = factById.get(r.id);
                 if (!fact) return null;
-                // Skip always-inject categories (already in alwaysOut) and
-                // insight (handled separately with its own quota and threshold)
+                // Skip facts handled by dedicated gates: identity alwaysOut,
+                // interaction_style styleOut, and insight quota/reranker pool.
                 if (
-                  MemoryService.ALWAYS_INJECT_CATEGORIES.has(fact.category) ||
-                  fact.category === "insight"
+                  alwaysIds.has(fact.id) ||
+                  fact.category === "insight" ||
+                  fact.category === "interaction_style"
                 )
                   return null;
                 const vecRank = vecIdx + 1;
@@ -1992,6 +2012,12 @@ ${insightsSection}</knowledge>
         category,
         content,
       }));
+      const styleOut = includeStyleFacts
+        ? allFacts
+            .filter((f) => f.category === "interaction_style")
+            .slice(0, 2)
+            .map(({ category, content }) => ({ category, content }))
+        : [];
       const insightOut = rankedInsights.map(({ category, content }) => ({
         category,
         content,
@@ -2038,11 +2064,9 @@ ${insightsSection}</knowledge>
           rerankerModel,
         );
         if (reranked) {
-          // Apply relevance threshold — discard results below minimum logit score
           const relevanceThreshold = rerankerCfg.memoryRelevanceThreshold ?? -2;
-          const filtered = reranked.filter(
-            (r) => r.score >= relevanceThreshold,
-          );
+          const { filtered, filteredOut } =
+            MemoryService.applyRerankerThreshold(reranked, relevanceThreshold);
           ranked = filtered.map((r) => mergedPool[r.index]);
           // Rebuild rankedIdsForGraph from only the facts that passed the threshold.
           // Without this, graph expansion would still use bi-encoder candidates that
@@ -2061,7 +2085,6 @@ ${insightsSection}</knowledge>
             (r, i) =>
               `${r.score.toFixed(2)}:[${mergedPool[r.index]?.category}] ${r.text.slice(0, 50)}`,
           );
-          const filteredOut = reranked.length - filtered.length;
           console.error(
             `🎯 [searchFacts] cross-encoder reranked ${mergedPool.length}→${ranked.length} facts+insights` +
               (filteredOut > 0
@@ -2085,6 +2108,11 @@ ${insightsSection}</knowledge>
       console.error(
         `🧠 [searchFacts] always(${alwaysOut.length}): ${alwaysOut.map((f) => `[${f.category}] ${f.content.slice(0, 50)}`).join(" | ")}`,
       );
+      if (styleOut.length > 0) {
+        console.error(
+          `🎨 [searchFacts] style(${styleOut.length}): ${styleOut.map((f) => f.content.slice(0, 60)).join(" | ")}`,
+        );
+      }
       console.error(
         `🧠 [searchFacts] ranked(${ranked.length}): ${ranked.map((f) => `[${f.category}] ${f.content.slice(0, 50)}`).join(" | ")}`,
       );
@@ -2098,6 +2126,7 @@ ${insightsSection}</knowledge>
       // Filter out facts already in alwaysOut or ranked to avoid duplicates
       const alreadyIncluded = new Set([
         ...alwaysOut.map((f) => f.content),
+        ...styleOut.map((f) => f.content),
         ...ranked.map((f) => f.content),
       ]);
       const expanded = this.expandViaEntityLinks(
@@ -2109,11 +2138,34 @@ ${insightsSection}</knowledge>
           `🔗 [searchFacts] expanded(${expanded.length}): ${expanded.map((f) => `[${f.category}] ${f.content.slice(0, 50)}`).join(" | ")}`,
         );
       }
-      return [...alwaysOut, ...ranked, ...insightOut, ...expanded];
+      return [...alwaysOut, ...styleOut, ...ranked, ...insightOut, ...expanded];
     } catch (e: any) {
       console.error(`⚠️ [searchFacts] outer catch: ${e?.message}`);
       return this.getStructuredFacts();
     }
+  }
+
+  private shouldInjectStyleFacts(query: string): boolean {
+    const lower = query.toLowerCase();
+    return [
+      "style",
+      "format",
+      "tone",
+      "language",
+      "concise",
+      "verbose",
+      "markdown",
+      "table",
+      "中文",
+      "英文",
+      "格式",
+      "风格",
+      "语气",
+      "简洁",
+      "详细",
+      "表格",
+      "语言",
+    ].some((keyword) => lower.includes(keyword));
   }
 
   // ---------------------------------------------------------------------------
