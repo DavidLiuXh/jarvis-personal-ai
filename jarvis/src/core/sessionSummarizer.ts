@@ -170,7 +170,7 @@ Update the compressed history by integrating the new conversation. Follow these 
 
 1. **Time Priority (CRITICAL)**: If new information contradicts or supersedes the existing summary, overwrite the older facts with the newer ones. Never keep conflicting information.
 
-2. **Keep Only Durable Signal**: Keep stable preferences, important decisions, active project context, recurring behaviors, and unresolved follow-ups. Drop greetings, filler, repeated analysis, and temporary details that are unlikely to matter later.
+2. **Keep Only Durable Signal**: Keep stable preferences, important decisions, active personal/technical/strategic project context, recurring behaviors, and unresolved follow-ups. Drop greetings, filler, repeated analysis, and temporary details that are unlikely to matter later.
 
 3. **Format**: Rewrite into compact Markdown bullets grouped by topic. Do not write a narrative paragraph.
 
@@ -197,7 +197,7 @@ Compress this conversation into compact Markdown bullets grouped by topic.
 Keep only durable signal:
 - stable preferences
 - important decisions
-- active project context
+- active personal, technical, or strategic project context
 - recurring behaviors
 - unresolved follow-ups
 
@@ -230,6 +230,98 @@ Compressed history (Markdown):
     }
   }
   return existingSummary ?? "";
+}
+
+export type ChunkedSummaryOptions = SummaryOptions & {
+  chunkSize?: number;
+  maxSummaryLength?: number;
+  onProgress?: (message: string) => void;
+};
+
+export async function buildChunkedRollingSummary(
+  newMessages: SessionMessage[],
+  existingSummary: string | null,
+  generateText: (prompt: string) => Promise<string>,
+  options: ChunkedSummaryOptions = {},
+): Promise<string> {
+  if (newMessages.length === 0) return existingSummary ?? "";
+
+  const chunkSize = options.chunkSize ?? 100;
+  const chunks: SessionMessage[][] =
+    chunkSize > 0 && newMessages.length > chunkSize
+      ? Array.from(
+          { length: Math.ceil(newMessages.length / chunkSize) },
+          (_, i) => newMessages.slice(i * chunkSize, (i + 1) * chunkSize),
+        )
+      : [newMessages];
+
+  if (chunks.length > 1) {
+    options.onProgress?.(
+      `Chunked summarization: ${newMessages.length} messages -> ${chunks.length} chunks of ~${chunkSize}`,
+    );
+  }
+
+  let rollingSummary = existingSummary || null;
+  const maxLen = options.maxSummaryLength ?? 1200;
+
+  for (let i = 0; i < chunks.length; i++) {
+    const chunk = chunks[i];
+    if (chunks.length > 1) {
+      options.onProgress?.(
+        `Summarizing chunk ${i + 1}/${chunks.length} (${chunk.length} messages)...`,
+      );
+    }
+    const newSummary = await buildIncrementalSummary(
+      chunk,
+      rollingSummary,
+      generateText,
+      {
+        maxRetries: options.maxRetries,
+        retryDelayMs: options.retryDelayMs,
+      },
+    );
+    if (newSummary.trim().length > 0) {
+      rollingSummary = await recompressSummaryIfNeeded(
+        newSummary.trim(),
+        maxLen,
+        generateText,
+        options.onProgress,
+      );
+    }
+  }
+
+  return rollingSummary ?? "";
+}
+
+async function recompressSummaryIfNeeded(
+  summary: string,
+  maxLen: number,
+  generateText: (prompt: string) => Promise<string>,
+  onProgress?: (message: string) => void,
+): Promise<string> {
+  if (maxLen <= 0 || summary.length <= maxLen) return summary;
+
+  onProgress?.(
+    `Summary too long (${summary.length} > ${maxLen} chars) - re-compressing...`,
+  );
+  try {
+    const recompressed = await generateText(
+      `Compress the following session summary to under ${maxLen} characters. ` +
+        `Keep only durable preferences, important decisions, active project context, recurring behaviors, and unresolved follow-ups. ` +
+        `Remove filler, repeated analysis, and temporary details.\n\n${summary}`,
+    );
+    if (
+      recompressed.trim().length > 0 &&
+      recompressed.length < summary.length
+    ) {
+      const trimmed = recompressed.trim();
+      onProgress?.(`Re-compressed to ${trimmed.length} chars.`);
+      return trimmed;
+    }
+  } catch (_e) {
+    /* keep original if re-compression fails */
+  }
+  return summary;
 }
 
 // ---------------------------------------------------------------------------
@@ -482,7 +574,7 @@ export function buildHistoryWithSummary(
       role: "model",
       parts: [
         {
-          text: "Understood. I will use this prior conversation summary as context.",
+          text: "Understood. I will use this compressed history summary as context.",
         },
       ],
     });

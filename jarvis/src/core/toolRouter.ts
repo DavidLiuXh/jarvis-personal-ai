@@ -96,6 +96,36 @@ const REMEMBER_INTENT_PATTERNS = [
   /don't forget/i,
 ];
 
+const RECALL_QUERY_STOPWORDS = new Set([
+  "还",
+  "记得",
+  "之前",
+  "以前",
+  "过去",
+  "讨论",
+  "聊",
+  "聊过",
+  "相关",
+  "关于",
+  "我们",
+  "的",
+  "吗",
+  "么",
+  "有",
+  "没有",
+  "what",
+  "did",
+  "we",
+  "discuss",
+  "talk",
+  "about",
+  "before",
+  "previously",
+  "earlier",
+  "remember",
+  "related",
+]);
+
 /** Returns 9 if the text contains an explicit "remember" intent, 6 otherwise. */
 function computeRememberIntentScore(text?: string): number {
   if (!text) return 6;
@@ -103,6 +133,35 @@ function computeRememberIntentScore(text?: string): number {
   if (REMEMBER_PREFIX_PATTERNS.some((p) => p.test(normalized))) return 9;
   if (REMEMBER_INTENT_PATTERNS.some((p) => p.test(normalized))) return 9;
   return 6;
+}
+
+function deriveRecallQuery(userPrompt: string): string {
+  const normalized = userPrompt
+    .replace(/[？?！!。.,，；;:：()[\]{}"'“”‘’]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!normalized) return "";
+
+  const rawTokens =
+    normalized.match(/[\p{Script=Han}]+|[A-Za-z0-9][A-Za-z0-9_-]*/gu) ?? [];
+  const tokens: string[] = [];
+
+  for (const rawToken of rawTokens) {
+    const lower = rawToken.toLowerCase();
+    if (RECALL_QUERY_STOPWORDS.has(lower)) continue;
+
+    if (/^\p{Script=Han}+$/u.test(rawToken)) {
+      let token = rawToken;
+      for (const stopword of RECALL_QUERY_STOPWORDS) {
+        token = token.replaceAll(stopword, "");
+      }
+      if (token.length >= 2) tokens.push(token);
+    } else if (lower.length >= 2) {
+      tokens.push(lower);
+    }
+  }
+
+  return tokens.join(" ").trim() || normalized;
 }
 
 /**
@@ -443,7 +502,8 @@ export class ToolRouter {
           dateRange = this.currentDateRange;
         }
 
-        const effectiveQuery = query || this.currentUserPrompt;
+        const effectiveQuery =
+          query || deriveRecallQuery(this.currentUserPrompt);
         if (!effectiveQuery) {
           // Neither LLM nor router provided a query — give actionable guidance.
           output =
@@ -471,7 +531,7 @@ export class ToolRouter {
               : (timeWindowDays ?? "all-time");
           if (!query) {
             console.error(
-              `⚠️ [Jarvis] recall_memory: empty query — falling back to user prompt: "${effectiveQuery.slice(0, 80)}"`,
+              `⚠️ [Jarvis] recall_memory: empty query — derived query "${effectiveQuery.slice(0, 80)}" from user prompt.`,
             );
           }
           console.error(

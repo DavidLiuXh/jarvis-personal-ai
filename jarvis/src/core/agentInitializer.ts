@@ -29,9 +29,8 @@ import { ollamaGenerate } from "./ollamaClient.js";
 import {
   loadSummaryState,
   saveSummaryState,
-  buildIncrementalSummary,
+  buildChunkedRollingSummary,
   getNewOrUpdatedFiles,
-  type SessionMessage,
 } from "./sessionSummarizer.js";
 import { buildHistoryFromMessages } from "./resumeFromDisk.js";
 
@@ -730,71 +729,22 @@ export class AgentInitializer {
           `🧠 [Jarvis] Compressing session history (${newOrUpdatedFiles.length} new/updated files, ${newMessages.length} messages)...`,
         );
         try {
-          // Chunked summarization: process newMessages in batches for small models
-          const chunkSize = this.jarvisConfig.summarizer?.chunkSize ?? 100;
-          const chunks: SessionMessage[][] =
-            chunkSize > 0 && newMessages.length > chunkSize
-              ? Array.from(
-                  { length: Math.ceil(newMessages.length / chunkSize) },
-                  (_, i) =>
-                    newMessages.slice(i * chunkSize, (i + 1) * chunkSize),
-                )
-              : [newMessages];
-
-          if (chunks.length > 1) {
-            console.error(
-              `🧠 [Jarvis] Chunked summarization: ${newMessages.length} messages → ${chunks.length} chunks of ~${chunkSize}`,
-            );
-          }
-
-          let rollingSummary = summary || null;
-          for (let i = 0; i < chunks.length; i++) {
-            const chunk = chunks[i];
-            if (chunks.length > 1) {
-              console.error(
-                `🧠 [Jarvis] Summarizing chunk ${i + 1}/${chunks.length} (${chunk.length} messages)...`,
-              );
-            }
-            const newSummary = await buildIncrementalSummary(
-              chunk,
-              rollingSummary,
-              generateText,
-              { maxRetries: 3, retryDelayMs: 2000 },
-            );
-            if (newSummary.trim().length > 0) {
-              rollingSummary = newSummary;
-            }
-          }
+          const rollingSummary = await buildChunkedRollingSummary(
+            newMessages,
+            summary || null,
+            generateText,
+            {
+              chunkSize: this.jarvisConfig.summarizer?.chunkSize ?? 100,
+              maxSummaryLength:
+                this.jarvisConfig.summarizer?.maxSummaryLength ?? 1200,
+              maxRetries: 3,
+              retryDelayMs: 2000,
+              onProgress: (message) => console.error(`🧠 [Jarvis] ${message}`),
+            },
+          );
 
           if (rollingSummary && rollingSummary !== (summary || null)) {
             summary = rollingSummary;
-
-            // maxSummaryLength: re-compress if summary exceeds limit
-            const maxLen =
-              this.jarvisConfig.summarizer?.maxSummaryLength ?? 1200;
-            if (maxLen > 0 && summary.length > maxLen) {
-              console.error(
-                `🧠 [Jarvis] Summary too long (${summary.length} > ${maxLen} chars) — re-compressing...`,
-              );
-              try {
-                const recompressed = await generateText(
-                  `Compress the following session summary to under ${maxLen} characters. ` +
-                    `Keep only durable preferences, important decisions, active project context, recurring behaviors, and unresolved follow-ups. ` +
-                    `Remove filler, repeated analysis, and temporary details.\n\n${summary}`,
-                );
-                if (
-                  recompressed.trim().length > 0 &&
-                  recompressed.length < summary.length
-                ) {
-                  summary = recompressed.trim();
-                  console.error(
-                    `✅ [Jarvis] Re-compressed to ${summary.length} chars.`,
-                  );
-                }
-              } catch (_e) {
-                /* keep original if re-compression fails */
-              }
-            }
 
             const processedFileMtimes: Record<string, number> = {};
             for (const f of allFiles) processedFileMtimes[f.name] = f.mtime;
@@ -804,7 +754,7 @@ export class AgentInitializer {
               updatedAt: Date.now(),
             });
             console.error(
-              `✅ [Jarvis] Session history compressed (${summary.length} chars, ${chunks.length} chunk(s)).`,
+              `✅ [Jarvis] Session history compressed (${summary.length} chars).`,
             );
 
             // Events extraction is handled by backfillSessionEvents() in autoBackfill()

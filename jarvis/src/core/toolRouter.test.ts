@@ -203,6 +203,25 @@ describe("ToolRouter", () => {
     expect(JSON.stringify(response)).toContain("memory item 1");
   });
 
+  it("recall_memory: derives topic keywords when LLM sends an empty query", async () => {
+    const search = vi.fn().mockResolvedValue(["market research result"]);
+    const { router } = makeRouter({ search });
+
+    router.setCurrentUserPrompt(
+      "还记得之前market reaearch ecommerce ai相关的讨论吗？",
+    );
+
+    const req = makeReq("recall_memory", { query: "" });
+    await router.route([req], new AbortController().signal, vi.fn());
+
+    expect(search).toHaveBeenCalledWith(
+      "market reaearch ecommerce ai",
+      5,
+      null,
+      null,
+    );
+  });
+
   it("routes evolved skills to dynamicRegistry.runSkill", async () => {
     const runSkill = vi.fn().mockResolvedValue("skill output");
     const { router } = makeRouter({ runSkill });
