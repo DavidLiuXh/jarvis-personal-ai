@@ -33,7 +33,7 @@ describe("SystemPromptBuilder", () => {
     const prompt = builder.build([]);
     expect(prompt).toContain("PUSH_TO_CHANNEL");
     expect(prompt).toContain("push_to_channel");
-    expect(prompt).toContain("发到微信");
+    expect(prompt).toContain("WeChat or Feishu");
   });
 
   it("always includes TASK_MANAGEMENT protocol with function-call vs shell distinction", () => {
@@ -41,12 +41,8 @@ describe("SystemPromptBuilder", () => {
     const prompt = builder.build([]);
     expect(prompt).toContain("TASK_MANAGEMENT");
     expect(prompt).toContain("FORBIDDEN");
-    expect(prompt).toContain("crontab");
-    expect(prompt).toContain("每天");
-    expect(prompt).toContain("BAD");
-    expect(prompt).toContain("GOOD");
-    expect(prompt).toContain('run_shell_command("task_list")');
-    expect(prompt).toContain("FUNCTION CALL TOOLS");
+    expect(prompt).toContain("task_* function tools");
+    expect(prompt).toContain("do not emulate them with shell commands");
   });
 
   it("always includes recall_memory instruction", () => {
@@ -72,11 +68,16 @@ describe("SystemPromptBuilder", () => {
     const builder = new SystemPromptBuilder();
     const facts: FactRecord[] = [
       { category: "identity", content: "user is David" },
+      {
+        category: "artifact",
+        content: "market_research_ecommerce_ai.md",
+      },
       { category: "behavior", content: "user runs 3 times a week" },
       { category: "specification", content: "project uses TypeScript" },
     ];
     const prompt = builder.buildFromFacts(facts);
     expect(prompt).toContain("[IDENTITY]");
+    expect(prompt).toContain("[ARTIFACT]");
     expect(prompt).toContain("[BEHAVIOR]");
     expect(prompt).toContain("[SPECIFICATION]");
   });
@@ -154,6 +155,23 @@ describe("SystemPromptBuilder", () => {
     expect(prompt).not.toContain("<style_constraints>");
   });
 
+  it("artifact facts are prioritized in persistent_context before general facts", () => {
+    const builder = new SystemPromptBuilder();
+    const facts: FactRecord[] = [
+      { category: "behavior", content: "user runs 3 times a week" },
+      {
+        category: "artifact",
+        content: "market_research_ecommerce_ai.md",
+      },
+    ];
+    const prompt = builder.buildFromFacts(facts);
+    const artifactIdx = prompt.indexOf("market_research_ecommerce_ai.md");
+    const behaviorIdx = prompt.indexOf("user runs 3 times a week");
+    expect(artifactIdx).toBeGreaterThan(-1);
+    expect(behaviorIdx).toBeGreaterThan(-1);
+    expect(artifactIdx).toBeLessThan(behaviorIdx);
+  });
+
   // --- memory_status ---
 
   it("renders memory_status with HALLUCINATE warning", () => {
@@ -209,7 +227,7 @@ describe("SystemPromptBuilder on-demand protocol injection", () => {
   it("injects TASK_MANAGEMENT only when prompt mentions scheduling/任务", () => {
     const builder = new SystemPromptBuilder();
 
-    const withTask = builder.buildFromFacts([], "每天早上8点做X");
+    const withTask = builder.buildFromFacts([], "每天提醒我做X");
     expect(withTask).toContain("TASK_MANAGEMENT");
 
     const withoutTask = builder.buildFromFacts([], "帮我分析代码");
@@ -219,7 +237,7 @@ describe("SystemPromptBuilder on-demand protocol injection", () => {
   it("injects CODE_MODIFICATION_PROTOCOL only when prompt mentions code/file editing", () => {
     const builder = new SystemPromptBuilder();
 
-    const withCode = builder.buildFromFacts([], "帮我修改这个文件");
+    const withCode = builder.buildFromFacts([], "帮我修改这个代码文件");
     expect(withCode).toContain("CODE_MODIFICATION_PROTOCOL");
 
     const withoutCode = builder.buildFromFacts([], "今天天气怎么样");

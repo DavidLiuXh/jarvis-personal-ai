@@ -730,7 +730,7 @@ export class MemoryService {
    * Increment when buildEmbeddingText() changes to trigger automatic
    * re-embedding of all existing facts on next startup.
    */
-  private static readonly EMBEDDING_TEXT_VERSION = "2";
+  private static readonly EMBEDDING_TEXT_VERSION = "3";
 
   /**
    * Builds the text used for embedding generation.
@@ -747,6 +747,7 @@ export class MemoryService {
     const prefixes: Record<string, string> = {
       identity: "PRIVATE_USER_DATA: Identity - ",
       behavior: "PRIVATE_USER_DATA: Habit/Behavior - ",
+      artifact: "PRIVATE_USER_DATA: Artifact Reference - ",
       interaction_style: "UI_UX_INSTRUCTION: Response Pattern - ",
       specification: "SYSTEM_CONSTRAINT: Implementation Rule - ",
       insight: "PRIVATE_USER_DATA: Meta Observation - ",
@@ -898,6 +899,7 @@ CRITICAL: Do NOT include any XML tags in your response.
 <categories>
 - identity: static facts about who the USER is (name, job, skills)
 - behavior: user habits, hobbies, interests, routines
+- artifact: user-owned docs, file names, paths, note titles, saved outputs
 - interaction_style: how the user wants responses formatted (tone, language, length)
 - specification: technical decisions, project rules, system constraints
 </categories>
@@ -905,7 +907,7 @@ CRITICAL: Do NOT include any XML tags in your response.
 <rules>
 1. Merge semantically duplicate facts into one.
 2. RESOLVE CONFLICTS: if facts contradict each other (e.g., an older fact says "User prefers Python" and a newer fact says "User uses Node.js exclusively"), synthesize them to reflect the most updated state.
-3. Fix miscategorized facts (hobbies → behavior, response style → interaction_style).
+3. Fix miscategorized facts (hobbies → behavior, response style → interaction_style, saved docs/files/paths/titles → artifact).
 4. Use English for all content.
 5. Preserve the highest importance score among merged facts.
 6. Output ONLY the JSON array, nothing else.
@@ -913,7 +915,7 @@ CRITICAL: Do NOT include any XML tags in your response.
 
 <schema>
 Each element MUST follow this exact structure:
-- "category": one string value from: "identity", "behavior", "interaction_style", "specification"
+- "category": one string value from: "identity", "behavior", "artifact", "interaction_style", "specification"
 - "content": one string sentence (NEVER an array, NEVER nested object — always a plain string)
 - "importance": one integer between 1 and 10
 
@@ -1737,11 +1739,13 @@ ${insightsSection}</knowledge>
   }
 
   // Stable identity is useful every turn, but only the top few identity facts
-  // should bypass relevance ranking. Style preferences are injected only when
-  // the current query is about response style/format; otherwise they are
-  // skipped to keep the prompt focused.
+  // should bypass relevance ranking. Artifact facts are injected only for
+  // history/file recall intents. Style preferences are injected only when the
+  // current query is about response style/format; otherwise they are skipped
+  // to keep the prompt focused.
   private static readonly ALWAYS_INJECT_CATEGORIES = new Set(["identity"]);
   private static readonly IDENTITY_ALWAYS_INJECT_LIMIT = 2;
+  private static readonly ARTIFACT_INJECT_LIMIT = 2;
 
   // Max number of insights to inject per turn when reranker is disabled.
   // When reranker is enabled, insights compete with other facts for the cap.
@@ -1757,11 +1761,47 @@ ${insightsSection}</knowledge>
     return { filtered, filteredOut: reranked.length - filtered.length };
   }
 
+  private shouldInjectArtifactFacts(query: string): boolean {
+    const lower = query.toLowerCase();
+    return [
+      "history",
+      "recall",
+      "remember",
+      "previous",
+      "earlier",
+      "before",
+      "discussion",
+      "conversation",
+      "document",
+      "docs",
+      "doc",
+      "file",
+      "path",
+      "title",
+      "note",
+      "notes",
+      "markdown",
+      "md",
+      "archive",
+      "之前",
+      "以前",
+      "记得",
+      "历史",
+      "讨论",
+      "文档",
+      "文件",
+      "路径",
+      "标题",
+      "笔记",
+    ].some((keyword) => lower.includes(keyword));
+  }
+
   /**
    * Returns facts relevant to the given query.
-   * Top identity facts bypass relevance ranking. Interaction style facts are
-   * injected only for style/format intents. Insights use a stricter importance
-   * threshold and either a small separate quota or the reranker cap.
+   * Top identity facts bypass relevance ranking. Artifact facts are injected
+   * only for history/file recall intents. Interaction style facts are injected
+   * only for style/format intents. Insights use a stricter importance threshold
+   * and either a small separate quota or the reranker cap.
    */
   public async searchFacts(
     query: string,
@@ -1787,8 +1827,12 @@ ${insightsSection}</knowledge>
         .filter((f) => MemoryService.ALWAYS_INJECT_CATEGORIES.has(f.category))
         .slice(0, MemoryService.IDENTITY_ALWAYS_INJECT_LIMIT);
       const alwaysIds = new Set(alwaysFacts.map((f) => f.id));
+      const includeArtifactFacts = this.shouldInjectArtifactFacts(query);
       const includeStyleFacts = this.shouldInjectStyleFacts(query);
       // insight is no longer always-inject; handle separately below
+      const artifactCandidates = allFacts.filter(
+        (f) => f.category === "artifact",
+      );
       const insightCandidates = allFacts.filter(
         (f) =>
           f.category === "insight" &&
@@ -1797,6 +1841,7 @@ ${insightsSection}</knowledge>
       const candidateFacts = allFacts.filter(
         (f) =>
           !alwaysIds.has(f.id) &&
+          f.category !== "artifact" &&
           f.category !== "insight" &&
           f.category !== "interaction_style",
       );
@@ -1900,9 +1945,11 @@ ${insightsSection}</knowledge>
                 const fact = factById.get(r.id);
                 if (!fact) return null;
                 // Skip facts handled by dedicated gates: identity alwaysOut,
-                // interaction_style styleOut, and insight quota/reranker pool.
+                // artifact/artifactOut, interaction_style styleOut, and
+                // insight quota/reranker pool.
                 if (
                   alwaysIds.has(fact.id) ||
+                  fact.category === "artifact" ||
                   fact.category === "insight" ||
                   fact.category === "interaction_style"
                 )
@@ -1984,6 +2031,28 @@ ${insightsSection}</knowledge>
         ranked = this.rankByJaccard(query, candidateFacts, biEncoderCap);
       }
 
+      let rankedArtifacts: Array<{
+        id: number;
+        category: string;
+        content: string;
+      }> = [];
+      if (includeArtifactFacts && artifactCandidates.length > 0) {
+        const artifactLimit = MemoryService.ARTIFACT_INJECT_LIMIT;
+        if (strategy === "embedding" && queryVecCached) {
+          rankedArtifacts = this.rankByEmbeddingWithId(
+            queryVecCached,
+            artifactCandidates,
+            artifactLimit,
+          );
+        } else {
+          rankedArtifacts = this.rankByJaccardWithId(
+            query,
+            artifactCandidates,
+            artifactLimit,
+          );
+        }
+      }
+
       // Rank insights using the same strategy as other facts, cap at INSIGHT_INJECT_LIMIT
       let rankedInsights: Array<{
         id: number;
@@ -2009,6 +2078,10 @@ ${insightsSection}</knowledge>
       }
 
       const alwaysOut = alwaysFacts.map(({ category, content }) => ({
+        category,
+        content,
+      }));
+      const artifactOut = rankedArtifacts.map(({ category, content }) => ({
         category,
         content,
       }));
@@ -2108,6 +2181,11 @@ ${insightsSection}</knowledge>
       console.error(
         `🧠 [searchFacts] always(${alwaysOut.length}): ${alwaysOut.map((f) => `[${f.category}] ${f.content.slice(0, 50)}`).join(" | ")}`,
       );
+      if (artifactOut.length > 0) {
+        console.error(
+          `📎 [searchFacts] artifact(${artifactOut.length}): ${artifactOut.map((f) => f.content.slice(0, 60)).join(" | ")}`,
+        );
+      }
       if (styleOut.length > 0) {
         console.error(
           `🎨 [searchFacts] style(${styleOut.length}): ${styleOut.map((f) => f.content.slice(0, 60)).join(" | ")}`,
@@ -2126,6 +2204,7 @@ ${insightsSection}</knowledge>
       // Filter out facts already in alwaysOut or ranked to avoid duplicates
       const alreadyIncluded = new Set([
         ...alwaysOut.map((f) => f.content),
+        ...artifactOut.map((f) => f.content),
         ...styleOut.map((f) => f.content),
         ...ranked.map((f) => f.content),
       ]);
@@ -2138,7 +2217,14 @@ ${insightsSection}</knowledge>
           `🔗 [searchFacts] expanded(${expanded.length}): ${expanded.map((f) => `[${f.category}] ${f.content.slice(0, 50)}`).join(" | ")}`,
         );
       }
-      return [...alwaysOut, ...styleOut, ...ranked, ...insightOut, ...expanded];
+      return [
+        ...alwaysOut,
+        ...artifactOut,
+        ...styleOut,
+        ...ranked,
+        ...insightOut,
+        ...expanded,
+      ];
     } catch (e: any) {
       console.error(`⚠️ [searchFacts] outer catch: ${e?.message}`);
       return this.getStructuredFacts();

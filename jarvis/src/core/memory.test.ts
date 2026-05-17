@@ -192,6 +192,7 @@ describe("MemoryService.consolidateFacts", () => {
     const prompt = generateText.mock.calls[0][0] as string;
     // Prompt must include all four category definitions
     expect(prompt).toContain("behavior");
+    expect(prompt).toContain("artifact");
     expect(prompt).toContain("interaction_style");
     expect(prompt).toContain("identity");
     expect(prompt).toContain("specification");
@@ -511,6 +512,31 @@ describe("MemoryService.searchFacts", () => {
     expect(styleResults.some((f) => f.category === "interaction_style")).toBe(
       true,
     );
+  });
+
+  it("injects artifact facts for history/file recall queries", async () => {
+    const { service } = await createServiceWithFacts([
+      {
+        category: "artifact",
+        content:
+          "notes from market research ecommerce ai discussion saved in market_research_ecommerce_ai.md",
+        importance: 10,
+      },
+      {
+        category: "behavior",
+        content: "user likes history",
+        importance: 7,
+      },
+    ]);
+
+    const results = await service.searchFacts(
+      "还记得之前market research ecommerce ai相关的讨论吗？",
+      2,
+    );
+
+    expect(results.some((f) => f.category === "artifact")).toBe(true);
+    expect(results[0].category).toBe("artifact");
+    expect(results[0].content).toContain("market_research_ecommerce_ai.md");
   });
 
   it("embedding: uses embedContentFn to rank facts by cosine similarity", async () => {
@@ -1685,6 +1711,16 @@ describe("MemoryService.buildEmbeddingText", () => {
     );
     expect(text).toContain("PRIVATE_USER_DATA: Habit/Behavior - ");
     expect(text).toContain("moderate risk appetite");
+  });
+
+  it("prepends PRIVATE_USER_DATA prefix for artifact", () => {
+    const text = BuildEmbeddingText(
+      "artifact",
+      "market_research_ecommerce_ai.md",
+    );
+    expect(text).toBe(
+      "PRIVATE_USER_DATA: Artifact Reference - market_research_ecommerce_ai.md",
+    );
   });
 
   it("prepends UI_UX_INSTRUCTION prefix for interaction_style", () => {

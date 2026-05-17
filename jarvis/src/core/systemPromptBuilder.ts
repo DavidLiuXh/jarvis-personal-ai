@@ -190,11 +190,15 @@ export class SystemPromptBuilder {
     skills: SkillInfo[] = [],
   ): string {
     const identityFacts = facts.filter((f) => f.category === "identity");
+    const artifactFacts = facts.filter((f) => f.category === "artifact");
     const preferenceFacts = facts.filter(
       (f) => f.category === "interaction_style",
     );
     const nonIdentityFacts = facts.filter(
-      (f) => f.category !== "interaction_style" && f.category !== "identity",
+      (f) =>
+        f.category !== "interaction_style" &&
+        f.category !== "identity" &&
+        f.category !== "artifact",
     );
 
     const derivedStyle = deriveStyleFromIdentity(identityFacts);
@@ -216,17 +220,23 @@ export class SystemPromptBuilder {
       styleSection = `\n<style_constraints>\n${lines.join("\n")}\n</style_constraints>`;
     }
 
-    // persistent_context: identity facts first (primacy), then others
+    // persistent_context: identity facts first (primacy), then artifact refs,
+    // then other durable facts.
     const identityLines = identityFacts
       .map((f) => `- [IDENTITY]: ${f.content}`)
+      .join("\n");
+    const artifactLines = artifactFacts
+      .map((f) => `- [ARTIFACT]: ${f.content}`)
       .join("\n");
     const otherLines = nonIdentityFacts
       .map((f) => `- [${f.category.toUpperCase()}]: ${f.content}`)
       .join("\n");
     const contextLines =
-      identityFacts.length === 0 && nonIdentityFacts.length === 0
+      identityFacts.length === 0 &&
+      artifactFacts.length === 0 &&
+      nonIdentityFacts.length === 0
         ? "(No persistent facts)"
-        : [identityLines, otherLines].filter(Boolean).join("\n");
+        : [identityLines, artifactLines, otherLines].filter(Boolean).join("\n");
 
     const memoryContext =
       `\n<memory_status>\n` +
