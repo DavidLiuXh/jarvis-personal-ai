@@ -109,13 +109,19 @@ async function callReranker(
       clearTimeout(timer);
       const isTimeout = e?.name === "AbortError";
       const reason = isTimeout ? `timeout(${timeoutMs}ms)` : e?.message;
+
+      // Extract key body info for logging without flooding the console
+      const bodyInfo = useOnnxManager
+        ? `{model: ${model}, query: "${query.slice(0, 30)}...", docs: ${candidates.length}}`
+        : `{query: "${query.slice(0, 30)}...", candidates: ${candidates.length}}`;
+
       if (attempt < maxRetries) {
         console.error(
-          `⚠️ [reranker] attempt ${attempt + 1}/${maxRetries + 1} failed (${reason}), retrying...`,
+          `⚠️ [reranker] attempt ${attempt + 1}/${maxRetries + 1} failed for ${url} with body ${bodyInfo} (${reason}), retrying...`,
         );
       } else {
         console.error(
-          `⚠️ [reranker] all ${maxRetries + 1} attempts failed, last error: ${reason}`,
+          `⚠️ [reranker] all ${maxRetries + 1} attempts failed for ${url} with body ${bodyInfo}, last error: ${reason}`,
         );
       }
     }
