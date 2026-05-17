@@ -38,9 +38,13 @@ import {
   buildIncrementalSummary,
   buildHistoryWithSummary,
   buildRelevantSummarySectionFallback,
-  buildSummarySectionFromChunks,
   type SessionMessage,
 } from "./sessionSummarizer.js";
+import {
+  MemoryInjectionPlanner,
+  type PrewarmCandidate,
+  type SummaryCandidate,
+} from "./memoryInjectionPlanner.js";
 import { buildHistoryFromMessages } from "./resumeFromDisk.js";
 import { LocalModelRouter } from "./localModelRouter.js";
 import { type AgentManager } from "./agentManager.js";
@@ -48,6 +52,21 @@ import {
   extractBackgroundPrompt,
   type BackgroundTaskRunner,
 } from "./backgroundTaskRunner.js";
+
+function extractSummaryCandidatesFromSection(
+  section: string,
+): SummaryCandidate[] {
+  if (!section.trim()) return [];
+  return section
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.startsWith("- "))
+    .map((line) => ({
+      text: line.replace(/^-\s+/, "").trim(),
+      source: "fallback" as const,
+    }))
+    .filter((item) => item.text);
+}
 
 /**
  * JARVIS 3.0: The Digital Lifeform Agent
@@ -534,11 +553,6 @@ export class JarvisAgent extends EventEmitter {
       }
     }
 
-    const protocol = this.promptBuilder.buildFromFacts(
-      facts,
-      userPrompt,
-      relevantSkills,
-    );
     // Use Jarvis slim preamble — GEMINI.md (userMemory) intentionally excluded
     // as it is Gemini CLI global config irrelevant to personal assistant use
     const defaultInstruction = buildJarvisPreamble();
@@ -551,8 +565,7 @@ export class JarvisAgent extends EventEmitter {
     const prewarmLimitMixed = this.jarvisConfig.memory.prewarmLimitMixed ?? 1;
     const prewarmMaxDistanceMixed =
       this.jarvisConfig.memory.prewarmMaxDistanceMixed ?? 0.6;
-    let prewarmSection = "";
-    let prewarmedCount = 0;
+    const prewarmCandidates: PrewarmCandidate[] = [];
     if (prewarmLimit > 0 && querySubject !== "external") {
       const effectiveLimit =
         querySubject === "mixed" ? prewarmLimitMixed : prewarmLimit;
@@ -621,7 +634,6 @@ export class JarvisAgent extends EventEmitter {
       }
 
       if (toInject.length > 0) {
-        prewarmedCount = toInject.length; // will be corrected after threshold filter
         // When reranker is enabled, filter by cross-encoder logit threshold and
         // treat all passing results as verified (no "possibly relevant" tier).
         // The threshold guards against injecting irrelevant memories that happen
@@ -635,34 +647,19 @@ export class JarvisAgent extends EventEmitter {
         const uncertain = rerankerEnabled
           ? []
           : toInject.filter((m) => m.score < VERIFIED_THRESHOLD);
-        let memoryContent = "";
-        let memoryIndex = 1;
-        if (verified.length > 0) {
-          memoryContent +=
-            "<verified_memories>\n" +
-            verified
-              .map((m) => `[Memory ${memoryIndex++}]: ${m.text}`)
-              .join("\n") +
-            "\n</verified_memories>";
-        }
-        if (uncertain.length > 0) {
-          memoryContent +=
-            (memoryContent ? "\n" : "") +
-            "<possibly_relevant_memories>\n" +
-            "(Low confidence — treat as hints only, not facts. Use only if directly matching the question.)\n" +
-            uncertain
-              .map((m) => `[Memory ${memoryIndex++}]: ${m.text}`)
-              .join("\n") +
-            "\n</possibly_relevant_memories>";
-        }
-        if (memoryContent) {
-          prewarmSection =
-            "\n<relevant_past_conversations>\n" +
-            memoryContent +
-            "\n</relevant_past_conversations>";
-        }
+        prewarmCandidates.push(
+          ...verified.map((m) => ({
+            text: m.text,
+            score: m.score,
+            tier: "verified" as const,
+          })),
+          ...uncertain.map((m) => ({
+            text: m.text,
+            score: m.score,
+            tier: "uncertain" as const,
+          })),
+        );
         const actualInjected = verified.length + uncertain.length;
-        prewarmedCount = actualInjected; // correct count after threshold filter
         const filteredOut = toInject.length - actualInjected;
         console.error(
           `🧠 [prewarm] subject=${querySubject}, limit=${effectiveLimit}, maxDist=${effectiveMaxDistance}, injected=${actualInjected}` +
@@ -678,7 +675,7 @@ export class JarvisAgent extends EventEmitter {
       }
     }
 
-    let relevantSummarySection = "";
+    const summaryCandidates: SummaryCandidate[] = [];
     if (querySubject !== "external" && this.conversationSummary.trim()) {
       const summaryChunks = await this.memoryService.searchSummaryChunks(
         this.sessionId,
@@ -686,14 +683,55 @@ export class JarvisAgent extends EventEmitter {
         2,
         0.72,
       );
-      relevantSummarySection =
-        summaryChunks.length > 0
-          ? buildSummarySectionFromChunks(summaryChunks)
-          : buildRelevantSummarySectionFallback(
-              this.conversationSummary,
-              userPrompt,
-            );
+      if (summaryChunks.length > 0) {
+        summaryCandidates.push(
+          ...summaryChunks.map((text) => ({
+            text,
+            source: "vector" as const,
+          })),
+        );
+      } else {
+        const fallbackSection = buildRelevantSummarySectionFallback(
+          this.conversationSummary,
+          userPrompt,
+        );
+        summaryCandidates.push(
+          ...extractSummaryCandidatesFromSection(fallbackSection),
+        );
+      }
     }
+
+    const injectionPlan = this.buildMemoryInjectionPlanner().buildPlan({
+      querySubject,
+      factCandidates: facts.map((fact) => ({
+        category: fact.category,
+        content: fact.content,
+      })),
+      summaryCandidates,
+      prewarmCandidates,
+    });
+    if (
+      facts.length > 0 ||
+      summaryCandidates.length > 0 ||
+      prewarmCandidates.length > 0
+    ) {
+      const rejectedPreview = injectionPlan.rejected
+        .slice(0, 5)
+        .map(
+          (item) => `${item.source}/${item.reason}: ${item.text.slice(0, 80)}`,
+        )
+        .join("\n  ");
+      console.error(
+        `🧠 [MemoryInjectionPlanner] candidates(facts=${facts.length}, summary=${summaryCandidates.length}, prewarm=${prewarmCandidates.length}) → injected(facts=${injectionPlan.factsInjected}, summary=${injectionPlan.summaryInjected}, prewarm=${injectionPlan.prewarmInjected}), chars=${injectionPlan.usedChars}, rejected=${injectionPlan.rejected.length}` +
+          (rejectedPreview ? `\n  ${rejectedPreview}` : ""),
+      );
+    }
+
+    const protocol = this.promptBuilder.buildFromFacts(
+      injectionPlan.facts,
+      userPrompt,
+      relevantSkills,
+    );
 
     this.client
       .getChat()
@@ -701,13 +739,28 @@ export class JarvisAgent extends EventEmitter {
         defaultInstruction +
           "\n" +
           protocol +
-          relevantSummarySection +
-          prewarmSection,
+          injectionPlan.relevantSummarySection +
+          injectionPlan.prewarmSection,
       );
 
     console.error(
-      `🔄 [Jarvis] System Prompt Refreshed (subject=${querySubject}). Facts injected: ${facts.length}. Summary bullets: ${relevantSummarySection ? (relevantSummarySection.match(/\n- /g)?.length ?? 0) : 0}. Prewarmed memories: ${prewarmLimit > 0 ? (prewarmSection ? prewarmSection.split("[Long-term Memory ").length - 1 : 0) : "disabled"}.`,
+      `🔄 [Jarvis] System Prompt Refreshed (subject=${querySubject}). Facts injected: ${injectionPlan.factsInjected}/${facts.length}. Summary bullets: ${injectionPlan.summaryInjected}. Prewarmed memories: ${prewarmLimit > 0 ? injectionPlan.prewarmInjected : "disabled"}. Memory chars: ${injectionPlan.usedChars}. Rejected: ${injectionPlan.rejected.length}.`,
     );
+  }
+
+  private buildMemoryInjectionPlanner(): MemoryInjectionPlanner {
+    const memory = this.jarvisConfig.memory;
+    return new MemoryInjectionPlanner({
+      maxTotalChars: memory.injectionMaxTotalChars,
+      maxFactChars: memory.injectionMaxFactChars,
+      maxSummaryChars: memory.injectionMaxSummaryChars,
+      maxPrewarmChars: memory.injectionMaxPrewarmChars,
+      maxFactItemChars: memory.injectionMaxFactItemChars,
+      maxSummaryItemChars: memory.injectionMaxSummaryItemChars,
+      maxPrewarmItemChars: memory.injectionMaxPrewarmItemChars,
+      maxFactItemsPersonal: memory.injectionMaxFactItemsPersonal,
+      maxFactItemsMixed: memory.injectionMaxFactItemsMixed,
+    });
   }
 
   public setChannelRegistry(registry: ChannelRegistry): void {

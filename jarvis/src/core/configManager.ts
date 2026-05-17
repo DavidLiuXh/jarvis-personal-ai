@@ -238,6 +238,24 @@ export interface JarvisConfig {
      * Default: 0.9 (stricter than facts/memories at 1.0).
      */
     skillMaxDistance: number;
+    /** Total character budget for injected facts + summary + prewarm context. */
+    injectionMaxTotalChars: number;
+    /** Character budget for injected persistent facts. */
+    injectionMaxFactChars: number;
+    /** Character budget for injected session summary chunks. */
+    injectionMaxSummaryChars: number;
+    /** Character budget for injected prewarm memories. */
+    injectionMaxPrewarmChars: number;
+    /** Max chars per injected fact. */
+    injectionMaxFactItemChars: number;
+    /** Max chars per injected summary chunk. */
+    injectionMaxSummaryItemChars: number;
+    /** Max chars per injected prewarm memory. */
+    injectionMaxPrewarmItemChars: number;
+    /** Max injected facts for personal queries. */
+    injectionMaxFactItemsPersonal: number;
+    /** Max injected facts for mixed queries. */
+    injectionMaxFactItemsMixed: number;
     /**
      * Whether to store raw conversation pairs (user+assistant) in vec_memories.
      * With events extraction enabled, raw conversations add low signal.
@@ -425,6 +443,15 @@ export class ConfigManager {
         prewarmMaxDistanceMixed: 0.6,
         skillSearchLimit: 5,
         skillMaxDistance: 0.9,
+        injectionMaxTotalChars: 1800,
+        injectionMaxFactChars: 900,
+        injectionMaxSummaryChars: 520,
+        injectionMaxPrewarmChars: 1100,
+        injectionMaxFactItemChars: 220,
+        injectionMaxSummaryItemChars: 180,
+        injectionMaxPrewarmItemChars: 500,
+        injectionMaxFactItemsPersonal: 8,
+        injectionMaxFactItemsMixed: 4,
         ingestConversations: false,
         eventsExtractionInterval: 20,
         skipStartupEventsBackfill: false,
