@@ -183,7 +183,7 @@ export class TaskScheduler {
         continue;
       }
 
-      const job = cron.schedule(task.cron, async () => {
+      const job = cron.schedule(task.cron, () => {
         const now = new Date();
         console.error(
           `⏰ [TaskScheduler] Task triggered: ${task.id} at ${now.toLocaleString()} (${now.toISOString()})`,
@@ -193,13 +193,17 @@ export class TaskScheduler {
           channel: task.channel ?? defaultChannel,
           chatId: task.chatId ?? defaultChatId,
         };
-        for (const cb of this.triggerCallbacks) {
-          await Promise.resolve(cb(triggered)).catch((e: any) => {
-            console.error(
-              `⚠️ [TaskScheduler] Task "${task.id}" callback failed: ${e?.message ?? e}`,
-            );
-          });
-        }
+        // Fire callbacks asynchronously so the cron heartbeat chain is never
+        // blocked by long-running tasks (LLM reflect, agent runs, etc.).
+        setImmediate(() => {
+          for (const cb of this.triggerCallbacks) {
+            Promise.resolve(cb(triggered)).catch((e: any) => {
+              console.error(
+                `⚠️ [TaskScheduler] Task "${task.id}" callback failed: ${e?.message ?? e}`,
+              );
+            });
+          }
+        });
       });
 
       // Log next scheduled execution time for diagnostics
