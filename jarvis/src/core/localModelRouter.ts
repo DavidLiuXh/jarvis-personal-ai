@@ -58,6 +58,9 @@ DIMENSION 3 — Query Subject (CRITICAL for memory retrieval)
 - "mixed": Needs BOTH personal context AND external knowledge.
 
 KEY RULE: "what did we discuss on Monday" → personal, even if the topic is external.
+MIXED RULE: External topic + any request to tailor, compare, recommend, decide, prioritize, or explain using the user's goals/preferences/history/context → mixed.
+PERSONAL-CONTEXT CUES: "for me", "based on my", "my preference", "my context", "按我的", "结合我", "适合我", "我该", "我的", "我们之前" → mixed or personal, never external.
+IF UNSURE between external and mixed, choose mixed.
 
 DIMENSION 4 — Time Window
 ${timeNote}
@@ -134,6 +137,13 @@ export type ConversationTurn = {
 // Fallback when classification fails: conservative defaults that avoid
 // both over-injection (external queries) and under-injection (personal queries).
 const FALLBACK_QUERY_SUBJECT: QuerySubject = "mixed";
+
+const PERSONAL_CONTEXT_CUE_RE =
+  /我的|我之前|我们之前|适合我|按我|按我的|结合我|我该|我应该|for me\b|based on my\b|my preference\b|my preferences\b|my context\b|my goals\b|my history\b/i;
+
+function hasPersonalContextCue(prompt: string): boolean {
+  return PERSONAL_CONTEXT_CUE_RE.test(prompt);
+}
 
 export class LocalModelRouter {
   constructor(
@@ -275,7 +285,7 @@ export class LocalModelRouter {
       "external",
       "mixed",
     ]);
-    const querySubject: QuerySubject = VALID_SUBJECTS.has(
+    let querySubject: QuerySubject = VALID_SUBJECTS.has(
       rawSubject as QuerySubject,
     )
       ? (rawSubject as QuerySubject)
@@ -284,6 +294,13 @@ export class LocalModelRouter {
     if (!VALID_SUBJECTS.has(rawSubject as QuerySubject)) {
       console.error(
         `⚠️ [LocalModelRouter] Invalid query_subject "${rawSubject}", using fallback "${FALLBACK_QUERY_SUBJECT}"`,
+      );
+    }
+
+    if (querySubject === "external" && hasPersonalContextCue(prompt)) {
+      querySubject = "mixed";
+      console.error(
+        `🧠 [LocalModelRouter] Personal-context cue detected — query_subject upgraded external → mixed`,
       );
     }
 

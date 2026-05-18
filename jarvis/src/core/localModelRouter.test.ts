@@ -204,3 +204,36 @@ describe("LocalModelRouter — route() topic_shifted via classify", () => {
     expect(result.topicShifted).toBe(false);
   });
 });
+
+describe("LocalModelRouter — query subject personal-context guard", () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it("upgrades classifier external to mixed for Chinese personal-context cues", async () => {
+    const router = makeRouter();
+    mockGenerate.mockResolvedValueOnce(classifyResponse(60, "external", false));
+
+    const result = await router.route("按我的投资风格分析一下英伟达");
+
+    expect(result.querySubject).toBe("mixed");
+  });
+
+  it("upgrades classifier external to mixed for English personal-context cues", async () => {
+    const router = makeRouter();
+    mockGenerate.mockResolvedValueOnce(classifyResponse(60, "external", false));
+
+    const result = await router.route(
+      "Is this framework a good fit for me based on my context?",
+    );
+
+    expect(result.querySubject).toBe("mixed");
+  });
+
+  it("keeps pure external questions external", async () => {
+    const router = makeRouter();
+    mockGenerate.mockResolvedValueOnce(classifyResponse(60, "external", false));
+
+    const result = await router.route("英伟达最新财报怎么样");
+
+    expect(result.querySubject).toBe("external");
+  });
+});
