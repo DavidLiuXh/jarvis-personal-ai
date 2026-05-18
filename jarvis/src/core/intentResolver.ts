@@ -93,7 +93,7 @@ const PERSONAL_CONTEXT_CUE_RE =
   /我的|我之前|我们之前|适合我|按我|按我的|结合我|我该|我应该|for me\b|based on my\b|my preference\b|my preferences\b|my context\b|my goals\b|my history\b/i;
 
 const MEMORY_RECALL_CUE_RE =
-  /之前|以前|上次|我们聊过|讨论过|记得|回忆|总结.*(之前|上次)|what did we discuss|previously|last time|remember when/i;
+  /我们聊过|我们讨论过|咱们聊过|咱们讨论过|你之前说|你以前说|你上次说|我之前说|我以前说|我上次说|我们之前|我们以前|我们上次|咱们之前|咱们以前|咱们上次|之前.*(对话|聊天|讨论|聊过|说过|提到|记忆|memory)|以前.*(对话|聊天|讨论|聊过|说过|提到|记忆|memory)|上次.*(对话|聊天|讨论|聊过|说过|提到|记忆|memory)|what did we discuss|our previous|our last conversation|you previously said|you said last time|last time we|remember when we/i;
 
 const SCHEDULE_CUE_RE =
   /提醒我|定时|每天|每周|每月|明天.*提醒|remind me|schedule|every day|every week|weekly|daily/i;

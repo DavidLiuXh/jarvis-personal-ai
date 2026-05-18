@@ -179,6 +179,26 @@ describe("IntentResolver", () => {
     expect(intent.needsMemory).toBe(false);
   });
 
+  it("does not treat external previous events as personal recall", async () => {
+    const resolver = makeResolver();
+    mockGenerate.mockResolvedValueOnce(
+      modelResponse({
+        query_subject: "external",
+        task_type: "analyze",
+        confidence: 0.9,
+      }),
+    );
+
+    const intent = await resolver.resolve({
+      userPrompt: "上次苹果发布会发布了什么",
+    });
+
+    expect(intent.subject).toBe("external");
+    expect(intent.taskType).toBe("analyze");
+    expect(intent.needsMemory).toBe(false);
+    expect(intent.evidence).not.toContain("memory_recall_cue");
+  });
+
   it("upgrades low-confidence external subject to mixed", async () => {
     const resolver = makeResolver();
     mockGenerate.mockResolvedValueOnce(
