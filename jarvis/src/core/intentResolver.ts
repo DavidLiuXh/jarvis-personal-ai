@@ -22,6 +22,45 @@ export type ConversationTurn = {
   content: string;
 };
 
+export type MemoryRecallTarget =
+  | "conversation_history"
+  | "user_memory"
+  | "external_past_event"
+  | "current_context_reference"
+  | "none";
+
+export type ActionRequestType =
+  | "read"
+  | "write"
+  | "run"
+  | "schedule"
+  | "delegate"
+  | "none";
+
+export type IntentEvidence = {
+  personalContext: {
+    present: boolean;
+    reason: string;
+    span?: string;
+  };
+  memoryRecall: {
+    present: boolean;
+    target: MemoryRecallTarget;
+    reason: string;
+    span?: string;
+  };
+  actionRequest: {
+    present: boolean;
+    action: ActionRequestType;
+    object?: string;
+  };
+  entityHints: {
+    tickers: string[];
+    technicalTerms: string[];
+    peopleOrCompanies: string[];
+  };
+};
+
 export type IntentFrame = {
   subject: QuerySubject;
   taskType: IntentTaskType;
@@ -42,6 +81,7 @@ export type IntentFrame = {
   reason: string;
   confidence: number;
   evidence: string[];
+  semanticEvidence: IntentEvidence;
   source: "local-intent/ollama";
 };
 
@@ -65,6 +105,7 @@ type RawIntentModelResult = {
   candidate_agents?: unknown;
   confidence?: number;
   evidence?: unknown;
+  semantic_evidence?: unknown;
   time_window_days?: number | null;
   date_from?: string | null;
   date_to?: string | null;
@@ -154,9 +195,15 @@ function hasExplicitDelegateCue(prompt: string): boolean {
   return EXPLICIT_DELEGATE_CUE_RE.test(prompt);
 }
 
-function hasInvestmentAnalysisCue(prompt: string): boolean {
+function hasInvestmentAnalysisCue(
+  prompt: string,
+  semanticEvidence: IntentEvidence,
+): boolean {
   if (!INVESTMENT_ANALYSIS_CUE_RE.test(prompt)) return false;
-  const symbols = prompt.match(new RegExp(TICKER_RE, "g")) ?? [];
+  const symbols = [
+    ...semanticEvidence.entityHints.tickers,
+    ...(prompt.match(new RegExp(TICKER_RE, "g")) ?? []),
+  ];
   return symbols.some((symbol) => !NON_TICKER_ACRONYMS.has(symbol));
 }
 
@@ -234,6 +281,18 @@ DIMENSION 5 — Capability Needs
 - needs_scheduling=true only for reminders, timers, recurring work, or future follow-up.
 - candidate_agents should contain likely specialized agent ids if obvious, otherwise [].
 
+DIMENSION 5B — Structured Semantic Evidence
+Return semantic_evidence to explain the labels:
+- personalContext.present=true only when the request explicitly depends on the user's goals, preferences, identity, project, or prior personal context.
+- memoryRecall.target:
+  - "conversation_history": asks about what the user and Jarvis discussed before.
+  - "user_memory": asks about stored user facts/preferences/history.
+  - "external_past_event": asks about a past outside-world event, e.g. "上次苹果发布会发布了什么".
+  - "current_context_reference": refers to the current recent conversation, e.g. "这个/that/继续".
+  - "none": no memory recall.
+- actionRequest.present=true only when the user asks Jarvis to do something operational. action is "read"|"write"|"run"|"schedule"|"delegate"|"none".
+- entityHints.tickers should include likely financial ticker symbols only. Put technical acronyms such as ONNX, API, JSON, HTTP, LLM, SDK in technicalTerms, not tickers.
+
 DIMENSION 6 — Time Window
 ${timeNote}
 
@@ -265,9 +324,10 @@ OUTPUT RULES
 - All fields required. time_window_days / date_from / date_to may be null.
 - confidence is 0-1.
 - evidence is an array of short strings naming cues you used.
+- semantic_evidence is required and must follow the schema below.
 
 Required schema:
-{"knowledge_score": <1-100>, "operation_score": <1-100>, "complexity_score": <1-100>, "complexity_reasoning": "<one sentence>", "query_subject": "personal"|"external"|"mixed", "task_type": "chat"|"recall"|"analyze"|"execute"|"delegate"|"schedule", "needs_external_knowledge": true|false, "needs_tool": true|false, "needs_scheduling": true|false, "candidate_agents": ["<agent-id>"], "confidence": <0-1>, "evidence": ["<short cue>"], "time_window_days": <integer>|null, "date_from": "<YYYY-MM-DD>"|null, "date_to": "<YYYY-MM-DD>"|null, "history_topic": "<1 phrase>", "new_topic": "<1 phrase>", "references_recent_history": true|false, "topic_shifted": true|false}
+{"knowledge_score": <1-100>, "operation_score": <1-100>, "complexity_score": <1-100>, "complexity_reasoning": "<one sentence>", "query_subject": "personal"|"external"|"mixed", "task_type": "chat"|"recall"|"analyze"|"execute"|"delegate"|"schedule", "needs_external_knowledge": true|false, "needs_tool": true|false, "needs_scheduling": true|false, "candidate_agents": ["<agent-id>"], "confidence": <0-1>, "evidence": ["<short cue>"], "semantic_evidence": {"personalContext": {"present": true|false, "reason": "<short reason>", "span": "<text span>"}, "memoryRecall": {"present": true|false, "target": "conversation_history"|"user_memory"|"external_past_event"|"current_context_reference"|"none", "reason": "<short reason>", "span": "<text span>"}, "actionRequest": {"present": true|false, "action": "read"|"write"|"run"|"schedule"|"delegate"|"none", "object": "<object or empty>"}, "entityHints": {"tickers": ["<ticker>"], "technicalTerms": ["<term>"], "peopleOrCompanies": ["<name>"]}}, "time_window_days": <integer>|null, "date_from": "<YYYY-MM-DD>"|null, "date_to": "<YYYY-MM-DD>"|null, "history_topic": "<1 phrase>", "new_topic": "<1 phrase>", "references_recent_history": true|false, "topic_shifted": true|false}
 `.trim();
 }
 
@@ -293,10 +353,84 @@ function normalizeStringArray(value: unknown): string[] {
   return value.filter((item): item is string => typeof item === "string");
 }
 
+function normalizeEvidenceStrings(value: unknown): string[] {
+  return normalizeStringArray(value);
+}
+
 function normalizeConfidence(value: unknown): number {
   const confidence = Number(value);
   if (Number.isNaN(confidence)) return 0.5;
   return Math.max(0, Math.min(1, confidence));
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+  if (value !== null && typeof value === "object" && !Array.isArray(value)) {
+    return value as Record<string, unknown>;
+  }
+  return {};
+}
+
+function normalizeOptionalString(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+function normalizeMemoryRecallTarget(value: unknown): MemoryRecallTarget {
+  if (
+    value === "conversation_history" ||
+    value === "user_memory" ||
+    value === "external_past_event" ||
+    value === "current_context_reference" ||
+    value === "none"
+  ) {
+    return value;
+  }
+  return "none";
+}
+
+function normalizeActionRequestType(value: unknown): ActionRequestType {
+  if (
+    value === "read" ||
+    value === "write" ||
+    value === "run" ||
+    value === "schedule" ||
+    value === "delegate" ||
+    value === "none"
+  ) {
+    return value;
+  }
+  return "none";
+}
+
+function normalizeIntentEvidence(value: unknown): IntentEvidence {
+  const root = asRecord(value);
+  const personalContext = asRecord(root.personalContext);
+  const memoryRecall = asRecord(root.memoryRecall);
+  const actionRequest = asRecord(root.actionRequest);
+  const entityHints = asRecord(root.entityHints);
+
+  return {
+    personalContext: {
+      present: personalContext.present === true,
+      reason: normalizeOptionalString(personalContext.reason) ?? "",
+      span: normalizeOptionalString(personalContext.span),
+    },
+    memoryRecall: {
+      present: memoryRecall.present === true,
+      target: normalizeMemoryRecallTarget(memoryRecall.target),
+      reason: normalizeOptionalString(memoryRecall.reason) ?? "",
+      span: normalizeOptionalString(memoryRecall.span),
+    },
+    actionRequest: {
+      present: actionRequest.present === true,
+      action: normalizeActionRequestType(actionRequest.action),
+      object: normalizeOptionalString(actionRequest.object),
+    },
+    entityHints: {
+      tickers: normalizeStringArray(entityHints.tickers),
+      technicalTerms: normalizeStringArray(entityHints.technicalTerms),
+      peopleOrCompanies: normalizeStringArray(entityHints.peopleOrCompanies),
+    },
+  };
 }
 
 function inferTaskType(prompt: string, parsedTaskType: string | undefined) {
@@ -322,12 +456,6 @@ export class IntentResolver {
     const prompt = args.userPrompt;
     const preResolved = extractDateRange(prompt, now);
     const anaphoric = hasAnaphoricReference(prompt, history);
-    const personalCue = hasPersonalContextCue(prompt);
-    const recallCue = hasMemoryRecallCue(prompt);
-    const scheduleCue = hasScheduleCue(prompt);
-    const actionCue = hasActionCue(prompt);
-    const explicitDelegateCue = hasExplicitDelegateCue(prompt);
-    const investmentAnalysisCue = hasInvestmentAnalysisCue(prompt);
 
     if (anaphoric) {
       console.error(
@@ -353,6 +481,39 @@ export class IntentResolver {
     });
     const parsed = parseJsonObject(raw);
     const confidence = normalizeConfidence(parsed.confidence);
+    const semanticEvidence = normalizeIntentEvidence(parsed.semantic_evidence);
+    const memoryRecallTarget = semanticEvidence.memoryRecall.target;
+    const semanticRecallCue =
+      semanticEvidence.memoryRecall.present &&
+      (memoryRecallTarget === "conversation_history" ||
+        memoryRecallTarget === "user_memory");
+    const externalPastEventCue = memoryRecallTarget === "external_past_event";
+    const currentContextReferenceCue =
+      memoryRecallTarget === "current_context_reference";
+    const semanticActionPresent = semanticEvidence.actionRequest.present;
+    const personalCue =
+      semanticEvidence.personalContext.present || hasPersonalContextCue(prompt);
+    const recallCue =
+      !externalPastEventCue &&
+      (semanticRecallCue || hasMemoryRecallCue(prompt));
+    const scheduleCue =
+      (semanticActionPresent &&
+        semanticEvidence.actionRequest.action === "schedule") ||
+      hasScheduleCue(prompt);
+    const actionCue =
+      (semanticActionPresent &&
+        semanticEvidence.actionRequest.action !== "read" &&
+        semanticEvidence.actionRequest.action !== "delegate" &&
+        semanticEvidence.actionRequest.action !== "none") ||
+      hasActionCue(prompt);
+    const explicitDelegateCue =
+      (semanticActionPresent &&
+        semanticEvidence.actionRequest.action === "delegate") ||
+      hasExplicitDelegateCue(prompt);
+    const investmentAnalysisCue = hasInvestmentAnalysisCue(
+      prompt,
+      semanticEvidence,
+    );
 
     const score = Number(parsed.complexity_score);
     if (Number.isNaN(score) || score < 1 || score > 100) {
@@ -364,7 +525,7 @@ export class IntentResolver {
       ? (rawSubject as QuerySubject)
       : FALLBACK_QUERY_SUBJECT;
 
-    const evidence = normalizeStringArray(parsed.evidence);
+    const evidence = normalizeEvidenceStrings(parsed.evidence);
     if (!VALID_SUBJECTS.has(rawSubject as QuerySubject)) {
       evidence.push(`invalid_subject:${rawSubject ?? "missing"}`);
       console.error(
@@ -387,7 +548,8 @@ export class IntentResolver {
       );
     } else if (
       subject === "external" &&
-      confidence < LOW_CONFIDENCE_THRESHOLD
+      confidence < LOW_CONFIDENCE_THRESHOLD &&
+      !externalPastEventCue
     ) {
       subject = "mixed";
       evidence.push("low_confidence_external_subject");
@@ -441,6 +603,12 @@ export class IntentResolver {
     } else if (recallCue && taskType !== "recall") {
       taskType = "recall";
       evidence.push("memory_recall_cue");
+    } else if (externalPastEventCue && taskType === "recall") {
+      taskType = "analyze";
+      evidence.push("external_past_event_not_recall");
+    } else if (explicitDelegateCue && taskType !== "delegate") {
+      taskType = "delegate";
+      evidence.push("delegate_action_cue");
     } else if (actionCue && taskType === "chat") {
       taskType = "execute";
       evidence.push("action_cue");
@@ -463,7 +631,9 @@ export class IntentResolver {
     }
 
     const referencesRecentHistory =
-      anaphoric || parsed.references_recent_history === true;
+      anaphoric ||
+      currentContextReferenceCue ||
+      parsed.references_recent_history === true;
     const topicShifted = referencesRecentHistory
       ? false
       : parsed.topic_shifted === true;
@@ -512,6 +682,7 @@ export class IntentResolver {
       confidence,
       evidence,
       source: "local-intent/ollama",
+      semanticEvidence,
     };
   }
 }

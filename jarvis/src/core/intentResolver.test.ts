@@ -46,6 +46,16 @@ function modelResponse(overrides: Record<string, unknown> = {}) {
     candidate_agents: [],
     confidence: 0.8,
     evidence: ["model_cue"],
+    semantic_evidence: {
+      personalContext: { present: false, reason: "", span: "" },
+      memoryRecall: { present: false, target: "none", reason: "", span: "" },
+      actionRequest: { present: false, action: "none", object: "" },
+      entityHints: {
+        tickers: [],
+        technicalTerms: [],
+        peopleOrCompanies: [],
+      },
+    },
     time_window_days: null,
     date_from: null,
     date_to: null,
@@ -109,6 +119,42 @@ describe("IntentResolver", () => {
     expect(intent.evidence).toContain("memory_recall_cue");
     expect(intent.evidence).not.toContain("personal_context_cue");
     expect(intent.evidence).not.toContain("low_confidence_external_subject");
+  });
+
+  it("uses semantic memory recall target without keyword matching", async () => {
+    const resolver = makeResolver();
+    mockGenerate.mockResolvedValueOnce(
+      modelResponse({
+        query_subject: "external",
+        task_type: "chat",
+        semantic_evidence: {
+          personalContext: { present: false, reason: "", span: "" },
+          memoryRecall: {
+            present: true,
+            target: "conversation_history",
+            reason: "asks for prior conversation",
+            span: "那次方案",
+          },
+          actionRequest: { present: false, action: "none", object: "" },
+          entityHints: {
+            tickers: [],
+            technicalTerms: ["ONNX"],
+            peopleOrCompanies: [],
+          },
+        },
+      }),
+    );
+
+    const intent = await resolver.resolve({
+      userPrompt: "能把那次方案整理一下吗",
+    });
+
+    expect(intent.subject).toBe("personal");
+    expect(intent.taskType).toBe("recall");
+    expect(intent.semanticEvidence.memoryRecall.target).toBe(
+      "conversation_history",
+    );
+    expect(intent.evidence).toContain("memory_recall_cue");
   });
 
   it("upgrades external to mixed for personal-context cues", async () => {
@@ -201,6 +247,76 @@ describe("IntentResolver", () => {
     expect(intent.evidence).not.toContain("memory_recall_cue");
   });
 
+  it("uses semantic external past event evidence to forbid recall", async () => {
+    const resolver = makeResolver();
+    mockGenerate.mockResolvedValueOnce(
+      modelResponse({
+        query_subject: "external",
+        task_type: "recall",
+        confidence: 0.9,
+        semantic_evidence: {
+          personalContext: { present: false, reason: "", span: "" },
+          memoryRecall: {
+            present: true,
+            target: "external_past_event",
+            reason: "asks about Apple launch event",
+            span: "上次苹果发布会",
+          },
+          actionRequest: { present: false, action: "none", object: "" },
+          entityHints: {
+            tickers: [],
+            technicalTerms: [],
+            peopleOrCompanies: ["Apple"],
+          },
+        },
+      }),
+    );
+
+    const intent = await resolver.resolve({
+      userPrompt: "上次苹果发布会发布了什么",
+    });
+
+    expect(intent.subject).toBe("external");
+    expect(intent.taskType).toBe("analyze");
+    expect(intent.needsMemory).toBe(false);
+    expect(intent.evidence).toContain("external_past_event_not_recall");
+    expect(intent.evidence).not.toContain("memory_recall_cue");
+  });
+
+  it("keeps low-confidence external past events external", async () => {
+    const resolver = makeResolver();
+    mockGenerate.mockResolvedValueOnce(
+      modelResponse({
+        query_subject: "external",
+        task_type: "recall",
+        confidence: 0.4,
+        semantic_evidence: {
+          personalContext: { present: false, reason: "", span: "" },
+          memoryRecall: {
+            present: true,
+            target: "external_past_event",
+            reason: "asks about a public past event",
+            span: "上次苹果发布会",
+          },
+          actionRequest: { present: false, action: "none", object: "" },
+          entityHints: {
+            tickers: [],
+            technicalTerms: [],
+            peopleOrCompanies: ["Apple"],
+          },
+        },
+      }),
+    );
+
+    const intent = await resolver.resolve({
+      userPrompt: "上次苹果发布会发布了什么",
+    });
+
+    expect(intent.subject).toBe("external");
+    expect(intent.taskType).toBe("analyze");
+    expect(intent.evidence).not.toContain("low_confidence_external_subject");
+  });
+
   it("does not treat standalone remember phrasing as personal recall", async () => {
     const resolver = makeResolver();
     mockGenerate.mockResolvedValueOnce(
@@ -250,6 +366,43 @@ describe("IntentResolver", () => {
 
     const intent = await resolver.resolve({
       userPrompt: "帮我改一下 localModelRouter 的测试",
+    });
+
+    expect(intent.taskType).toBe("execute");
+    expect(intent.needsTool).toBe(true);
+    expect(intent.evidence).toContain("action_cue");
+  });
+
+  it("uses semantic action evidence to promote chat to execute", async () => {
+    const resolver = makeResolver();
+    mockGenerate.mockResolvedValueOnce(
+      modelResponse({
+        task_type: "chat",
+        needs_tool: false,
+        semantic_evidence: {
+          personalContext: { present: false, reason: "", span: "" },
+          memoryRecall: {
+            present: false,
+            target: "none",
+            reason: "",
+            span: "",
+          },
+          actionRequest: {
+            present: true,
+            action: "write",
+            object: "localModelRouter test",
+          },
+          entityHints: {
+            tickers: [],
+            technicalTerms: ["TypeScript"],
+            peopleOrCompanies: [],
+          },
+        },
+      }),
+    );
+
+    const intent = await resolver.resolve({
+      userPrompt: "处理一下 localModelRouter 的测试",
     });
 
     expect(intent.taskType).toBe("execute");
@@ -313,5 +466,43 @@ describe("IntentResolver", () => {
     expect(intent.taskType).toBe("delegate");
     expect(intent.needsTool).toBe(true);
     expect(intent.candidateAgents).toContain("investment-analysis");
+  });
+
+  it("uses semantic delegate action evidence to preserve delegation", async () => {
+    const resolver = makeResolver();
+    mockGenerate.mockResolvedValueOnce(
+      modelResponse({
+        task_type: "chat",
+        needs_tool: false,
+        candidate_agents: ["investment-analysis"],
+        semantic_evidence: {
+          personalContext: { present: false, reason: "", span: "" },
+          memoryRecall: {
+            present: false,
+            target: "none",
+            reason: "",
+            span: "",
+          },
+          actionRequest: {
+            present: true,
+            action: "delegate",
+            object: "investment-analysis",
+          },
+          entityHints: {
+            tickers: ["NVDA"],
+            technicalTerms: [],
+            peopleOrCompanies: ["Nvidia"],
+          },
+        },
+      }),
+    );
+
+    const intent = await resolver.resolve({
+      userPrompt: "请交给投资分析 agent 看一下 NVDA",
+    });
+
+    expect(intent.taskType).toBe("delegate");
+    expect(intent.needsTool).toBe(true);
+    expect(intent.evidence).toContain("delegate_action_cue");
   });
 });
