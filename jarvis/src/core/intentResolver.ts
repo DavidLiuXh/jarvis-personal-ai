@@ -200,10 +200,19 @@ function hasInvestmentAnalysisCue(
   semanticEvidence: IntentEvidence,
 ): boolean {
   if (!INVESTMENT_ANALYSIS_CUE_RE.test(prompt)) return false;
-  const symbols = [
-    ...semanticEvidence.entityHints.tickers,
-    ...(prompt.match(new RegExp(TICKER_RE, "g")) ?? []),
-  ];
+
+  const semanticTickers = semanticEvidence.entityHints.tickers.filter(
+    (symbol) => !NON_TICKER_ACRONYMS.has(symbol),
+  );
+  if (semanticTickers.length > 0) return true;
+
+  const hasSemanticEntityHints =
+    semanticEvidence.entityHints.tickers.length > 0 ||
+    semanticEvidence.entityHints.technicalTerms.length > 0 ||
+    semanticEvidence.entityHints.peopleOrCompanies.length > 0;
+  if (hasSemanticEntityHints) return false;
+
+  const symbols = prompt.match(new RegExp(TICKER_RE, "g")) ?? [];
   return symbols.some((symbol) => !NON_TICKER_ACRONYMS.has(symbol));
 }
 
@@ -533,6 +542,8 @@ export class IntentResolver {
       );
     }
 
+    // Recall of Jarvis/user memory is more specific than a generic personal
+    // context cue, so it intentionally wins when both cues are present.
     if (recallCue && subject !== "personal") {
       const previousSubject = subject;
       subject = "personal";
@@ -634,6 +645,11 @@ export class IntentResolver {
       anaphoric ||
       currentContextReferenceCue ||
       parsed.references_recent_history === true;
+    if (currentContextReferenceCue) {
+      console.error(
+        `🔗 [IntentResolver] Semantic current-context reference detected — topic_shifted forced false`,
+      );
+    }
     const topicShifted = referencesRecentHistory
       ? false
       : parsed.topic_shifted === true;

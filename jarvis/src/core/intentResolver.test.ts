@@ -449,6 +449,39 @@ describe("IntentResolver", () => {
     expect(intent.evidence).not.toContain("investment_analysis_candidate");
   });
 
+  it("trusts semantic technical terms over ticker fallback", async () => {
+    const resolver = makeResolver();
+    mockGenerate.mockResolvedValueOnce(
+      modelResponse({
+        task_type: "chat",
+        needs_tool: false,
+        candidate_agents: [],
+        semantic_evidence: {
+          personalContext: { present: false, reason: "", span: "" },
+          memoryRecall: {
+            present: false,
+            target: "none",
+            reason: "",
+            span: "",
+          },
+          actionRequest: { present: false, action: "none", object: "" },
+          entityHints: {
+            tickers: [],
+            technicalTerms: ["RAG"],
+            peopleOrCompanies: [],
+          },
+        },
+      }),
+    );
+
+    const intent = await resolver.resolve({
+      userPrompt: "分析 RAG 的基本面",
+    });
+
+    expect(intent.candidateAgents).not.toContain("investment-analysis");
+    expect(intent.evidence).not.toContain("investment_analysis_candidate");
+  });
+
   it("keeps explicit agent requests as delegation", async () => {
     const resolver = makeResolver();
     mockGenerate.mockResolvedValueOnce(
