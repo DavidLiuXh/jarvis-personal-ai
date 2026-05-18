@@ -56,17 +56,35 @@ function classifyResponse(
     complexity_score: score,
     complexity_reasoning: "test",
     query_subject: subject,
+    task_type: "analyze",
+    needs_external_knowledge: true,
+    needs_tool: false,
+    needs_scheduling: false,
+    candidate_agents: [],
     time_window_days: null,
     date_from: null,
     date_to: null,
     confidence: 0.8,
     evidence: ["test"],
+    semantic_evidence: {
+      personalContext: { present: false, reason: "", span: "" },
+      memoryRecall: { present: false, target: "none", reason: "", span: "" },
+      actionRequest: { present: false, action: "none", object: "" },
+      entityHints: {
+        tickers: [],
+        technicalTerms: [],
+        peopleOrCompanies: [],
+      },
+    },
+    history_topic: "coding",
+    new_topic: "market analysis",
+    references_recent_history: false,
     topic_shifted: topicShifted,
   });
 }
 
 describe("LocalModelRouter — detectTopicShift", () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(() => mockGenerate.mockReset());
 
   it("returns true when model says shifted=true", async () => {
     const router = makeRouter();
@@ -97,7 +115,9 @@ describe("LocalModelRouter — detectTopicShift", () => {
 
   it("returns false when ollamaGenerate throws (conservative default)", async () => {
     const router = makeRouter();
-    mockGenerate.mockRejectedValue(new Error("connection refused"));
+    mockGenerate.mockImplementationOnce(async () => {
+      throw new Error("connection refused");
+    });
     const result = await router.detectTopicShift("anything", HISTORY_2_TURNS);
     expect(result).toBe(false);
   });
@@ -111,7 +131,7 @@ describe("LocalModelRouter — detectTopicShift", () => {
 });
 
 describe("LocalModelRouter — route() topic_shifted via classify", () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(() => mockGenerate.mockReset());
 
   it("returns topicShifted=true when classifier returns topic_shifted=true", async () => {
     const router = makeRouter();
@@ -146,6 +166,28 @@ describe("LocalModelRouter — route() topic_shifted via classify", () => {
         complexity_score: 50,
         complexity_reasoning: "test",
         query_subject: "external",
+        task_type: "chat",
+        needs_external_knowledge: true,
+        needs_tool: false,
+        needs_scheduling: false,
+        candidate_agents: [],
+        confidence: 0.8,
+        evidence: ["test"],
+        semantic_evidence: {
+          personalContext: { present: false, reason: "", span: "" },
+          memoryRecall: {
+            present: false,
+            target: "none",
+            reason: "",
+            span: "",
+          },
+          actionRequest: { present: false, action: "none", object: "" },
+          entityHints: {
+            tickers: [],
+            technicalTerms: [],
+            peopleOrCompanies: [],
+          },
+        },
         time_window_days: null,
         date_from: null,
         date_to: null,
@@ -160,7 +202,9 @@ describe("LocalModelRouter — route() topic_shifted via classify", () => {
 
   it("topicShifted=false in fallback result when classify throws", async () => {
     const router = makeRouter();
-    mockGenerate.mockRejectedValue(new Error("timeout"));
+    mockGenerate.mockImplementationOnce(async () => {
+      throw new Error("timeout");
+    });
 
     const result = await router.route("anything", HISTORY_CODING);
 
@@ -188,6 +232,28 @@ describe("LocalModelRouter — route() topic_shifted via classify", () => {
         complexity_score: 50,
         complexity_reasoning: "test",
         query_subject: "external",
+        task_type: "chat",
+        needs_external_knowledge: true,
+        needs_tool: false,
+        needs_scheduling: false,
+        candidate_agents: [],
+        confidence: 0.8,
+        evidence: ["test"],
+        semantic_evidence: {
+          personalContext: { present: false, reason: "", span: "" },
+          memoryRecall: {
+            present: false,
+            target: "none",
+            reason: "",
+            span: "",
+          },
+          actionRequest: { present: false, action: "none", object: "" },
+          entityHints: {
+            tickers: [],
+            technicalTerms: [],
+            peopleOrCompanies: [],
+          },
+        },
         time_window_days: null,
         date_from: null,
         date_to: null,
@@ -208,7 +274,7 @@ describe("LocalModelRouter — route() topic_shifted via classify", () => {
 });
 
 describe("LocalModelRouter — query subject personal-context guard", () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(() => mockGenerate.mockReset());
 
   it("upgrades classifier external to mixed for Chinese personal-context cues", async () => {
     const router = makeRouter();

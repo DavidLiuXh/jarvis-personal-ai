@@ -115,6 +115,32 @@ type RawIntentModelResult = {
   topic_shifted?: boolean;
 };
 
+type RawMemoryTargetResult = {
+  present?: boolean;
+  target?: unknown;
+  reason?: unknown;
+  span?: unknown;
+};
+
+function isLikelyIntentModelResult(
+  value: unknown,
+): value is RawIntentModelResult {
+  const record = asRecord(value);
+  return (
+    "complexity_score" in record &&
+    "query_subject" in record &&
+    "task_type" in record &&
+    "semantic_evidence" in record
+  );
+}
+
+function isLikelyMemoryTargetResult(
+  value: unknown,
+): value is RawMemoryTargetResult {
+  const record = asRecord(value);
+  return "target" in record || "present" in record;
+}
+
 // Fallback when classification fails or the model emits an invalid subject:
 // conservative defaults avoid both over-injection and under-injection.
 export const FALLBACK_QUERY_SUBJECT: QuerySubject = "mixed";
@@ -340,17 +366,141 @@ Required schema:
 `.trim();
 }
 
-function parseJsonObject(raw: string): RawIntentModelResult {
+function parseJsonObjectMatching<T>(
+  raw: string,
+  predicate: (value: unknown) => value is T,
+): T {
   const stripped = raw
     .replace(/^```(?:json)?\s*/i, "")
     .replace(/\s*```\s*$/, "")
     .trim();
-  const start = stripped.indexOf("{");
-  const end = stripped.lastIndexOf("}");
-  if (start === -1 || end <= start) {
-    throw new Error("No JSON in intent response");
+
+  for (
+    let start = stripped.indexOf("{");
+    start !== -1;
+    start = stripped.indexOf("{", start + 1)
+  ) {
+    let depth = 0;
+    let inString = false;
+    let escaped = false;
+
+    for (let index = start; index < stripped.length; index += 1) {
+      const char = stripped[index];
+
+      if (escaped) {
+        escaped = false;
+        continue;
+      }
+      if (char === "\\") {
+        escaped = true;
+        continue;
+      }
+      if (char === '"') {
+        inString = !inString;
+        continue;
+      }
+      if (inString) continue;
+
+      if (char === "{") depth += 1;
+      if (char === "}") depth -= 1;
+
+      if (depth === 0) {
+        const candidate = stripped.slice(start, index + 1);
+        try {
+          const parsed = JSON.parse(candidate);
+          if (predicate(parsed)) {
+            return parsed;
+          }
+        } catch {
+          break;
+        }
+      }
+    }
   }
-  return JSON.parse(stripped.slice(start, end + 1)) as RawIntentModelResult;
+
+  throw new Error("No valid JSON object in intent response");
+}
+
+function parseJsonObject(raw: string): RawIntentModelResult {
+  return parseJsonObjectMatching(raw, isLikelyIntentModelResult);
+}
+
+function parseMemoryTargetObject(raw: string): RawMemoryTargetResult {
+  return parseJsonObjectMatching(raw, isLikelyMemoryTargetResult);
+}
+
+function buildIntentRepairPrompt(raw: string): string {
+  return `
+The text below was intended to be the raw JSON object for Jarvis intent routing,
+but it is not valid JSON.
+
+Repair it into one valid raw JSON object. Preserve the original meaning as much
+as possible. Do not add markdown, comments, or explanations.
+
+Required top-level fields:
+knowledge_score, operation_score, complexity_score, complexity_reasoning,
+query_subject, task_type, needs_external_knowledge, needs_tool,
+needs_scheduling, candidate_agents, confidence, evidence, semantic_evidence,
+time_window_days, date_from, date_to, history_topic, new_topic,
+references_recent_history, topic_shifted.
+
+Required semantic_evidence shape:
+{
+  "personalContext": {"present": true|false, "reason": "", "span": ""},
+  "memoryRecall": {"present": true|false, "target": "conversation_history"|"user_memory"|"external_past_event"|"current_context_reference"|"none", "reason": "", "span": ""},
+  "actionRequest": {"present": true|false, "action": "read"|"write"|"run"|"schedule"|"delegate"|"none", "object": ""},
+  "entityHints": {"tickers": [], "technicalTerms": [], "peopleOrCompanies": []}
+}
+
+Invalid JSON text:
+${raw}
+`.trim();
+}
+
+function buildMemoryTargetPrompt(
+  prompt: string,
+  history: ConversationTurn[],
+): string {
+  const historySection =
+    history.length > 0
+      ? `\nRecent conversation:\n${history
+          .slice(-6)
+          .map((turn) => `${turn.role}: ${turn.content.slice(0, 200)}`)
+          .join("\n")}\n`
+      : "";
+
+  return `
+Classify only the memory reference target for the user request.
+
+Targets:
+- "conversation_history": asks what the user and Jarvis discussed before.
+- "user_memory": asks about stored user facts, preferences, goals, or personal history.
+- "external_past_event": asks about a past outside-world event, such as a product launch, earnings report, news event, sports result, or public historical event.
+- "current_context_reference": refers to the current/recent conversation, such as "this", "that", "continue", "刚才", "这个".
+- "none": no memory recall target.
+
+Return ONLY JSON:
+{"present": true|false, "target": "conversation_history"|"user_memory"|"external_past_event"|"current_context_reference"|"none", "reason": "<short reason>", "span": "<text span or empty>"}
+${historySection}
+User request: ${prompt}
+`.trim();
+}
+
+function shouldRefineMemoryTarget(
+  prompt: string,
+  parsedTaskType: unknown,
+  memoryRecall: IntentEvidence["memoryRecall"],
+): boolean {
+  if (memoryRecall.target !== "none") return false;
+  const rawTaskType =
+    typeof parsedTaskType === "string" ? parsedTaskType.toLowerCase() : "";
+  return (
+    rawTaskType === "recall" ||
+    memoryRecall.present ||
+    /上次|去年|前年|刚才|last time|previous event|previous earnings|earlier today/i.test(
+      prompt,
+    )
+  );
 }
 
 function normalizeBoolean(value: unknown): boolean {
@@ -455,6 +605,81 @@ function inferTaskType(prompt: string, parsedTaskType: string | undefined) {
 export class IntentResolver {
   constructor(private readonly options: IntentResolverOptions) {}
 
+  private async parseOrRepairJson(raw: string): Promise<RawIntentModelResult> {
+    try {
+      return parseJsonObject(raw);
+    } catch (parseError: any) {
+      console.error(
+        `⚠️ [IntentResolver] Invalid intent JSON, attempting repair: ${parseError.message}`,
+      );
+      const repairedRaw = await ollamaGenerate(
+        this.options.model,
+        buildIntentRepairPrompt(raw),
+        {
+          baseUrl: this.options.baseUrl ?? "http://localhost:11434",
+          timeoutMs: this.options.timeoutMs ?? 30_000,
+        },
+      );
+      try {
+        const parsed = parseJsonObject(repairedRaw);
+        console.error(`✅ [IntentResolver] Intent JSON repair succeeded`);
+        return parsed;
+      } catch (repairError: any) {
+        throw new Error(
+          `Intent JSON parse failed; repair also failed. parse=${parseError.message}; repair=${repairError.message}`,
+        );
+      }
+    }
+  }
+
+  private async refineMemoryTarget(
+    prompt: string,
+    history: ConversationTurn[],
+    semanticEvidence: IntentEvidence,
+    parsedTaskType: unknown,
+  ): Promise<IntentEvidence> {
+    if (
+      !shouldRefineMemoryTarget(
+        prompt,
+        parsedTaskType,
+        semanticEvidence.memoryRecall,
+      )
+    ) {
+      return semanticEvidence;
+    }
+
+    try {
+      const raw = await ollamaGenerate(
+        this.options.model,
+        buildMemoryTargetPrompt(prompt, history),
+        {
+          baseUrl: this.options.baseUrl ?? "http://localhost:11434",
+          timeoutMs: this.options.timeoutMs ?? 30_000,
+        },
+      );
+      const parsed = parseMemoryTargetObject(raw);
+      const target = normalizeMemoryRecallTarget(parsed.target);
+      if (target === "none" && parsed.present !== true) {
+        return semanticEvidence;
+      }
+      console.error(`🧭 [IntentResolver] Focused memory target=${target}`);
+      return {
+        ...semanticEvidence,
+        memoryRecall: {
+          present: parsed.present === true || target !== "none",
+          target,
+          reason: normalizeOptionalString(parsed.reason) ?? "",
+          span: normalizeOptionalString(parsed.span),
+        },
+      };
+    } catch (error: any) {
+      console.error(
+        `⚠️ [IntentResolver] Focused memory-target extraction failed: ${error.message}`,
+      );
+      return semanticEvidence;
+    }
+  }
+
   async resolve(args: {
     userPrompt: string;
     history?: ConversationTurn[];
@@ -488,9 +713,14 @@ export class IntentResolver {
       baseUrl: this.options.baseUrl ?? "http://localhost:11434",
       timeoutMs: this.options.timeoutMs ?? 30_000,
     });
-    const parsed = parseJsonObject(raw);
+    const parsed = await this.parseOrRepairJson(raw);
     const confidence = normalizeConfidence(parsed.confidence);
-    const semanticEvidence = normalizeIntentEvidence(parsed.semantic_evidence);
+    const semanticEvidence = await this.refineMemoryTarget(
+      prompt,
+      recentTurns,
+      normalizeIntentEvidence(parsed.semantic_evidence),
+      parsed.task_type,
+    );
     const memoryRecallTarget = semanticEvidence.memoryRecall.target;
     const semanticRecallCue =
       semanticEvidence.memoryRecall.present &&

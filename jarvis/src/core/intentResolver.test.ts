@@ -68,7 +68,7 @@ function modelResponse(overrides: Record<string, unknown> = {}) {
 }
 
 describe("IntentResolver", () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(() => mockGenerate.mockReset());
 
   it("produces an IntentFrame from local model output", async () => {
     const resolver = makeResolver();
@@ -97,6 +97,48 @@ describe("IntentResolver", () => {
       confidence: 0.8,
       source: "local-intent/ollama",
     });
+  });
+
+  it("repairs malformed intent JSON once before parsing", async () => {
+    const resolver = makeResolver();
+    mockGenerate
+      .mockResolvedValueOnce(
+        '{"query_subject":"external","task_type":"analyze"',
+      )
+      .mockResolvedValueOnce(
+        `Nested fragment: {"present":false}
+Original invalid fragment: {"query_subject":"external"
+${modelResponse({
+  query_subject: "external",
+  task_type: "analyze",
+})}`,
+      );
+
+    const intent = await resolver.resolve({
+      userPrompt: "英伟达财报怎么样",
+    });
+
+    expect(intent.subject).toBe("external");
+    expect(intent.taskType).toBe("analyze");
+    expect(mockGenerate).toHaveBeenCalledTimes(2);
+    expect(mockGenerate.mock.calls[1]?.[1]).toContain(
+      "Repair it into one valid raw JSON object",
+    );
+  });
+
+  it("throws when intent JSON repair also fails", async () => {
+    const resolver = makeResolver();
+    mockGenerate
+      .mockResolvedValueOnce('{"query_subject":"external"')
+      .mockResolvedValueOnce('{"still_invalid":');
+
+    await expect(
+      resolver.resolve({
+        userPrompt: "去年英伟达财报表现怎么样",
+      }),
+    ).rejects.toThrow("repair also failed");
+
+    expect(mockGenerate).toHaveBeenCalledTimes(2);
   });
 
   it("upgrades external to personal for memory recall cues", async () => {
@@ -229,13 +271,22 @@ describe("IntentResolver", () => {
 
   it("does not treat external previous events as personal recall", async () => {
     const resolver = makeResolver();
-    mockGenerate.mockResolvedValueOnce(
-      modelResponse({
-        query_subject: "external",
-        task_type: "analyze",
-        confidence: 0.9,
-      }),
-    );
+    mockGenerate
+      .mockResolvedValueOnce(
+        modelResponse({
+          query_subject: "external",
+          task_type: "analyze",
+          confidence: 0.9,
+        }),
+      )
+      .mockResolvedValueOnce(
+        JSON.stringify({
+          present: true,
+          target: "external_past_event",
+          reason: "public product launch",
+          span: "上次苹果发布会",
+        }),
+      );
 
     const intent = await resolver.resolve({
       userPrompt: "上次苹果发布会发布了什么",
@@ -245,6 +296,9 @@ describe("IntentResolver", () => {
     expect(intent.taskType).toBe("analyze");
     expect(intent.needsMemory).toBe(false);
     expect(intent.evidence).not.toContain("memory_recall_cue");
+    expect(intent.semanticEvidence.memoryRecall.target).toBe(
+      "external_past_event",
+    );
   });
 
   it("uses semantic external past event evidence to forbid recall", async () => {
