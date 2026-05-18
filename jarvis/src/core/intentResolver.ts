@@ -350,31 +350,27 @@ export class IntentResolver {
       );
     }
 
-    if (subject === "external" && personalCue) {
+    if (recallCue && subject !== "personal") {
+      const previousSubject = subject;
+      subject = "personal";
+      evidence.push("memory_recall_cue");
+      console.error(
+        `🧠 [IntentResolver] Memory recall cue detected — subject upgraded ${previousSubject} → personal`,
+      );
+    } else if (subject === "external" && personalCue) {
       subject = "mixed";
       evidence.push("personal_context_cue");
       console.error(
         `🧠 [IntentResolver] Personal-context cue detected — subject upgraded external → mixed`,
       );
-    }
-
-    if (
+    } else if (
       subject === "external" &&
-      confidence < LOW_CONFIDENCE_THRESHOLD &&
-      !recallCue
+      confidence < LOW_CONFIDENCE_THRESHOLD
     ) {
       subject = "mixed";
       evidence.push("low_confidence_external_subject");
       console.error(
         `🧠 [IntentResolver] Low-confidence external subject (${confidence.toFixed(2)}) — upgraded external → mixed`,
-      );
-    }
-
-    if (recallCue && subject !== "personal") {
-      subject = "personal";
-      evidence.push("memory_recall_cue");
-      console.error(
-        `🧠 [IntentResolver] Memory recall cue detected — subject upgraded ${rawSubject ?? "unknown"} → personal`,
       );
     }
 

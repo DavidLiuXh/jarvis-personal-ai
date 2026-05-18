@@ -107,6 +107,8 @@ describe("IntentResolver", () => {
     expect(intent.taskType).toBe("recall");
     expect(intent.needsMemory).toBe(true);
     expect(intent.evidence).toContain("memory_recall_cue");
+    expect(intent.evidence).not.toContain("personal_context_cue");
+    expect(intent.evidence).not.toContain("low_confidence_external_subject");
   });
 
   it("upgrades external to mixed for personal-context cues", async () => {
