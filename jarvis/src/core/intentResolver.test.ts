@@ -258,6 +258,24 @@ describe("IntentResolver", () => {
     expect(intent.evidence).toContain("delegate_downgraded_to_candidate");
   });
 
+  it("does not treat technical acronyms as investment ticker candidates", async () => {
+    const resolver = makeResolver();
+    mockGenerate.mockResolvedValueOnce(
+      modelResponse({
+        task_type: "chat",
+        needs_tool: false,
+        candidate_agents: [],
+      }),
+    );
+
+    const intent = await resolver.resolve({
+      userPrompt: "分析 ONNX 的基本面",
+    });
+
+    expect(intent.candidateAgents).not.toContain("investment-analysis");
+    expect(intent.evidence).not.toContain("investment_analysis_candidate");
+  });
+
   it("keeps explicit agent requests as delegation", async () => {
     const resolver = makeResolver();
     mockGenerate.mockResolvedValueOnce(

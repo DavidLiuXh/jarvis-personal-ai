@@ -108,6 +108,26 @@ const INVESTMENT_ANALYSIS_CUE_RE =
   /投资价值|基本面|财报|估值|股票|股价|买入|卖出|持有|分析.*(nvda|googl|aapl|msft|tsla)|investment|fundamental|valuation|earnings|stock/i;
 
 const TICKER_RE = /\b[A-Z]{1,5}\b/;
+const NON_TICKER_ACRONYMS = new Set([
+  "ADK",
+  "API",
+  "CLI",
+  "CPU",
+  "CSS",
+  "GPU",
+  "HTML",
+  "HTTP",
+  "JSON",
+  "LLM",
+  "MCP",
+  "ONNX",
+  "REST",
+  "SDK",
+  "SSE",
+  "SQL",
+  "URL",
+  "XML",
+]);
 
 const ANAPHORA_RE =
   /它|这个|那个|这些|那些|上述|刚才|this\b|that\b|these\b|those\b|follow[- ]?up/i;
@@ -135,7 +155,9 @@ function hasExplicitDelegateCue(prompt: string): boolean {
 }
 
 function hasInvestmentAnalysisCue(prompt: string): boolean {
-  return INVESTMENT_ANALYSIS_CUE_RE.test(prompt) && TICKER_RE.test(prompt);
+  if (!INVESTMENT_ANALYSIS_CUE_RE.test(prompt)) return false;
+  const symbols = prompt.match(new RegExp(TICKER_RE, "g")) ?? [];
+  return symbols.some((symbol) => !NON_TICKER_ACRONYMS.has(symbol));
 }
 
 function hasAnaphoricReference(
