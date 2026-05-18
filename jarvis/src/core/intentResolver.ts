@@ -98,8 +98,21 @@ const MEMORY_RECALL_CUE_RE =
 const SCHEDULE_CUE_RE =
   /提醒我|定时|每天|每周|每月|明天.*提醒|remind me|schedule|every day|every week|weekly|daily/i;
 
+const ACTION_CUE_RE =
+  /帮我(改|写|创建|运行|提交|部署|修|实现|生成)|创建|运行|提交|部署|修复|实现|生成文件|edit|modify|create|run|commit|deploy|fix|implement|generate.*file/i;
+
+const EXPLICIT_DELEGATE_CUE_RE =
+  /^agent:|启动.*agent|调用.*agent|用.*agent|route to agent|delegate to/i;
+
+const INVESTMENT_ANALYSIS_CUE_RE =
+  /投资价值|基本面|财报|估值|股票|股价|买入|卖出|持有|分析.*(nvda|googl|aapl|msft|tsla)|investment|fundamental|valuation|earnings|stock/i;
+
+const TICKER_RE = /\b[A-Z]{1,5}\b/;
+
 const ANAPHORA_RE =
   /它|这个|那个|这些|那些|上述|刚才|this\b|that\b|these\b|those\b|follow[- ]?up/i;
+
+const LOW_CONFIDENCE_THRESHOLD = 0.55;
 
 export function hasPersonalContextCue(prompt: string): boolean {
   return PERSONAL_CONTEXT_CUE_RE.test(prompt);
@@ -111,6 +124,18 @@ function hasMemoryRecallCue(prompt: string): boolean {
 
 function hasScheduleCue(prompt: string): boolean {
   return SCHEDULE_CUE_RE.test(prompt);
+}
+
+function hasActionCue(prompt: string): boolean {
+  return ACTION_CUE_RE.test(prompt);
+}
+
+function hasExplicitDelegateCue(prompt: string): boolean {
+  return EXPLICIT_DELEGATE_CUE_RE.test(prompt);
+}
+
+function hasInvestmentAnalysisCue(prompt: string): boolean {
+  return INVESTMENT_ANALYSIS_CUE_RE.test(prompt) && TICKER_RE.test(prompt);
 }
 
 function hasAnaphoricReference(
@@ -278,6 +303,9 @@ export class IntentResolver {
     const personalCue = hasPersonalContextCue(prompt);
     const recallCue = hasMemoryRecallCue(prompt);
     const scheduleCue = hasScheduleCue(prompt);
+    const actionCue = hasActionCue(prompt);
+    const explicitDelegateCue = hasExplicitDelegateCue(prompt);
+    const investmentAnalysisCue = hasInvestmentAnalysisCue(prompt);
 
     if (anaphoric) {
       console.error(
@@ -302,6 +330,7 @@ export class IntentResolver {
       timeoutMs: this.options.timeoutMs ?? 30_000,
     });
     const parsed = parseJsonObject(raw);
+    const confidence = normalizeConfidence(parsed.confidence);
 
     const score = Number(parsed.complexity_score);
     if (Number.isNaN(score) || score < 1 || score > 100) {
@@ -326,6 +355,18 @@ export class IntentResolver {
       evidence.push("personal_context_cue");
       console.error(
         `🧠 [IntentResolver] Personal-context cue detected — subject upgraded external → mixed`,
+      );
+    }
+
+    if (
+      subject === "external" &&
+      confidence < LOW_CONFIDENCE_THRESHOLD &&
+      !recallCue
+    ) {
+      subject = "mixed";
+      evidence.push("low_confidence_external_subject");
+      console.error(
+        `🧠 [IntentResolver] Low-confidence external subject (${confidence.toFixed(2)}) — upgraded external → mixed`,
       );
     }
 
@@ -382,6 +423,25 @@ export class IntentResolver {
     } else if (recallCue && taskType !== "recall") {
       taskType = "recall";
       evidence.push("memory_recall_cue");
+    } else if (actionCue && taskType === "chat") {
+      taskType = "execute";
+      evidence.push("action_cue");
+    }
+
+    const candidateAgents = normalizeStringArray(parsed.candidate_agents);
+    if (
+      investmentAnalysisCue &&
+      !candidateAgents.includes("investment-analysis")
+    ) {
+      candidateAgents.push("investment-analysis");
+      evidence.push("investment_analysis_candidate");
+    }
+
+    let delegateDowngraded = false;
+    if (taskType === "delegate" && !explicitDelegateCue) {
+      taskType = investmentAnalysisCue ? "analyze" : "chat";
+      delegateDowngraded = true;
+      evidence.push("delegate_downgraded_to_candidate");
     }
 
     const referencesRecentHistory =
@@ -402,7 +462,7 @@ export class IntentResolver {
       needsScheduling ||
       taskType === "execute" ||
       taskType === "delegate" ||
-      normalizeBoolean(parsed.needs_tool);
+      (!delegateDowngraded && normalizeBoolean(parsed.needs_tool));
 
     return {
       subject,
@@ -414,7 +474,7 @@ export class IntentResolver {
         normalizeBoolean(parsed.needs_external_knowledge),
       needsTool,
       needsScheduling,
-      candidateAgents: normalizeStringArray(parsed.candidate_agents),
+      candidateAgents,
       timeWindowDays,
       dateFrom,
       dateTo,
@@ -431,7 +491,7 @@ export class IntentResolver {
           ? null
           : Number(parsed.operation_score),
       reason: parsed.complexity_reasoning ?? "(no reason)",
-      confidence: normalizeConfidence(parsed.confidence),
+      confidence,
       evidence,
       source: "local-intent/ollama",
     };

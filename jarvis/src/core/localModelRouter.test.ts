@@ -59,6 +59,8 @@ function classifyResponse(
     time_window_days: null,
     date_from: null,
     date_to: null,
+    confidence: 0.8,
+    evidence: ["test"],
     topic_shifted: topicShifted,
   });
 }

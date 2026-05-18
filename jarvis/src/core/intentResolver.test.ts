@@ -160,4 +160,98 @@ describe("IntentResolver", () => {
     expect(intent.needsScheduling).toBe(true);
     expect(intent.needsTool).toBe(true);
   });
+
+  it("keeps high-confidence pure external questions external", async () => {
+    const resolver = makeResolver();
+    mockGenerate.mockResolvedValueOnce(
+      modelResponse({
+        query_subject: "external",
+        task_type: "analyze",
+        confidence: 0.9,
+      }),
+    );
+
+    const intent = await resolver.resolve({
+      userPrompt: "英伟达财报怎么样",
+    });
+
+    expect(intent.subject).toBe("external");
+    expect(intent.needsMemory).toBe(false);
+  });
+
+  it("upgrades low-confidence external subject to mixed", async () => {
+    const resolver = makeResolver();
+    mockGenerate.mockResolvedValueOnce(
+      modelResponse({
+        query_subject: "external",
+        confidence: 0.42,
+      }),
+    );
+
+    const intent = await resolver.resolve({
+      userPrompt: "这个框架现在值得接入吗",
+    });
+
+    expect(intent.subject).toBe("mixed");
+    expect(intent.needsMemory).toBe(true);
+    expect(intent.evidence).toContain("low_confidence_external_subject");
+  });
+
+  it("uses action cues to promote chat to execute", async () => {
+    const resolver = makeResolver();
+    mockGenerate.mockResolvedValueOnce(
+      modelResponse({
+        task_type: "chat",
+        needs_tool: false,
+      }),
+    );
+
+    const intent = await resolver.resolve({
+      userPrompt: "帮我改一下 localModelRouter 的测试",
+    });
+
+    expect(intent.taskType).toBe("execute");
+    expect(intent.needsTool).toBe(true);
+    expect(intent.evidence).toContain("action_cue");
+  });
+
+  it("adds investment-analysis as a candidate without forcing delegation", async () => {
+    const resolver = makeResolver();
+    mockGenerate.mockResolvedValueOnce(
+      modelResponse({
+        task_type: "delegate",
+        needs_tool: true,
+        candidate_agents: [],
+      }),
+    );
+
+    const intent = await resolver.resolve({
+      userPrompt: "分析 GOOGL 的投资价值",
+    });
+
+    expect(intent.taskType).toBe("analyze");
+    expect(intent.needsTool).toBe(false);
+    expect(intent.candidateAgents).toContain("investment-analysis");
+    expect(intent.evidence).toContain("investment_analysis_candidate");
+    expect(intent.evidence).toContain("delegate_downgraded_to_candidate");
+  });
+
+  it("keeps explicit agent requests as delegation", async () => {
+    const resolver = makeResolver();
+    mockGenerate.mockResolvedValueOnce(
+      modelResponse({
+        task_type: "delegate",
+        needs_tool: false,
+        candidate_agents: ["investment-analysis"],
+      }),
+    );
+
+    const intent = await resolver.resolve({
+      userPrompt: "agent: 分析 NVDA 的投资价值",
+    });
+
+    expect(intent.taskType).toBe("delegate");
+    expect(intent.needsTool).toBe(true);
+    expect(intent.candidateAgents).toContain("investment-analysis");
+  });
 });
