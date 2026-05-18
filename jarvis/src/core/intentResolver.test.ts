@@ -201,6 +201,26 @@ describe("IntentResolver", () => {
     expect(intent.evidence).not.toContain("memory_recall_cue");
   });
 
+  it("does not treat standalone remember phrasing as personal recall", async () => {
+    const resolver = makeResolver();
+    mockGenerate.mockResolvedValueOnce(
+      modelResponse({
+        query_subject: "external",
+        task_type: "chat",
+        confidence: 0.9,
+      }),
+    );
+
+    const intent = await resolver.resolve({
+      userPrompt: "你记得保存这个文件吗",
+    });
+
+    expect(intent.subject).toBe("external");
+    expect(intent.taskType).toBe("chat");
+    expect(intent.needsMemory).toBe(false);
+    expect(intent.evidence).not.toContain("memory_recall_cue");
+  });
+
   it("upgrades low-confidence external subject to mixed", async () => {
     const resolver = makeResolver();
     mockGenerate.mockResolvedValueOnce(
