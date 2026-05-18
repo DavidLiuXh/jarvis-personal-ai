@@ -5,99 +5,19 @@
  */
 
 import { ollamaGenerate } from "./ollamaClient.js";
-import { extractDateRange, type DateRange } from "./dateRange.js";
+import {
+  FALLBACK_QUERY_SUBJECT,
+  IntentResolver,
+  type ConversationTurn,
+  type IntentFrame,
+  type QuerySubject,
+} from "./intentResolver.js";
 
-/**
- * Build the classifier prompt. Date/time resolution is handled by
- * extractDateRange() in code — the LLM only needs to score and classify.
- * We still tell the LLM about the pre-resolved date range so it can use it
- * for query_subject classification (e.g. temporal personal queries).
- */
-function buildClassifierPrompt(
-  preResolvedRange: DateRange | null,
-  now: Date,
-): string {
-  const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
-  const DAY_NAMES = [
-    "Sunday",
-    "Monday",
-    "Tuesday",
-    "Wednesday",
-    "Thursday",
-    "Friday",
-    "Saturday",
-  ];
-  const todayName = DAY_NAMES[now.getDay()];
-
-  const timeNote = preResolvedRange
-    ? `NOTE: The system has already resolved the temporal reference to the date range ` +
-      `[${new Date(preResolvedRange.from).toISOString().slice(0, 10)} ~ ` +
-      `${new Date(preResolvedRange.to - 1).toISOString().slice(0, 10)}]. ` +
-      `Output date_from=null, date_to=null, time_window_days=null — the system handles this.`
-    : `If the request has NO clear temporal reference, output time_window_days=null, date_from=null, date_to=null.`;
-
-  return `
-Today is ${todayStr} (${todayName}).
-You are a task analyst. Evaluate the user's request on FIVE dimensions simultaneously.
-
-DIMENSION 1 — Knowledge Depth (1-100)
-1-25: Basic fact retrieval, simple summaries.
-26-50: Integrating concepts, standard workflows.
-51-75: Deep expertise, cross-disciplinary analysis.
-76-100: Cross-domain fusion, abstract thinking, system design.
-
-DIMENSION 2 — Operational Difficulty (1-100)
-1-25: Reading, simple input — no multi-step execution.
-26-50: Multi-step operations, standard tools.
-51-75: Skilled tool usage, process design.
-76-100: Algorithm design, debugging, architectural decisions.
-
-DIMENSION 3 — Query Subject (CRITICAL for memory retrieval)
-- "personal": About the USER's own history, habits, preferences, past decisions, or past conversations. ANY question about what was discussed, even if the topic is external.
-- "external": PURELY about the outside world with NO user history reference.
-- "mixed": Needs BOTH personal context AND external knowledge.
-
-KEY RULE: "what did we discuss on Monday" → personal, even if the topic is external.
-MIXED RULE: External topic + any request to tailor, compare, recommend, decide, prioritize, or explain using the user's goals/preferences/history/context → mixed.
-PERSONAL-CONTEXT CUES: "for me", "based on my", "my preference", "my context", "按我的", "结合我", "适合我", "我该", "我的", "我们之前" → mixed or personal, never external.
-IF UNSURE between external and mixed, choose mixed.
-
-DIMENSION 4 — Time Window
-${timeNote}
-
-DIMENSION 5 — Topic Shift (only meaningful when conversation history is present)
-
-Step 1 — Summarize: What is the main topic/domain of the recent history? (1 phrase)
-Step 2 — Identify: What is the domain/intent of the new request? (1 phrase)
-Step 3 — Check: Does the new request directly reference something in the CURRENT recent history?
-  YES (references_recent_history=true): Uses pronouns/references pointing to what was JUST discussed.
-    e.g. 它/这个/那个/这些/那些/上述/this/that/these/those/follow-up on what you just said
-  NO (references_recent_history=false): Mentions past time ("之前"/"以前"/"上次") to REQUEST retrieval of older history, OR introduces a new subject with no tie to the current exchange.
-  KEY DISTINCTION: "你之前说的那个方案" → references recent history (true). "帮我获取之前讨论的xxx" → requests retrieval of older history, not referencing this conversation (false).
-Step 4 — Decide:
-  - true (SHIFT): references_recent_history=false AND the new domain/intent differs from recent history.
-  - false (NO SHIFT): references_recent_history=true, OR the new request continues/follows up the same domain.
-
-Examples:
-  History: "严格避免幻觉" | New: "帮我获取下之前讨论onnx的总结" → history_topic="写作规范", new_topic="历史检索/onnx", references_recent_history=false, topic_shifted=true
-  History: "分析英伟达财报" | New: "超微电脑股价呢" → history_topic="英伟达财报", new_topic="超微股价", references_recent_history=true ("呢" refers to prior context), topic_shifted=false
-  History: "实现reranker功能" | New: "继续" → history_topic="reranker开发", new_topic="继续上一任务", references_recent_history=true, topic_shifted=false
-  History: "今天天气怎么样" | New: "帮我写一份投资分析报告" → history_topic="天气查询", new_topic="投资分析", references_recent_history=false, topic_shifted=true
-  History: "讨论onnx部署" | New: "你之前说的那个超时参数怎么设" → history_topic="onnx部署", new_topic="超时参数配置", references_recent_history=true, topic_shifted=false
-
-SCORING FORMULA
-complexity_score = knowledge_score * 0.6 + operation_score * 0.4 (round to integer)
-
-OUTPUT RULES
-- Respond ONLY with a raw JSON object. No markdown, no explanation.
-- All fields required. time_window_days / date_from / date_to may be null.
-
-Required schema:
-{"knowledge_score": <1-100>, "operation_score": <1-100>, "complexity_score": <1-100>, "complexity_reasoning": "<one sentence>", "query_subject": "personal"|"external"|"mixed", "time_window_days": <integer>|null, "date_from": "<YYYY-MM-DD>"|null, "date_to": "<YYYY-MM-DD>"|null, "history_topic": "<1 phrase>", "new_topic": "<1 phrase>", "references_recent_history": true|false, "topic_shifted": true|false}
-`.trim();
-}
-
-export type QuerySubject = "personal" | "external" | "mixed";
+export type {
+  ConversationTurn,
+  IntentFrame,
+  QuerySubject,
+} from "./intentResolver.js";
 
 export type RoutingResult = {
   model: string;
@@ -128,22 +48,6 @@ type ClassifyResult = {
   resolvedDateRange: { from: number; to: number } | null;
   topicShifted: boolean;
 };
-
-export type ConversationTurn = {
-  role: "user" | "assistant";
-  content: string;
-};
-
-// Fallback when classification fails: conservative defaults that avoid
-// both over-injection (external queries) and under-injection (personal queries).
-const FALLBACK_QUERY_SUBJECT: QuerySubject = "mixed";
-
-const PERSONAL_CONTEXT_CUE_RE =
-  /我的|我之前|我们之前|适合我|按我|按我的|结合我|我该|我应该|for me\b|based on my\b|my preference\b|my preferences\b|my context\b|my goals\b|my history\b/i;
-
-function hasPersonalContextCue(prompt: string): boolean {
-  return PERSONAL_CONTEXT_CUE_RE.test(prompt);
-}
 
 export class LocalModelRouter {
   constructor(
@@ -210,173 +114,37 @@ export class LocalModelRouter {
     prompt: string,
     history: ConversationTurn[],
   ): Promise<ClassifyResult> {
-    // Pre-filter: if the prompt contains anaphoric pronouns/references pointing
-    // to the previous conversation, it cannot be a topic shift regardless of
-    // what the LLM decides. This is deterministic and takes priority.
-    // Only unambiguous anaphoric pronouns/references — words that can ONLY
-    // refer back to prior context (not topic-switching connectors like 另外/补充).
-    const ANAPHORA_RE =
-      /它|这个|那个|这些|那些|上述|刚才|this\b|that\b|these\b|those\b|follow[- ]?up/i;
-    const hasAnaphoricRef = history.length > 0 && ANAPHORA_RE.test(prompt);
-    if (hasAnaphoricRef) {
-      console.error(
-        `🔗 [LocalModelRouter] Anaphoric reference detected in prompt — topic_shifted forced false`,
-      );
-    }
-
-    // Step 1: resolve date range in code — deterministic, no LLM needed.
-    const now = new Date();
-    const preResolved = extractDateRange(prompt, now);
-
-    const recentTurns = history.slice(-this.historyTurns * 2);
-    const historySection =
-      recentTurns.length > 0
-        ? `\n# Recent Conversation Context\n${recentTurns
-            .map(
-              (t) =>
-                `${t.role === "user" ? "User" : "Assistant"}: ${t.content.slice(0, 200)}`,
-            )
-            .join("\n")}\n`
-        : "";
-
-    const fullPrompt = `${buildClassifierPrompt(preResolved, now)}${historySection}\nUser request: ${prompt}`;
-    const raw = await ollamaGenerate(this.classifierModel, fullPrompt, {
-      baseUrl: this.baseUrl,
-      timeoutMs: this.timeoutMs,
-    });
-
-    // Strip markdown code fences if present
-    const stripped = raw
-      .replace(/^```(?:json)?\s*/i, "")
-      .replace(/\s*```\s*$/, "")
-      .trim();
-    // Use first-{ / last-} to handle nested braces in LLM string values
-    const _s = stripped.indexOf("{");
-    const _e = stripped.lastIndexOf("}");
-    if (_s === -1 || _e <= _s)
-      throw new Error("No JSON in classifier response");
-    const match = [stripped.slice(_s, _e + 1)];
-
-    const parsed = JSON.parse(match[0]) as {
-      complexity_score?: number;
-      knowledge_score?: number;
-      operation_score?: number;
-      complexity_reasoning?: string;
-      query_subject?: string;
-      time_window_days?: number | null;
-      date_from?: string | null;
-      date_to?: string | null;
-      history_topic?: string;
-      new_topic?: string;
-      references_recent_history?: boolean;
-      topic_shifted?: boolean;
-    };
-
-    // Validate complexity_score
-    const score = Number(parsed.complexity_score);
-    if (isNaN(score) || score < 1 || score > 100) {
-      throw new Error(`Invalid complexity_score: ${parsed.complexity_score}`);
-    }
-
-    // Validate and normalise query_subject with strict allowlist
-    const rawSubject = parsed.query_subject?.toLowerCase().trim();
-    const VALID_SUBJECTS = new Set<QuerySubject>([
-      "personal",
-      "external",
-      "mixed",
-    ]);
-    let querySubject: QuerySubject = VALID_SUBJECTS.has(
-      rawSubject as QuerySubject,
-    )
-      ? (rawSubject as QuerySubject)
-      : FALLBACK_QUERY_SUBJECT;
-
-    if (!VALID_SUBJECTS.has(rawSubject as QuerySubject)) {
-      console.error(
-        `⚠️ [LocalModelRouter] Invalid query_subject "${rawSubject}", using fallback "${FALLBACK_QUERY_SUBJECT}"`,
-      );
-    }
-
-    if (querySubject === "external" && hasPersonalContextCue(prompt)) {
-      querySubject = "mixed";
-      console.error(
-        `🧠 [LocalModelRouter] Personal-context cue detected — query_subject upgraded external → mixed`,
-      );
-    }
-
-    // Parse time_window_days — must be a non-negative integer or null
-    let timeWindowDays: number | null = null;
-    if (
-      parsed.time_window_days !== null &&
-      parsed.time_window_days !== undefined
-    ) {
-      const raw = Number(parsed.time_window_days);
-      if (!isNaN(raw) && raw >= 0 && Number.isInteger(raw)) {
-        timeWindowDays = raw;
-      } else {
-        console.error(
-          `⚠️ [LocalModelRouter] Invalid time_window_days "${parsed.time_window_days}", using null`,
-        );
-      }
-    }
-
-    // Step 2: Resolve date range.
-    // Pre-resolved (code) wins over LLM output — code is always correct.
-    // If code found a range, use it and discard LLM time fields.
-    // If code found nothing, try LLM date_from/date_to as fallback.
-    let dateFrom: string | null = null;
-    let dateTo: string | null = null;
-
-    if (preResolved !== null) {
-      // Convert ms timestamps back to YYYY-MM-DD for the RoutingResult fields
-      const toIso = (ms: number) => new Date(ms).toISOString().slice(0, 10);
-      dateFrom = toIso(preResolved.from);
-      // dateTo: preResolved.to is start-of-next-day; subtract 1ms to get last day
-      dateTo = toIso(preResolved.to - 1);
-      timeWindowDays = null;
-    } else {
-      // Fallback: try LLM-provided date_from/date_to
-      const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
-      if (parsed.date_from && ISO_DATE_RE.test(String(parsed.date_from))) {
-        dateFrom = String(parsed.date_from);
-      }
-      if (parsed.date_to && ISO_DATE_RE.test(String(parsed.date_to))) {
-        dateTo = String(parsed.date_to);
-      }
-      if (dateFrom !== null && dateTo !== null) {
-        timeWindowDays = null;
-      }
-    }
-
-    const knowledgeScore = parsed.knowledge_score ?? null;
-    const operationScore = parsed.operation_score ?? null;
+    const intent = await this.resolveIntent(prompt, history);
+    const knowledgeScore = intent.knowledgeScore;
+    const operationScore = intent.operationScore;
     const breakdown =
       knowledgeScore !== null && operationScore !== null
         ? ` [knowledge=${knowledgeScore}, operation=${operationScore}]`
         : "";
 
-    // references_recent_history=true (LLM) or hasAnaphoricRef (code pre-filter) → always false
-    const topicShifted =
-      hasAnaphoricRef || parsed.references_recent_history === true
-        ? false
-        : parsed.topic_shifted === true;
-
-    if (parsed.history_topic || parsed.new_topic) {
-      console.error(
-        `🔍 [LocalModelRouter] topic analysis: history="${parsed.history_topic ?? "?"}" new="${parsed.new_topic ?? "?"}" references_recent=${parsed.references_recent_history ?? "?"} → topic_shifted=${topicShifted}`,
-      );
-    }
-
     return {
-      score,
-      reason: `${parsed.complexity_reasoning ?? "(no reason)"}${breakdown}`,
-      querySubject,
-      topicShifted,
-      timeWindowDays,
-      dateFrom,
-      dateTo,
-      resolvedDateRange: preResolved,
+      score: intent.complexityScore,
+      reason: `${intent.reason}${breakdown}`,
+      querySubject: intent.subject,
+      topicShifted: intent.topicShifted,
+      timeWindowDays: intent.timeWindowDays,
+      dateFrom: intent.dateFrom,
+      dateTo: intent.dateTo,
+      resolvedDateRange: intent.resolvedDateRange,
     };
+  }
+
+  async resolveIntent(
+    userPrompt: string,
+    history: ConversationTurn[] = [],
+  ): Promise<IntentFrame> {
+    const resolver = new IntentResolver({
+      baseUrl: this.baseUrl,
+      model: this.classifierModel,
+      timeoutMs: this.timeoutMs,
+      historyTurns: this.historyTurns,
+    });
+    return resolver.resolve({ userPrompt, history });
   }
 
   /**
