@@ -538,4 +538,23 @@ describe("IntentResolver", () => {
     expect(intent.needsTool).toBe(true);
     expect(intent.evidence).toContain("delegate_action_cue");
   });
+
+  it("topicShifted=false when there is no conversation history", async () => {
+    const resolver = makeResolver();
+    mockGenerate.mockResolvedValueOnce(
+      modelResponse({
+        query_subject: "external",
+        topic_shifted: true,
+        references_recent_history: false,
+        history_topic: "?",
+      }),
+    );
+
+    const intent = await resolver.resolve({
+      userPrompt: "Specialized Agent Design",
+      // no history passed
+    });
+
+    expect(intent.topicShifted).toBe(false);
+  });
 });

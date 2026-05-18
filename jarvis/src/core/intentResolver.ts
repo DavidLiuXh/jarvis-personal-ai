@@ -650,9 +650,13 @@ export class IntentResolver {
         `🔗 [IntentResolver] Semantic current-context reference detected — topic_shifted forced false`,
       );
     }
-    const topicShifted = referencesRecentHistory
-      ? false
-      : parsed.topic_shifted === true;
+    // No history → topic shift is meaningless; force false to avoid spurious clears.
+    const topicShifted =
+      recentTurns.length === 0
+        ? false
+        : referencesRecentHistory
+          ? false
+          : parsed.topic_shifted === true;
 
     if (parsed.history_topic || parsed.new_topic) {
       console.error(
