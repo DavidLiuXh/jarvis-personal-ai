@@ -138,7 +138,7 @@ describe("LocalModelRouter — route() topic_shifted via classify", () => {
     mockGenerate.mockResolvedValueOnce(classifyResponse(40, "external", true));
 
     const result = await router.route(
-      "Tell me about investment strategies",
+      "Tell me about quantum computing",
       HISTORY_CODING,
     );
 

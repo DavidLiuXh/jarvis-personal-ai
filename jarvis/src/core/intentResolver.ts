@@ -122,6 +122,12 @@ type RawMemoryTargetResult = {
   span?: unknown;
 };
 
+type RawEntityHintsResult = {
+  tickers?: unknown;
+  technicalTerms?: unknown;
+  peopleOrCompanies?: unknown;
+};
+
 function isLikelyIntentModelResult(
   value: unknown,
 ): value is RawIntentModelResult {
@@ -139,6 +145,17 @@ function isLikelyMemoryTargetResult(
 ): value is RawMemoryTargetResult {
   const record = asRecord(value);
   return "target" in record || "present" in record;
+}
+
+function isLikelyEntityHintsResult(
+  value: unknown,
+): value is RawEntityHintsResult {
+  const record = asRecord(value);
+  return (
+    "tickers" in record ||
+    "technicalTerms" in record ||
+    "peopleOrCompanies" in record
+  );
 }
 
 // Fallback when classification fails or the model emits an invalid subject:
@@ -162,11 +179,17 @@ const PERSONAL_CONTEXT_CUE_RE =
 const MEMORY_RECALL_CUE_RE =
   /我们聊过|我们讨论过|咱们聊过|咱们讨论过|你之前说|你以前说|你上次说|我之前说|我以前说|我上次说|我们之前|我们以前|我们上次|咱们之前|咱们以前|咱们上次|之前.*(对话|聊天|讨论|聊过|说过|提到|记忆|memory)|以前.*(对话|聊天|讨论|聊过|说过|提到|记忆|memory)|上次.*(对话|聊天|讨论|聊过|说过|提到|记忆|memory)|what did we discuss|our previous|our last conversation|you previously said|you said last time|last time we|remember when we/i;
 
+const CONVERSATION_HISTORY_RECALL_CUE_RE =
+  /我们聊过|我们讨论过|咱们聊过|咱们讨论过|你之前说|你以前说|你上次说|我之前说|我以前说|我上次说|之前.*(对话|聊天|讨论|聊过|说过|提到)|以前.*(对话|聊天|讨论|聊过|说过|提到)|上次.*(对话|聊天|讨论|聊过|说过|提到)|what did we discuss|our previous conversation|our last conversation|you previously said|you said last time|last time we discussed/i;
+
+const REMEMBER_TO_ACTION_CUE_RE =
+  /记得(保存|提交|运行|创建|打开|关闭|下载|上传|备份|删除|发送|检查|更新|修改|写|做)|remember to (save|commit|run|create|open|close|download|upload|delete|send|check|update|modify|write|do)/i;
+
 const SCHEDULE_CUE_RE =
   /提醒我|定时|每天|每周|每月|明天.*提醒|remind me|schedule|every day|every week|weekly|daily/i;
 
 const ACTION_CUE_RE =
-  /帮我(改|写|创建|运行|提交|部署|修|实现|生成)|创建|运行|提交|部署|修复|实现|生成文件|edit|modify|create|run|commit|deploy|fix|implement|generate.*file/i;
+  /帮我(改|写|创建|运行|提交|部署|修|实现|生成|增加)|增加.*(测试|用例|单元测试)|创建|运行|提交|部署|修复|实现|生成文件|edit|modify|update|create|run|commit|deploy|fix|implement|generate.*file/i;
 
 const EXPLICIT_DELEGATE_CUE_RE =
   /^agent:|启动.*agent|调用.*agent|用.*agent|route to agent|delegate to/i;
@@ -174,7 +197,10 @@ const EXPLICIT_DELEGATE_CUE_RE =
 const INVESTMENT_ANALYSIS_CUE_RE =
   /投资价值|基本面|财报|估值|股票|股价|买入|卖出|持有|分析.*(nvda|googl|aapl|msft|tsla)|investment|fundamental|valuation|earnings|stock/i;
 
-const TICKER_RE = /\b[A-Z]{1,5}\b/;
+const ENTITY_REFINEMENT_CUE_RE =
+  /\b[A-Z]{2,5}\b|英伟达|苹果|微软|特斯拉|谷歌|亚马逊|Nvidia|Apple|Microsoft|Tesla|Google|Amazon/;
+
+const TICKER_RE = /\b[A-Z]{2,5}\b/;
 const NON_TICKER_ACRONYMS = new Set([
   "ADK",
   "API",
@@ -206,7 +232,15 @@ export function hasPersonalContextCue(prompt: string): boolean {
 }
 
 function hasMemoryRecallCue(prompt: string): boolean {
-  return MEMORY_RECALL_CUE_RE.test(prompt);
+  return !hasRememberToActionCue(prompt) && MEMORY_RECALL_CUE_RE.test(prompt);
+}
+
+function hasConversationHistoryRecallCue(prompt: string): boolean {
+  return CONVERSATION_HISTORY_RECALL_CUE_RE.test(prompt);
+}
+
+function hasRememberToActionCue(prompt: string): boolean {
+  return REMEMBER_TO_ACTION_CUE_RE.test(prompt);
 }
 
 function hasScheduleCue(prompt: string): boolean {
@@ -219,6 +253,14 @@ function hasActionCue(prompt: string): boolean {
 
 function hasExplicitDelegateCue(prompt: string): boolean {
   return EXPLICIT_DELEGATE_CUE_RE.test(prompt);
+}
+
+function inferActionRequestFromCue(prompt: string): ActionRequestType | null {
+  if (hasExplicitDelegateCue(prompt)) return "delegate";
+  if (hasScheduleCue(prompt)) return "schedule";
+  if (/运行|run|执行.*测试|run.*test/i.test(prompt)) return "run";
+  if (hasActionCue(prompt)) return "write";
+  return null;
 }
 
 function hasInvestmentAnalysisCue(
@@ -326,7 +368,7 @@ Return semantic_evidence to explain the labels:
   - "current_context_reference": refers to the current recent conversation, e.g. "这个/that/继续".
   - "none": no memory recall.
 - actionRequest.present=true only when the user asks Jarvis to do something operational. action is "read"|"write"|"run"|"schedule"|"delegate"|"none".
-- entityHints.tickers should include likely financial ticker symbols only. Put technical acronyms such as ONNX, API, JSON, HTTP, LLM, SDK in technicalTerms, not tickers.
+- entityHints may be empty when uncertain. A focused entity extractor can refine tickers and technical terms later.
 
 DIMENSION 6 — Time Window
 ${timeNote}
@@ -361,8 +403,34 @@ OUTPUT RULES
 - evidence is an array of short strings naming cues you used.
 - semantic_evidence is required and must follow the schema below.
 
-Required schema:
-{"knowledge_score": <1-100>, "operation_score": <1-100>, "complexity_score": <1-100>, "complexity_reasoning": "<one sentence>", "query_subject": "personal"|"external"|"mixed", "task_type": "chat"|"recall"|"analyze"|"execute"|"delegate"|"schedule", "needs_external_knowledge": true|false, "needs_tool": true|false, "needs_scheduling": true|false, "candidate_agents": ["<agent-id>"], "confidence": <0-1>, "evidence": ["<short cue>"], "semantic_evidence": {"personalContext": {"present": true|false, "reason": "<short reason>", "span": "<text span>"}, "memoryRecall": {"present": true|false, "target": "conversation_history"|"user_memory"|"external_past_event"|"current_context_reference"|"none", "reason": "<short reason>", "span": "<text span>"}, "actionRequest": {"present": true|false, "action": "read"|"write"|"run"|"schedule"|"delegate"|"none", "object": "<object or empty>"}, "entityHints": {"tickers": ["<ticker>"], "technicalTerms": ["<term>"], "peopleOrCompanies": ["<name>"]}}, "time_window_days": <integer>|null, "date_from": "<YYYY-MM-DD>"|null, "date_to": "<YYYY-MM-DD>"|null, "history_topic": "<1 phrase>", "new_topic": "<1 phrase>", "references_recent_history": true|false, "topic_shifted": true|false}
+Required compact schema:
+{
+  "knowledge_score": 1-100,
+  "operation_score": 1-100,
+  "complexity_score": 1-100,
+  "complexity_reasoning": "one sentence",
+  "query_subject": "personal|external|mixed",
+  "task_type": "chat|recall|analyze|execute|delegate|schedule",
+  "needs_external_knowledge": true|false,
+  "needs_tool": true|false,
+  "needs_scheduling": true|false,
+  "candidate_agents": [],
+  "confidence": 0-1,
+  "evidence": [],
+  "semantic_evidence": {
+    "personalContext": {"present": true|false, "reason": "", "span": ""},
+    "memoryRecall": {"present": true|false, "target": "conversation_history|user_memory|external_past_event|current_context_reference|none", "reason": "", "span": ""},
+    "actionRequest": {"present": true|false, "action": "read|write|run|schedule|delegate|none", "object": ""},
+    "entityHints": {"tickers": [], "technicalTerms": [], "peopleOrCompanies": []}
+  },
+  "time_window_days": null,
+  "date_from": null,
+  "date_to": null,
+  "history_topic": "",
+  "new_topic": "",
+  "references_recent_history": true|false,
+  "topic_shifted": true|false
+}
 `.trim();
 }
 
@@ -429,6 +497,10 @@ function parseMemoryTargetObject(raw: string): RawMemoryTargetResult {
   return parseJsonObjectMatching(raw, isLikelyMemoryTargetResult);
 }
 
+function parseEntityHintsObject(raw: string): RawEntityHintsResult {
+  return parseJsonObjectMatching(raw, isLikelyEntityHintsResult);
+}
+
 function buildIntentRepairPrompt(raw: string): string {
   return `
 The text below was intended to be the raw JSON object for Jarvis intent routing,
@@ -486,6 +558,23 @@ User request: ${prompt}
 `.trim();
 }
 
+function buildEntityHintsPrompt(prompt: string): string {
+  return `
+Classify only entity hints for the user request.
+
+Rules:
+- tickers: likely stock ticker symbols only, such as NVDA, GOOGL, AAPL, MSFT, TSLA.
+- technicalTerms: technical acronyms, tools, protocols, libraries, or model names, such as ONNX, RAG, API, JSON, HTTP, LLM, SDK.
+- peopleOrCompanies: company, product, project, or person names written as natural names, such as Apple, Nvidia, OpenAI.
+- Do not put technical acronyms in tickers.
+
+Return ONLY JSON:
+{"tickers": [], "technicalTerms": [], "peopleOrCompanies": []}
+
+User request: ${prompt}
+`.trim();
+}
+
 function shouldRefineMemoryTarget(
   prompt: string,
   parsedTaskType: unknown,
@@ -500,6 +589,22 @@ function shouldRefineMemoryTarget(
     /上次|去年|前年|刚才|last time|previous event|previous earnings|earlier today/i.test(
       prompt,
     )
+  );
+}
+
+function shouldRefineEntityHints(
+  prompt: string,
+  entityHints: IntentEvidence["entityHints"],
+): boolean {
+  const hasHints =
+    entityHints.tickers.length > 0 ||
+    entityHints.technicalTerms.length > 0 ||
+    entityHints.peopleOrCompanies.length > 0;
+  if (hasHints) return false;
+  return (
+    ENTITY_REFINEMENT_CUE_RE.test(prompt) &&
+    (INVESTMENT_ANALYSIS_CUE_RE.test(prompt) ||
+      new RegExp(TICKER_RE, "g").test(prompt))
   );
 }
 
@@ -680,6 +785,44 @@ export class IntentResolver {
     }
   }
 
+  private async refineEntityHints(
+    prompt: string,
+    semanticEvidence: IntentEvidence,
+  ): Promise<IntentEvidence> {
+    if (!shouldRefineEntityHints(prompt, semanticEvidence.entityHints)) {
+      return semanticEvidence;
+    }
+
+    try {
+      const raw = await ollamaGenerate(
+        this.options.model,
+        buildEntityHintsPrompt(prompt),
+        {
+          baseUrl: this.options.baseUrl ?? "http://localhost:11434",
+          timeoutMs: this.options.timeoutMs ?? 30_000,
+        },
+      );
+      const parsed = parseEntityHintsObject(raw);
+      const entityHints = {
+        tickers: normalizeStringArray(parsed.tickers),
+        technicalTerms: normalizeStringArray(parsed.technicalTerms),
+        peopleOrCompanies: normalizeStringArray(parsed.peopleOrCompanies),
+      };
+      console.error(
+        `🏷️ [IntentResolver] Focused entity hints tickers=${entityHints.tickers.join(",") || "-"} technical=${entityHints.technicalTerms.join(",") || "-"}`,
+      );
+      return {
+        ...semanticEvidence,
+        entityHints,
+      };
+    } catch (error: any) {
+      console.error(
+        `⚠️ [IntentResolver] Focused entity extraction failed: ${error.message}`,
+      );
+      return semanticEvidence;
+    }
+  }
+
   async resolve(args: {
     userPrompt: string;
     history?: ConversationTurn[];
@@ -715,12 +858,95 @@ export class IntentResolver {
     });
     const parsed = await this.parseOrRepairJson(raw);
     const confidence = normalizeConfidence(parsed.confidence);
-    const semanticEvidence = await this.refineMemoryTarget(
+    const memoryRefinedEvidence = await this.refineMemoryTarget(
       prompt,
       recentTurns,
       normalizeIntentEvidence(parsed.semantic_evidence),
       parsed.task_type,
     );
+    let semanticEvidence = await this.refineEntityHints(
+      prompt,
+      memoryRefinedEvidence,
+    );
+    if (hasRememberToActionCue(prompt)) {
+      semanticEvidence = {
+        ...semanticEvidence,
+        memoryRecall: {
+          present: false,
+          target: "none",
+          reason: "remember-to-action phrasing is not memory recall",
+          span: semanticEvidence.memoryRecall.span,
+        },
+        actionRequest: {
+          present: false,
+          action: "none",
+          object: semanticEvidence.actionRequest.object,
+        },
+      };
+      console.error(
+        "🧭 [IntentResolver] Remember-to-action cue corrected memory/action evidence to none",
+      );
+    }
+    if (
+      anaphoric &&
+      recentTurns.length > 0 &&
+      semanticEvidence.memoryRecall.target !== "external_past_event" &&
+      !hasMemoryRecallCue(prompt)
+    ) {
+      semanticEvidence = {
+        ...semanticEvidence,
+        memoryRecall: {
+          ...semanticEvidence.memoryRecall,
+          present: true,
+          target: "current_context_reference",
+          reason:
+            semanticEvidence.memoryRecall.reason ||
+            "anaphoric reference to recent conversation",
+        },
+      };
+      console.error(
+        "🔗 [IntentResolver] Anaphoric cue corrected memory target to current_context_reference",
+      );
+    }
+    if (
+      semanticEvidence.memoryRecall.target === "user_memory" &&
+      hasConversationHistoryRecallCue(prompt)
+    ) {
+      semanticEvidence = {
+        ...semanticEvidence,
+        memoryRecall: {
+          ...semanticEvidence.memoryRecall,
+          target: "conversation_history",
+          reason:
+            semanticEvidence.memoryRecall.reason ||
+            "explicit prior conversation cue",
+        },
+      };
+      console.error(
+        "🧭 [IntentResolver] Conversation-history cue corrected memory target user_memory → conversation_history",
+      );
+    }
+    const deterministicAction = inferActionRequestFromCue(prompt);
+    if (
+      deterministicAction !== null &&
+      semanticEvidence.actionRequest.action === "none" &&
+      ((semanticEvidence.memoryRecall.target === "none" &&
+        !hasMemoryRecallCue(prompt)) ||
+        deterministicAction === "schedule" ||
+        deterministicAction === "delegate")
+    ) {
+      semanticEvidence = {
+        ...semanticEvidence,
+        actionRequest: {
+          ...semanticEvidence.actionRequest,
+          present: true,
+          action: deterministicAction,
+        },
+      };
+      console.error(
+        `🛠️ [IntentResolver] Action cue corrected semantic action to ${deterministicAction}`,
+      );
+    }
     const memoryRecallTarget = semanticEvidence.memoryRecall.target;
     const semanticRecallCue =
       semanticEvidence.memoryRecall.present &&
@@ -838,6 +1064,13 @@ export class IntentResolver {
     }
 
     let taskType = inferTaskType(prompt, parsed.task_type);
+    if (
+      hasRememberToActionCue(prompt) &&
+      (taskType === "recall" || taskType === "execute")
+    ) {
+      taskType = "chat";
+      evidence.push("remember_to_action_not_recall");
+    }
     if (scheduleCue && taskType !== "schedule") {
       taskType = "schedule";
       evidence.push("schedule_cue");
@@ -850,7 +1083,7 @@ export class IntentResolver {
     } else if (explicitDelegateCue && taskType !== "delegate") {
       taskType = "delegate";
       evidence.push("delegate_action_cue");
-    } else if (actionCue && taskType === "chat") {
+    } else if (actionCue && (taskType === "chat" || taskType === "analyze")) {
       taskType = "execute";
       evidence.push("action_cue");
     }
