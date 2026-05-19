@@ -97,6 +97,14 @@ describe("IntentResolver", () => {
       confidence: 0.8,
       source: "local-intent/ollama",
     });
+    expect(intent.richIntent).toMatchObject({
+      primaryAction: "analyze",
+      contextDependency: {
+        longTermMemory: true,
+        externalWorld: true,
+      },
+      riskLevel: "low",
+    });
   });
 
   it("repairs malformed intent JSON once before parsing", async () => {
@@ -287,6 +295,11 @@ ${modelResponse({
     expect(intent.semanticEvidence.memoryRecall.target).toBe(
       "current_context_reference",
     );
+    expect(intent.richIntent.targets).toContainEqual({
+      type: "current_context",
+      value: "recent_conversation",
+    });
+    expect(intent.richIntent.contextDependency.recentConversation).toBe(true);
   });
 
   it("uses deterministic schedule cue to set scheduling intent", async () => {
@@ -499,6 +512,8 @@ ${modelResponse({
     expect(intent.taskType).toBe("execute");
     expect(intent.needsTool).toBe(true);
     expect(intent.semanticEvidence.actionRequest.action).toBe("write");
+    expect(intent.richIntent.primaryAction).toBe("modify");
+    expect(intent.richIntent.contextDependency.localWorkspace).toBe(true);
     expect(intent.evidence).toContain("action_cue");
   });
 
@@ -620,6 +635,10 @@ ${modelResponse({
 
     expect(intent.candidateAgents).toContain("investment-analysis");
     expect(intent.semanticEvidence.entityHints.tickers).toContain("NVDA");
+    expect(intent.richIntent.targets).toContainEqual({
+      type: "external_entity",
+      value: "NVDA",
+    });
   });
 
   it("trusts semantic technical terms over ticker fallback", async () => {
@@ -681,6 +700,14 @@ ${modelResponse({
     expect(intent.needsTool).toBe(true);
     expect(intent.candidateAgents).toContain("investment-analysis");
     expect(intent.semanticEvidence.actionRequest.action).toBe("delegate");
+    expect(intent.richIntent).toMatchObject({
+      primaryAction: "delegate",
+      riskLevel: "medium",
+    });
+    expect(intent.richIntent.targets).toContainEqual({
+      type: "agent",
+      value: "investment-analysis",
+    });
   });
 
   it("uses semantic delegate action evidence to preserve delegation", async () => {

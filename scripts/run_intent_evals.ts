@@ -46,6 +46,15 @@ type IntentExpectation = {
       peopleOrCompanies?: string[];
     };
   };
+  richIntent?: {
+    primaryAction?: IntentFrame["richIntent"]["primaryAction"];
+    riskLevel?: IntentFrame["richIntent"]["riskLevel"];
+    targetsContain?: Array<{
+      type: IntentFrame["richIntent"]["targets"][number]["type"];
+      value: string;
+    }>;
+    contextDependency?: Partial<IntentFrame["richIntent"]["contextDependency"]>;
+  };
 };
 
 type Dimension =
@@ -62,7 +71,8 @@ type Dimension =
   | "personalContext"
   | "memoryTarget"
   | "action"
-  | "entityHints";
+  | "entityHints"
+  | "richIntent";
 
 type CheckResult = {
   dimension: Dimension;
@@ -351,6 +361,59 @@ function compareIntent(intent: IntentFrame, expect: IntentExpectation) {
         actualValues,
         includesAll(actualValues, expectedValues),
         `entityHints.${key} contains expected values`,
+      );
+    }
+  }
+
+  const richIntent = expect.richIntent;
+  if (richIntent?.primaryAction !== undefined) {
+    addCheck(
+      checks,
+      "richIntent",
+      richIntent.primaryAction,
+      intent.richIntent.primaryAction,
+      intent.richIntent.primaryAction === richIntent.primaryAction,
+      "richIntent.primaryAction matches",
+    );
+  }
+  if (richIntent?.riskLevel !== undefined) {
+    addCheck(
+      checks,
+      "richIntent",
+      richIntent.riskLevel,
+      intent.richIntent.riskLevel,
+      intent.richIntent.riskLevel === richIntent.riskLevel,
+      "richIntent.riskLevel matches",
+    );
+  }
+  if (richIntent?.targetsContain) {
+    for (const target of richIntent.targetsContain) {
+      addCheck(
+        checks,
+        "richIntent",
+        target,
+        intent.richIntent.targets,
+        intent.richIntent.targets.some(
+          (actual) =>
+            actual.type === target.type && actual.value === target.value,
+        ),
+        "richIntent.targets contains expected target",
+      );
+    }
+  }
+  if (richIntent?.contextDependency) {
+    for (const [key, expectedValue] of Object.entries(
+      richIntent.contextDependency,
+    )) {
+      const dependencyKey =
+        key as keyof IntentFrame["richIntent"]["contextDependency"];
+      addCheck(
+        checks,
+        "richIntent",
+        expectedValue,
+        intent.richIntent.contextDependency[dependencyKey],
+        intent.richIntent.contextDependency[dependencyKey] === expectedValue,
+        `richIntent.contextDependency.${key} matches`,
       );
     }
   }

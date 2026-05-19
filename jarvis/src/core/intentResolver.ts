@@ -61,6 +61,47 @@ export type IntentEvidence = {
   };
 };
 
+export type RichIntentPrimaryAction =
+  | "answer"
+  | "recall"
+  | "analyze"
+  | "modify"
+  | "run"
+  | "schedule"
+  | "delegate";
+
+export type RichIntentTargetType =
+  | "memory"
+  | "file"
+  | "code"
+  | "external_entity"
+  | "agent"
+  | "calendar"
+  | "current_context";
+
+export type RichIntentRiskLevel = "low" | "medium" | "high";
+
+export type RichIntent = {
+  userGoal: string;
+  primaryAction: RichIntentPrimaryAction;
+  targets: Array<{
+    type: RichIntentTargetType;
+    value: string;
+  }>;
+  contextDependency: {
+    recentConversation: boolean;
+    longTermMemory: boolean;
+    localWorkspace: boolean;
+    externalWorld: boolean;
+  };
+  ambiguity: Array<{
+    field: string;
+    reason: string;
+    severity: "low" | "medium" | "high";
+  }>;
+  riskLevel: RichIntentRiskLevel;
+};
+
 export type IntentFrame = {
   subject: QuerySubject;
   taskType: IntentTaskType;
@@ -82,6 +123,7 @@ export type IntentFrame = {
   confidence: number;
   evidence: string[];
   semanticEvidence: IntentEvidence;
+  richIntent: RichIntent;
   source: "local-intent/ollama";
 };
 
@@ -113,6 +155,7 @@ type RawIntentModelResult = {
   new_topic?: string;
   references_recent_history?: boolean;
   topic_shifted?: boolean;
+  rich_intent?: unknown;
 };
 
 type RawMemoryTargetResult = {
@@ -369,6 +412,7 @@ Return semantic_evidence to explain the labels:
   - "none": no memory recall.
 - actionRequest.present=true only when the user asks Jarvis to do something operational. action is "read"|"write"|"run"|"schedule"|"delegate"|"none".
 - entityHints may be empty when uncertain. A focused entity extractor can refine tickers and technical terms later.
+- rich_intent expresses the user's concrete goal/action/targets/context. Keep subject/task_type for compatibility, but fill rich_intent whenever possible.
 
 DIMENSION 6 — Time Window
 ${timeNote}
@@ -422,6 +466,14 @@ Required compact schema:
     "memoryRecall": {"present": true|false, "target": "conversation_history|user_memory|external_past_event|current_context_reference|none", "reason": "", "span": ""},
     "actionRequest": {"present": true|false, "action": "read|write|run|schedule|delegate|none", "object": ""},
     "entityHints": {"tickers": [], "technicalTerms": [], "peopleOrCompanies": []}
+  },
+  "rich_intent": {
+    "userGoal": "",
+    "primaryAction": "answer|recall|analyze|modify|run|schedule|delegate",
+    "targets": [{"type": "memory|file|code|external_entity|agent|calendar|current_context", "value": ""}],
+    "contextDependency": {"recentConversation": true|false, "longTermMemory": true|false, "localWorkspace": true|false, "externalWorld": true|false},
+    "ambiguity": [{"field": "", "reason": "", "severity": "low|medium|high"}],
+    "riskLevel": "low|medium|high"
   },
   "time_window_days": null,
   "date_from": null,
@@ -513,7 +565,7 @@ Required top-level fields:
 knowledge_score, operation_score, complexity_score, complexity_reasoning,
 query_subject, task_type, needs_external_knowledge, needs_tool,
 needs_scheduling, candidate_agents, confidence, evidence, semantic_evidence,
-time_window_days, date_from, date_to, history_topic, new_topic,
+rich_intent, time_window_days, date_from, date_to, history_topic, new_topic,
 references_recent_history, topic_shifted.
 
 Required semantic_evidence shape:
@@ -522,6 +574,16 @@ Required semantic_evidence shape:
   "memoryRecall": {"present": true|false, "target": "conversation_history"|"user_memory"|"external_past_event"|"current_context_reference"|"none", "reason": "", "span": ""},
   "actionRequest": {"present": true|false, "action": "read"|"write"|"run"|"schedule"|"delegate"|"none", "object": ""},
   "entityHints": {"tickers": [], "technicalTerms": [], "peopleOrCompanies": []}
+}
+
+Required rich_intent shape:
+{
+  "userGoal": "",
+  "primaryAction": "answer"|"recall"|"analyze"|"modify"|"run"|"schedule"|"delegate",
+  "targets": [{"type": "memory"|"file"|"code"|"external_entity"|"agent"|"calendar"|"current_context", "value": ""}],
+  "contextDependency": {"recentConversation": true|false, "longTermMemory": true|false, "localWorkspace": true|false, "externalWorld": true|false},
+  "ambiguity": [{"field": "", "reason": "", "severity": "low"|"medium"|"high"}],
+  "riskLevel": "low"|"medium"|"high"
 }
 
 Invalid JSON text:
@@ -694,6 +756,212 @@ function normalizeIntentEvidence(value: unknown): IntentEvidence {
       technicalTerms: normalizeStringArray(entityHints.technicalTerms),
       peopleOrCompanies: normalizeStringArray(entityHints.peopleOrCompanies),
     },
+  };
+}
+
+function normalizeRichIntentTargetType(
+  value: unknown,
+): RichIntentTargetType | null {
+  if (
+    value === "memory" ||
+    value === "file" ||
+    value === "code" ||
+    value === "external_entity" ||
+    value === "agent" ||
+    value === "calendar" ||
+    value === "current_context"
+  ) {
+    return value;
+  }
+  return null;
+}
+
+function normalizeRichIntentRiskLevel(value: unknown): RichIntentRiskLevel {
+  return value === "medium" || value === "high" ? value : "low";
+}
+
+function normalizeRichIntentTargets(value: unknown): RichIntent["targets"] {
+  if (!Array.isArray(value)) return [];
+  const targets: RichIntent["targets"] = [];
+  for (const item of value) {
+    const record = asRecord(item);
+    const type = normalizeRichIntentTargetType(record.type);
+    const targetValue = normalizeOptionalString(record.value);
+    if (type && targetValue) {
+      targets.push({ type, value: targetValue });
+    }
+  }
+  return targets;
+}
+
+function normalizeRichIntentAmbiguity(value: unknown): RichIntent["ambiguity"] {
+  if (!Array.isArray(value)) return [];
+  const ambiguity: RichIntent["ambiguity"] = [];
+  for (const item of value) {
+    const record = asRecord(item);
+    const field = normalizeOptionalString(record.field);
+    const reason = normalizeOptionalString(record.reason);
+    const severity = normalizeRichIntentRiskLevel(record.severity);
+    if (field && reason) {
+      ambiguity.push({ field, reason, severity });
+    }
+  }
+  return ambiguity;
+}
+
+function dedupeRichIntentTargets(
+  targets: RichIntent["targets"],
+): RichIntent["targets"] {
+  const seen = new Set<string>();
+  return targets.filter((target) => {
+    const key = `${target.type}:${target.value}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function toRichIntentPrimaryAction(
+  taskType: IntentTaskType,
+  actionRequest: IntentEvidence["actionRequest"],
+): RichIntentPrimaryAction {
+  if (taskType === "recall") return "recall";
+  if (taskType === "analyze") return "analyze";
+  if (taskType === "schedule") return "schedule";
+  if (taskType === "delegate") return "delegate";
+  if (taskType === "execute") {
+    if (actionRequest.action === "run") return "run";
+    return "modify";
+  }
+  return "answer";
+}
+
+function deriveRichIntentTargets(args: {
+  semanticEvidence: IntentEvidence;
+  candidateAgents: string[];
+  taskType: IntentTaskType;
+  referencesRecentHistory: boolean;
+}): RichIntent["targets"] {
+  const targets: RichIntent["targets"] = [];
+  const {
+    semanticEvidence,
+    candidateAgents,
+    taskType,
+    referencesRecentHistory,
+  } = args;
+
+  if (
+    semanticEvidence.memoryRecall.target === "conversation_history" ||
+    semanticEvidence.memoryRecall.target === "user_memory"
+  ) {
+    targets.push({
+      type: "memory",
+      value: semanticEvidence.memoryRecall.target,
+    });
+  }
+  if (
+    referencesRecentHistory ||
+    semanticEvidence.memoryRecall.target === "current_context_reference"
+  ) {
+    targets.push({ type: "current_context", value: "recent_conversation" });
+  }
+  for (const ticker of semanticEvidence.entityHints.tickers) {
+    targets.push({ type: "external_entity", value: ticker });
+  }
+  for (const name of semanticEvidence.entityHints.peopleOrCompanies) {
+    targets.push({ type: "external_entity", value: name });
+  }
+  for (const term of semanticEvidence.entityHints.technicalTerms) {
+    targets.push({ type: "code", value: term });
+  }
+  if (semanticEvidence.actionRequest.object) {
+    const type =
+      /test|测试|用例|code|router|resolver|\.ts|\.js|file|文件/i.test(
+        semanticEvidence.actionRequest.object,
+      )
+        ? "code"
+        : "file";
+    targets.push({ type, value: semanticEvidence.actionRequest.object });
+  }
+  if (taskType === "schedule") {
+    targets.push({ type: "calendar", value: "reminder" });
+  }
+  for (const agent of candidateAgents) {
+    targets.push({ type: "agent", value: agent });
+  }
+
+  return dedupeRichIntentTargets(targets);
+}
+
+function buildRichIntent(args: {
+  prompt: string;
+  parsedRichIntent: unknown;
+  taskType: IntentTaskType;
+  subject: QuerySubject;
+  needsMemory: boolean;
+  needsExternalKnowledge: boolean;
+  needsTool: boolean;
+  candidateAgents: string[];
+  referencesRecentHistory: boolean;
+  confidence: number;
+  semanticEvidence: IntentEvidence;
+}): RichIntent {
+  const parsed = asRecord(args.parsedRichIntent);
+  const parsedContext = asRecord(parsed.contextDependency);
+  const primaryAction = toRichIntentPrimaryAction(
+    args.taskType,
+    args.semanticEvidence.actionRequest,
+  );
+  const derivedTargets = deriveRichIntentTargets({
+    semanticEvidence: args.semanticEvidence,
+    candidateAgents: args.candidateAgents,
+    taskType: args.taskType,
+    referencesRecentHistory: args.referencesRecentHistory,
+  });
+  const targets = dedupeRichIntentTargets([
+    ...normalizeRichIntentTargets(parsed.targets),
+    ...derivedTargets,
+  ]);
+  const ambiguity = normalizeRichIntentAmbiguity(parsed.ambiguity);
+  if (args.confidence < LOW_CONFIDENCE_THRESHOLD) {
+    ambiguity.push({
+      field: "subject",
+      reason: "low confidence local intent classification",
+      severity: "medium",
+    });
+  }
+
+  return {
+    userGoal: normalizeOptionalString(parsed.userGoal) ?? args.prompt,
+    primaryAction,
+    targets,
+    contextDependency: {
+      recentConversation:
+        parsedContext.recentConversation === true ||
+        args.referencesRecentHistory,
+      longTermMemory:
+        parsedContext.longTermMemory === true ||
+        args.needsMemory ||
+        args.semanticEvidence.memoryRecall.target === "conversation_history" ||
+        args.semanticEvidence.memoryRecall.target === "user_memory",
+      localWorkspace:
+        parsedContext.localWorkspace === true ||
+        args.needsTool ||
+        args.semanticEvidence.actionRequest.action === "write" ||
+        args.semanticEvidence.actionRequest.action === "run",
+      externalWorld:
+        parsedContext.externalWorld === true ||
+        args.needsExternalKnowledge ||
+        args.subject === "external" ||
+        args.subject === "mixed",
+    },
+    ambiguity,
+    riskLevel:
+      normalizeRichIntentRiskLevel(parsed.riskLevel) !== "low"
+        ? normalizeRichIntentRiskLevel(parsed.riskLevel)
+        : args.needsTool || args.taskType === "delegate"
+          ? "medium"
+          : "low",
   };
 }
 
@@ -1134,15 +1402,30 @@ export class IntentResolver {
       taskType === "execute" ||
       taskType === "delegate" ||
       (!delegateDowngraded && normalizeBoolean(parsed.needs_tool));
+    const needsMemory = subject !== "external" || taskType === "recall";
+    const needsExternalKnowledge =
+      subject === "external" ||
+      subject === "mixed" ||
+      normalizeBoolean(parsed.needs_external_knowledge);
+    const richIntent = buildRichIntent({
+      prompt,
+      parsedRichIntent: parsed.rich_intent,
+      taskType,
+      subject,
+      needsMemory,
+      needsExternalKnowledge,
+      needsTool,
+      candidateAgents,
+      referencesRecentHistory,
+      confidence,
+      semanticEvidence,
+    });
 
     return {
       subject,
       taskType,
-      needsMemory: subject !== "external" || taskType === "recall",
-      needsExternalKnowledge:
-        subject === "external" ||
-        subject === "mixed" ||
-        normalizeBoolean(parsed.needs_external_knowledge),
+      needsMemory,
+      needsExternalKnowledge,
       needsTool,
       needsScheduling,
       candidateAgents,
@@ -1166,6 +1449,7 @@ export class IntentResolver {
       evidence,
       source: "local-intent/ollama",
       semanticEvidence,
+      richIntent,
     };
   }
 }
