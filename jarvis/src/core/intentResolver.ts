@@ -270,10 +270,10 @@ const PERSONAL_CONTEXT_CUE_RE =
   /我的|我之前|我们之前|适合我|按我|按我的|结合我|我该|我应该|for me\b|based on my\b|my preference\b|my preferences\b|my context\b|my goals\b|my history\b/i;
 
 const MEMORY_RECALL_CUE_RE =
-  /我们聊过|我们讨论过|咱们聊过|咱们讨论过|你之前说|你以前说|你上次说|我之前说|我以前说|我上次说|我们之前|我们以前|我们上次|咱们之前|咱们以前|咱们上次|之前.*(对话|聊天|讨论|聊过|说过|提到|记忆|memory)|以前.*(对话|聊天|讨论|聊过|说过|提到|记忆|memory)|上次.*(对话|聊天|讨论|聊过|说过|提到|记忆|memory)|what did we discuss|our previous|our last conversation|you previously said|you said last time|last time we|remember when we/i;
+  /我们聊过|我们讨论过|咱们聊过|咱们讨论过|你之前说|你以前说|你上次说|我之前说|我以前说|我上次说|我们之前|我们以前|我们上次|咱们之前|咱们以前|咱们上次|之前.*(对话|聊天|讨论|探讨|聊过|说过|提到|内容|记忆|memory)|以前.*(对话|聊天|讨论|探讨|聊过|说过|提到|内容|记忆|memory)|上次.*(对话|聊天|讨论|探讨|聊过|说过|提到|内容|记忆|memory)|what did we discuss|our previous|our last conversation|you previously said|you said last time|last time we|remember when we/i;
 
 const CONVERSATION_HISTORY_RECALL_CUE_RE =
-  /我们聊过|我们讨论过|咱们聊过|咱们讨论过|你之前说|你以前说|你上次说|我之前说|我以前说|我上次说|之前.*(对话|聊天|讨论|聊过|说过|提到)|以前.*(对话|聊天|讨论|聊过|说过|提到)|上次.*(对话|聊天|讨论|聊过|说过|提到)|what did we discuss|our previous conversation|our last conversation|you previously said|you said last time|last time we discussed/i;
+  /我们聊过|我们讨论过|咱们聊过|咱们讨论过|你之前说|你以前说|你上次说|我之前说|我以前说|我上次说|之前.*(对话|聊天|讨论|探讨|聊过|说过|提到|内容)|以前.*(对话|聊天|讨论|探讨|聊过|说过|提到|内容)|上次.*(对话|聊天|讨论|探讨|聊过|说过|提到|内容)|what did we discuss|our previous conversation|our last conversation|you previously said|you said last time|last time we discussed/i;
 
 const REMEMBER_TO_ACTION_CUE_RE =
   /记得(保存|提交|运行|创建|打开|关闭|下载|上传|备份|删除|发送|检查|更新|修改|写|做)|remember to (save|commit|run|create|open|close|download|upload|delete|send|check|update|modify|write|do)/i;
@@ -1900,9 +1900,30 @@ export class IntentResolver {
       );
     }
     if (
-      semanticEvidence.memoryRecall.target === "user_memory" &&
+      semanticEvidence.memoryRecall.target === "none" &&
       hasConversationHistoryRecallCue(prompt)
     ) {
+      semanticEvidence = {
+        ...semanticEvidence,
+        memoryRecall: {
+          ...semanticEvidence.memoryRecall,
+          present: true,
+          target: "conversation_history",
+          reason:
+            semanticEvidence.memoryRecall.reason ||
+            "explicit prior conversation cue",
+          span: semanticEvidence.memoryRecall.span || prompt,
+        },
+      };
+      console.error(
+        "🧭 [IntentResolver] Conversation-history cue corrected memory target none → conversation_history",
+      );
+    } else if (
+      (semanticEvidence.memoryRecall.target === "user_memory" ||
+        semanticEvidence.memoryRecall.target === "current_context_reference") &&
+      hasConversationHistoryRecallCue(prompt)
+    ) {
+      const previousTarget = semanticEvidence.memoryRecall.target;
       semanticEvidence = {
         ...semanticEvidence,
         memoryRecall: {
@@ -1914,7 +1935,7 @@ export class IntentResolver {
         },
       };
       console.error(
-        "🧭 [IntentResolver] Conversation-history cue corrected memory target user_memory → conversation_history",
+        `🧭 [IntentResolver] Conversation-history cue corrected memory target ${previousTarget} → conversation_history`,
       );
     }
     const deterministicAction = inferActionRequestFromCue(prompt);
@@ -1999,10 +2020,18 @@ export class IntentResolver {
     // context cue. When the same request also needs external work, keep it
     // mixed instead of collapsing the whole request to personal.
     if (recallCue && subject === "mixed") {
-      evidence.push("memory_recall_cue");
-      console.error(
-        `🧠 [IntentResolver] Memory recall cue detected — subject remains mixed due to external context`,
-      );
+      if (recallWithExternalWork) {
+        evidence.push("memory_recall_cue");
+        console.error(
+          `🧠 [IntentResolver] Memory recall cue detected — subject remains mixed due to external context`,
+        );
+      } else {
+        subject = "personal";
+        evidence.push("memory_recall_cue");
+        console.error(
+          `🧠 [IntentResolver] Memory recall cue detected — subject downgraded mixed → personal`,
+        );
+      }
     } else if (recallCue && subject !== "personal") {
       const previousSubject = subject;
       subject = recallWithExternalWork ? "mixed" : "personal";

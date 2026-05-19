@@ -290,6 +290,113 @@ ${modelResponse({
     );
   });
 
+  it("corrects prior conversation recall from missing memory target", async () => {
+    const resolver = makeResolver();
+    mockGenerate.mockResolvedValueOnce(
+      modelResponse({
+        query_subject: "external",
+        task_type: "chat",
+        semantic_evidence: {
+          personalContext: {
+            present: false,
+            reason: "",
+            span: "",
+          },
+          memoryRecall: {
+            present: false,
+            target: "none",
+            reason: "",
+            span: "",
+          },
+          actionRequest: { present: false, action: "none", object: "" },
+          entityHints: {
+            tickers: [],
+            technicalTerms: ["梓潼"],
+            peopleOrCompanies: [],
+          },
+        },
+      }),
+    );
+
+    const intent = await resolver.resolve({
+      userPrompt: "帮我汇总之前梓潼相关的探讨内容",
+    });
+
+    expect(intent.subject).toBe("personal");
+    expect(intent.taskType).toBe("recall");
+    expect(intent.needsMemory).toBe(true);
+    expect(intent.semanticEvidence.memoryRecall.present).toBe(true);
+    expect(intent.semanticEvidence.memoryRecall.target).toBe(
+      "conversation_history",
+    );
+    expect(intent.evidence).toContain("memory_recall_cue");
+  });
+
+  it("corrects explicit prior conversation cues away from current context", async () => {
+    const resolver = makeResolver();
+    mockGenerate.mockResolvedValueOnce(
+      modelResponse({
+        query_subject: "personal",
+        task_type: "recall",
+        references_recent_history: true,
+        topic_analysis: {
+          relation: "current_context_reference",
+          history: {
+            label: "梓潼相关讨论",
+            evidence: ["之前讨论过梓潼文化"],
+            source_turns: [-1],
+          },
+          current: {
+            label: "梓潼相关汇总",
+            evidence: ["帮我汇总之前梓潼相关的探讨内容"],
+            source_turns: [0],
+          },
+          confidence: 0.6,
+        },
+        semantic_evidence: {
+          personalContext: {
+            present: false,
+            reason: "",
+            span: "",
+          },
+          memoryRecall: {
+            present: true,
+            target: "current_context_reference",
+            reason: "references recent discussion",
+            span: "之前梓潼相关的探讨内容",
+          },
+          actionRequest: { present: false, action: "none", object: "" },
+          entityHints: {
+            tickers: [],
+            technicalTerms: ["梓潼"],
+            peopleOrCompanies: [],
+          },
+        },
+      }),
+    );
+
+    const intent = await resolver.resolve({
+      userPrompt: "帮我汇总之前梓潼相关的探讨内容",
+      history: [
+        {
+          role: "user",
+          content: "还记得之前我们讨论的梓潼相关的内容吗？",
+        },
+        {
+          role: "assistant",
+          content:
+            "记得。我们之前聊过，您对梓潼、文昌帝君以及古蜀道等相关的文化和符号象征很感兴趣。",
+        },
+      ],
+    });
+
+    expect(intent.referencesRecentHistory).toBe(false);
+    expect(intent.topicAnalysis.relation).toBe("adjacent_topic");
+    expect(intent.semanticEvidence.memoryRecall.target).toBe(
+      "conversation_history",
+    );
+  });
+
   it("upgrades external to mixed for personal-context cues", async () => {
     const resolver = makeResolver();
     mockGenerate.mockResolvedValueOnce(

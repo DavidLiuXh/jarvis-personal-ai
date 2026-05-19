@@ -49,6 +49,7 @@ import { buildHistoryFromMessages } from "./resumeFromDisk.js";
 import { LocalModelRouter } from "./localModelRouter.js";
 import type { IntentFrame } from "./intentResolver.js";
 import { buildIntentPlanSection } from "./intentPlan.js";
+import { buildRecentConversationRecallCandidates } from "./conversationRecall.js";
 import { buildIntentAwareMemoryPolicy } from "./intentAwareMemoryPolicy.js";
 import {
   buildClarificationDecision,
@@ -681,6 +682,35 @@ export class JarvisAgent extends EventEmitter {
     } else {
       console.error(
         `🧠 [prewarm] disabled by intent-aware policy (${memoryPolicy.reasons.join(",") || "not_needed"})`,
+      );
+    }
+
+    const recentConversationRecallCandidates =
+      buildRecentConversationRecallCandidates({
+        userPrompt,
+        intent,
+        conversationHistory,
+        maxCandidates: 2,
+      });
+    if (recentConversationRecallCandidates.length > 0) {
+      prewarmCandidates.unshift(
+        ...recentConversationRecallCandidates.map((candidate) => ({
+          text: candidate.text,
+          score: 1,
+          tier: "verified" as const,
+        })),
+      );
+      console.error(
+        `🧠 [conversation-recall] recent matches(${recentConversationRecallCandidates.length}): ` +
+          recentConversationRecallCandidates
+            .map((candidate) => candidate.matchedTerms.join(","))
+            .join(" | "),
+      );
+    } else if (
+      intent?.semanticEvidence.memoryRecall.target === "conversation_history"
+    ) {
+      console.error(
+        `🧠 [conversation-recall] no recent chat history match for query="${memoryPolicy.prewarmQuery.slice(0, 80)}"`,
       );
     }
 
