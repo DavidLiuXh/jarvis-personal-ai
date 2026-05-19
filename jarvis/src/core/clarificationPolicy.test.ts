@@ -8,6 +8,7 @@ import { describe, expect, it } from "vitest";
 import type { IntentFrame } from "./intentResolver.js";
 import {
   buildClarificationDecision,
+  buildClarificationTrace,
   buildClarifiedPrompt,
 } from "./clarificationPolicy.js";
 
@@ -298,5 +299,45 @@ describe("buildClarifiedPrompt", () => {
 
     expect(prompt).toContain("帮我处理一下这个文件");
     expect(prompt).toContain("Clarify action: 格式化并运行测试");
+  });
+});
+
+describe("buildClarificationTrace", () => {
+  it("returns a compact structured trace for enabled observability", () => {
+    const input = {
+      userPrompt: "帮我处理一下这个文件",
+      querySubject: "external" as const,
+      candidateAgents: [],
+      intent: intent({
+        taskType: "execute",
+        confidenceByDimension: {
+          ...intent().confidenceByDimension,
+          action: 0.4,
+        },
+        richIntent: {
+          ...intent().richIntent,
+          targets: [],
+          riskLevel: "high",
+          ambiguity: [
+            {
+              field: "action",
+              reason: "operation is not specified",
+              severity: "high",
+            },
+          ],
+        },
+      }),
+      recentHistoryLength: 2,
+    };
+    const decision = buildClarificationDecision(input);
+
+    const trace = buildClarificationTrace(input, decision);
+
+    expect(trace.enabled).toBe(true);
+    expect(trace.shouldAsk).toBe(true);
+    expect(trace.questionHeaders).toEqual(["Clarify action"]);
+    expect(trace.intent?.taskType).toBe("execute");
+    expect(trace.intent?.confidenceByDimension.action).toBe(0.4);
+    expect(trace.input.recentHistoryLength).toBe(2);
   });
 });

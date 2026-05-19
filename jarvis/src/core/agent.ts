@@ -51,6 +51,7 @@ import type { IntentFrame } from "./intentResolver.js";
 import { buildIntentAwareMemoryPolicy } from "./intentAwareMemoryPolicy.js";
 import {
   buildClarificationDecision,
+  buildClarificationTrace,
   buildClarifiedPrompt,
   formatClarificationQuestions,
   type ClarificationDecision,
@@ -1103,13 +1104,19 @@ export class JarvisAgent extends EventEmitter {
             `🔀 [Jarvis] Local routing: ${result.decision} | subject=${result.querySubject} | topic_shifted=${result.topicShifted} | time_window=${twLabel} | reason="${result.classifierReason}" (source=${result.source})`,
           );
 
-          const clarification = buildClarificationDecision({
+          const clarificationInput = {
             userPrompt,
             intent: intentFrame,
             querySubject,
             candidateAgents: intentFrame?.candidateAgents ?? [],
             recentHistoryLength: conversationHistory.length,
-          });
+          };
+          const clarification = buildClarificationDecision(clarificationInput);
+          if (this.jarvisConfig.routing?.clarificationObservability === true) {
+            console.error(
+              `[clarification] ${JSON.stringify(buildClarificationTrace(clarificationInput, clarification))}`,
+            );
+          }
           if (clarification.shouldAsk && clarification.blocking) {
             console.error(
               `❓ [Jarvis] Clarification required: ${clarification.reasons.join(",")}`,

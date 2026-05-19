@@ -22,6 +22,30 @@ export type ClarificationDecision = {
   reasons: string[];
 };
 
+export type ClarificationTrace = {
+  enabled: true;
+  shouldAsk: boolean;
+  blocking: boolean;
+  reasons: string[];
+  questionHeaders: string[];
+  intent: null | {
+    subject: IntentFrame["subject"];
+    taskType: IntentFrame["taskType"];
+    needsMemory: boolean;
+    referencesRecentHistory: boolean;
+    confidence: number;
+    confidenceByDimension: IntentFrame["confidenceByDimension"];
+    memoryTarget: IntentFrame["semanticEvidence"]["memoryRecall"]["target"];
+    riskLevel: IntentFrame["richIntent"]["riskLevel"];
+    ambiguity: IntentFrame["richIntent"]["ambiguity"];
+  };
+  input: {
+    querySubject: QuerySubject;
+    candidateAgents: string[];
+    recentHistoryLength: number;
+  };
+};
+
 const LOW_CONFIDENCE_THRESHOLD = 0.55;
 
 function hasHighSeverityAmbiguity(
@@ -193,4 +217,37 @@ export function formatClarificationQuestions(
     });
   });
   return lines.join("\n");
+}
+
+export function buildClarificationTrace(
+  input: ClarificationPolicyInput,
+  decision: ClarificationDecision,
+): ClarificationTrace {
+  return {
+    enabled: true,
+    shouldAsk: decision.shouldAsk,
+    blocking: decision.blocking,
+    reasons: decision.reasons,
+    questionHeaders: decision.questions.map(
+      (question) => question.header ?? question.question.slice(0, 40),
+    ),
+    intent: input.intent
+      ? {
+          subject: input.intent.subject,
+          taskType: input.intent.taskType,
+          needsMemory: input.intent.needsMemory,
+          referencesRecentHistory: input.intent.referencesRecentHistory,
+          confidence: input.intent.confidence,
+          confidenceByDimension: input.intent.confidenceByDimension,
+          memoryTarget: input.intent.semanticEvidence.memoryRecall.target,
+          riskLevel: input.intent.richIntent.riskLevel,
+          ambiguity: input.intent.richIntent.ambiguity,
+        }
+      : null,
+    input: {
+      querySubject: input.querySubject,
+      candidateAgents: input.candidateAgents,
+      recentHistoryLength: input.recentHistoryLength ?? 0,
+    },
+  };
 }

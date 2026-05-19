@@ -83,6 +83,12 @@ export interface JarvisConfig {
      * Default: true.
      */
     topicShiftDetection?: boolean;
+    /**
+     * Emit structured clarification-policy traces to stderr.
+     * Useful for debugging why Jarvis did or did not ask a follow-up question.
+     * Default: false.
+     */
+    clarificationObservability?: boolean;
   };
   /**
    * Session summarizer configuration.
@@ -497,6 +503,7 @@ export class ConfigManager {
       routing: {
         enabled: true,
         model: "",
+        clarificationObservability: false,
       },
     };
 
