@@ -65,6 +65,17 @@ function modelResponse(overrides: Record<string, unknown> = {}) {
         peopleOrCompanies: [],
       },
     },
+    intent_steps: [
+      {
+        id: "step-1",
+        type: "analyze",
+        action: "analyze external/domain context",
+        target: "market analysis",
+        depends_on: [],
+        requires_confirmation: false,
+        risk_level: "low",
+      },
+    ],
     time_window_days: null,
     date_from: null,
     date_to: null,
@@ -165,19 +176,21 @@ ${modelResponse({
     );
   });
 
-  it("throws when intent JSON repair also fails", async () => {
+  it("falls back deterministically when intent JSON repair also fails", async () => {
     const resolver = makeResolver();
     mockGenerate
       .mockResolvedValueOnce('{"query_subject":"external"')
       .mockResolvedValueOnce('{"still_invalid":');
 
-    await expect(
-      resolver.resolve({
-        userPrompt: "去年英伟达财报表现怎么样",
-      }),
-    ).rejects.toThrow("repair also failed");
+    const intent = await resolver.resolve({
+      userPrompt: "还记得我偏好的代码风格吗？",
+    });
 
     expect(mockGenerate).toHaveBeenCalledTimes(2);
+    expect(intent.subject).toBe("personal");
+    expect(intent.taskType).toBe("recall");
+    expect(intent.needsMemory).toBe(true);
+    expect(intent.evidence).toContain("deterministic_parse_fallback");
   });
 
   it("upgrades external to personal for memory recall cues", async () => {
@@ -305,10 +318,10 @@ ${modelResponse({
             span: "我的风险偏好",
           },
           memoryRecall: {
-            present: false,
-            target: "none",
-            reason: "",
-            span: "",
+            present: true,
+            target: "user_memory",
+            reason: "uses stored risk preference",
+            span: "我的风险偏好",
           },
           actionRequest: { present: false, action: "none", object: "" },
           entityHints: {
@@ -848,6 +861,66 @@ ${modelResponse({
     expect(intent.topicShifted).toBe(false);
   });
 
+  it("derives ordered multi-intent steps from semantic evidence and cues", async () => {
+    const resolver = makeResolver();
+    mockGenerate.mockResolvedValueOnce(
+      modelResponse({
+        query_subject: "external",
+        task_type: "analyze",
+        needs_external_knowledge: true,
+        semantic_evidence: {
+          personalContext: {
+            present: true,
+            reason: "uses user's risk preference",
+            span: "我的风险偏好",
+          },
+          memoryRecall: {
+            present: false,
+            target: "none",
+            reason: "",
+            span: "",
+          },
+          actionRequest: {
+            present: true,
+            action: "schedule",
+            object: "明天早上9点提醒我复盘",
+          },
+          entityHints: {
+            tickers: ["NVDA"],
+            technicalTerms: [],
+            peopleOrCompanies: [],
+          },
+        },
+        intent_steps: [],
+      }),
+    );
+
+    const intent = await resolver.resolve({
+      userPrompt:
+        "结合我的风险偏好分析 NVDA 最新财报，整理成 markdown，明天早上9点提醒我复盘",
+    });
+
+    expect(intent.subject).toBe("mixed");
+    expect(intent.taskType).toBe("schedule");
+    expect(intent.needsMemory).toBe(true);
+    expect(intent.needsScheduling).toBe(true);
+    expect(intent.intentSteps.map((step) => step.type)).toEqual([
+      "recall",
+      "analyze",
+      "execute",
+      "schedule",
+    ]);
+    expect(intent.intentSteps[1]).toMatchObject({
+      type: "analyze",
+      target: "NVDA",
+    });
+    expect(intent.intentSteps.at(-1)).toMatchObject({
+      type: "schedule",
+      requiresConfirmation: true,
+      riskLevel: "medium",
+    });
+  });
+
   it("normalizes grounded topic analysis and uses relation for topic shift", async () => {
     const resolver = makeResolver();
     mockGenerate.mockResolvedValueOnce(
@@ -897,12 +970,12 @@ ${modelResponse({
       confidence: 0.82,
       history: {
         label: "AI Agent value in enterprise procurement",
-        evidence: ["企业采购流程", "优势与必要性"],
+        evidence: expect.arrayContaining(["企业采购流程", "优势与必要性"]),
         sourceTurns: [-2],
       },
       current: {
         label: "LLM reliability and Agent decision-making",
-        evidence: ["LLM可靠性", "Agent决策"],
+        evidence: expect.arrayContaining(["LLM可靠性", "Agent决策"]),
         sourceTurns: [0],
       },
     });

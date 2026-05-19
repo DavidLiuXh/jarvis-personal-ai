@@ -73,6 +73,17 @@ function intent(overrides: Partial<IntentFrame> = {}): IntentFrame {
       ambiguity: [],
       riskLevel: "low",
     },
+    intentSteps: [
+      {
+        id: "step-1",
+        type: "recall",
+        action: "retrieve relevant user context",
+        target: "conversation_history",
+        dependsOn: [],
+        requiresConfirmation: false,
+        riskLevel: "low",
+      },
+    ],
     topicAnalysis: {
       history: { label: "", evidence: [], sourceTurns: [], confidence: 0.8 },
       current: {

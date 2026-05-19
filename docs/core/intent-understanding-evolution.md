@@ -144,23 +144,79 @@ normalize 能兜底，但强系统应该主动校验和修复模型输出。
 
 这同时包含外部分析、报告写入和定时提醒。单一 `taskType` 无法完整表达。
 
-短期做法：
+如果正确识别出了 Multi-Intent，后续执行阶段也需要逐步调整。Multi-Intent 的价值
+不在于“多贴几个标签”，而是让 Jarvis 知道一个用户请求里有多个不同性质的子任务，
+并能在后续按顺序、依赖、风险和上下文需求处理它们。
+
+例如：
+
+> 查 NVDA 最新财报，结合我的风险偏好写成 markdown，明天提醒我复盘
+
+至少包含：
+
+- `analyze`：分析 NVDA 财报；
+- `recall`：使用用户风险偏好；
+- `execute`：写入 markdown；
+- `schedule`：创建明天提醒。
+
+如果执行阶段仍只看一个 `taskType`，系统可能只回答分析内容，漏掉写文件或提醒；也
+可能因为主意图被判成 `execute` 而忽略外部分析和个人上下文。
+
+因此 Multi-Intent 应分阶段落地。
+
+阶段一：识别和暴露 intent steps，不改主执行循环。
 
 - 继续保留 `taskType` 作为主意图；
-- 新增 `secondaryIntents` 表示次级意图。
+- 新增 `intentSteps` 表示完整子任务；
+- `IntentFrame` 兼容旧字段；
+- 将 `<intent_plan>` 注入 system prompt，让主 LLM 明确看到完整任务结构；
+- memory / clarification / executor 先不做大改，避免一次性改动执行引擎。
+
+当前阶段一的落地边界：
+
+- 本地意图模型直接输出 `intent_steps`；
+- Resolver 会校验、归一化模型输出；
+- 当模型漏掉 steps 时，Resolver 会根据 subject、memory recall、entity hints、action cue、
+  schedule cue、candidate agents 做确定性补全；
+- 单步骤请求不注入 `<intent_plan>`，避免污染普通问答；
+- 多步骤请求注入 `<intent_plan>`，但执行仍由主 LLM 在一个 turn 内完成。
 
 候选结构：
 
 ```ts
 type IntentStep = {
+  id: string;
   type: "chat" | "recall" | "analyze" | "execute" | "delegate" | "schedule";
-  action?: string;
-  target?: string;
+  action: string;
+  target: string;
+  dependsOn: string[];
   requiresConfirmation?: boolean;
+  riskLevel?: "low" | "medium" | "high";
 };
 ```
 
-这样 downstream planner 可以保留完整请求，而不是把所有事情强行压成一个标签。
+阶段二：让 policy 层开始消费 steps。
+
+- 任一 step 是 `schedule` 且缺时间，则 clarification policy 追问；
+- 任一 step 是 `execute` 且 action/target 不清楚，则追问；
+- 任一 step 需要 memory，则 memory policy 允许必要的记忆注入；
+- external analyze + personal recall 同时存在时，subject 应保持 `mixed`；
+- delegate step 可保留 candidate agent，但不一定自动启动。
+
+阶段三：再引入真正的 orchestrated execution。
+
+```ts
+type ExecutionPlan = {
+  steps: IntentStep[];
+  mode: "single_llm" | "orchestrated";
+};
+```
+
+短期仍使用 `single_llm`：主模型阅读 `<intent_plan>` 后自行完成。长期才考虑 Jarvis
+按 step 主动调 retrieval、web/search、file write、schedule tool 或 subagent。
+
+这个分阶段策略可以让 Jarvis 先获得 Multi-Intent 的理解收益，又不会立即引入复杂
+执行器风险。
 
 ### P2：分维度置信度
 

@@ -70,6 +70,17 @@ function intent(overrides: Partial<IntentFrame> = {}): IntentFrame {
       ambiguity: [],
       riskLevel: "low",
     },
+    intentSteps: [
+      {
+        id: "step-1",
+        type: "analyze",
+        action: "analyze external/domain context",
+        target: "NVDA",
+        dependsOn: [],
+        requiresConfirmation: false,
+        riskLevel: "low",
+      },
+    ],
     topicAnalysis: {
       history: { label: "", evidence: [], sourceTurns: [], confidence: 0.8 },
       current: {

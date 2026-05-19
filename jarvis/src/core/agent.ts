@@ -48,6 +48,7 @@ import {
 import { buildHistoryFromMessages } from "./resumeFromDisk.js";
 import { LocalModelRouter } from "./localModelRouter.js";
 import type { IntentFrame } from "./intentResolver.js";
+import { buildIntentPlanSection } from "./intentPlan.js";
 import { buildIntentAwareMemoryPolicy } from "./intentAwareMemoryPolicy.js";
 import {
   buildClarificationDecision,
@@ -744,6 +745,7 @@ export class JarvisAgent extends EventEmitter {
       userPrompt,
       relevantSkills,
     );
+    const intentPlanSection = buildIntentPlanSection(intent);
 
     this.client
       .getChat()
@@ -751,6 +753,7 @@ export class JarvisAgent extends EventEmitter {
         defaultInstruction +
           "\n" +
           protocol +
+          intentPlanSection +
           injectionPlan.relevantSummarySection +
           injectionPlan.prewarmSection,
       );

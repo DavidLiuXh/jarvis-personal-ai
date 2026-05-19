@@ -55,6 +55,15 @@ type IntentExpectation = {
     }>;
     contextDependency?: Partial<IntentFrame["richIntent"]["contextDependency"]>;
   };
+  intentSteps?: {
+    minCount?: number;
+    contains?: Array<{
+      type: IntentFrame["intentSteps"][number]["type"];
+      actionIncludes?: string;
+      targetIncludes?: string;
+      requiresConfirmation?: boolean;
+    }>;
+  };
   topicAnalysis?: {
     relation?: IntentFrame["topicAnalysis"]["relation"];
     relationOneOf?: IntentFrame["topicAnalysis"]["relation"][];
@@ -84,6 +93,7 @@ type Dimension =
   | "action"
   | "entityHints"
   | "richIntent"
+  | "intentSteps"
   | "topicAnalysis"
   | "dimensionConfidence";
 
@@ -433,6 +443,44 @@ function compareIntent(intent: IntentFrame, expect: IntentExpectation) {
         intent.richIntent.contextDependency[dependencyKey],
         intent.richIntent.contextDependency[dependencyKey] === expectedValue,
         `richIntent.contextDependency.${key} matches`,
+      );
+    }
+  }
+
+  const intentSteps = expect.intentSteps;
+  if (intentSteps?.minCount !== undefined) {
+    addCheck(
+      checks,
+      "intentSteps",
+      `>=${intentSteps.minCount}`,
+      intent.intentSteps.length,
+      intent.intentSteps.length >= intentSteps.minCount,
+      "intentSteps has enough steps",
+    );
+  }
+  if (intentSteps?.contains) {
+    for (const expectedStep of intentSteps.contains) {
+      addCheck(
+        checks,
+        "intentSteps",
+        expectedStep,
+        intent.intentSteps,
+        intent.intentSteps.some(
+          (actual) =>
+            actual.type === expectedStep.type &&
+            (expectedStep.actionIncludes === undefined ||
+              actual.action
+                .toLowerCase()
+                .includes(expectedStep.actionIncludes.toLowerCase())) &&
+            (expectedStep.targetIncludes === undefined ||
+              actual.target
+                .toLowerCase()
+                .includes(expectedStep.targetIncludes.toLowerCase())) &&
+            (expectedStep.requiresConfirmation === undefined ||
+              actual.requiresConfirmation ===
+                expectedStep.requiresConfirmation),
+        ),
+        "intentSteps contains expected step",
       );
     }
   }
