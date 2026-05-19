@@ -112,6 +112,30 @@ export type IntentConfidenceByDimension = {
   richIntent: number;
 };
 
+export type TopicRelation =
+  | "same_topic"
+  | "subtopic"
+  | "adjacent_topic"
+  | "new_topic"
+  | "current_context_reference"
+  | "unknown";
+
+export type GroundedTopic = {
+  label: string;
+  evidence: string[];
+  sourceTurns: number[];
+  confidence: number;
+};
+
+export type TopicAnalysis = {
+  history: GroundedTopic;
+  current: GroundedTopic;
+  relation: TopicRelation;
+  relationReason: string;
+  confidence: number;
+  lowGrounding: boolean;
+};
+
 export type IntentFrame = {
   subject: QuerySubject;
   taskType: IntentTaskType;
@@ -135,6 +159,7 @@ export type IntentFrame = {
   evidence: string[];
   semanticEvidence: IntentEvidence;
   richIntent: RichIntent;
+  topicAnalysis: TopicAnalysis;
   source: "local-intent/ollama";
 };
 
@@ -168,6 +193,7 @@ type RawIntentModelResult = {
   references_recent_history?: boolean;
   topic_shifted?: boolean;
   rich_intent?: unknown;
+  topic_analysis?: unknown;
 };
 
 type RawMemoryTargetResult = {
@@ -449,6 +475,23 @@ Examples:
   History: "今天天气怎么样" | New: "帮我写一份投资分析报告" → task_type="execute", query_subject="external", references_recent_history=false, topic_shifted=true
   History: "讨论onnx部署" | New: "你之前说的那个超时参数怎么设" → task_type="chat", query_subject="personal", references_recent_history=true, topic_shifted=false
 
+DIMENSION 7B — Grounded Topic Analysis
+Return topic_analysis in addition to legacy history_topic/new_topic.
+Grounding rules:
+- topic_analysis.history.label must be a faithful compact label of the relevant recent history.
+- topic_analysis.current.label must be a faithful compact label of the current user request.
+- Each label must be supported by evidence spans copied or closely paraphrased from the provided text.
+- Do not introduce unstated lifecycle/stage words such as architecture/design/implementation unless supported by evidence.
+- source_turns uses negative indexes over the Recent Conversation Context: -1 is the most recent turn, -2 the turn before it.
+- relation:
+  - "current_context_reference": current request directly refers to the recent conversation with pronouns/follow-up wording.
+  - "same_topic": same domain and same intent.
+  - "subtopic": current request narrows or deepens the recent topic.
+  - "adjacent_topic": shares a broad domain but changes intent, layer, or focus.
+  - "new_topic": unrelated domain.
+  - "unknown": insufficient grounding.
+Use topic_analysis.confidence to express confidence in the topic grounding and relation.
+
 SCORING FORMULA
 complexity_score = knowledge_score * 0.6 + operation_score * 0.4 (round to integer)
 
@@ -494,6 +537,13 @@ Required compact schema:
   "date_to": null,
   "history_topic": "",
   "new_topic": "",
+  "topic_analysis": {
+    "history": {"label": "", "evidence": [], "source_turns": [], "confidence": 0-1},
+    "current": {"label": "", "evidence": [], "source_turns": [0], "confidence": 0-1},
+    "relation": "same_topic|subtopic|adjacent_topic|new_topic|current_context_reference|unknown",
+    "relation_reason": "",
+    "confidence": 0-1
+  },
   "references_recent_history": true|false,
   "topic_shifted": true|false
 }
@@ -579,8 +629,9 @@ Required top-level fields:
 knowledge_score, operation_score, complexity_score, complexity_reasoning,
 query_subject, task_type, needs_external_knowledge, needs_tool,
 needs_scheduling, candidate_agents, confidence, evidence, semantic_evidence,
-confidence_by_dimension, rich_intent, time_window_days, date_from, date_to,
-history_topic, new_topic, references_recent_history, topic_shifted.
+confidence_by_dimension, rich_intent, topic_analysis, time_window_days,
+date_from, date_to, history_topic, new_topic, references_recent_history,
+topic_shifted.
 
 Required semantic_evidence shape:
 {
@@ -601,6 +652,15 @@ Required rich_intent shape:
   "contextDependency": {"recentConversation": true|false, "longTermMemory": true|false, "localWorkspace": true|false, "externalWorld": true|false},
   "ambiguity": [{"field": "", "reason": "", "severity": "low"|"medium"|"high"}],
   "riskLevel": "low"|"medium"|"high"
+}
+
+Required topic_analysis shape:
+{
+  "history": {"label": "", "evidence": [], "source_turns": [], "confidence": 0-1},
+  "current": {"label": "", "evidence": [], "source_turns": [0], "confidence": 0-1},
+  "relation": "same_topic"|"subtopic"|"adjacent_topic"|"new_topic"|"current_context_reference"|"unknown",
+  "relation_reason": "",
+  "confidence": 0-1
 }
 
 Invalid JSON text:
@@ -700,6 +760,13 @@ function normalizeEvidenceStrings(value: unknown): string[] {
   return normalizeStringArray(value);
 }
 
+function normalizeNumberArray(value: unknown): number[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((item) => Number(item))
+    .filter((item) => Number.isFinite(item));
+}
+
 function normalizeConfidence(value: unknown): number {
   const confidence = Number(value);
   if (Number.isNaN(confidence)) return 0.5;
@@ -723,6 +790,98 @@ function asRecord(value: unknown): Record<string, unknown> {
 
 function normalizeOptionalString(value: unknown): string | undefined {
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+function normalizeTopicRelation(value: unknown): TopicRelation {
+  if (
+    value === "same_topic" ||
+    value === "subtopic" ||
+    value === "adjacent_topic" ||
+    value === "new_topic" ||
+    value === "current_context_reference" ||
+    value === "unknown"
+  ) {
+    return value;
+  }
+  return "unknown";
+}
+
+function normalizeGroundedTopic(
+  value: unknown,
+  fallbackLabel: string,
+  fallbackSourceTurns: number[],
+): GroundedTopic {
+  const record = asRecord(value);
+  return {
+    label: normalizeOptionalString(record.label) ?? fallbackLabel,
+    evidence: normalizeStringArray(record.evidence),
+    sourceTurns:
+      normalizeNumberArray(record.source_turns).length > 0
+        ? normalizeNumberArray(record.source_turns)
+        : fallbackSourceTurns,
+    confidence: normalizeConfidence(record.confidence ?? 0.5),
+  };
+}
+
+function hasWeakGrounding(topic: GroundedTopic): boolean {
+  return topic.label.trim().length > 0 && topic.evidence.length === 0;
+}
+
+function normalizeTopicAnalysis(args: {
+  value: unknown;
+  legacyHistoryTopic?: string;
+  legacyNewTopic?: string;
+  prompt: string;
+  recentTurns: ConversationTurn[];
+  referencesRecentHistory: boolean;
+  topicShifted: boolean;
+  recentHistoryLength: number;
+}): TopicAnalysis {
+  const root = asRecord(args.value);
+  const rawRelation = normalizeTopicRelation(root.relation);
+  const relation = args.referencesRecentHistory
+    ? "current_context_reference"
+    : rawRelation;
+  const history = normalizeGroundedTopic(
+    root.history,
+    normalizeOptionalString(args.legacyHistoryTopic) ?? "",
+    args.recentHistoryLength > 0 ? [-1] : [],
+  );
+  const current = normalizeGroundedTopic(
+    root.current,
+    normalizeOptionalString(args.legacyNewTopic) ?? "",
+    [0],
+  );
+  if (history.evidence.length === 0 && args.recentTurns.length > 0) {
+    const sourceIndexes =
+      history.sourceTurns.length > 0 ? history.sourceTurns : [-1];
+    history.evidence = sourceIndexes.flatMap((sourceTurn) => {
+      const index =
+        sourceTurn < 0 ? args.recentTurns.length + sourceTurn : sourceTurn;
+      const turn = args.recentTurns[index];
+      return turn?.content ? [turn.content.slice(0, 160)] : [];
+    });
+  }
+  if (current.evidence.length === 0) {
+    current.evidence = [args.prompt.slice(0, 160)];
+  }
+  const lowGrounding = hasWeakGrounding(history) || hasWeakGrounding(current);
+
+  return {
+    history,
+    current,
+    relation:
+      relation === "unknown" && args.topicShifted
+        ? "new_topic"
+        : relation === "unknown" && args.referencesRecentHistory
+          ? "current_context_reference"
+          : relation === "unknown" && args.recentHistoryLength > 0
+            ? "adjacent_topic"
+            : relation,
+    relationReason: normalizeOptionalString(root.relation_reason) ?? "",
+    confidence: normalizeConfidence(root.confidence ?? 0.5),
+    lowGrounding,
+  };
 }
 
 function normalizeMemoryRecallTarget(value: unknown): MemoryRecallTarget {
@@ -1033,7 +1192,8 @@ function buildConfidenceByDimension(args: {
   }
   if (
     evidence.has("memory_recall_cue") ||
-    evidence.has("personal_context_cue")
+    evidence.has("personal_context_cue") ||
+    evidence.has("personal_context_with_external_entity")
   ) {
     result.subject = maxConfidence(result.subject, 0.85);
   }
@@ -1085,6 +1245,9 @@ function buildConfidenceByDimension(args: {
 
   if (args.recentHistoryLength === 0) {
     result.topicShift = maxConfidence(result.topicShift, 0.95);
+  }
+  if (evidence.has("topic_analysis_low_grounding")) {
+    result.topicShift = minConfidence(result.topicShift, 0.55);
   }
 
   const hasTargets = args.richIntent.targets.length > 0;
@@ -1412,6 +1575,19 @@ export class IntentResolver {
         `🧠 [IntentResolver] Personal-context cue detected — subject upgraded external → mixed`,
       );
     } else if (
+      subject === "personal" &&
+      personalCue &&
+      !recallCue &&
+      (semanticEvidence.entityHints.tickers.length > 0 ||
+        semanticEvidence.entityHints.peopleOrCompanies.length > 0 ||
+        normalizeBoolean(parsed.needs_external_knowledge))
+    ) {
+      subject = "mixed";
+      evidence.push("personal_context_with_external_entity");
+      console.error(
+        `🧠 [IntentResolver] Personal context + external entity detected — subject upgraded personal → mixed`,
+      );
+    } else if (
       subject === "external" &&
       confidence < LOW_CONFIDENCE_THRESHOLD &&
       !externalPastEventCue
@@ -1505,24 +1681,46 @@ export class IntentResolver {
     const referencesRecentHistory =
       anaphoric ||
       currentContextReferenceCue ||
-      parsed.references_recent_history === true;
+      parsed.references_recent_history === true ||
+      normalizeTopicRelation(asRecord(parsed.topic_analysis).relation) ===
+        "current_context_reference";
     if (currentContextReferenceCue) {
       console.error(
         `🔗 [IntentResolver] Semantic current-context reference detected — topic_shifted forced false`,
       );
     }
+    const topicRelation = normalizeTopicRelation(
+      asRecord(parsed.topic_analysis).relation,
+    );
     // No history → topic shift is meaningless; force false to avoid spurious clears.
     const topicShifted =
       recentTurns.length === 0
         ? false
         : referencesRecentHistory
           ? false
-          : parsed.topic_shifted === true;
+          : topicRelation === "same_topic" || topicRelation === "subtopic"
+            ? false
+            : topicRelation === "new_topic"
+              ? true
+              : parsed.topic_shifted === true;
+    const topicAnalysis = normalizeTopicAnalysis({
+      value: parsed.topic_analysis,
+      legacyHistoryTopic: parsed.history_topic,
+      legacyNewTopic: parsed.new_topic,
+      prompt,
+      recentTurns,
+      referencesRecentHistory,
+      topicShifted,
+      recentHistoryLength: recentTurns.length,
+    });
 
-    if (parsed.history_topic || parsed.new_topic) {
+    if (parsed.history_topic || parsed.new_topic || parsed.topic_analysis) {
       console.error(
-        `🔍 [IntentResolver] topic analysis: history="${parsed.history_topic ?? "?"}" new="${parsed.new_topic ?? "?"}" references_recent=${parsed.references_recent_history ?? "?"} → topic_shifted=${topicShifted}`,
+        `🔍 [IntentResolver] topic analysis: relation=${topicAnalysis.relation} history="${topicAnalysis.history.label || parsed.history_topic || "?"}" evidence=${JSON.stringify(topicAnalysis.history.evidence)} new="${topicAnalysis.current.label || parsed.new_topic || "?"}" evidence=${JSON.stringify(topicAnalysis.current.evidence)} references_recent=${referencesRecentHistory} confidence=${topicAnalysis.confidence.toFixed(2)}${topicAnalysis.lowGrounding ? " low_grounding=true" : ""} → topic_shifted=${topicShifted}`,
       );
+    }
+    if (topicAnalysis.lowGrounding) {
+      evidence.push("topic_analysis_low_grounding");
     }
 
     const needsScheduling =
@@ -1592,6 +1790,7 @@ export class IntentResolver {
       source: "local-intent/ollama",
       semanticEvidence,
       richIntent,
+      topicAnalysis,
     };
   }
 }

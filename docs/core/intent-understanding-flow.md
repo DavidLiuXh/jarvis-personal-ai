@@ -226,6 +226,30 @@ resolvedDateRange: { from: number; to: number } | null;
 ```ts
 topicShifted: boolean;
 referencesRecentHistory: boolean;
+topicAnalysis: {
+  history: {
+    label: string;
+    evidence: string[];
+    sourceTurns: number[];
+    confidence: number;
+  };
+  current: {
+    label: string;
+    evidence: string[];
+    sourceTurns: number[];
+    confidence: number;
+  };
+  relation:
+    | "same_topic"
+    | "subtopic"
+    | "adjacent_topic"
+    | "new_topic"
+    | "current_context_reference"
+    | "unknown";
+  relationReason: string;
+  confidence: number;
+  lowGrounding: boolean;
+}
 ```
 
 用于判断是否清空当前 chat history。
@@ -234,6 +258,10 @@ referencesRecentHistory: boolean;
 
 - 如果用户明确引用当前上下文，比如“继续”“这个”“刚才那个”，不能清空历史；
 - 如果是新主题，且不是第一轮，可以清空历史，降低旧话题污染。
+- `history.label` 和 `current.label` 是模型对最近历史和当前请求的短标签；
+- `evidence` 是支撑标签的证据片段，优先来自原始用户输入或最近 history；
+- 如果模型漏掉 evidence，normalize 层会用当前 prompt 或相关 history turn 做 fallback；
+- `relation` 比自由文本 topic label 更重要，下游优先看关系类型和 `referencesRecentHistory`。
 
 #### 分维度置信度
 
@@ -655,6 +683,50 @@ clarification 之后，Jarvis 才处理 topic shift。
 则清空当前 chat history。
 
 但如果用户是“继续”“这个”“刚才那个”等当前上下文引用，guardrails 会把 `topicShifted` 强制为 false。
+
+### 6.1 Grounded Topic Analysis
+
+Topic analysis 已从简单的：
+
+```json
+{
+  "history_topic": "Procurement Agent architecture",
+  "new_topic": "LLM reliability and Agent decision-making"
+}
+```
+
+升级为 evidence-grounded 结构：
+
+```json
+{
+  "topic_analysis": {
+    "history": {
+      "label": "AI Agent in Procurement",
+      "evidence": ["AI Agent在企业采购流程中的优势与必要性？"],
+      "source_turns": [-2],
+      "confidence": 0.95
+    },
+    "current": {
+      "label": "LLM Reliability and Agent Decision-Making",
+      "evidence": ["LLM可靠性对Agent决策有什么影响？"],
+      "source_turns": [0],
+      "confidence": 0.95
+    },
+    "relation": "new_topic",
+    "relation_reason": "same broad AI-agent domain, but different focus",
+    "confidence": 0.95
+  }
+}
+```
+
+这解决的是 topic label 漂移问题：模型不能只自由生成一个话题名，还要给出支撑它的证据。
+
+代码层还有几个通用保护：
+
+- `referencesRecentHistory=true` 时，`relation` 强制为 `current_context_reference`；
+- 没有 relation 但有 recent history 时，默认回退到 `adjacent_topic`，避免不可解释的 unknown；
+- 如果 evidence 缺失，会用当前 prompt 或对应 history turn 作为 grounding fallback；
+- `lowGrounding=true` 会降低 `topicShift` 维度置信度，提醒后续策略保守处理。
 
 ## 7. 第七层：Intent-Aware Memory Policy
 

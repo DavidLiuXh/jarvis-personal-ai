@@ -70,6 +70,19 @@ function intent(overrides: Partial<IntentFrame> = {}): IntentFrame {
       ambiguity: [],
       riskLevel: "low",
     },
+    topicAnalysis: {
+      history: { label: "", evidence: [], sourceTurns: [], confidence: 0.8 },
+      current: {
+        label: "test goal",
+        evidence: ["test goal"],
+        sourceTurns: [0],
+        confidence: 0.8,
+      },
+      relation: "unknown",
+      relationReason: "",
+      confidence: 0.8,
+      lowGrounding: false,
+    },
     source: "local-intent/ollama",
     ...overrides,
   };

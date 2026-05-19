@@ -70,6 +70,23 @@ function modelResponse(overrides: Record<string, unknown> = {}) {
     date_to: null,
     history_topic: "coding",
     new_topic: "market analysis",
+    topic_analysis: {
+      history: {
+        label: "coding",
+        evidence: ["reranker timeout"],
+        source_turns: [-2, -1],
+        confidence: 0.8,
+      },
+      current: {
+        label: "market analysis",
+        evidence: ["market"],
+        source_turns: [0],
+        confidence: 0.8,
+      },
+      relation: "new_topic",
+      relation_reason: "different domain",
+      confidence: 0.8,
+    },
     references_recent_history: false,
     topic_shifted: true,
     ...overrides,
@@ -273,6 +290,43 @@ ${modelResponse({
     expect(intent.subject).toBe("mixed");
     expect(intent.needsMemory).toBe(true);
     expect(intent.evidence).toContain("personal_context_cue");
+  });
+
+  it("upgrades personal to mixed when personal context includes an external entity", async () => {
+    const resolver = makeResolver();
+    mockGenerate.mockResolvedValueOnce(
+      modelResponse({
+        query_subject: "personal",
+        needs_external_knowledge: true,
+        semantic_evidence: {
+          personalContext: {
+            present: true,
+            reason: "based on user risk preference",
+            span: "我的风险偏好",
+          },
+          memoryRecall: {
+            present: false,
+            target: "none",
+            reason: "",
+            span: "",
+          },
+          actionRequest: { present: false, action: "none", object: "" },
+          entityHints: {
+            tickers: ["NVDA"],
+            technicalTerms: [],
+            peopleOrCompanies: ["Nvidia"],
+          },
+        },
+      }),
+    );
+
+    const intent = await resolver.resolve({
+      userPrompt: "结合我的风险偏好分析一下 NVDA 是否适合我",
+      history: HISTORY_CODING,
+    });
+
+    expect(intent.subject).toBe("mixed");
+    expect(intent.evidence).toContain("personal_context_with_external_entity");
   });
 
   it("forces topicShifted=false for anaphoric current-history references", async () => {
@@ -792,5 +846,65 @@ ${modelResponse({
     });
 
     expect(intent.topicShifted).toBe(false);
+  });
+
+  it("normalizes grounded topic analysis and uses relation for topic shift", async () => {
+    const resolver = makeResolver();
+    mockGenerate.mockResolvedValueOnce(
+      modelResponse({
+        topic_shifted: false,
+        references_recent_history: false,
+        history_topic: "Procurement Agent architecture",
+        new_topic: "LLM reliability and Agent decision-making",
+        topic_analysis: {
+          history: {
+            label: "AI Agent value in enterprise procurement",
+            evidence: ["企业采购流程", "优势与必要性"],
+            source_turns: [-2],
+            confidence: 0.86,
+          },
+          current: {
+            label: "LLM reliability and Agent decision-making",
+            evidence: ["LLM可靠性", "Agent决策"],
+            source_turns: [0],
+            confidence: 0.84,
+          },
+          relation: "adjacent_topic",
+          relation_reason:
+            "Both are about agents, but the focus changes from procurement value to reliability of decisions.",
+          confidence: 0.82,
+        },
+      }),
+    );
+
+    const intent = await resolver.resolve({
+      userPrompt: "LLM可靠性对Agent决策有什么影响？",
+      history: [
+        {
+          role: "user",
+          content: "AI Agent在企业采购流程中的优势与必要性？",
+        },
+        {
+          role: "assistant",
+          content: "可以从效率、合规、成本控制和供应商协同几个方面分析。",
+        },
+      ],
+    });
+
+    expect(intent.topicShifted).toBe(false);
+    expect(intent.topicAnalysis).toMatchObject({
+      relation: "adjacent_topic",
+      confidence: 0.82,
+      history: {
+        label: "AI Agent value in enterprise procurement",
+        evidence: ["企业采购流程", "优势与必要性"],
+        sourceTurns: [-2],
+      },
+      current: {
+        label: "LLM reliability and Agent decision-making",
+        evidence: ["LLM可靠性", "Agent决策"],
+        sourceTurns: [0],
+      },
+    });
   });
 });

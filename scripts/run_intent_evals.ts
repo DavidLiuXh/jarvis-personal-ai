@@ -55,6 +55,16 @@ type IntentExpectation = {
     }>;
     contextDependency?: Partial<IntentFrame["richIntent"]["contextDependency"]>;
   };
+  topicAnalysis?: {
+    relation?: IntentFrame["topicAnalysis"]["relation"];
+    relationOneOf?: IntentFrame["topicAnalysis"]["relation"][];
+    confidenceMin?: number;
+    lowGrounding?: boolean;
+    historyLabelNotContains?: string[];
+    currentLabelNotContains?: string[];
+    historyEvidenceContains?: string[];
+    currentEvidenceContains?: string[];
+  };
   confidenceByDimensionMin?: Partial<IntentFrame["confidenceByDimension"]>;
 };
 
@@ -74,6 +84,7 @@ type Dimension =
   | "action"
   | "entityHints"
   | "richIntent"
+  | "topicAnalysis"
   | "dimensionConfidence";
 
 type CheckResult = {
@@ -214,6 +225,12 @@ function includesAll(actual: string[], expected: string[] | undefined) {
 function includesNone(actual: string[], expected: string[] | undefined) {
   if (!expected || expected.length === 0) return true;
   return expected.every((item) => !actual.includes(item));
+}
+
+function textContainsAll(actual: string[], expected: string[] | undefined) {
+  if (!expected || expected.length === 0) return true;
+  const actualText = actual.join("\n").toLowerCase();
+  return expected.every((item) => actualText.includes(item.toLowerCase()));
 }
 
 function addCheck(
@@ -434,6 +451,110 @@ function compareIntent(intent: IntentFrame, expect: IntentExpectation) {
         `confidenceByDimension.${key} meets minimum`,
       );
     }
+  }
+
+  const topicAnalysis = expect.topicAnalysis;
+  if (topicAnalysis?.relation !== undefined) {
+    addCheck(
+      checks,
+      "topicAnalysis",
+      topicAnalysis.relation,
+      intent.topicAnalysis.relation,
+      intent.topicAnalysis.relation === topicAnalysis.relation,
+      "topicAnalysis.relation matches",
+    );
+  }
+  if (topicAnalysis?.relationOneOf !== undefined) {
+    addCheck(
+      checks,
+      "topicAnalysis",
+      topicAnalysis.relationOneOf,
+      intent.topicAnalysis.relation,
+      topicAnalysis.relationOneOf.includes(intent.topicAnalysis.relation),
+      "topicAnalysis.relation is one of expected values",
+    );
+  }
+  if (topicAnalysis?.confidenceMin !== undefined) {
+    addCheck(
+      checks,
+      "topicAnalysis",
+      `>=${topicAnalysis.confidenceMin}`,
+      intent.topicAnalysis.confidence,
+      intent.topicAnalysis.confidence >= topicAnalysis.confidenceMin,
+      "topicAnalysis.confidence meets minimum",
+    );
+  }
+  if (topicAnalysis?.lowGrounding !== undefined) {
+    addCheck(
+      checks,
+      "topicAnalysis",
+      topicAnalysis.lowGrounding,
+      intent.topicAnalysis.lowGrounding,
+      intent.topicAnalysis.lowGrounding === topicAnalysis.lowGrounding,
+      "topicAnalysis.lowGrounding matches",
+    );
+  }
+  if (topicAnalysis?.historyLabelNotContains) {
+    addCheck(
+      checks,
+      "topicAnalysis",
+      topicAnalysis.historyLabelNotContains,
+      intent.topicAnalysis.history.label,
+      topicAnalysis.historyLabelNotContains.every(
+        (item) =>
+          !intent.topicAnalysis.history.label
+            .toLowerCase()
+            .includes(item.toLowerCase()),
+      ),
+      "topicAnalysis.history.label excludes forbidden terms",
+    );
+  }
+  if (topicAnalysis?.currentLabelNotContains) {
+    addCheck(
+      checks,
+      "topicAnalysis",
+      topicAnalysis.currentLabelNotContains,
+      intent.topicAnalysis.current.label,
+      topicAnalysis.currentLabelNotContains.every(
+        (item) =>
+          !intent.topicAnalysis.current.label
+            .toLowerCase()
+            .includes(item.toLowerCase()),
+      ),
+      "topicAnalysis.current.label excludes forbidden terms",
+    );
+  }
+  if (topicAnalysis?.historyEvidenceContains) {
+    addCheck(
+      checks,
+      "topicAnalysis",
+      topicAnalysis.historyEvidenceContains,
+      intent.topicAnalysis.history.evidence,
+      textContainsAll(
+        [
+          intent.topicAnalysis.history.label,
+          ...intent.topicAnalysis.history.evidence,
+        ],
+        topicAnalysis.historyEvidenceContains,
+      ),
+      "topicAnalysis.history.evidence contains expected values",
+    );
+  }
+  if (topicAnalysis?.currentEvidenceContains) {
+    addCheck(
+      checks,
+      "topicAnalysis",
+      topicAnalysis.currentEvidenceContains,
+      intent.topicAnalysis.current.evidence,
+      textContainsAll(
+        [
+          intent.topicAnalysis.current.label,
+          ...intent.topicAnalysis.current.evidence,
+        ],
+        topicAnalysis.currentEvidenceContains,
+      ),
+      "topicAnalysis.current.evidence contains expected values",
+    );
   }
 
   return checks;
