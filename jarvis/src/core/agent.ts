@@ -47,6 +47,8 @@ import {
 } from "./memoryInjectionPlanner.js";
 import { buildHistoryFromMessages } from "./resumeFromDisk.js";
 import { LocalModelRouter } from "./localModelRouter.js";
+import type { IntentFrame } from "./intentResolver.js";
+import { buildIntentAwareMemoryPolicy } from "./intentAwareMemoryPolicy.js";
 import { type AgentManager } from "./agentManager.js";
 import {
   extractBackgroundPrompt,
@@ -487,6 +489,7 @@ export class JarvisAgent extends EventEmitter {
       role: "user" | "assistant";
       content: string;
     }> = [],
+    intent: IntentFrame | null = null,
   ) {
     // Strip thoughtSignature from historical turns to reduce token usage.
     // The active loop (turns after the last user text message) must keep
@@ -495,26 +498,32 @@ export class JarvisAgent extends EventEmitter {
     // signatures where needed, so stripping old ones is safe.
     this.stripThoughtSignaturesFromOldHistory();
 
-    // For external queries (pure world knowledge), skip personal facts entirely —
-    // they add noise and no value. For personal/mixed, use symmetric embedding:
-    // prepend the same "PRIVATE_USER_DATA: User Query - " prefix to the query
-    // so it lands in the same embedding space as the prefixed fact vectors.
+    const memoryPolicy = buildIntentAwareMemoryPolicy({
+      userPrompt,
+      querySubject,
+      intent,
+      config: {
+        prewarmLimit: this.jarvisConfig.memory.prewarmLimit ?? 3,
+        prewarmLimitMixed: this.jarvisConfig.memory.prewarmLimitMixed ?? 1,
+        memoryMaxDistance: this.jarvisConfig.memory.memoryMaxDistance ?? 1.0,
+        prewarmMaxDistanceMixed:
+          this.jarvisConfig.memory.prewarmMaxDistanceMixed ?? 0.6,
+      },
+    });
+    querySubject = memoryPolicy.querySubject;
+
     let facts: FactRecord[] = [];
-    if (querySubject !== "external") {
-      const embeddingQuery =
-        querySubject === "personal" || querySubject === "mixed"
-          ? "PRIVATE_USER_DATA: User Query - " + userPrompt
-          : userPrompt;
-      const hasPrefix = embeddingQuery !== userPrompt;
+    if (memoryPolicy.allowFacts) {
+      const hasPrefix = memoryPolicy.factQuery !== userPrompt;
       console.error(
-        `🔍 [Jarvis] searchFacts (subject=${querySubject}, prefix=${hasPrefix}): "${embeddingQuery.slice(0, 80)}"`,
+        `🔍 [Jarvis] searchFacts (subject=${querySubject}, prefix=${hasPrefix}): "${memoryPolicy.factQuery.slice(0, 80)}"`,
       );
       facts = (await this.memoryService.searchFacts(
-        embeddingQuery,
+        memoryPolicy.factQuery,
       )) as FactRecord[];
     } else {
       console.error(
-        `🔍 [Jarvis] External query (subject=external) — skipping facts + prewarm injection.`,
+        `🔍 [Jarvis] Intent-aware memory policy — skipping facts (${memoryPolicy.reasons.join(",") || "not_needed"}).`,
       );
     }
 
@@ -557,25 +566,13 @@ export class JarvisAgent extends EventEmitter {
     // as it is Gemini CLI global config irrelevant to personal assistant use
     const defaultInstruction = buildJarvisPreamble();
 
-    // vec_memories pre-warm: inject semantically similar past conversations
-    // external: skip entirely (context adhesion risk)
-    // mixed: conservative limit + stricter distance threshold
-    // personal: full prewarmLimit + standard memoryMaxDistance
-    const prewarmLimit = this.jarvisConfig.memory.prewarmLimit ?? 3;
-    const prewarmLimitMixed = this.jarvisConfig.memory.prewarmLimitMixed ?? 1;
-    const prewarmMaxDistanceMixed =
-      this.jarvisConfig.memory.prewarmMaxDistanceMixed ?? 0.6;
     const prewarmCandidates: PrewarmCandidate[] = [];
-    if (prewarmLimit > 0 && querySubject !== "external") {
-      const effectiveLimit =
-        querySubject === "mixed" ? prewarmLimitMixed : prewarmLimit;
-      const effectiveMaxDistance =
-        querySubject === "mixed"
-          ? prewarmMaxDistanceMixed
-          : (this.jarvisConfig.memory.memoryMaxDistance ?? 1.0);
+    if (memoryPolicy.allowPrewarm && memoryPolicy.prewarmLimit > 0) {
+      const effectiveLimit = memoryPolicy.prewarmLimit;
+      const effectiveMaxDistance = memoryPolicy.prewarmMaxDistance;
       // Query rewriting: for personal queries, expand/de-reference the query
       // before vector search to improve retrieval accuracy.
-      let searchQuery = userPrompt;
+      let searchQuery = memoryPolicy.prewarmQuery;
       const queryRewriteEnabled =
         this.jarvisConfig.routing?.queryRewrite === true;
       if (queryRewriteEnabled && !this.localModelRouter) {
@@ -585,11 +582,11 @@ export class JarvisAgent extends EventEmitter {
       }
       if (
         queryRewriteEnabled &&
-        querySubject === "personal" &&
+        memoryPolicy.shouldRewritePrewarmQuery &&
         this.localModelRouter
       ) {
         const rewritten = await this.localModelRouter.rewriteMemoryQuery(
-          userPrompt,
+          memoryPolicy.prewarmQuery,
           conversationHistory,
         );
         if (rewritten) {
@@ -673,13 +670,17 @@ export class JarvisAgent extends EventEmitter {
               .join("\n"),
         );
       }
+    } else {
+      console.error(
+        `🧠 [prewarm] disabled by intent-aware policy (${memoryPolicy.reasons.join(",") || "not_needed"})`,
+      );
     }
 
     const summaryCandidates: SummaryCandidate[] = [];
-    if (querySubject !== "external" && this.conversationSummary.trim()) {
+    if (memoryPolicy.allowSummary && this.conversationSummary.trim()) {
       const summaryChunks = await this.memoryService.searchSummaryChunks(
         this.sessionId,
-        userPrompt,
+        memoryPolicy.prewarmQuery,
         2,
         0.72,
       );
@@ -693,12 +694,16 @@ export class JarvisAgent extends EventEmitter {
       } else {
         const fallbackSection = buildRelevantSummarySectionFallback(
           this.conversationSummary,
-          userPrompt,
+          memoryPolicy.prewarmQuery,
         );
         summaryCandidates.push(
           ...extractSummaryCandidatesFromSection(fallbackSection),
         );
       }
+    } else if (this.conversationSummary.trim()) {
+      console.error(
+        `🧠 [summary] disabled by intent-aware policy (${memoryPolicy.reasons.join(",") || "not_needed"})`,
+      );
     }
 
     const injectionPlan = this.buildMemoryInjectionPlanner().buildPlan({
@@ -744,7 +749,7 @@ export class JarvisAgent extends EventEmitter {
       );
 
     console.error(
-      `🔄 [Jarvis] System Prompt Refreshed (subject=${querySubject}). Facts injected: ${injectionPlan.factsInjected}/${facts.length}. Summary bullets: ${injectionPlan.summaryInjected}. Prewarmed memories: ${prewarmLimit > 0 ? injectionPlan.prewarmInjected : "disabled"}. Memory chars: ${injectionPlan.usedChars}. Rejected: ${injectionPlan.rejected.length}.`,
+      `🔄 [Jarvis] System Prompt Refreshed (subject=${querySubject}, memoryPolicy=${memoryPolicy.reasons.join(",") || "enabled"}). Facts injected: ${injectionPlan.factsInjected}/${facts.length}. Summary bullets: ${injectionPlan.summaryInjected}. Prewarmed memories: ${memoryPolicy.allowPrewarm ? injectionPlan.prewarmInjected : "disabled"}. Memory chars: ${injectionPlan.usedChars}. Rejected: ${injectionPlan.rejected.length}.`,
     );
   }
 
@@ -1036,6 +1041,7 @@ export class JarvisAgent extends EventEmitter {
         let querySubject: "personal" | "external" | "mixed" = "mixed";
         let timeWindowDays: number | null = null;
         let resolvedDateRange: { from: number; to: number } | null = null;
+        let intentFrame: IntentFrame | null = null;
         let conversationHistory: Array<{
           role: "user" | "assistant";
           content: string;
@@ -1075,6 +1081,7 @@ export class JarvisAgent extends EventEmitter {
           this.client.config.getModel = () => result.model;
 
           querySubject = result.querySubject;
+          intentFrame = result.intent;
           timeWindowDays = result.timeWindowDays;
           resolvedDateRange = result.resolvedDateRange ?? null;
           this.toolRouter.setCurrentTimeWindow(timeWindowDays);
@@ -1113,6 +1120,7 @@ export class JarvisAgent extends EventEmitter {
           timeWindowDays,
           resolvedDateRange,
           conversationHistory,
+          intentFrame,
         );
 
         // Restore getModel() after refreshContext() — it reads config state

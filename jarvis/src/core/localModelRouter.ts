@@ -36,6 +36,8 @@ export type RoutingResult = {
   resolvedDateRange: { from: number; to: number } | null;
   /** Whether the local model detected a topic shift from recent history. */
   topicShifted: boolean;
+  /** Full normalized intent frame used by downstream intent-aware policies. */
+  intent: IntentFrame | null;
 };
 
 type ClassifyResult = {
@@ -47,6 +49,7 @@ type ClassifyResult = {
   dateTo: string | null;
   resolvedDateRange: { from: number; to: number } | null;
   topicShifted: boolean;
+  intent: IntentFrame;
 };
 
 export class LocalModelRouter {
@@ -92,6 +95,7 @@ export class LocalModelRouter {
         dateTo,
         resolvedDateRange,
         topicShifted,
+        intent: classified.intent,
       };
     } catch (e: any) {
       return {
@@ -106,6 +110,7 @@ export class LocalModelRouter {
         dateTo: null,
         resolvedDateRange: null,
         topicShifted: false,
+        intent: null,
       };
     }
   }
@@ -131,6 +136,7 @@ export class LocalModelRouter {
       dateFrom: intent.dateFrom,
       dateTo: intent.dateTo,
       resolvedDateRange: intent.resolvedDateRange,
+      intent,
     };
   }
 
