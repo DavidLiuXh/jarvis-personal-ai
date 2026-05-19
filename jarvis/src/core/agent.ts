@@ -49,6 +49,12 @@ import { buildHistoryFromMessages } from "./resumeFromDisk.js";
 import { LocalModelRouter } from "./localModelRouter.js";
 import type { IntentFrame } from "./intentResolver.js";
 import { buildIntentAwareMemoryPolicy } from "./intentAwareMemoryPolicy.js";
+import {
+  buildClarificationDecision,
+  buildClarifiedPrompt,
+  formatClarificationQuestions,
+  type ClarificationDecision,
+} from "./clarificationPolicy.js";
 import { type AgentManager } from "./agentManager.js";
 import {
   extractBackgroundPrompt,
@@ -1064,7 +1070,7 @@ export class JarvisAgent extends EventEmitter {
             ];
           });
           conversationHistory = history;
-          const result = await this.localModelRouter.route(userPrompt, history);
+          let result = await this.localModelRouter.route(userPrompt, history);
           // Use setActiveModel (not setModel) to avoid broadcasting on the
           // global coreEvents singleton, which would disrupt all live
           // GeminiClient instances including concurrent bg agents.
@@ -1096,6 +1102,49 @@ export class JarvisAgent extends EventEmitter {
           console.error(
             `🔀 [Jarvis] Local routing: ${result.decision} | subject=${result.querySubject} | topic_shifted=${result.topicShifted} | time_window=${twLabel} | reason="${result.classifierReason}" (source=${result.source})`,
           );
+
+          const clarification = buildClarificationDecision({
+            userPrompt,
+            intent: intentFrame,
+            querySubject,
+            candidateAgents: intentFrame?.candidateAgents ?? [],
+            recentHistoryLength: conversationHistory.length,
+          });
+          if (clarification.shouldAsk && clarification.blocking) {
+            console.error(
+              `❓ [Jarvis] Clarification required: ${clarification.reasons.join(",")}`,
+            );
+            const answers =
+              await this.requestClarificationOrEmitFallback(clarification);
+            if (answers === null) {
+              if (originalGetModel) {
+                this.client.config.getModel = originalGetModel;
+              }
+              return;
+            }
+            userPrompt = buildClarifiedPrompt(
+              userPrompt,
+              clarification,
+              answers,
+            );
+            this.toolRouter.setCurrentUserPrompt(userPrompt);
+
+            result = await this.localModelRouter.route(userPrompt, history);
+            this.client.config.setActiveModel(result.model);
+            querySubject = result.querySubject;
+            intentFrame = result.intent;
+            timeWindowDays = result.timeWindowDays;
+            resolvedDateRange = result.resolvedDateRange ?? null;
+            this.toolRouter.setCurrentTimeWindow(timeWindowDays);
+            this.toolRouter.setCurrentDateRange(
+              resolvedDateRange,
+              result.dateFrom,
+              result.dateTo,
+            );
+            console.error(
+              `🔀 [Jarvis] Re-routed after clarification: ${result.decision} | subject=${result.querySubject} | topic_shifted=${result.topicShifted} | reason="${result.classifierReason}" (source=${result.source})`,
+            );
+          }
 
           // Topic shift detected: clear history so LLM starts fresh on new topic.
           // Guard: skip on first turn (already cleared at session start) and when disabled.
@@ -1409,6 +1458,60 @@ export class JarvisAgent extends EventEmitter {
         entry.resolve(answers);
       }
     }
+  }
+
+  private async requestClarificationOrEmitFallback(
+    decision: ClarificationDecision,
+  ): Promise<Record<string, string> | null> {
+    const entry = this.pendingAskUserWs;
+    if (!entry || entry.ws.readyState !== 1 /* OPEN */) {
+      this.emit(JarvisEventType.CONTENT, {
+        type: "content",
+        value: formatClarificationQuestions(decision),
+      });
+      return null;
+    }
+
+    const { ws, ownerId } = entry;
+    return new Promise<Record<string, string>>((resolve, reject) => {
+      const id = `clarify-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      const timer = setTimeout(() => {
+        this.pendingAskUsers.delete(id);
+        reject(new Error("user did not respond within 300s"));
+      }, 300_000);
+
+      const cleanup = () => clearTimeout(timer);
+      this.pendingAskUsers.set(id, {
+        ownerId,
+        resolve: (answers) => {
+          cleanup();
+          resolve(answers);
+        },
+        reject: (e) => {
+          cleanup();
+          reject(e);
+        },
+      });
+
+      if (ws.readyState !== 1 /* OPEN */) {
+        this.pendingAskUsers.delete(id);
+        cleanup();
+        reject(new Error("WebSocket closed"));
+        return;
+      }
+
+      this.emit(JarvisEventType.CONTENT, {
+        type: "ask_user_request",
+        value: { id, questions: decision.questions },
+      });
+    }).catch((e) => {
+      console.error(`⚠️ [Jarvis] Clarification cancelled: ${e.message}`);
+      this.emit(JarvisEventType.CONTENT, {
+        type: "content",
+        value: "已取消本次操作。",
+      });
+      return null;
+    });
   }
 
   /**
