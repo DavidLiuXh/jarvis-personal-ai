@@ -45,6 +45,15 @@ function modelResponse(overrides: Record<string, unknown> = {}) {
     needs_scheduling: false,
     candidate_agents: [],
     confidence: 0.8,
+    confidence_by_dimension: {
+      subject: 0.8,
+      taskType: 0.8,
+      memoryTarget: 0.8,
+      action: 0.8,
+      entityHints: 0.8,
+      topicShift: 0.8,
+      richIntent: 0.8,
+    },
     evidence: ["model_cue"],
     semantic_evidence: {
       personalContext: { present: false, reason: "", span: "" },
@@ -96,6 +105,11 @@ describe("IntentResolver", () => {
       complexityScore: 52,
       confidence: 0.8,
       source: "local-intent/ollama",
+    });
+    expect(intent.confidenceByDimension).toMatchObject({
+      subject: 0.8,
+      taskType: 0.8,
+      richIntent: 0.8,
     });
     expect(intent.richIntent).toMatchObject({
       primaryAction: "analyze",
@@ -295,6 +309,10 @@ ${modelResponse({
     expect(intent.semanticEvidence.memoryRecall.target).toBe(
       "current_context_reference",
     );
+    expect(intent.confidenceByDimension.memoryTarget).toBeGreaterThanOrEqual(
+      0.9,
+    );
+    expect(intent.confidenceByDimension.topicShift).toBeGreaterThanOrEqual(0.9);
     expect(intent.richIntent.targets).toContainEqual({
       type: "current_context",
       value: "recent_conversation",
@@ -319,6 +337,8 @@ ${modelResponse({
     expect(intent.taskType).toBe("schedule");
     expect(intent.needsScheduling).toBe(true);
     expect(intent.needsTool).toBe(true);
+    expect(intent.confidenceByDimension.taskType).toBeGreaterThanOrEqual(0.9);
+    expect(intent.confidenceByDimension.action).toBeGreaterThanOrEqual(0.85);
   });
 
   it("keeps high-confidence pure external questions external", async () => {
@@ -494,6 +514,7 @@ ${modelResponse({
     expect(intent.subject).toBe("mixed");
     expect(intent.needsMemory).toBe(true);
     expect(intent.evidence).toContain("low_confidence_external_subject");
+    expect(intent.confidenceByDimension.subject).toBeLessThanOrEqual(0.6);
   });
 
   it("uses action cues to promote chat to execute", async () => {
@@ -512,6 +533,8 @@ ${modelResponse({
     expect(intent.taskType).toBe("execute");
     expect(intent.needsTool).toBe(true);
     expect(intent.semanticEvidence.actionRequest.action).toBe("write");
+    expect(intent.confidenceByDimension.taskType).toBeGreaterThanOrEqual(0.9);
+    expect(intent.confidenceByDimension.action).toBeGreaterThanOrEqual(0.85);
     expect(intent.richIntent.primaryAction).toBe("modify");
     expect(intent.richIntent.contextDependency.localWorkspace).toBe(true);
     expect(intent.evidence).toContain("action_cue");
@@ -635,6 +658,9 @@ ${modelResponse({
 
     expect(intent.candidateAgents).toContain("investment-analysis");
     expect(intent.semanticEvidence.entityHints.tickers).toContain("NVDA");
+    expect(intent.confidenceByDimension.entityHints).toBeGreaterThanOrEqual(
+      0.85,
+    );
     expect(intent.richIntent.targets).toContainEqual({
       type: "external_entity",
       value: "NVDA",
@@ -700,6 +726,7 @@ ${modelResponse({
     expect(intent.needsTool).toBe(true);
     expect(intent.candidateAgents).toContain("investment-analysis");
     expect(intent.semanticEvidence.actionRequest.action).toBe("delegate");
+    expect(intent.confidenceByDimension.action).toBeGreaterThanOrEqual(0.9);
     expect(intent.richIntent).toMatchObject({
       primaryAction: "delegate",
       riskLevel: "medium",

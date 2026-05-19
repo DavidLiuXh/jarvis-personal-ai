@@ -55,6 +55,7 @@ type IntentExpectation = {
     }>;
     contextDependency?: Partial<IntentFrame["richIntent"]["contextDependency"]>;
   };
+  confidenceByDimensionMin?: Partial<IntentFrame["confidenceByDimension"]>;
 };
 
 type Dimension =
@@ -72,7 +73,8 @@ type Dimension =
   | "memoryTarget"
   | "action"
   | "entityHints"
-  | "richIntent";
+  | "richIntent"
+  | "dimensionConfidence";
 
 type CheckResult = {
   dimension: Dimension;
@@ -414,6 +416,22 @@ function compareIntent(intent: IntentFrame, expect: IntentExpectation) {
         intent.richIntent.contextDependency[dependencyKey],
         intent.richIntent.contextDependency[dependencyKey] === expectedValue,
         `richIntent.contextDependency.${key} matches`,
+      );
+    }
+  }
+
+  if (expect.confidenceByDimensionMin) {
+    for (const [key, expectedMin] of Object.entries(
+      expect.confidenceByDimensionMin,
+    )) {
+      const dimensionKey = key as keyof IntentFrame["confidenceByDimension"];
+      addCheck(
+        checks,
+        "dimensionConfidence",
+        `>=${expectedMin}`,
+        intent.confidenceByDimension[dimensionKey],
+        intent.confidenceByDimension[dimensionKey] >= Number(expectedMin),
+        `confidenceByDimension.${key} meets minimum`,
       );
     }
   }

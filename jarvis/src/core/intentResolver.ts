@@ -102,6 +102,16 @@ export type RichIntent = {
   riskLevel: RichIntentRiskLevel;
 };
 
+export type IntentConfidenceByDimension = {
+  subject: number;
+  taskType: number;
+  memoryTarget: number;
+  action: number;
+  entityHints: number;
+  topicShift: number;
+  richIntent: number;
+};
+
 export type IntentFrame = {
   subject: QuerySubject;
   taskType: IntentTaskType;
@@ -121,6 +131,7 @@ export type IntentFrame = {
   operationScore: number | null;
   reason: string;
   confidence: number;
+  confidenceByDimension: IntentConfidenceByDimension;
   evidence: string[];
   semanticEvidence: IntentEvidence;
   richIntent: RichIntent;
@@ -146,6 +157,7 @@ type RawIntentModelResult = {
   needs_scheduling?: boolean;
   candidate_agents?: unknown;
   confidence?: number;
+  confidence_by_dimension?: unknown;
   evidence?: unknown;
   semantic_evidence?: unknown;
   time_window_days?: number | null;
@@ -444,6 +456,7 @@ OUTPUT RULES
 - Respond ONLY with a raw JSON object. No markdown, no explanation.
 - All fields required. time_window_days / date_from / date_to may be null.
 - confidence is 0-1.
+- confidence_by_dimension gives independent 0-1 confidence for subject, taskType, memoryTarget, action, entityHints, topicShift, and richIntent.
 - evidence is an array of short strings naming cues you used.
 - semantic_evidence is required and must follow the schema below.
 
@@ -460,6 +473,7 @@ Required compact schema:
   "needs_scheduling": true|false,
   "candidate_agents": [],
   "confidence": 0-1,
+  "confidence_by_dimension": {"subject": 0-1, "taskType": 0-1, "memoryTarget": 0-1, "action": 0-1, "entityHints": 0-1, "topicShift": 0-1, "richIntent": 0-1},
   "evidence": [],
   "semantic_evidence": {
     "personalContext": {"present": true|false, "reason": "", "span": ""},
@@ -565,8 +579,8 @@ Required top-level fields:
 knowledge_score, operation_score, complexity_score, complexity_reasoning,
 query_subject, task_type, needs_external_knowledge, needs_tool,
 needs_scheduling, candidate_agents, confidence, evidence, semantic_evidence,
-rich_intent, time_window_days, date_from, date_to, history_topic, new_topic,
-references_recent_history, topic_shifted.
+confidence_by_dimension, rich_intent, time_window_days, date_from, date_to,
+history_topic, new_topic, references_recent_history, topic_shifted.
 
 Required semantic_evidence shape:
 {
@@ -575,6 +589,9 @@ Required semantic_evidence shape:
   "actionRequest": {"present": true|false, "action": "read"|"write"|"run"|"schedule"|"delegate"|"none", "object": ""},
   "entityHints": {"tickers": [], "technicalTerms": [], "peopleOrCompanies": []}
 }
+
+Required confidence_by_dimension shape:
+{"subject": 0-1, "taskType": 0-1, "memoryTarget": 0-1, "action": 0-1, "entityHints": 0-1, "topicShift": 0-1, "richIntent": 0-1}
 
 Required rich_intent shape:
 {
@@ -689,6 +706,14 @@ function normalizeConfidence(value: unknown): number {
   return Math.max(0, Math.min(1, confidence));
 }
 
+function maxConfidence(...values: number[]): number {
+  return Math.max(...values.map((value) => normalizeConfidence(value)));
+}
+
+function minConfidence(...values: number[]): number {
+  return Math.min(...values.map((value) => normalizeConfidence(value)));
+}
+
 function asRecord(value: unknown): Record<string, unknown> {
   if (value !== null && typeof value === "object" && !Array.isArray(value)) {
     return value as Record<string, unknown>;
@@ -756,6 +781,22 @@ function normalizeIntentEvidence(value: unknown): IntentEvidence {
       technicalTerms: normalizeStringArray(entityHints.technicalTerms),
       peopleOrCompanies: normalizeStringArray(entityHints.peopleOrCompanies),
     },
+  };
+}
+
+function normalizeConfidenceByDimension(
+  value: unknown,
+  fallback: number,
+): IntentConfidenceByDimension {
+  const root = asRecord(value);
+  return {
+    subject: normalizeConfidence(root.subject ?? fallback),
+    taskType: normalizeConfidence(root.taskType ?? fallback),
+    memoryTarget: normalizeConfidence(root.memoryTarget ?? fallback),
+    action: normalizeConfidence(root.action ?? fallback),
+    entityHints: normalizeConfidence(root.entityHints ?? fallback),
+    topicShift: normalizeConfidence(root.topicShift ?? fallback),
+    richIntent: normalizeConfidence(root.richIntent ?? fallback),
   };
 }
 
@@ -963,6 +1004,95 @@ function buildRichIntent(args: {
           ? "medium"
           : "low",
   };
+}
+
+function buildConfidenceByDimension(args: {
+  parsedConfidenceByDimension: unknown;
+  confidence: number;
+  evidence: string[];
+  subject: QuerySubject;
+  taskType: IntentTaskType;
+  semanticEvidence: IntentEvidence;
+  referencesRecentHistory: boolean;
+  recentHistoryLength: number;
+  richIntent: RichIntent;
+}): IntentConfidenceByDimension {
+  const result = normalizeConfidenceByDimension(
+    args.parsedConfidenceByDimension,
+    args.confidence,
+  );
+  const evidence = new Set(args.evidence);
+  const hasEvidencePrefix = (prefix: string) =>
+    args.evidence.some((item) => item.startsWith(prefix));
+
+  if (hasEvidencePrefix("invalid_subject:")) {
+    result.subject = minConfidence(result.subject, 0.4);
+  }
+  if (evidence.has("low_confidence_external_subject")) {
+    result.subject = minConfidence(result.subject, 0.6);
+  }
+  if (
+    evidence.has("memory_recall_cue") ||
+    evidence.has("personal_context_cue")
+  ) {
+    result.subject = maxConfidence(result.subject, 0.85);
+  }
+  if (evidence.has("external_past_event_not_recall")) {
+    result.subject = maxConfidence(result.subject, 0.85);
+    result.taskType = maxConfidence(result.taskType, 0.85);
+  }
+
+  if (
+    evidence.has("schedule_cue") ||
+    evidence.has("action_cue") ||
+    evidence.has("delegate_action_cue") ||
+    evidence.has("remember_to_action_not_recall")
+  ) {
+    result.taskType = maxConfidence(result.taskType, 0.9);
+  }
+  if (args.taskType === "execute" || args.taskType === "schedule") {
+    result.action = maxConfidence(result.action, 0.85);
+  }
+  if (args.taskType === "delegate") {
+    result.action = maxConfidence(result.action, 0.9);
+  }
+
+  if (args.semanticEvidence.memoryRecall.target !== "none") {
+    result.memoryTarget = maxConfidence(result.memoryTarget, 0.85);
+  }
+  if (
+    args.semanticEvidence.memoryRecall.target === "current_context_reference" ||
+    args.referencesRecentHistory
+  ) {
+    result.memoryTarget = maxConfidence(result.memoryTarget, 0.9);
+    result.topicShift = maxConfidence(result.topicShift, 0.9);
+  }
+  if (evidence.has("remember_to_action_not_recall")) {
+    result.memoryTarget = maxConfidence(result.memoryTarget, 0.9);
+    result.action = maxConfidence(result.action, 0.85);
+  }
+
+  const hasEntityHints =
+    args.semanticEvidence.entityHints.tickers.length > 0 ||
+    args.semanticEvidence.entityHints.technicalTerms.length > 0 ||
+    args.semanticEvidence.entityHints.peopleOrCompanies.length > 0;
+  if (hasEntityHints) {
+    result.entityHints = maxConfidence(result.entityHints, 0.85);
+  }
+  if (evidence.has("investment_analysis_candidate")) {
+    result.entityHints = maxConfidence(result.entityHints, 0.85);
+  }
+
+  if (args.recentHistoryLength === 0) {
+    result.topicShift = maxConfidence(result.topicShift, 0.95);
+  }
+
+  const hasTargets = args.richIntent.targets.length > 0;
+  result.richIntent = hasTargets
+    ? maxConfidence(result.richIntent, 0.8)
+    : minConfidence(maxConfidence(result.richIntent, 0.65), 0.85);
+
+  return result;
 }
 
 function inferTaskType(prompt: string, parsedTaskType: string | undefined) {
@@ -1420,6 +1550,17 @@ export class IntentResolver {
       confidence,
       semanticEvidence,
     });
+    const confidenceByDimension = buildConfidenceByDimension({
+      parsedConfidenceByDimension: parsed.confidence_by_dimension,
+      confidence,
+      evidence,
+      subject,
+      taskType,
+      semanticEvidence,
+      referencesRecentHistory,
+      recentHistoryLength: recentTurns.length,
+      richIntent,
+    });
 
     return {
       subject,
@@ -1446,6 +1587,7 @@ export class IntentResolver {
           : Number(parsed.operation_score),
       reason: parsed.complexity_reasoning ?? "(no reason)",
       confidence,
+      confidenceByDimension,
       evidence,
       source: "local-intent/ollama",
       semanticEvidence,
