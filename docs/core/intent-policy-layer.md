@@ -22,6 +22,8 @@ Each policy rule is represented as an explicit unit:
 - `apply(state)`: deterministic state patch.
 - `snapshot(state)`: compact before/after trace payload.
 
+Rules live in `jarvis/src/core/intentPolicy.ts`. `intentResolver.ts` constructs policy state and calls the registry, but rule definitions and manifests are kept out of the resolver.
+
 The resolver returns `IntentFrame.policyTrace`, where every applied rule includes:
 
 - `ruleId`
@@ -115,6 +117,18 @@ Run the full real-model gate:
 npx tsx scripts/run_intent_evals.ts --models gemma4:e2b --min-pass-rate 1
 ```
 
+Write a core policy trace baseline:
+
+```bash
+npx tsx scripts/run_intent_evals.ts --models gemma4:e2b --suite core --min-pass-rate 1 --write-policy-baseline evals/intent/policy-trace-baseline.core.json
+```
+
+Compare against the committed core policy trace baseline:
+
+```bash
+npx tsx scripts/run_intent_evals.ts --models gemma4:e2b --suite core --min-pass-rate 1 --compare-policy-baseline evals/intent/policy-trace-baseline.core.json
+```
+
 Policy changes should pass both unit coverage and the full real-model gate before commit.
 
 ## Eval Coverage
@@ -125,3 +139,9 @@ Intent eval cases can assert policy behavior:
 - `expect.policyTrace.reasonCodesNotContain`
 
 The Markdown and JSON reports include `Policy Reason Codes`, showing how many cases and applications covered each reason code. This makes it visible when a rule has no regression coverage.
+
+## Rule Coverage
+
+Every registered policy rule must have a deterministic unit case in `jarvis/src/core/intentPolicy.test.ts`. This is intentionally separate from real-model evals because some policy paths depend on low-confidence or contradictory model output and should not rely on model luck for coverage.
+
+The core real-model baseline is a path-stability gate: it detects when a case still passes but reaches the answer through a different policy trace.

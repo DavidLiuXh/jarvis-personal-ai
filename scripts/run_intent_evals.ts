@@ -8,6 +8,7 @@ import {
   type ConversationTurn,
   type IntentFrame,
 } from "../jarvis/src/core/intentResolver.js";
+import type { IntentPolicyTraceEntry } from "../jarvis/src/core/intentPolicy.js";
 
 type IntentEvalCase = {
   id: string;
@@ -158,6 +159,8 @@ function parseArgs(argv: string[]) {
     tags: [] as string[],
     suite: "",
     minPassRate: null as number | null,
+    writePolicyBaseline: "",
+    comparePolicyBaseline: "",
   };
 
   for (let i = 0; i < argv.length; i += 1) {
@@ -198,6 +201,12 @@ function parseArgs(argv: string[]) {
       i += 1;
     } else if (arg === "--min-pass-rate" && next) {
       args.minPassRate = Number(next);
+      i += 1;
+    } else if (arg === "--write-policy-baseline" && next) {
+      args.writePolicyBaseline = path.resolve(next);
+      i += 1;
+    } else if (arg === "--compare-policy-baseline" && next) {
+      args.comparePolicyBaseline = path.resolve(next);
       i += 1;
     } else if (arg === "--help" || arg === "-h") {
       printHelp();
@@ -242,6 +251,10 @@ Options:
   --tags <a,b>         Run cases containing any of these tags
   --suite <name>       Run cases tagged suite:<name>, e.g. --suite core
   --min-pass-rate <n>  Require each model to meet this pass rate, e.g. 1 or 0.95
+  --write-policy-baseline <path>
+                       Write compact policy trace baseline JSON
+  --compare-policy-baseline <path>
+                       Fail if compact policy trace differs from baseline
 `);
 }
 
@@ -864,6 +877,93 @@ function renderMarkdown(reports: ModelReport[]) {
   return lines.join("\n");
 }
 
+type PolicyTraceBaseline = {
+  version: 1;
+  reports: Array<{
+    model: string;
+    cases: Array<{
+      id: string;
+      passed: boolean;
+      reasonCodes: string[];
+      trace: Array<
+        Pick<
+          IntentPolicyTraceEntry,
+          "ruleId" | "stage" | "priority" | "reasonCode"
+        >
+      >;
+    }>;
+  }>;
+};
+
+function buildPolicyTraceBaseline(reports: ModelReport[]): PolicyTraceBaseline {
+  return {
+    version: 1,
+    reports: reports.map((report) => ({
+      model: report.model,
+      cases: report.results.map((result) => {
+        const trace = (result.intent?.policyTrace ?? []).map((entry) => ({
+          ruleId: entry.ruleId,
+          stage: entry.stage,
+          priority: entry.priority,
+          reasonCode: entry.reasonCode,
+        }));
+        return {
+          id: result.id,
+          passed: result.passed,
+          reasonCodes: trace.map((entry) => entry.reasonCode),
+          trace,
+        };
+      }),
+    })),
+  };
+}
+
+function comparePolicyTraceBaseline(
+  expected: PolicyTraceBaseline,
+  actual: PolicyTraceBaseline,
+) {
+  const diffs: string[] = [];
+  const expectedReports = new Map(
+    expected.reports.map((report) => [report.model, report]),
+  );
+  const actualReports = new Map(
+    actual.reports.map((report) => [report.model, report]),
+  );
+
+  for (const [model, expectedReport] of expectedReports) {
+    const actualReport = actualReports.get(model);
+    if (!actualReport) {
+      diffs.push(`missing model ${model}`);
+      continue;
+    }
+    const actualCases = new Map(
+      actualReport.cases.map((caseResult) => [caseResult.id, caseResult]),
+    );
+    for (const expectedCase of expectedReport.cases) {
+      const actualCase = actualCases.get(expectedCase.id);
+      if (!actualCase) {
+        diffs.push(`${model}/${expectedCase.id}: missing case`);
+        continue;
+      }
+      const expectedCodes = expectedCase.reasonCodes.join(",");
+      const actualCodes = actualCase.reasonCodes.join(",");
+      if (expectedCodes !== actualCodes) {
+        diffs.push(
+          `${model}/${expectedCase.id}: reasonCodes ${expectedCodes || "(none)"} -> ${actualCodes || "(none)"}`,
+        );
+      }
+    }
+  }
+
+  for (const model of actualReports.keys()) {
+    if (!expectedReports.has(model)) {
+      diffs.push(`unexpected model ${model}`);
+    }
+  }
+
+  return diffs;
+}
+
 async function main() {
   const args = parseArgs(process.argv.slice(2));
   let cases = readCases(args.casesPath);
@@ -931,11 +1031,20 @@ async function main() {
     minPassRate: args.minPassRate,
     reports,
   };
+  const policyBaseline = buildPolicyTraceBaseline(reports);
 
   fs.writeFileSync(jsonPath, JSON.stringify(payload, null, 2));
   const markdown = renderMarkdown(reports);
   fs.writeFileSync(mdPath, markdown);
   fs.writeFileSync(latestMdPath, markdown);
+  if (args.writePolicyBaseline) {
+    fs.mkdirSync(path.dirname(args.writePolicyBaseline), { recursive: true });
+    fs.writeFileSync(
+      args.writePolicyBaseline,
+      JSON.stringify(policyBaseline, null, 2),
+    );
+    console.log(`Policy baseline: ${args.writePolicyBaseline}`);
+  }
 
   console.log(`\nJSON report: ${jsonPath}`);
   console.log(`Markdown report: ${mdPath}`);
@@ -948,7 +1057,24 @@ async function main() {
       (report) =>
         report.total === 0 || report.passed / report.total < args.minPassRate!,
     );
-  process.exitCode = hasFailures || missesPassRate ? 1 : 0;
+  let policyBaselineDiffs: string[] = [];
+  if (args.comparePolicyBaseline) {
+    const expectedBaseline = JSON.parse(
+      fs.readFileSync(args.comparePolicyBaseline, "utf8"),
+    ) as PolicyTraceBaseline;
+    policyBaselineDiffs = comparePolicyTraceBaseline(
+      expectedBaseline,
+      policyBaseline,
+    );
+    if (policyBaselineDiffs.length > 0) {
+      console.error("\nPolicy baseline differs:");
+      for (const diff of policyBaselineDiffs) console.error(`- ${diff}`);
+    } else {
+      console.log(`Policy baseline matched: ${args.comparePolicyBaseline}`);
+    }
+  }
+  process.exitCode =
+    hasFailures || missesPassRate || policyBaselineDiffs.length > 0 ? 1 : 0;
 }
 
 main().catch((error) => {

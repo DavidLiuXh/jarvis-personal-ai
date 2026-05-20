@@ -1,0 +1,151 @@
+{
+  "version": 1,
+  "reports": [
+    {
+      "model": "gemma4:e2b",
+      "cases": [
+        {
+          "id": "conversation_recall.en_onnx_deployment",
+          "passed": true,
+          "reasonCodes": [],
+          "trace": []
+        },
+        {
+          "id": "conversation_recall.zh_personal_ai_goals",
+          "passed": true,
+          "reasonCodes": [],
+          "trace": []
+        },
+        {
+          "id": "external_past_event.apple_memory_phrase",
+          "passed": true,
+          "reasonCodes": ["EXTERNAL_PAST_EVENT_NOT_RECALL"],
+          "trace": [
+            {
+              "ruleId": "task.external_past_event_not_recall",
+              "stage": "guardrail",
+              "priority": 450,
+              "reasonCode": "EXTERNAL_PAST_EVENT_NOT_RECALL"
+            }
+          ]
+        },
+        {
+          "id": "current_context.timeout_parameter",
+          "passed": true,
+          "reasonCodes": [],
+          "trace": []
+        },
+        {
+          "id": "current_context.en_task_followup",
+          "passed": true,
+          "reasonCodes": ["ANAPHORA_CURRENT_CONTEXT_REFERENCE"],
+          "trace": [
+            {
+              "ruleId": "semantic.anaphora_current_context",
+              "stage": "normalize",
+              "priority": 420,
+              "reasonCode": "ANAPHORA_CURRENT_CONTEXT_REFERENCE"
+            }
+          ]
+        },
+        {
+          "id": "remember_not_recall.backup_directory",
+          "passed": true,
+          "reasonCodes": [
+            "REMEMBER_TO_ACTION_NOT_MEMORY_RECALL",
+            "REMEMBER_TO_ACTION_TASK_NOT_RECALL"
+          ],
+          "trace": [
+            {
+              "ruleId": "semantic.remember_to_action_not_recall",
+              "stage": "guardrail",
+              "priority": 500,
+              "reasonCode": "REMEMBER_TO_ACTION_NOT_MEMORY_RECALL"
+            },
+            {
+              "ruleId": "task.remember_to_action_not_recall",
+              "stage": "guardrail",
+              "priority": 600,
+              "reasonCode": "REMEMBER_TO_ACTION_TASK_NOT_RECALL"
+            }
+          ]
+        },
+        {
+          "id": "external.no_memory_history_summary",
+          "passed": true,
+          "reasonCodes": ["EXTERNAL_PAST_EVENT_NOT_RECALL"],
+          "trace": [
+            {
+              "ruleId": "task.external_past_event_not_recall",
+              "stage": "guardrail",
+              "priority": 450,
+              "reasonCode": "EXTERNAL_PAST_EVENT_NOT_RECALL"
+            }
+          ]
+        },
+        {
+          "id": "mixed.tech_preference_compare",
+          "passed": true,
+          "reasonCodes": ["TECHNICAL_TERM_NORMALIZATION"],
+          "trace": [
+            {
+              "ruleId": "semantic.technical_entity_normalization",
+              "stage": "normalize",
+              "priority": 190,
+              "reasonCode": "TECHNICAL_TERM_NORMALIZATION"
+            }
+          ]
+        },
+        {
+          "id": "multi_intent.recall_to_markdown",
+          "passed": true,
+          "reasonCodes": [],
+          "trace": []
+        },
+        {
+          "id": "multi_intent.delegate_and_schedule",
+          "passed": true,
+          "reasonCodes": ["SCHEDULE_CUE_TASK_OVERRIDE"],
+          "trace": [
+            {
+              "ruleId": "task.schedule_cue_override",
+              "stage": "override",
+              "priority": 500,
+              "reasonCode": "SCHEDULE_CUE_TASK_OVERRIDE"
+            }
+          ]
+        },
+        {
+          "id": "technical_acronym.http",
+          "passed": true,
+          "reasonCodes": [],
+          "trace": []
+        },
+        {
+          "id": "schedule.weekly_report",
+          "passed": true,
+          "reasonCodes": [],
+          "trace": []
+        },
+        {
+          "id": "action.run_intent_eval_smoke",
+          "passed": true,
+          "reasonCodes": [],
+          "trace": []
+        },
+        {
+          "id": "delegate.explicit_agent_tsla",
+          "passed": true,
+          "reasonCodes": [],
+          "trace": []
+        },
+        {
+          "id": "topic_grounding.procurement_compliance_followup",
+          "passed": true,
+          "reasonCodes": [],
+          "trace": []
+        }
+      ]
+    }
+  ]
+}
