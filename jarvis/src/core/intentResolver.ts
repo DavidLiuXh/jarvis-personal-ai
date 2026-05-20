@@ -171,7 +171,25 @@ export type IntentFrame = {
   richIntent: RichIntent;
   intentSteps: IntentStep[];
   topicAnalysis: TopicAnalysis;
+  policyTrace: IntentPolicyTraceEntry[];
   source: "local-intent/ollama";
+};
+
+export type IntentPolicyStage =
+  | "normalize"
+  | "guardrail"
+  | "override"
+  | "finalize";
+
+export type IntentPolicyTraceEntry = {
+  ruleId: string;
+  stage: IntentPolicyStage;
+  priority: number;
+  reasonCode: string;
+  applied: boolean;
+  before?: Record<string, unknown>;
+  after?: Record<string, unknown>;
+  skippedReason?: string;
 };
 
 export type IntentResolverOptions = {
@@ -424,6 +442,7 @@ function extractTickerCandidates(prompt: string): string[] {
 function normalizeInvestmentEntityHints(
   prompt: string,
   semanticEvidence: IntentEvidence,
+  emitLog = true,
 ): IntentEvidence {
   if (!INVESTMENT_ANALYSIS_CUE_RE.test(prompt)) return semanticEvidence;
 
@@ -443,9 +462,11 @@ function normalizeInvestmentEntityHints(
   }
 
   const promoted = new Set(promptTickers);
-  console.error(
-    `🏷️ [IntentResolver] Deterministic ticker normalization tickers=${promptTickers.join(",")}`,
-  );
+  if (emitLog) {
+    console.error(
+      `🏷️ [IntentResolver] Deterministic ticker normalization tickers=${promptTickers.join(",")}`,
+    );
+  }
   return {
     ...semanticEvidence,
     entityHints: {
@@ -463,6 +484,7 @@ function normalizeInvestmentEntityHints(
 function normalizeTechnicalEntityHints(
   prompt: string,
   semanticEvidence: IntentEvidence,
+  emitLog = true,
 ): IntentEvidence {
   const existing = new Set(
     semanticEvidence.entityHints.technicalTerms.map((term) =>
@@ -476,9 +498,11 @@ function normalizeTechnicalEntityHints(
 
   if (detected.length === 0) return semanticEvidence;
 
-  console.error(
-    `🏷️ [IntentResolver] Deterministic technical-term normalization terms=${detected.join(",")}`,
-  );
+  if (emitLog) {
+    console.error(
+      `🏷️ [IntentResolver] Deterministic technical-term normalization terms=${detected.join(",")}`,
+    );
+  }
   return {
     ...semanticEvidence,
     entityHints: {
@@ -489,6 +513,540 @@ function normalizeTechnicalEntityHints(
       ],
     },
   };
+}
+
+type IntentPolicyRule<TState> = {
+  id: string;
+  stage: IntentPolicyStage;
+  priority: number;
+  reasonCode: string;
+  applies(state: TState): boolean;
+  apply(state: TState): TState;
+  snapshot(state: TState): Record<string, unknown>;
+};
+
+function runIntentPolicyRules<TState>(
+  state: TState,
+  rules: IntentPolicyRule<TState>[],
+  trace: IntentPolicyTraceEntry[],
+): TState {
+  let nextState = state;
+  for (const rule of [...rules].sort((a, b) => b.priority - a.priority)) {
+    const before = rule.snapshot(nextState);
+    if (!rule.applies(nextState)) continue;
+    nextState = rule.apply(nextState);
+    const after = rule.snapshot(nextState);
+    trace.push({
+      ruleId: rule.id,
+      stage: rule.stage,
+      priority: rule.priority,
+      reasonCode: rule.reasonCode,
+      applied: true,
+      before,
+      after,
+    });
+  }
+  return nextState;
+}
+
+function appendPolicyEvidence(evidence: string[], item: string): string[] {
+  return evidence.includes(item) ? [...evidence] : [...evidence, item];
+}
+
+type SemanticPolicyState = {
+  prompt: string;
+  recentTurns: ConversationTurn[];
+  semanticEvidence: IntentEvidence;
+};
+
+const semanticEvidenceSnapshot = (state: SemanticPolicyState) => ({
+  memoryTarget: state.semanticEvidence.memoryRecall.target,
+  memoryPresent: state.semanticEvidence.memoryRecall.present,
+  action: state.semanticEvidence.actionRequest.action,
+  actionPresent: state.semanticEvidence.actionRequest.present,
+  tickers: [...state.semanticEvidence.entityHints.tickers],
+  technicalTerms: [...state.semanticEvidence.entityHints.technicalTerms],
+  peopleOrCompanies: [...state.semanticEvidence.entityHints.peopleOrCompanies],
+});
+
+function semanticEvidencePolicyRules(): IntentPolicyRule<SemanticPolicyState>[] {
+  return [
+    {
+      id: "semantic.remember_to_action_not_recall",
+      stage: "guardrail",
+      priority: 500,
+      reasonCode: "REMEMBER_TO_ACTION_NOT_MEMORY_RECALL",
+      snapshot: semanticEvidenceSnapshot,
+      applies: (state) => hasRememberToActionCue(state.prompt),
+      apply: (state) => ({
+        ...state,
+        semanticEvidence: {
+          ...state.semanticEvidence,
+          memoryRecall: {
+            present: false,
+            target: "none",
+            reason: "remember-to-action phrasing is not memory recall",
+            span: state.semanticEvidence.memoryRecall.span,
+          },
+          actionRequest: {
+            present: false,
+            action: "none",
+            object: state.semanticEvidence.actionRequest.object,
+          },
+        },
+      }),
+    },
+    {
+      id: "semantic.anaphora_current_context",
+      stage: "normalize",
+      priority: 420,
+      reasonCode: "ANAPHORA_CURRENT_CONTEXT_REFERENCE",
+      snapshot: semanticEvidenceSnapshot,
+      applies: (state) =>
+        hasAnaphoricReference(state.prompt, state.recentTurns) &&
+        state.semanticEvidence.memoryRecall.target !== "external_past_event" &&
+        !hasMemoryRecallCue(state.prompt),
+      apply: (state) => ({
+        ...state,
+        semanticEvidence: {
+          ...state.semanticEvidence,
+          memoryRecall: {
+            ...state.semanticEvidence.memoryRecall,
+            present: true,
+            target: "current_context_reference",
+            reason:
+              state.semanticEvidence.memoryRecall.reason ||
+              "anaphoric reference to recent conversation",
+          },
+        },
+      }),
+    },
+    {
+      id: "semantic.conversation_history_from_none",
+      stage: "normalize",
+      priority: 410,
+      reasonCode: "CONVERSATION_HISTORY_CUE_FROM_NONE",
+      snapshot: semanticEvidenceSnapshot,
+      applies: (state) =>
+        state.semanticEvidence.memoryRecall.target === "none" &&
+        hasConversationHistoryRecallCue(state.prompt),
+      apply: (state) => ({
+        ...state,
+        semanticEvidence: {
+          ...state.semanticEvidence,
+          memoryRecall: {
+            ...state.semanticEvidence.memoryRecall,
+            present: true,
+            target: "conversation_history",
+            reason:
+              state.semanticEvidence.memoryRecall.reason ||
+              "explicit prior conversation cue",
+            span: state.semanticEvidence.memoryRecall.span || state.prompt,
+          },
+        },
+      }),
+    },
+    {
+      id: "semantic.conversation_history_from_memory_or_stale_context",
+      stage: "guardrail",
+      priority: 400,
+      reasonCode: "CONVERSATION_HISTORY_CUE_TARGET_CORRECTION",
+      snapshot: semanticEvidenceSnapshot,
+      applies: (state) =>
+        (state.semanticEvidence.memoryRecall.target === "user_memory" ||
+          (state.semanticEvidence.memoryRecall.target ===
+            "current_context_reference" &&
+            !hasCurrentContextReferenceCue(state.prompt))) &&
+        hasConversationHistoryRecallCue(state.prompt),
+      apply: (state) => ({
+        ...state,
+        semanticEvidence: {
+          ...state.semanticEvidence,
+          memoryRecall: {
+            ...state.semanticEvidence.memoryRecall,
+            target: "conversation_history",
+            reason:
+              state.semanticEvidence.memoryRecall.reason ||
+              "explicit prior conversation cue",
+          },
+        },
+      }),
+    },
+    {
+      id: "semantic.action_cue_from_none",
+      stage: "normalize",
+      priority: 300,
+      reasonCode: "ACTION_CUE_FROM_NONE",
+      snapshot: semanticEvidenceSnapshot,
+      applies: (state) => {
+        const deterministicAction = inferActionRequestFromCue(state.prompt);
+        return (
+          deterministicAction !== null &&
+          state.semanticEvidence.actionRequest.action === "none" &&
+          ((state.semanticEvidence.memoryRecall.target === "none" &&
+            !hasMemoryRecallCue(state.prompt)) ||
+            deterministicAction === "schedule" ||
+            deterministicAction === "delegate")
+        );
+      },
+      apply: (state) => ({
+        ...state,
+        semanticEvidence: {
+          ...state.semanticEvidence,
+          actionRequest: {
+            ...state.semanticEvidence.actionRequest,
+            present: true,
+            action: inferActionRequestFromCue(state.prompt) ?? "none",
+          },
+        },
+      }),
+    },
+    {
+      id: "semantic.investment_entity_normalization",
+      stage: "normalize",
+      priority: 200,
+      reasonCode: "INVESTMENT_TICKER_NORMALIZATION",
+      snapshot: semanticEvidenceSnapshot,
+      applies: (state) =>
+        normalizeInvestmentEntityHints(
+          state.prompt,
+          state.semanticEvidence,
+          false,
+        ) !== state.semanticEvidence,
+      apply: (state) => ({
+        ...state,
+        semanticEvidence: normalizeInvestmentEntityHints(
+          state.prompt,
+          state.semanticEvidence,
+        ),
+      }),
+    },
+    {
+      id: "semantic.technical_entity_normalization",
+      stage: "normalize",
+      priority: 190,
+      reasonCode: "TECHNICAL_TERM_NORMALIZATION",
+      snapshot: semanticEvidenceSnapshot,
+      applies: (state) =>
+        normalizeTechnicalEntityHints(
+          state.prompt,
+          state.semanticEvidence,
+          false,
+        ) !== state.semanticEvidence,
+      apply: (state) => ({
+        ...state,
+        semanticEvidence: normalizeTechnicalEntityHints(
+          state.prompt,
+          state.semanticEvidence,
+        ),
+      }),
+    },
+  ];
+}
+
+function logAppliedPolicyTrace(trace: IntentPolicyTraceEntry[]): void {
+  if (trace.length === 0) return;
+  const compact = trace.map((entry) => ({
+    ruleId: entry.ruleId,
+    reasonCode: entry.reasonCode,
+    stage: entry.stage,
+    priority: entry.priority,
+    before: entry.before,
+    after: entry.after,
+  }));
+  console.error(`[IntentPolicy] trace ${JSON.stringify(compact)}`);
+}
+
+type IntentCueState = {
+  semanticRecallCue: boolean;
+  externalPastEventCue: boolean;
+  currentContextReferenceCue: boolean;
+  personalCue: boolean;
+  recallCue: boolean;
+  scheduleCue: boolean;
+  actionCue: boolean;
+  explicitDelegateCue: boolean;
+  investmentAnalysisCue: boolean;
+  recallWithExternalWork: boolean;
+};
+
+type SubjectPolicyState = {
+  subject: QuerySubject;
+  confidence: number;
+  cues: IntentCueState;
+  semanticEvidence: IntentEvidence;
+  hasModelExternalKnowledge: boolean;
+  evidence: string[];
+};
+
+const subjectPolicySnapshot = (state: SubjectPolicyState) => ({
+  subject: state.subject,
+  evidence: [...state.evidence],
+});
+
+function subjectPolicyRules(): IntentPolicyRule<SubjectPolicyState>[] {
+  return [
+    {
+      id: "subject.recall_cue_override",
+      stage: "override",
+      priority: 500,
+      reasonCode: "RECALL_CUE_SUBJECT_OVERRIDE",
+      snapshot: subjectPolicySnapshot,
+      applies: (state) =>
+        state.cues.recallCue &&
+        state.subject !== "personal" &&
+        !(state.subject === "mixed" && state.cues.recallWithExternalWork),
+      apply: (state) => {
+        const subject = state.cues.recallWithExternalWork
+          ? "mixed"
+          : "personal";
+        return {
+          ...state,
+          subject,
+          evidence: appendPolicyEvidence(state.evidence, "memory_recall_cue"),
+        };
+      },
+    },
+    {
+      id: "subject.recall_cue_mixed_external_context",
+      stage: "guardrail",
+      priority: 490,
+      reasonCode: "RECALL_CUE_KEEP_MIXED_FOR_EXTERNAL_WORK",
+      snapshot: subjectPolicySnapshot,
+      applies: (state) =>
+        state.cues.recallCue &&
+        state.subject === "mixed" &&
+        state.cues.recallWithExternalWork,
+      apply: (state) => ({
+        ...state,
+        evidence: appendPolicyEvidence(state.evidence, "memory_recall_cue"),
+      }),
+    },
+    {
+      id: "subject.personal_with_external_entity",
+      stage: "guardrail",
+      priority: 360,
+      reasonCode: "PERSONAL_CONTEXT_WITH_EXTERNAL_ENTITY",
+      snapshot: subjectPolicySnapshot,
+      applies: (state) =>
+        state.subject === "personal" &&
+        state.cues.personalCue &&
+        (!state.cues.recallCue || state.cues.recallWithExternalWork) &&
+        (state.semanticEvidence.entityHints.tickers.length > 0 ||
+          state.semanticEvidence.entityHints.peopleOrCompanies.length > 0 ||
+          state.hasModelExternalKnowledge),
+      apply: (state) => ({
+        ...state,
+        subject: "mixed",
+        evidence: appendPolicyEvidence(
+          state.evidence,
+          "personal_context_with_external_entity",
+        ),
+      }),
+    },
+    {
+      id: "subject.external_personal_cue",
+      stage: "guardrail",
+      priority: 350,
+      reasonCode: "EXTERNAL_WITH_PERSONAL_CONTEXT_CUE",
+      snapshot: subjectPolicySnapshot,
+      applies: (state) =>
+        state.subject === "external" && state.cues.personalCue,
+      apply: (state) => ({
+        ...state,
+        subject: "mixed",
+        evidence: appendPolicyEvidence(state.evidence, "personal_context_cue"),
+      }),
+    },
+    {
+      id: "subject.low_confidence_external",
+      stage: "guardrail",
+      priority: 100,
+      reasonCode: "LOW_CONFIDENCE_EXTERNAL_TO_MIXED",
+      snapshot: subjectPolicySnapshot,
+      applies: (state) =>
+        state.subject === "external" &&
+        state.confidence < LOW_CONFIDENCE_THRESHOLD &&
+        !state.cues.externalPastEventCue,
+      apply: (state) => ({
+        ...state,
+        subject: "mixed",
+        evidence: appendPolicyEvidence(
+          state.evidence,
+          "low_confidence_external_subject",
+        ),
+      }),
+    },
+  ];
+}
+
+type TaskPolicyState = {
+  taskType: IntentTaskType;
+  cues: IntentCueState;
+  prompt: string;
+  evidence: string[];
+};
+
+const taskPolicySnapshot = (state: TaskPolicyState) => ({
+  taskType: state.taskType,
+  evidence: [...state.evidence],
+});
+
+function taskPolicyRules(): IntentPolicyRule<TaskPolicyState>[] {
+  return [
+    {
+      id: "task.remember_to_action_not_recall",
+      stage: "guardrail",
+      priority: 600,
+      reasonCode: "REMEMBER_TO_ACTION_TASK_NOT_RECALL",
+      snapshot: taskPolicySnapshot,
+      applies: (state) =>
+        hasRememberToActionCue(state.prompt) &&
+        (state.taskType === "recall" || state.taskType === "execute"),
+      apply: (state) => ({
+        ...state,
+        taskType: "chat",
+        evidence: appendPolicyEvidence(
+          state.evidence,
+          "remember_to_action_not_recall",
+        ),
+      }),
+    },
+    {
+      id: "task.schedule_cue_override",
+      stage: "override",
+      priority: 500,
+      reasonCode: "SCHEDULE_CUE_TASK_OVERRIDE",
+      snapshot: taskPolicySnapshot,
+      applies: (state) =>
+        state.cues.scheduleCue && state.taskType !== "schedule",
+      apply: (state) => ({
+        ...state,
+        taskType: "schedule",
+        evidence: appendPolicyEvidence(state.evidence, "schedule_cue"),
+      }),
+    },
+    {
+      id: "task.external_past_event_not_recall",
+      stage: "guardrail",
+      priority: 450,
+      reasonCode: "EXTERNAL_PAST_EVENT_NOT_RECALL",
+      snapshot: taskPolicySnapshot,
+      applies: (state) =>
+        state.cues.externalPastEventCue && state.taskType === "recall",
+      apply: (state) => ({
+        ...state,
+        taskType: "analyze",
+        evidence: appendPolicyEvidence(
+          state.evidence,
+          "external_past_event_not_recall",
+        ),
+      }),
+    },
+    {
+      id: "task.recall_cue_override",
+      stage: "override",
+      priority: 400,
+      reasonCode: "RECALL_CUE_TASK_OVERRIDE",
+      snapshot: taskPolicySnapshot,
+      applies: (state) =>
+        state.cues.recallCue &&
+        state.taskType !== "recall" &&
+        state.taskType !== "schedule",
+      apply: (state) => ({
+        ...state,
+        taskType: "recall",
+        evidence: appendPolicyEvidence(state.evidence, "memory_recall_cue"),
+      }),
+    },
+    {
+      id: "task.delegate_cue_override",
+      stage: "override",
+      priority: 300,
+      reasonCode: "DELEGATE_CUE_TASK_OVERRIDE",
+      snapshot: taskPolicySnapshot,
+      applies: (state) =>
+        state.cues.explicitDelegateCue &&
+        state.taskType !== "delegate" &&
+        state.taskType !== "schedule",
+      apply: (state) => ({
+        ...state,
+        taskType: "delegate",
+        evidence: appendPolicyEvidence(state.evidence, "delegate_action_cue"),
+      }),
+    },
+    {
+      id: "task.action_cue_execute",
+      stage: "override",
+      priority: 200,
+      reasonCode: "ACTION_CUE_EXECUTE",
+      snapshot: taskPolicySnapshot,
+      applies: (state) =>
+        state.cues.actionCue &&
+        (state.taskType === "chat" || state.taskType === "analyze"),
+      apply: (state) => ({
+        ...state,
+        taskType: "execute",
+        evidence: appendPolicyEvidence(state.evidence, "action_cue"),
+      }),
+    },
+  ];
+}
+
+type AgentPolicyState = {
+  taskType: IntentTaskType;
+  candidateAgents: string[];
+  cues: IntentCueState;
+  evidence: string[];
+  delegateDowngraded: boolean;
+};
+
+const agentPolicySnapshot = (state: AgentPolicyState) => ({
+  taskType: state.taskType,
+  candidateAgents: [...state.candidateAgents],
+  delegateDowngraded: state.delegateDowngraded,
+  evidence: [...state.evidence],
+});
+
+function agentPolicyRules(): IntentPolicyRule<AgentPolicyState>[] {
+  return [
+    {
+      id: "agent.investment_analysis_candidate",
+      stage: "finalize",
+      priority: 300,
+      reasonCode: "INVESTMENT_ANALYSIS_CANDIDATE",
+      snapshot: agentPolicySnapshot,
+      applies: (state) =>
+        state.cues.investmentAnalysisCue &&
+        !state.candidateAgents.includes("investment-analysis"),
+      apply: (state) => ({
+        ...state,
+        candidateAgents: [...state.candidateAgents, "investment-analysis"],
+        evidence: appendPolicyEvidence(
+          state.evidence,
+          "investment_analysis_candidate",
+        ),
+      }),
+    },
+    {
+      id: "agent.implicit_delegate_downgrade",
+      stage: "guardrail",
+      priority: 200,
+      reasonCode: "IMPLICIT_DELEGATE_DOWNGRADE",
+      snapshot: agentPolicySnapshot,
+      applies: (state) =>
+        state.taskType === "delegate" && !state.cues.explicitDelegateCue,
+      apply: (state) => ({
+        ...state,
+        taskType: state.cues.investmentAnalysisCue ? "analyze" : "chat",
+        delegateDowngraded: true,
+        evidence: appendPolicyEvidence(
+          state.evidence,
+          "delegate_downgraded_to_candidate",
+        ),
+      }),
+    },
+  ];
 }
 
 function hasAnaphoricReference(
@@ -1969,6 +2527,7 @@ export class IntentResolver {
       parsed = buildFallbackRawIntentResult(prompt);
     }
     const confidence = normalizeConfidence(parsed.confidence);
+    const policyTrace: IntentPolicyTraceEntry[] = [];
     const memoryRefinedEvidence = await this.refineMemoryTarget(
       prompt,
       recentTurns,
@@ -1979,111 +2538,11 @@ export class IntentResolver {
       prompt,
       memoryRefinedEvidence,
     );
-    if (hasRememberToActionCue(prompt)) {
-      semanticEvidence = {
-        ...semanticEvidence,
-        memoryRecall: {
-          present: false,
-          target: "none",
-          reason: "remember-to-action phrasing is not memory recall",
-          span: semanticEvidence.memoryRecall.span,
-        },
-        actionRequest: {
-          present: false,
-          action: "none",
-          object: semanticEvidence.actionRequest.object,
-        },
-      };
-      console.error(
-        "🧭 [IntentResolver] Remember-to-action cue corrected memory/action evidence to none",
-      );
-    }
-    if (
-      anaphoric &&
-      recentTurns.length > 0 &&
-      semanticEvidence.memoryRecall.target !== "external_past_event" &&
-      !hasMemoryRecallCue(prompt)
-    ) {
-      semanticEvidence = {
-        ...semanticEvidence,
-        memoryRecall: {
-          ...semanticEvidence.memoryRecall,
-          present: true,
-          target: "current_context_reference",
-          reason:
-            semanticEvidence.memoryRecall.reason ||
-            "anaphoric reference to recent conversation",
-        },
-      };
-      console.error(
-        "🔗 [IntentResolver] Anaphoric cue corrected memory target to current_context_reference",
-      );
-    }
-    if (
-      semanticEvidence.memoryRecall.target === "none" &&
-      hasConversationHistoryRecallCue(prompt)
-    ) {
-      semanticEvidence = {
-        ...semanticEvidence,
-        memoryRecall: {
-          ...semanticEvidence.memoryRecall,
-          present: true,
-          target: "conversation_history",
-          reason:
-            semanticEvidence.memoryRecall.reason ||
-            "explicit prior conversation cue",
-          span: semanticEvidence.memoryRecall.span || prompt,
-        },
-      };
-      console.error(
-        "🧭 [IntentResolver] Conversation-history cue corrected memory target none → conversation_history",
-      );
-    } else if (
-      (semanticEvidence.memoryRecall.target === "user_memory" ||
-        (semanticEvidence.memoryRecall.target === "current_context_reference" &&
-          !hasCurrentContextReferenceCue(prompt))) &&
-      hasConversationHistoryRecallCue(prompt)
-    ) {
-      const previousTarget = semanticEvidence.memoryRecall.target;
-      semanticEvidence = {
-        ...semanticEvidence,
-        memoryRecall: {
-          ...semanticEvidence.memoryRecall,
-          target: "conversation_history",
-          reason:
-            semanticEvidence.memoryRecall.reason ||
-            "explicit prior conversation cue",
-        },
-      };
-      console.error(
-        `🧭 [IntentResolver] Conversation-history cue corrected memory target ${previousTarget} → conversation_history`,
-      );
-    }
-    const deterministicAction = inferActionRequestFromCue(prompt);
-    if (
-      deterministicAction !== null &&
-      semanticEvidence.actionRequest.action === "none" &&
-      ((semanticEvidence.memoryRecall.target === "none" &&
-        !hasMemoryRecallCue(prompt)) ||
-        deterministicAction === "schedule" ||
-        deterministicAction === "delegate")
-    ) {
-      semanticEvidence = {
-        ...semanticEvidence,
-        actionRequest: {
-          ...semanticEvidence.actionRequest,
-          present: true,
-          action: deterministicAction,
-        },
-      };
-      console.error(
-        `🛠️ [IntentResolver] Action cue corrected semantic action to ${deterministicAction}`,
-      );
-    }
-    semanticEvidence = normalizeTechnicalEntityHints(
-      prompt,
-      normalizeInvestmentEntityHints(prompt, semanticEvidence),
-    );
+    semanticEvidence = runIntentPolicyRules(
+      { prompt, recentTurns, semanticEvidence },
+      semanticEvidencePolicyRules(),
+      policyTrace,
+    ).semanticEvidence;
     const memoryRecallTarget = semanticEvidence.memoryRecall.target;
     const semanticRecallCue =
       semanticEvidence.memoryRecall.present &&
@@ -2117,6 +2576,23 @@ export class IntentResolver {
       prompt,
       semanticEvidence,
     );
+    const recallWithExternalWork =
+      recallCue &&
+      semanticEvidence.memoryRecall.target !== "conversation_history" &&
+      (semanticEvidence.entityHints.tickers.length > 0 ||
+        semanticEvidence.entityHints.peopleOrCompanies.length > 0);
+    const cues: IntentCueState = {
+      semanticRecallCue,
+      externalPastEventCue,
+      currentContextReferenceCue,
+      personalCue,
+      recallCue,
+      scheduleCue,
+      actionCue,
+      explicitDelegateCue,
+      investmentAnalysisCue,
+      recallWithExternalWork,
+    };
 
     const score = Number(parsed.complexity_score);
     if (Number.isNaN(score) || score < 1 || score > 100) {
@@ -2136,64 +2612,22 @@ export class IntentResolver {
       );
     }
 
-    const recallWithExternalWork =
-      recallCue &&
-      semanticEvidence.memoryRecall.target !== "conversation_history" &&
-      (semanticEvidence.entityHints.tickers.length > 0 ||
-        semanticEvidence.entityHints.peopleOrCompanies.length > 0);
-    // Recall of Jarvis/user memory is more specific than a generic personal
-    // context cue. When the same request also needs external work, keep it
-    // mixed instead of collapsing the whole request to personal.
-    if (recallCue && subject === "mixed") {
-      if (recallWithExternalWork) {
-        evidence.push("memory_recall_cue");
-        console.error(
-          `🧠 [IntentResolver] Memory recall cue detected — subject remains mixed due to external context`,
-        );
-      } else {
-        subject = "personal";
-        evidence.push("memory_recall_cue");
-        console.error(
-          `🧠 [IntentResolver] Memory recall cue detected — subject downgraded mixed → personal`,
-        );
-      }
-    } else if (recallCue && subject !== "personal") {
-      const previousSubject = subject;
-      subject = recallWithExternalWork ? "mixed" : "personal";
-      evidence.push("memory_recall_cue");
-      console.error(
-        `🧠 [IntentResolver] Memory recall cue detected — subject upgraded ${previousSubject} → ${subject}`,
-      );
-    } else if (subject === "external" && personalCue) {
-      subject = "mixed";
-      evidence.push("personal_context_cue");
-      console.error(
-        `🧠 [IntentResolver] Personal-context cue detected — subject upgraded external → mixed`,
-      );
-    } else if (
-      subject === "personal" &&
-      personalCue &&
-      (!recallCue || recallWithExternalWork) &&
-      (semanticEvidence.entityHints.tickers.length > 0 ||
-        semanticEvidence.entityHints.peopleOrCompanies.length > 0 ||
-        normalizeBoolean(parsed.needs_external_knowledge))
-    ) {
-      subject = "mixed";
-      evidence.push("personal_context_with_external_entity");
-      console.error(
-        `🧠 [IntentResolver] Personal context + external entity detected — subject upgraded personal → mixed`,
-      );
-    } else if (
-      subject === "external" &&
-      confidence < LOW_CONFIDENCE_THRESHOLD &&
-      !externalPastEventCue
-    ) {
-      subject = "mixed";
-      evidence.push("low_confidence_external_subject");
-      console.error(
-        `🧠 [IntentResolver] Low-confidence external subject (${confidence.toFixed(2)}) — upgraded external → mixed`,
-      );
-    }
+    const subjectState = runIntentPolicyRules(
+      {
+        subject,
+        confidence,
+        cues,
+        semanticEvidence,
+        hasModelExternalKnowledge: normalizeBoolean(
+          parsed.needs_external_knowledge,
+        ),
+        evidence,
+      },
+      subjectPolicyRules(),
+      policyTrace,
+    );
+    subject = subjectState.subject;
+    evidence.splice(0, evidence.length, ...subjectState.evidence);
 
     let timeWindowDays: number | null = null;
     if (
@@ -2234,45 +2668,30 @@ export class IntentResolver {
     }
 
     let taskType = inferTaskType(prompt, parsed.task_type);
-    if (
-      hasRememberToActionCue(prompt) &&
-      (taskType === "recall" || taskType === "execute")
-    ) {
-      taskType = "chat";
-      evidence.push("remember_to_action_not_recall");
-    }
-    if (scheduleCue && taskType !== "schedule") {
-      taskType = "schedule";
-      evidence.push("schedule_cue");
-    } else if (recallCue && taskType !== "recall") {
-      taskType = "recall";
-      evidence.push("memory_recall_cue");
-    } else if (externalPastEventCue && taskType === "recall") {
-      taskType = "analyze";
-      evidence.push("external_past_event_not_recall");
-    } else if (explicitDelegateCue && taskType !== "delegate") {
-      taskType = "delegate";
-      evidence.push("delegate_action_cue");
-    } else if (actionCue && (taskType === "chat" || taskType === "analyze")) {
-      taskType = "execute";
-      evidence.push("action_cue");
-    }
+    const taskState = runIntentPolicyRules(
+      { taskType, cues, prompt, evidence },
+      taskPolicyRules(),
+      policyTrace,
+    );
+    taskType = taskState.taskType;
+    evidence.splice(0, evidence.length, ...taskState.evidence);
 
-    const candidateAgents = normalizeStringArray(parsed.candidate_agents);
-    if (
-      investmentAnalysisCue &&
-      !candidateAgents.includes("investment-analysis")
-    ) {
-      candidateAgents.push("investment-analysis");
-      evidence.push("investment_analysis_candidate");
-    }
-
-    let delegateDowngraded = false;
-    if (taskType === "delegate" && !explicitDelegateCue) {
-      taskType = investmentAnalysisCue ? "analyze" : "chat";
-      delegateDowngraded = true;
-      evidence.push("delegate_downgraded_to_candidate");
-    }
+    let candidateAgents = normalizeStringArray(parsed.candidate_agents);
+    const agentState = runIntentPolicyRules(
+      {
+        taskType,
+        candidateAgents,
+        cues,
+        evidence,
+        delegateDowngraded: false,
+      },
+      agentPolicyRules(),
+      policyTrace,
+    );
+    taskType = agentState.taskType;
+    candidateAgents = agentState.candidateAgents;
+    const delegateDowngraded = agentState.delegateDowngraded;
+    evidence.splice(0, evidence.length, ...agentState.evidence);
 
     const modelCurrentContextReference =
       parsed.references_recent_history === true ||
@@ -2375,6 +2794,7 @@ export class IntentResolver {
       recentHistoryLength: recentTurns.length,
       richIntent,
     });
+    logAppliedPolicyTrace(policyTrace);
 
     return {
       subject,
@@ -2408,6 +2828,7 @@ export class IntentResolver {
       richIntent,
       intentSteps,
       topicAnalysis,
+      policyTrace,
     };
   }
 }

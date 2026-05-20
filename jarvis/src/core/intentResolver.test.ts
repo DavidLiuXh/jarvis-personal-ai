@@ -104,6 +104,12 @@ function modelResponse(overrides: Record<string, unknown> = {}) {
   });
 }
 
+function policyReasonCodes(
+  intent: Awaited<ReturnType<IntentResolver["resolve"]>>,
+) {
+  return intent.policyTrace.map((entry) => entry.reasonCode);
+}
+
 describe("IntentResolver", () => {
   beforeEach(() => mockGenerate.mockReset());
 
@@ -674,6 +680,9 @@ ${modelResponse({
     expect(intent.needsMemory).toBe(false);
     expect(intent.evidence).toContain("external_past_event_not_recall");
     expect(intent.evidence).not.toContain("memory_recall_cue");
+    expect(policyReasonCodes(intent)).toContain(
+      "EXTERNAL_PAST_EVENT_NOT_RECALL",
+    );
   });
 
   it("keeps low-confidence external past events external", async () => {
@@ -745,6 +754,12 @@ ${modelResponse({
     expect(intent.semanticEvidence.memoryRecall.target).toBe("none");
     expect(intent.semanticEvidence.actionRequest.action).toBe("none");
     expect(intent.evidence).not.toContain("memory_recall_cue");
+    expect(policyReasonCodes(intent)).toEqual(
+      expect.arrayContaining([
+        "REMEMBER_TO_ACTION_NOT_MEMORY_RECALL",
+        "REMEMBER_TO_ACTION_TASK_NOT_RECALL",
+      ]),
+    );
   });
 
   it("upgrades low-confidence external subject to mixed", async () => {
@@ -764,6 +779,9 @@ ${modelResponse({
     expect(intent.needsMemory).toBe(true);
     expect(intent.evidence).toContain("low_confidence_external_subject");
     expect(intent.confidenceByDimension.subject).toBeLessThanOrEqual(0.6);
+    expect(policyReasonCodes(intent)).toContain(
+      "LOW_CONFIDENCE_EXTERNAL_TO_MIXED",
+    );
   });
 
   it("uses action cues to promote chat to execute", async () => {
@@ -963,6 +981,12 @@ ${modelResponse({
     );
     expect(intent.candidateAgents).toContain("investment-analysis");
     expect(intent.evidence).toContain("investment_analysis_candidate");
+    expect(policyReasonCodes(intent)).toEqual(
+      expect.arrayContaining([
+        "INVESTMENT_TICKER_NORMALIZATION",
+        "INVESTMENT_ANALYSIS_CANDIDATE",
+      ]),
+    );
   });
 
   it("adds known technical terms deterministically when entity hints are sparse", async () => {
@@ -1271,6 +1295,43 @@ ${modelResponse({
       requiresConfirmation: true,
       riskLevel: "medium",
     });
+  });
+
+  it("keeps schedule as the primary task when delegate and schedule cues both appear", async () => {
+    const resolver = makeResolver();
+    mockGenerate.mockResolvedValueOnce(
+      modelResponse({
+        query_subject: "external",
+        task_type: "execute",
+        candidate_agents: [],
+        semantic_evidence: {
+          personalContext: { present: false, reason: "", span: "" },
+          memoryRecall: {
+            present: false,
+            target: "none",
+            reason: "",
+            span: "",
+          },
+          actionRequest: { present: false, action: "none", object: "" },
+          entityHints: {
+            tickers: ["TSLA"],
+            technicalTerms: [],
+            peopleOrCompanies: [],
+          },
+        },
+      }),
+    );
+
+    const intent = await resolver.resolve({
+      userPrompt: "用 investment-analysis agent 分析 TSLA，明天提醒我复盘",
+    });
+
+    expect(intent.taskType).toBe("schedule");
+    expect(intent.needsScheduling).toBe(true);
+    expect(policyReasonCodes(intent)).toContain("SCHEDULE_CUE_TASK_OVERRIDE");
+    expect(policyReasonCodes(intent)).not.toContain(
+      "DELEGATE_CUE_TASK_OVERRIDE",
+    );
   });
 
   it("marks recall plus write artifact requests as needing tools", async () => {
