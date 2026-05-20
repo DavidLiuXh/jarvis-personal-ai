@@ -61,6 +61,7 @@ export class LocalModelRouter {
     private flashModel: string = "gemini-2.5-flash",
     private timeoutMs: number = 30_000,
     private historyTurns: number = 5,
+    private intentPolicyObservability: boolean = false,
   ) {}
 
   async route(
@@ -149,6 +150,7 @@ export class LocalModelRouter {
       model: this.classifierModel,
       timeoutMs: this.timeoutMs,
       historyTurns: this.historyTurns,
+      intentPolicyObservability: this.intentPolicyObservability,
     });
     return resolver.resolve({ userPrompt, history });
   }

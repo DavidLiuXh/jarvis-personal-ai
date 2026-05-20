@@ -197,6 +197,7 @@ export type IntentResolverOptions = {
   model: string;
   timeoutMs?: number;
   historyTurns?: number;
+  intentPolicyObservability?: boolean;
 };
 
 type RawIntentModelResult = {
@@ -2794,7 +2795,9 @@ export class IntentResolver {
       recentHistoryLength: recentTurns.length,
       richIntent,
     });
-    logAppliedPolicyTrace(policyTrace);
+    if (this.options.intentPolicyObservability === true) {
+      logAppliedPolicyTrace(policyTrace);
+    }
 
     return {
       subject,

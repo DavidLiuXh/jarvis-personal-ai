@@ -31,6 +31,18 @@ The resolver returns `IntentFrame.policyTrace`, where every applied rule include
 - `before`
 - `after`
 
+Runtime stderr output is controlled by config:
+
+```json
+{
+  "routing": {
+    "intentPolicyObservability": true
+  }
+}
+```
+
+The trace is always available on `IntentFrame.policyTrace`; the switch only controls structured stderr logging in normal Jarvis runtime.
+
 ## Stages
 
 `normalize`
@@ -104,3 +116,12 @@ npx tsx scripts/run_intent_evals.ts --models gemma4:e2b --min-pass-rate 1
 ```
 
 Policy changes should pass both unit coverage and the full real-model gate before commit.
+
+## Eval Coverage
+
+Intent eval cases can assert policy behavior:
+
+- `expect.policyTrace.reasonCodesContain`
+- `expect.policyTrace.reasonCodesNotContain`
+
+The Markdown and JSON reports include `Policy Reason Codes`, showing how many cases and applications covered each reason code. This makes it visible when a rule has no regression coverage.

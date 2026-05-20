@@ -225,6 +225,7 @@ export class JarvisAgent extends EventEmitter {
           this.jarvisConfig.ollama?.defaultTimeoutMs ??
           30_000,
         routingCfg.historyTurns ?? 5,
+        routingCfg.intentPolicyObservability === true,
       );
       console.error(
         `🔀 [Jarvis] Local model router initialized (model=${routingCfg.model}, threshold=${routingCfg.threshold ?? 70})`,

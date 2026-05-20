@@ -89,6 +89,12 @@ export interface JarvisConfig {
      * Default: false.
      */
     clarificationObservability?: boolean;
+    /**
+     * Emit structured intent-policy traces to stderr.
+     * Useful for debugging which deterministic policy rules changed the
+     * local-model intent frame. Default: false.
+     */
+    intentPolicyObservability?: boolean;
   };
   /**
    * Session summarizer configuration.
@@ -504,6 +510,7 @@ export class ConfigManager {
         enabled: true,
         model: "",
         clarificationObservability: false,
+        intentPolicyObservability: false,
       },
     };
 

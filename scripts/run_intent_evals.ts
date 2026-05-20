@@ -74,6 +74,10 @@ type IntentExpectation = {
     historyEvidenceContains?: string[];
     currentEvidenceContains?: string[];
   };
+  policyTrace?: {
+    reasonCodesContain?: string[];
+    reasonCodesNotContain?: string[];
+  };
   confidenceByDimensionMin?: Partial<IntentFrame["confidenceByDimension"]>;
 };
 
@@ -95,6 +99,7 @@ type Dimension =
   | "richIntent"
   | "intentSteps"
   | "topicAnalysis"
+  | "policyTrace"
   | "dimensionConfidence";
 
 type CheckResult = {
@@ -125,6 +130,10 @@ type ModelReport = {
   avgLatencyMs: number;
   dimensionStats: Record<string, { passed: number; total: number }>;
   tagStats: Record<string, { passed: number; total: number }>;
+  policyReasonCodeStats: Record<
+    string,
+    { cases: number; applications: number }
+  >;
   results: CaseResult[];
 };
 
@@ -635,6 +644,31 @@ function compareIntent(intent: IntentFrame, expect: IntentExpectation) {
     );
   }
 
+  const policyTrace = expect.policyTrace;
+  if (policyTrace !== undefined) {
+    const reasonCodes = intent.policyTrace.map((entry) => entry.reasonCode);
+    if (policyTrace.reasonCodesContain !== undefined) {
+      addCheck(
+        checks,
+        "policyTrace",
+        policyTrace.reasonCodesContain,
+        reasonCodes,
+        includesAll(reasonCodes, policyTrace.reasonCodesContain),
+        "policyTrace contains expected reason codes",
+      );
+    }
+    if (policyTrace.reasonCodesNotContain !== undefined) {
+      addCheck(
+        checks,
+        "policyTrace",
+        policyTrace.reasonCodesNotContain,
+        reasonCodes,
+        includesNone(reasonCodes, policyTrace.reasonCodesNotContain),
+        "policyTrace excludes forbidden reason codes",
+      );
+    }
+  }
+
   return checks;
 }
 
@@ -700,6 +734,7 @@ function summarizeModel(model: string, results: CaseResult[]): ModelReport {
   );
   const dimensionStats: ModelReport["dimensionStats"] = {};
   const tagStats: ModelReport["tagStats"] = {};
+  const policyReasonCodeStats: ModelReport["policyReasonCodeStats"] = {};
 
   for (const result of results) {
     for (const tag of result.tags) {
@@ -711,6 +746,18 @@ function summarizeModel(model: string, results: CaseResult[]): ModelReport {
       dimensionStats[check.dimension] ??= { passed: 0, total: 0 };
       dimensionStats[check.dimension].total += 1;
       if (check.pass) dimensionStats[check.dimension].passed += 1;
+    }
+    const caseReasonCodes = new Set<string>();
+    for (const entry of result.intent?.policyTrace ?? []) {
+      policyReasonCodeStats[entry.reasonCode] ??= {
+        cases: 0,
+        applications: 0,
+      };
+      policyReasonCodeStats[entry.reasonCode].applications += 1;
+      caseReasonCodes.add(entry.reasonCode);
+    }
+    for (const reasonCode of caseReasonCodes) {
+      policyReasonCodeStats[reasonCode].cases += 1;
     }
   }
 
@@ -725,6 +772,7 @@ function summarizeModel(model: string, results: CaseResult[]): ModelReport {
       results.length === 0 ? 0 : Math.round(durationMs / results.length),
     dimensionStats,
     tagStats,
+    policyReasonCodeStats,
     results,
   };
 }
@@ -745,6 +793,22 @@ function renderStatsTable(
     ...rows.map(
       ([name, stat]) =>
         `| ${name} | ${stat.passed} | ${stat.total} | ${percent(stat.passed, stat.total)} |`,
+    ),
+    "",
+  ].join("\n");
+}
+
+function renderPolicyReasonCodeStats(
+  stats: Record<string, { cases: number; applications: number }>,
+) {
+  const rows = Object.entries(stats).sort(([a], [b]) => a.localeCompare(b));
+  if (rows.length === 0) return "_No policy rules applied._\n";
+  return [
+    "| Reason Code | Cases | Applications |",
+    "| --- | ---: | ---: |",
+    ...rows.map(
+      ([reasonCode, stat]) =>
+        `| ${reasonCode} | ${stat.cases} | ${stat.applications} |`,
     ),
     "",
   ].join("\n");
@@ -771,6 +835,11 @@ function renderMarkdown(reports: ModelReport[]) {
     lines.push(`## ${report.model}`, "");
     lines.push("### By Dimension", "", renderStatsTable(report.dimensionStats));
     lines.push("### By Tag", "", renderStatsTable(report.tagStats));
+    lines.push(
+      "### Policy Reason Codes",
+      "",
+      renderPolicyReasonCodeStats(report.policyReasonCodeStats),
+    );
     const failures = report.results.filter((result) => !result.passed);
     lines.push("### Failures", "");
     if (failures.length === 0) {
