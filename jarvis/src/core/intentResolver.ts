@@ -310,6 +310,7 @@ const NON_TICKER_ACRONYMS = new Set([
   "LLM",
   "MCP",
   "ONNX",
+  "RAG",
   "REST",
   "SDK",
   "SSE",
@@ -394,6 +395,56 @@ function hasInvestmentAnalysisCue(
 
   const symbols = prompt.match(new RegExp(TICKER_RE, "g")) ?? [];
   return symbols.some((symbol) => !NON_TICKER_ACRONYMS.has(symbol));
+}
+
+function extractTickerCandidates(prompt: string): string[] {
+  const symbols = prompt.match(new RegExp(TICKER_RE, "g")) ?? [];
+  return Array.from(
+    new Set(
+      symbols
+        .map((symbol) => symbol.toUpperCase())
+        .filter((symbol) => !NON_TICKER_ACRONYMS.has(symbol)),
+    ),
+  );
+}
+
+function normalizeInvestmentEntityHints(
+  prompt: string,
+  semanticEvidence: IntentEvidence,
+): IntentEvidence {
+  if (!INVESTMENT_ANALYSIS_CUE_RE.test(prompt)) return semanticEvidence;
+
+  const promptTickers = extractTickerCandidates(prompt);
+  if (promptTickers.length === 0) return semanticEvidence;
+
+  const existingTickers = semanticEvidence.entityHints.tickers.map((ticker) =>
+    ticker.toUpperCase(),
+  );
+  const tickers = Array.from(new Set([...existingTickers, ...promptTickers]));
+  const originalTickers = semanticEvidence.entityHints.tickers;
+  const unchanged =
+    tickers.length === originalTickers.length &&
+    tickers.every((ticker, index) => ticker === originalTickers[index]);
+  if (unchanged) {
+    return semanticEvidence;
+  }
+
+  const promoted = new Set(promptTickers);
+  console.error(
+    `🏷️ [IntentResolver] Deterministic ticker normalization tickers=${promptTickers.join(",")}`,
+  );
+  return {
+    ...semanticEvidence,
+    entityHints: {
+      tickers,
+      technicalTerms: semanticEvidence.entityHints.technicalTerms.filter(
+        (term) => !promoted.has(term.toUpperCase()),
+      ),
+      peopleOrCompanies: semanticEvidence.entityHints.peopleOrCompanies.filter(
+        (name) => !promoted.has(name.toUpperCase()),
+      ),
+    },
+  };
 }
 
 function hasAnaphoricReference(
@@ -1006,6 +1057,7 @@ function normalizeIntentEvidence(value: unknown): IntentEvidence {
   const personalContext = asRecord(root.personalContext);
   const memoryRecall = asRecord(root.memoryRecall);
   const actionRequest = asRecord(root.actionRequest);
+  const action = normalizeActionRequestType(actionRequest.action);
   const entityHints = asRecord(root.entityHints);
 
   return {
@@ -1021,8 +1073,8 @@ function normalizeIntentEvidence(value: unknown): IntentEvidence {
       span: normalizeOptionalString(memoryRecall.span),
     },
     actionRequest: {
-      present: actionRequest.present === true,
-      action: normalizeActionRequestType(actionRequest.action),
+      present: actionRequest.present === true || action !== "none",
+      action,
       object: normalizeOptionalString(actionRequest.object),
     },
     entityHints: {
@@ -1983,6 +2035,7 @@ export class IntentResolver {
         `🛠️ [IntentResolver] Action cue corrected semantic action to ${deterministicAction}`,
       );
     }
+    semanticEvidence = normalizeInvestmentEntityHints(prompt, semanticEvidence);
     const memoryRecallTarget = semanticEvidence.memoryRecall.target;
     const semanticRecallCue =
       semanticEvidence.memoryRecall.present &&

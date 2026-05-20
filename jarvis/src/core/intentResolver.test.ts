@@ -864,6 +864,55 @@ ${modelResponse({
     });
   });
 
+  it("promotes ticker-like company hints to tickers in investment context", async () => {
+    const resolver = makeResolver();
+    mockGenerate.mockResolvedValueOnce(
+      modelResponse({
+        query_subject: "mixed",
+        task_type: "schedule",
+        needs_external_knowledge: true,
+        needs_tool: true,
+        needs_scheduling: true,
+        candidate_agents: [],
+        semantic_evidence: {
+          personalContext: {
+            present: true,
+            reason: "uses user's risk preference",
+            span: "我的风险偏好",
+          },
+          memoryRecall: {
+            present: false,
+            target: "none",
+            reason: "",
+            span: "",
+          },
+          actionRequest: {
+            present: true,
+            action: "schedule",
+            object: "NVDA财报分析",
+          },
+          entityHints: {
+            tickers: [],
+            technicalTerms: [],
+            peopleOrCompanies: ["NVDA"],
+          },
+        },
+      }),
+    );
+
+    const intent = await resolver.resolve({
+      userPrompt:
+        "结合我的风险偏好分析 NVDA 最新财报，整理成 markdown，明天早上9点提醒我复盘",
+    });
+
+    expect(intent.semanticEvidence.entityHints.tickers).toContain("NVDA");
+    expect(intent.semanticEvidence.entityHints.peopleOrCompanies).not.toContain(
+      "NVDA",
+    );
+    expect(intent.candidateAgents).toContain("investment-analysis");
+    expect(intent.evidence).toContain("investment_analysis_candidate");
+  });
+
   it("trusts semantic technical terms over ticker fallback", async () => {
     const resolver = makeResolver();
     mockGenerate.mockResolvedValueOnce(
@@ -893,6 +942,48 @@ ${modelResponse({
       userPrompt: "分析 RAG 的基本面",
     });
 
+    expect(intent.candidateAgents).not.toContain("investment-analysis");
+    expect(intent.evidence).not.toContain("investment_analysis_candidate");
+  });
+
+  it("does not add investment candidate for non-ticker acronyms when hints are empty", async () => {
+    const resolver = makeResolver();
+    mockGenerate
+      .mockResolvedValueOnce(
+        modelResponse({
+          task_type: "chat",
+          needs_tool: false,
+          candidate_agents: [],
+          semantic_evidence: {
+            personalContext: { present: false, reason: "", span: "" },
+            memoryRecall: {
+              present: false,
+              target: "none",
+              reason: "",
+              span: "",
+            },
+            actionRequest: { present: false, action: "none", object: "" },
+            entityHints: {
+              tickers: [],
+              technicalTerms: [],
+              peopleOrCompanies: [],
+            },
+          },
+        }),
+      )
+      .mockResolvedValueOnce(
+        JSON.stringify({
+          tickers: [],
+          technicalTerms: [],
+          peopleOrCompanies: [],
+        }),
+      );
+
+    const intent = await resolver.resolve({
+      userPrompt: "分析 RAG 的基本面",
+    });
+
+    expect(intent.semanticEvidence.entityHints.tickers).toHaveLength(0);
     expect(intent.candidateAgents).not.toContain("investment-analysis");
     expect(intent.evidence).not.toContain("investment_analysis_candidate");
   });
@@ -970,6 +1061,45 @@ ${modelResponse({
     expect(intent.taskType).toBe("delegate");
     expect(intent.needsTool).toBe(true);
     expect(intent.evidence).toContain("delegate_action_cue");
+  });
+
+  it("treats non-none action as present when the model omits actionRequest.present", async () => {
+    const resolver = makeResolver();
+    mockGenerate.mockResolvedValueOnce(
+      modelResponse({
+        query_subject: "external",
+        task_type: "analyze",
+        needs_tool: false,
+        candidate_agents: ["investment-analysis"],
+        semantic_evidence: {
+          personalContext: { present: false, reason: "", span: "" },
+          memoryRecall: {
+            present: false,
+            target: "none",
+            reason: "",
+            span: "",
+          },
+          actionRequest: {
+            present: false,
+            action: "delegate",
+            object: "investment-analysis",
+          },
+          entityHints: {
+            tickers: ["GOOGL"],
+            technicalTerms: [],
+            peopleOrCompanies: [],
+          },
+        },
+      }),
+    );
+
+    const intent = await resolver.resolve({
+      userPrompt: "请交给投资分析 agent 看一下 GOOGL",
+    });
+
+    expect(intent.semanticEvidence.actionRequest.present).toBe(true);
+    expect(intent.taskType).toBe("delegate");
+    expect(intent.needsTool).toBe(true);
   });
 
   it("topicShifted=false when there is no conversation history", async () => {
