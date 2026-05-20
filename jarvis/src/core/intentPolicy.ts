@@ -29,6 +29,10 @@ export type IntentPolicyTraceEntry = {
   skippedReason?: string;
 };
 
+export type IntentPolicyRunOptions = {
+  recordSkipped?: boolean;
+};
+
 export type IntentPolicyRule<TState> = {
   id: string;
   stage: IntentPolicyStage;
@@ -121,11 +125,25 @@ export function runIntentPolicyRules<TState>(
   state: TState,
   rules: IntentPolicyRule<TState>[],
   trace: IntentPolicyTraceEntry[],
+  options: IntentPolicyRunOptions = {},
 ): TState {
   let nextState = state;
   for (const rule of [...rules].sort((a, b) => b.priority - a.priority)) {
     const before = rule.snapshot(nextState);
-    if (!rule.applies(nextState)) continue;
+    if (!rule.applies(nextState)) {
+      if (options.recordSkipped === true) {
+        trace.push({
+          ruleId: rule.id,
+          stage: rule.stage,
+          priority: rule.priority,
+          reasonCode: rule.reasonCode,
+          applied: false,
+          before,
+          skippedReason: "applies_false",
+        });
+      }
+      continue;
+    }
     nextState = rule.apply(nextState);
     const after = rule.snapshot(nextState);
     trace.push({
@@ -612,12 +630,14 @@ function agentPolicyRules(): IntentPolicyRule<AgentPolicyState>[] {
 export function createIntentPolicyRegistry(
   deps: IntentPolicyDeps,
 ): IntentPolicyRegistry {
-  return {
+  const registry = {
     semantic: semanticEvidencePolicyRules(deps),
     subject: subjectPolicyRules(deps),
     task: taskPolicyRules(deps),
     agent: agentPolicyRules(),
   };
+  assertValidIntentPolicyRegistry(registry);
+  return registry;
 }
 
 export function listIntentPolicyRules(
@@ -636,4 +656,74 @@ export function listIntentPolicyRules(
       reasonCode: rule.reasonCode,
     })),
   );
+}
+
+export function validateIntentPolicyRegistry(
+  registry: IntentPolicyRegistry,
+): string[] {
+  const errors: string[] = [];
+  const rules = listIntentPolicyRules(registry);
+  const idToGroup = new Map<string, string>();
+  const reasonCodeToRule = new Map<string, string>();
+  const groupPriorityToRule = new Map<string, string>();
+
+  if (rules.length === 0) {
+    errors.push("registry has no policy rules");
+  }
+
+  for (const rule of rules) {
+    if (!rule.id.startsWith(`${rule.group}.`)) {
+      errors.push(`${rule.id}: rule id must be prefixed with ${rule.group}.`);
+    }
+    if (!/^[a-z]+\.[a-z0-9_]+$/.test(rule.id)) {
+      errors.push(`${rule.id}: rule id must use lowercase dot notation`);
+    }
+    if (!/^[A-Z0-9_]+$/.test(rule.reasonCode)) {
+      errors.push(
+        `${rule.id}: reason code ${rule.reasonCode} must be uppercase snake case`,
+      );
+    }
+    if (!Number.isFinite(rule.priority) || !Number.isInteger(rule.priority)) {
+      errors.push(`${rule.id}: priority must be an integer`);
+    }
+
+    const existingGroup = idToGroup.get(rule.id);
+    if (existingGroup !== undefined) {
+      errors.push(
+        `${rule.id}: duplicate id in ${existingGroup} and ${rule.group}`,
+      );
+    } else {
+      idToGroup.set(rule.id, rule.group);
+    }
+
+    const existingReasonRule = reasonCodeToRule.get(rule.reasonCode);
+    if (existingReasonRule !== undefined) {
+      errors.push(
+        `${rule.id}: duplicate reason code ${rule.reasonCode} also used by ${existingReasonRule}`,
+      );
+    } else {
+      reasonCodeToRule.set(rule.reasonCode, rule.id);
+    }
+
+    const groupPriorityKey = `${rule.group}:${rule.priority}`;
+    const existingPriorityRule = groupPriorityToRule.get(groupPriorityKey);
+    if (existingPriorityRule !== undefined) {
+      errors.push(
+        `${rule.id}: duplicate priority ${rule.priority} in ${rule.group} also used by ${existingPriorityRule}`,
+      );
+    } else {
+      groupPriorityToRule.set(groupPriorityKey, rule.id);
+    }
+  }
+
+  return errors;
+}
+
+export function assertValidIntentPolicyRegistry(
+  registry: IntentPolicyRegistry,
+): void {
+  const errors = validateIntentPolicyRegistry(registry);
+  if (errors.length > 0) {
+    throw new Error(`Invalid intent policy registry:\n${errors.join("\n")}`);
+  }
 }

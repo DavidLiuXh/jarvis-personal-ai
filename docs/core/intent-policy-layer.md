@@ -24,6 +24,8 @@ Each policy rule is represented as an explicit unit:
 
 Rules live in `jarvis/src/core/intentPolicy.ts`. `intentResolver.ts` constructs policy state and calls the registry, but rule definitions and manifests are kept out of the resolver.
 
+The registry is validated at construction time. Validation enforces non-empty rules, unique ids, unique reason codes, uppercase reason codes, group-prefixed rule ids, integer priorities, and no duplicate priority inside the same rule group. This keeps execution order explicit instead of relying on array position.
+
 The resolver returns `IntentFrame.policyTrace`, where every applied rule includes:
 
 - `ruleId`
@@ -32,6 +34,8 @@ The resolver returns `IntentFrame.policyTrace`, where every applied rule include
 - `reasonCode`
 - `before`
 - `after`
+
+The policy runner also supports skipped-decision tracing for focused debugging via `recordSkipped`; normal resolver output keeps the trace to applied rules so runtime payloads stay compact.
 
 Runtime stderr output is controlled by config:
 
@@ -145,3 +149,5 @@ The Markdown and JSON reports include `Policy Reason Codes`, showing how many ca
 Every registered policy rule must have a deterministic unit case in `jarvis/src/core/intentPolicy.test.ts`. This is intentionally separate from real-model evals because some policy paths depend on low-confidence or contradictory model output and should not rely on model luck for coverage.
 
 The core real-model baseline is a path-stability gate: it detects when a case still passes but reaches the answer through a different policy trace.
+
+The baseline comparison is exact for applied policy path: it compares `ruleId`, `stage`, `priority`, and `reasonCode`, and it fails on missing or unexpected cases. A passing eval with a different policy path is treated as a regression until the baseline is intentionally regenerated.

@@ -10,9 +10,11 @@ import {
   createIntentPolicyRegistry,
   listIntentPolicyRules,
   runIntentPolicyRules,
+  validateIntentPolicyRegistry,
   type AgentPolicyState,
   type IntentCueState,
   type IntentPolicyDeps,
+  type IntentPolicyRule,
   type IntentPolicyTraceEntry,
   type SemanticPolicyState,
   type SubjectPolicyState,
@@ -166,6 +168,47 @@ describe("intent policy registry", () => {
     expect(new Set(rules.map((rule) => rule.reasonCode)).size).toBe(
       rules.length,
     );
+  });
+
+  it("passes registry validation", () => {
+    expect(validateIntentPolicyRegistry(registry)).toEqual([]);
+  });
+
+  it("reports registry contract violations", () => {
+    const duplicateRule: IntentPolicyRule<SemanticPolicyState> = {
+      ...registry.semantic[0],
+      priority: registry.semantic[1].priority,
+      reasonCode: registry.semantic[1].reasonCode,
+    };
+    const invalidRegistry = {
+      ...registry,
+      semantic: [registry.semantic[0], registry.semantic[1], duplicateRule],
+    };
+
+    expect(validateIntentPolicyRegistry(invalidRegistry)).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining("duplicate reason code"),
+        expect.stringContaining("duplicate priority"),
+      ]),
+    );
+  });
+
+  it("can record skipped decisions for policy debugging", () => {
+    const trace: IntentPolicyTraceEntry[] = [];
+    runIntentPolicyRules(
+      { prompt: "", recentTurns: [], semanticEvidence: baseEvidence() },
+      registry.semantic.slice(0, 1),
+      trace,
+      { recordSkipped: true },
+    );
+
+    expect(trace).toEqual([
+      expect.objectContaining({
+        ruleId: "semantic.remember_to_action_not_recall",
+        applied: false,
+        skippedReason: "applies_false",
+      }),
+    ]);
   });
 
   it.each([

@@ -923,6 +923,9 @@ function comparePolicyTraceBaseline(
   actual: PolicyTraceBaseline,
 ) {
   const diffs: string[] = [];
+  if (expected.version !== actual.version) {
+    diffs.push(`baseline version ${expected.version} -> ${actual.version}`);
+  }
   const expectedReports = new Map(
     expected.reports.map((report) => [report.model, report]),
   );
@@ -945,12 +948,20 @@ function comparePolicyTraceBaseline(
         diffs.push(`${model}/${expectedCase.id}: missing case`);
         continue;
       }
-      const expectedCodes = expectedCase.reasonCodes.join(",");
-      const actualCodes = actualCase.reasonCodes.join(",");
-      if (expectedCodes !== actualCodes) {
+      const expectedSignature = formatPolicyTraceSignature(expectedCase.trace);
+      const actualSignature = formatPolicyTraceSignature(actualCase.trace);
+      if (expectedSignature !== actualSignature) {
         diffs.push(
-          `${model}/${expectedCase.id}: reasonCodes ${expectedCodes || "(none)"} -> ${actualCodes || "(none)"}`,
+          `${model}/${expectedCase.id}: trace ${expectedSignature || "(none)"} -> ${actualSignature || "(none)"}`,
         );
+      }
+    }
+    const expectedCaseIds = new Set(
+      expectedReport.cases.map((caseResult) => caseResult.id),
+    );
+    for (const actualCase of actualReport.cases) {
+      if (!expectedCaseIds.has(actualCase.id)) {
+        diffs.push(`${model}/${actualCase.id}: unexpected case`);
       }
     }
   }
@@ -962,6 +973,17 @@ function comparePolicyTraceBaseline(
   }
 
   return diffs;
+}
+
+function formatPolicyTraceSignature(
+  trace: PolicyTraceBaseline["reports"][number]["cases"][number]["trace"],
+) {
+  return trace
+    .map(
+      (entry) =>
+        `${entry.ruleId}@${entry.stage}:${entry.priority}:${entry.reasonCode}`,
+    )
+    .join(",");
 }
 
 async function main() {
