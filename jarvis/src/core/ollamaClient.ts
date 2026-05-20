@@ -38,12 +38,18 @@ export async function ollamaGenerate(
     /** Context window size in tokens. Ollama defaults to 2048 which is too small
      *  for structured JSON extraction prompts. Set higher for entity extraction. */
     numCtx?: number;
+    /** Ollama structured output mode. Use "json" for classifier/extractor calls. */
+    format?: "json";
+    /** Sampling temperature. Lower values reduce malformed structured output. */
+    temperature?: number;
   } = {},
 ): Promise<string> {
   const baseUrl = options.baseUrl ?? DEFAULT_BASE_URL;
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const numPredict = options.numPredict ?? -1; // -1 = unlimited
   const numCtx = options.numCtx;
+  const format = options.format;
+  const temperature = options.temperature;
   const startTime = Date.now();
 
   const controller = new AbortController();
@@ -57,9 +63,11 @@ export async function ollamaGenerate(
         model,
         prompt,
         stream: false,
+        ...(format !== undefined ? { format } : {}),
         options: {
           num_predict: numPredict,
           ...(numCtx !== undefined ? { num_ctx: numCtx } : {}),
+          ...(temperature !== undefined ? { temperature } : {}),
         },
       }),
       signal: controller.signal,

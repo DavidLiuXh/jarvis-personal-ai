@@ -147,6 +147,24 @@ describe("IntentResolver", () => {
       },
       riskLevel: "low",
     });
+    expect(mockGenerate.mock.calls[0]?.[2]).toMatchObject({
+      format: "json",
+      numCtx: 8192,
+      temperature: 0,
+    });
+  });
+
+  it("parses JSON-mode responses that wrap the intent object as a string", async () => {
+    const resolver = makeResolver();
+    mockGenerate.mockResolvedValueOnce(JSON.stringify(modelResponse()));
+
+    const intent = await resolver.resolve({
+      userPrompt: "天气怎么样",
+    });
+
+    expect(intent.subject).toBe("external");
+    expect(intent.taskType).toBe("analyze");
+    expect(mockGenerate).toHaveBeenCalledTimes(1);
   });
 
   it("repairs malformed intent JSON once before parsing", async () => {
@@ -171,6 +189,11 @@ ${modelResponse({
     expect(intent.subject).toBe("external");
     expect(intent.taskType).toBe("analyze");
     expect(mockGenerate).toHaveBeenCalledTimes(2);
+    expect(mockGenerate.mock.calls[1]?.[2]).toMatchObject({
+      format: "json",
+      numCtx: 8192,
+      temperature: 0,
+    });
     expect(mockGenerate.mock.calls[1]?.[1]).toContain(
       "Repair it into one valid raw JSON object",
     );

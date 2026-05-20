@@ -611,6 +611,18 @@ function parseJsonObjectMatching<T>(
     .replace(/\s*```\s*$/, "")
     .trim();
 
+  try {
+    const parsed = JSON.parse(stripped) as unknown;
+    if (predicate(parsed)) {
+      return parsed;
+    }
+    if (typeof parsed === "string" && parsed !== stripped) {
+      return parseJsonObjectMatching(parsed, predicate);
+    }
+  } catch {
+    // Fall back to scanning for the first valid object embedded in text.
+  }
+
   for (
     let start = stripped.indexOf("{");
     start !== -1;
@@ -1706,6 +1718,9 @@ export class IntentResolver {
         {
           baseUrl: this.options.baseUrl ?? "http://localhost:11434",
           timeoutMs: this.options.timeoutMs ?? 30_000,
+          format: "json",
+          numCtx: 8192,
+          temperature: 0,
         },
       );
       try {
@@ -1743,6 +1758,9 @@ export class IntentResolver {
         {
           baseUrl: this.options.baseUrl ?? "http://localhost:11434",
           timeoutMs: this.options.timeoutMs ?? 30_000,
+          format: "json",
+          numCtx: 4096,
+          temperature: 0,
         },
       );
       const parsed = parseMemoryTargetObject(raw);
@@ -1783,6 +1801,9 @@ export class IntentResolver {
         {
           baseUrl: this.options.baseUrl ?? "http://localhost:11434",
           timeoutMs: this.options.timeoutMs ?? 30_000,
+          format: "json",
+          numCtx: 4096,
+          temperature: 0,
         },
       );
       const parsed = parseEntityHintsObject(raw);
@@ -1838,6 +1859,9 @@ export class IntentResolver {
     const raw = await ollamaGenerate(this.options.model, fullPrompt, {
       baseUrl: this.options.baseUrl ?? "http://localhost:11434",
       timeoutMs: this.options.timeoutMs ?? 30_000,
+      format: "json",
+      numCtx: 8192,
+      temperature: 0,
     });
     let parsed: RawIntentModelResult;
     try {
