@@ -517,6 +517,58 @@ ${modelResponse({
     expect(intent.richIntent.contextDependency.recentConversation).toBe(true);
   });
 
+  it("keeps explicit current-context wording as current context even with prior wording", async () => {
+    const resolver = makeResolver();
+    mockGenerate.mockResolvedValueOnce(
+      modelResponse({
+        task_type: "recall",
+        references_recent_history: true,
+        topic_analysis: {
+          relation: "current_context_reference",
+          history: {
+            label: "reranker timeout",
+            evidence: ["timeoutMs option"],
+            source_turns: [-1],
+            confidence: 0.8,
+          },
+          current: {
+            label: "timeout parameter",
+            evidence: ["你之前说的那个超时参数怎么设"],
+            source_turns: [0],
+            confidence: 0.8,
+          },
+          confidence: 0.8,
+        },
+        semantic_evidence: {
+          personalContext: { present: false, reason: "", span: "" },
+          memoryRecall: {
+            present: true,
+            target: "current_context_reference",
+            reason: "那个 refers to recent context",
+            span: "那个超时参数",
+          },
+          actionRequest: { present: false, action: "none", object: "" },
+          entityHints: {
+            tickers: [],
+            technicalTerms: [],
+            peopleOrCompanies: [],
+          },
+        },
+      }),
+    );
+
+    const intent = await resolver.resolve({
+      userPrompt: "你之前说的那个超时参数怎么设",
+      history: HISTORY_CODING,
+    });
+
+    expect(intent.referencesRecentHistory).toBe(true);
+    expect(intent.semanticEvidence.memoryRecall.target).toBe(
+      "current_context_reference",
+    );
+    expect(intent.topicAnalysis.relation).toBe("current_context_reference");
+  });
+
   it("uses deterministic schedule cue to set scheduling intent", async () => {
     const resolver = makeResolver();
     mockGenerate.mockResolvedValueOnce(
@@ -913,6 +965,46 @@ ${modelResponse({
     expect(intent.evidence).toContain("investment_analysis_candidate");
   });
 
+  it("adds known technical terms deterministically when entity hints are sparse", async () => {
+    const resolver = makeResolver();
+    mockGenerate.mockResolvedValueOnce(
+      modelResponse({
+        query_subject: "mixed",
+        task_type: "analyze",
+        needs_external_knowledge: true,
+        semantic_evidence: {
+          personalContext: {
+            present: true,
+            reason: "uses user's technical preference",
+            span: "我的技术偏好",
+          },
+          memoryRecall: {
+            present: false,
+            target: "none",
+            reason: "",
+            span: "",
+          },
+          actionRequest: { present: false, action: "none", object: "" },
+          entityHints: {
+            tickers: [],
+            technicalTerms: [],
+            peopleOrCompanies: [],
+          },
+        },
+      }),
+    );
+
+    const intent = await resolver.resolve({
+      userPrompt: "结合我的技术偏好，比较一下 React 和 Vue 哪个更适合我",
+    });
+
+    expect(intent.semanticEvidence.entityHints.technicalTerms).toEqual(
+      expect.arrayContaining(["React", "Vue"]),
+    );
+    expect(intent.subject).toBe("mixed");
+    expect(intent.needsMemory).toBe(true);
+  });
+
   it("trusts semantic technical terms over ticker fallback", async () => {
     const resolver = makeResolver();
     mockGenerate.mockResolvedValueOnce(
@@ -1179,6 +1271,52 @@ ${modelResponse({
       requiresConfirmation: true,
       riskLevel: "medium",
     });
+  });
+
+  it("marks recall plus write artifact requests as needing tools", async () => {
+    const resolver = makeResolver();
+    mockGenerate.mockResolvedValueOnce(
+      modelResponse({
+        query_subject: "personal",
+        task_type: "recall",
+        needs_tool: false,
+        semantic_evidence: {
+          personalContext: {
+            present: true,
+            reason: "prior discussion",
+            span: "我们之前",
+          },
+          memoryRecall: {
+            present: true,
+            target: "conversation_history",
+            reason: "asks for previous discussion",
+            span: "之前关于 intent understanding 的讨论",
+          },
+          actionRequest: {
+            present: true,
+            action: "write",
+            object: "markdown 文档",
+          },
+          entityHints: {
+            tickers: [],
+            technicalTerms: [],
+            peopleOrCompanies: [],
+          },
+        },
+        intent_steps: [],
+      }),
+    );
+
+    const intent = await resolver.resolve({
+      userPrompt:
+        "先总结我们之前关于 intent understanding 的讨论，再整理成 markdown 文档",
+      history: HISTORY_CODING,
+    });
+
+    expect(intent.needsTool).toBe(true);
+    expect(intent.intentSteps.map((step) => step.type)).toEqual(
+      expect.arrayContaining(["recall", "execute"]),
+    );
   });
 
   it("normalizes grounded topic analysis and uses relation for topic shift", async () => {

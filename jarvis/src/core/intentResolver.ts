@@ -294,9 +294,22 @@ const INVESTMENT_ANALYSIS_CUE_RE =
   /投资价值|基本面|财报|估值|股票|股价|买入|卖出|持有|分析.*(nvda|googl|aapl|msft|tsla)|investment|fundamental|valuation|earnings|stock/i;
 
 const ENTITY_REFINEMENT_CUE_RE =
-  /\b[A-Z]{2,5}\b|英伟达|苹果|微软|特斯拉|谷歌|亚马逊|Nvidia|Apple|Microsoft|Tesla|Google|Amazon/;
+  /\b[A-Z]{2,5}\b|React|Vue|TypeScript|JavaScript|Node\.?js|英伟达|苹果|微软|特斯拉|谷歌|亚马逊|Nvidia|Apple|Microsoft|Tesla|Google|Amazon/;
 
 const TICKER_RE = /\b[A-Z]{2,5}\b/;
+const KNOWN_TECHNICAL_TERMS = [
+  "React",
+  "Vue",
+  "TypeScript",
+  "JavaScript",
+  "Node.js",
+  "ONNX",
+  "RAG",
+  "HTTP",
+  "JSON",
+  "API",
+  "LLM",
+];
 const NON_TICKER_ACRONYMS = new Set([
   "ADK",
   "API",
@@ -443,6 +456,37 @@ function normalizeInvestmentEntityHints(
       peopleOrCompanies: semanticEvidence.entityHints.peopleOrCompanies.filter(
         (name) => !promoted.has(name.toUpperCase()),
       ),
+    },
+  };
+}
+
+function normalizeTechnicalEntityHints(
+  prompt: string,
+  semanticEvidence: IntentEvidence,
+): IntentEvidence {
+  const existing = new Set(
+    semanticEvidence.entityHints.technicalTerms.map((term) =>
+      term.toLowerCase(),
+    ),
+  );
+  const detected = KNOWN_TECHNICAL_TERMS.filter((term) => {
+    const escaped = term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    return new RegExp(`\\b${escaped}\\b`, "i").test(prompt);
+  }).filter((term) => !existing.has(term.toLowerCase()));
+
+  if (detected.length === 0) return semanticEvidence;
+
+  console.error(
+    `🏷️ [IntentResolver] Deterministic technical-term normalization terms=${detected.join(",")}`,
+  );
+  return {
+    ...semanticEvidence,
+    entityHints: {
+      ...semanticEvidence.entityHints,
+      technicalTerms: [
+        ...semanticEvidence.entityHints.technicalTerms,
+        ...detected,
+      ],
     },
   };
 }
@@ -1996,7 +2040,8 @@ export class IntentResolver {
       );
     } else if (
       (semanticEvidence.memoryRecall.target === "user_memory" ||
-        semanticEvidence.memoryRecall.target === "current_context_reference") &&
+        (semanticEvidence.memoryRecall.target === "current_context_reference" &&
+          !hasCurrentContextReferenceCue(prompt))) &&
       hasConversationHistoryRecallCue(prompt)
     ) {
       const previousTarget = semanticEvidence.memoryRecall.target;
@@ -2035,7 +2080,10 @@ export class IntentResolver {
         `🛠️ [IntentResolver] Action cue corrected semantic action to ${deterministicAction}`,
       );
     }
-    semanticEvidence = normalizeInvestmentEntityHints(prompt, semanticEvidence);
+    semanticEvidence = normalizeTechnicalEntityHints(
+      prompt,
+      normalizeInvestmentEntityHints(prompt, semanticEvidence),
+    );
     const memoryRecallTarget = semanticEvidence.memoryRecall.target;
     const semanticRecallCue =
       semanticEvidence.memoryRecall.present &&
@@ -2252,9 +2300,11 @@ export class IntentResolver {
           ? false
           : topicRelation === "same_topic" || topicRelation === "subtopic"
             ? false
-            : topicRelation === "new_topic"
-              ? true
-              : parsed.topic_shifted === true;
+            : topicRelation === "adjacent_topic"
+              ? false
+              : topicRelation === "new_topic"
+                ? true
+                : parsed.topic_shifted === true;
     const topicAnalysis = normalizeTopicAnalysis({
       value: parsed.topic_analysis,
       legacyHistoryTopic: parsed.history_topic,
@@ -2281,6 +2331,9 @@ export class IntentResolver {
       needsScheduling ||
       taskType === "execute" ||
       taskType === "delegate" ||
+      (semanticEvidence.actionRequest.present &&
+        semanticEvidence.actionRequest.action !== "read" &&
+        semanticEvidence.actionRequest.action !== "none") ||
       (!delegateDowngraded && normalizeBoolean(parsed.needs_tool));
     const needsMemory = subject !== "external" || taskType === "recall";
     const needsExternalKnowledge =

@@ -146,6 +146,9 @@ function parseArgs(argv: string[]) {
     timeoutMs: Number(process.env.INTENT_EVAL_TIMEOUT_MS ?? 120_000),
     limit: 0,
     tag: "",
+    tags: [] as string[],
+    suite: "",
+    minPassRate: null as number | null,
   };
 
   for (let i = 0; i < argv.length; i += 1) {
@@ -175,6 +178,18 @@ function parseArgs(argv: string[]) {
     } else if (arg === "--tag" && next) {
       args.tag = next;
       i += 1;
+    } else if (arg === "--tags" && next) {
+      args.tags = next
+        .split(",")
+        .map((tag) => tag.trim())
+        .filter(Boolean);
+      i += 1;
+    } else if (arg === "--suite" && next) {
+      args.suite = next.trim();
+      i += 1;
+    } else if (arg === "--min-pass-rate" && next) {
+      args.minPassRate = Number(next);
+      i += 1;
     } else if (arg === "--help" || arg === "-h") {
       printHelp();
       process.exit(0);
@@ -189,6 +204,14 @@ function parseArgs(argv: string[]) {
   }
   if (args.models.length === 0) {
     throw new Error("At least one model is required.");
+  }
+  if (
+    args.minPassRate !== null &&
+    (!Number.isFinite(args.minPassRate) ||
+      args.minPassRate < 0 ||
+      args.minPassRate > 1)
+  ) {
+    throw new Error(`Invalid --min-pass-rate: ${args.minPassRate}`);
   }
 
   return args;
@@ -207,6 +230,9 @@ Options:
   --timeout-ms <ms>    Per-case timeout. Default: INTENT_EVAL_TIMEOUT_MS or 120000
   --limit <n>          Run only the first n cases after tag filtering
   --tag <tag>          Run only cases with this tag
+  --tags <a,b>         Run cases containing any of these tags
+  --suite <name>       Run cases tagged suite:<name>, e.g. --suite core
+  --min-pass-rate <n>  Require each model to meet this pass rate, e.g. 1 or 0.95
 `);
 }
 
@@ -225,6 +251,10 @@ function readCases(casesPath: string): IntentEvalCase[] {
         );
       }
     });
+}
+
+function caseHasTag(evalCase: IntentEvalCase, tag: string) {
+  return evalCase.tags?.includes(tag) === true;
 }
 
 function includesAll(actual: string[], expected: string[] | undefined) {
@@ -768,8 +798,17 @@ function renderMarkdown(reports: ModelReport[]) {
 async function main() {
   const args = parseArgs(process.argv.slice(2));
   let cases = readCases(args.casesPath);
+  if (args.suite) {
+    const suiteTag = `suite:${args.suite}`;
+    cases = cases.filter((evalCase) => caseHasTag(evalCase, suiteTag));
+  }
   if (args.tag)
-    cases = cases.filter((evalCase) => evalCase.tags?.includes(args.tag));
+    cases = cases.filter((evalCase) => caseHasTag(evalCase, args.tag));
+  if (args.tags.length > 0) {
+    cases = cases.filter((evalCase) =>
+      args.tags.some((tag) => caseHasTag(evalCase, tag)),
+    );
+  }
   if (args.limit > 0) cases = cases.slice(0, args.limit);
   if (cases.length === 0) throw new Error("No eval cases selected.");
 
@@ -780,6 +819,11 @@ async function main() {
   );
   console.log(`Cases: ${args.casesPath}`);
   console.log(`Ollama: ${args.baseUrl}`);
+  if (args.suite) console.log(`Suite: ${args.suite}`);
+  if (args.tag) console.log(`Tag: ${args.tag}`);
+  if (args.tags.length > 0) console.log(`Tags: ${args.tags.join(",")}`);
+  if (args.minPassRate !== null)
+    console.log(`Min pass rate: ${Math.round(args.minPassRate * 100)}%`);
 
   const reports: ModelReport[] = [];
   for (const model of args.models) {
@@ -809,6 +853,13 @@ async function main() {
     generatedAt: new Date().toISOString(),
     models: args.models,
     casesPath: args.casesPath,
+    filters: {
+      suite: args.suite || null,
+      tag: args.tag || null,
+      tags: args.tags,
+      limit: args.limit || null,
+    },
+    minPassRate: args.minPassRate,
     reports,
   };
 
@@ -822,7 +873,13 @@ async function main() {
   console.log(`Latest report: ${latestMdPath}`);
 
   const hasFailures = reports.some((report) => report.failed > 0);
-  process.exitCode = hasFailures ? 1 : 0;
+  const missesPassRate =
+    args.minPassRate !== null &&
+    reports.some(
+      (report) =>
+        report.total === 0 || report.passed / report.total < args.minPassRate!,
+    );
+  process.exitCode = hasFailures || missesPassRate ? 1 : 0;
 }
 
 main().catch((error) => {
