@@ -1699,17 +1699,19 @@ Topic grounding 已经比之前稳定，但仍有现实问题：
 已完成：
 
 - 已经有真实模型 eval；
-- 已经有 `suite:core`、topic grounding、personal fact、multi-intent、proactive clarification 等回归 case；
+- 已经有 `smoke` / `core` / `extended` / `stress` 分层 suite；
+- 已经有 topic grounding、personal fact、multi-intent、proactive clarification 等回归 case；
 - 已经具备失败样本 candidate 输出；
 - 已经有 policy trace reason code 和部分 baseline 能力；
 - eval runner 已支持 clarification execution context，能覆盖 proactive task 这类非交互场景。
+- eval runner 已支持 `--repeat` 一致性检查、`--max-inconsistency-rate` 门禁和跨模型差异报告。
 
 仍需加强：
 
 - 当前 case 数量还不够大，覆盖的业务面有限；
 - 还缺少大规模真实 query 回放、按分布采样和线上日志自动回灌；
 - 还没有稳定的跨模型回归基线、分版本趋势追踪、失败聚类分析；
-- 还没有把波动性本身做成指标，例如同一 case 重跑 10 次的一致性；
+- 波动性已经能通过 repeated eval 测量，但还没有进入 nightly trend；
 - 当前 eval 更偏功能回归，还不是完整质量运营体系。
 
 工业级不是“这一轮通过”，而是长期、跨模型、跨版本、跨分布地稳定通过。

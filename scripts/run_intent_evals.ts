@@ -153,6 +153,8 @@ type CheckResult = {
 
 type CaseResult = {
   id: string;
+  runIndex: number;
+  runKey: string;
   tags: string[];
   prompt: string;
   history: ConversationTurn[];
@@ -183,7 +185,25 @@ type ModelReport = {
     }
   >;
   confidenceCalibration: ConfidenceCalibrationReport;
+  consistency: ConsistencyReport;
   results: CaseResult[];
+};
+
+type CaseConsistency = {
+  id: string;
+  runs: number;
+  stable: boolean;
+  signatures: string[];
+  passValues: boolean[];
+};
+
+type ConsistencyReport = {
+  repeat: number;
+  cases: number;
+  stableCases: number;
+  unstableCases: number;
+  inconsistencyRate: number;
+  unstable: CaseConsistency[];
 };
 
 type ConfidenceDimension = keyof IntentFrame["confidenceByDimension"];
@@ -212,6 +232,8 @@ const repoRoot = path.resolve(
 const defaultCasesPath = path.join(repoRoot, "evals/intent/cases.jsonl");
 const defaultOutputDir = path.join(repoRoot, "evals/logs");
 
+const BUILTIN_SUITES = new Set(["smoke", "core", "extended", "stress"]);
+
 function parseArgs(argv: string[]) {
   const args = {
     models: process.env.INTENT_EVAL_MODELS?.split(",").filter(Boolean) ?? [
@@ -222,13 +244,16 @@ function parseArgs(argv: string[]) {
     baseUrl: process.env.OLLAMA_BASE_URL ?? "http://localhost:11434",
     timeoutMs: Number(process.env.INTENT_EVAL_TIMEOUT_MS ?? 120_000),
     limit: 0,
+    repeat: 1,
     tag: "",
     tags: [] as string[],
     suite: "",
     minPassRate: null as number | null,
+    maxInconsistencyRate: null as number | null,
     writePolicyBaseline: "",
     comparePolicyBaseline: "",
     writeEvalCandidates: "",
+    listSuites: false,
   };
 
   for (let i = 0; i < argv.length; i += 1) {
@@ -255,6 +280,9 @@ function parseArgs(argv: string[]) {
     } else if (arg === "--limit" && next) {
       args.limit = Number(next);
       i += 1;
+    } else if (arg === "--repeat" && next) {
+      args.repeat = Number(next);
+      i += 1;
     } else if (arg === "--tag" && next) {
       args.tag = next;
       i += 1;
@@ -270,6 +298,9 @@ function parseArgs(argv: string[]) {
     } else if (arg === "--min-pass-rate" && next) {
       args.minPassRate = Number(next);
       i += 1;
+    } else if (arg === "--max-inconsistency-rate" && next) {
+      args.maxInconsistencyRate = Number(next);
+      i += 1;
     } else if (arg === "--write-policy-baseline" && next) {
       args.writePolicyBaseline = path.resolve(next);
       i += 1;
@@ -279,6 +310,8 @@ function parseArgs(argv: string[]) {
     } else if (arg === "--write-eval-candidates" && next) {
       args.writeEvalCandidates = path.resolve(next);
       i += 1;
+    } else if (arg === "--list-suites") {
+      args.listSuites = true;
     } else if (arg === "--help" || arg === "-h") {
       printHelp();
       process.exit(0);
@@ -291,6 +324,13 @@ function parseArgs(argv: string[]) {
   if (!Number.isFinite(args.limit) || args.limit < 0) {
     throw new Error(`Invalid --limit: ${args.limit}`);
   }
+  if (
+    !Number.isFinite(args.repeat) ||
+    args.repeat < 1 ||
+    !Number.isInteger(args.repeat)
+  ) {
+    throw new Error(`Invalid --repeat: ${args.repeat}`);
+  }
   if (args.models.length === 0) {
     throw new Error("At least one model is required.");
   }
@@ -301,6 +341,23 @@ function parseArgs(argv: string[]) {
       args.minPassRate > 1)
   ) {
     throw new Error(`Invalid --min-pass-rate: ${args.minPassRate}`);
+  }
+  if (
+    args.maxInconsistencyRate !== null &&
+    (!Number.isFinite(args.maxInconsistencyRate) ||
+      args.maxInconsistencyRate < 0 ||
+      args.maxInconsistencyRate > 1)
+  ) {
+    throw new Error(
+      `Invalid --max-inconsistency-rate: ${args.maxInconsistencyRate}`,
+    );
+  }
+  if (args.suite && !BUILTIN_SUITES.has(args.suite)) {
+    throw new Error(
+      `Unknown --suite "${args.suite}". Known suites: ${Array.from(
+        BUILTIN_SUITES,
+      ).join(", ")}`,
+    );
   }
 
   return args;
@@ -318,16 +375,20 @@ Options:
   --base-url <url>     Ollama base URL. Default: OLLAMA_BASE_URL or http://localhost:11434
   --timeout-ms <ms>    Per-case timeout. Default: INTENT_EVAL_TIMEOUT_MS or 120000
   --limit <n>          Run only the first n cases after tag filtering
+  --repeat <n>         Run each selected case n times to measure consistency
   --tag <tag>          Run only cases with this tag
   --tags <a,b>         Run cases containing any of these tags
-  --suite <name>       Run cases tagged suite:<name>, e.g. --suite core
+  --suite <name>       Run a named suite: smoke, core, extended, or stress
   --min-pass-rate <n>  Require each model to meet this pass rate, e.g. 1 or 0.95
+  --max-inconsistency-rate <n>
+                       Fail if repeated runs exceed this inconsistency rate
   --write-policy-baseline <path>
                        Write compact policy trace baseline JSON
   --compare-policy-baseline <path>
                        Fail if compact policy trace differs from baseline
   --write-eval-candidates <path>
                        Write failed cases as JSONL eval candidates
+  --list-suites        Print built-in suite definitions
 `);
 }
 
@@ -350,6 +411,29 @@ function readCases(casesPath: string): IntentEvalCase[] {
 
 function caseHasTag(evalCase: IntentEvalCase, tag: string) {
   return evalCase.tags?.includes(tag) === true;
+}
+
+function suiteIncludesCase(suite: string, evalCase: IntentEvalCase): boolean {
+  if (suite === "smoke") return caseHasTag(evalCase, "suite:smoke");
+  if (suite === "core") return caseHasTag(evalCase, "suite:core");
+  if (suite === "stress") return caseHasTag(evalCase, "suite:stress");
+  if (suite === "extended") return !caseHasTag(evalCase, "candidate");
+  return false;
+}
+
+function printSuites(cases: IntentEvalCase[]) {
+  const rows = Array.from(BUILTIN_SUITES).map((suite) => ({
+    suite,
+    cases: cases.filter((evalCase) => suiteIncludesCase(suite, evalCase)),
+  }));
+  console.log("Built-in intent eval suites:");
+  for (const row of rows) {
+    console.log(
+      `- ${row.suite}: ${row.cases.length} case(s)${
+        row.suite === "extended" ? " (all non-candidate cases)" : ""
+      }`,
+    );
+  }
 }
 
 function includesAll(actual: string[], expected: string[] | undefined) {
@@ -913,6 +997,7 @@ async function runCase(
   model: string,
   evalCase: IntentEvalCase,
   options: { baseUrl: string; timeoutMs: number },
+  runIndex = 0,
 ): Promise<CaseResult> {
   const resolver = new IntentResolver({
     model,
@@ -951,6 +1036,8 @@ async function runCase(
     );
     return {
       id: evalCase.id,
+      runIndex,
+      runKey: formatRunKey(evalCase.id, runIndex),
       tags: evalCase.tags ?? [],
       prompt: evalCase.prompt,
       history: evalCase.history ?? [],
@@ -963,6 +1050,8 @@ async function runCase(
   } catch (error: any) {
     return {
       id: evalCase.id,
+      runIndex,
+      runKey: formatRunKey(evalCase.id, runIndex),
       tags: evalCase.tags ?? [],
       prompt: evalCase.prompt,
       history: evalCase.history ?? [],
@@ -980,6 +1069,10 @@ async function runCase(
       error: error?.stack ?? error?.message ?? String(error),
     };
   }
+}
+
+function formatRunKey(id: string, runIndex: number) {
+  return runIndex === 0 ? id : `${id}#${runIndex + 1}`;
 }
 
 function summarizeModel(model: string, results: CaseResult[]): ModelReport {
@@ -1031,7 +1124,84 @@ function summarizeModel(model: string, results: CaseResult[]): ModelReport {
     tagStats,
     policyReasonCodeStats,
     confidenceCalibration: buildConfidenceCalibration(results),
+    consistency: buildConsistencyReport(results),
     results,
+  };
+}
+
+function buildConsistencySignature(result: CaseResult): string {
+  if (!result.intent) {
+    return JSON.stringify({
+      passed: result.passed,
+      error: result.error ?? "unknown_error",
+    });
+  }
+  const intent = result.intent;
+  return JSON.stringify({
+    passed: result.passed,
+    subject: intent.subject,
+    taskType: intent.taskType,
+    needsMemory: intent.needsMemory,
+    needsExternalKnowledge: intent.needsExternalKnowledge,
+    needsTool: intent.needsTool,
+    needsScheduling: intent.needsScheduling,
+    topicShifted: intent.topicShifted,
+    referencesRecentHistory: intent.referencesRecentHistory,
+    memoryTarget: intent.semanticEvidence.memoryRecall.target,
+    action: intent.semanticEvidence.actionRequest.action,
+    candidateAgents: [...intent.candidateAgents].sort(),
+    intentSteps: intent.intentSteps.map((step) => ({
+      type: step.type,
+      action: step.action,
+      target: step.target,
+      requiresConfirmation: step.requiresConfirmation,
+    })),
+    topicRelation: intent.topicAnalysis.relation,
+    policyReasonCodes: intent.policyTrace.map((entry) => entry.reasonCode),
+    clarification: result.clarification
+      ? {
+          state: result.clarification.state,
+          shouldAsk: result.clarification.shouldAsk,
+          reasons: result.clarification.reasons,
+        }
+      : null,
+  });
+}
+
+function buildConsistencyReport(results: CaseResult[]): ConsistencyReport {
+  const byCase = new Map<string, CaseResult[]>();
+  for (const result of results) {
+    const bucket = byCase.get(result.id) ?? [];
+    bucket.push(result);
+    byCase.set(result.id, bucket);
+  }
+
+  const caseReports: CaseConsistency[] = [];
+  for (const [id, caseResults] of byCase) {
+    const signatures = caseResults.map(buildConsistencySignature);
+    const uniqueSignatures = Array.from(new Set(signatures));
+    caseReports.push({
+      id,
+      runs: caseResults.length,
+      stable: uniqueSignatures.length === 1,
+      signatures: uniqueSignatures,
+      passValues: caseResults.map((result) => result.passed),
+    });
+  }
+
+  const repeated = caseReports.filter((result) => result.runs > 1);
+  const unstable = repeated.filter((result) => !result.stable);
+  return {
+    repeat:
+      results.length === 0
+        ? 1
+        : Math.max(...caseReports.map((result) => result.runs)),
+    cases: repeated.length,
+    stableCases: repeated.length - unstable.length,
+    unstableCases: unstable.length,
+    inconsistencyRate:
+      repeated.length === 0 ? 0 : unstable.length / repeated.length,
+    unstable,
   };
 }
 
@@ -1174,6 +1344,84 @@ function renderConfidenceCalibration(report: ConfidenceCalibrationReport) {
   ].join("\n");
 }
 
+function renderConsistency(report: ConsistencyReport) {
+  if (report.repeat <= 1) {
+    return "_Repeat disabled. Use `--repeat N` to measure volatility._\n";
+  }
+  const lines = [
+    "| Repeat | Cases | Stable | Unstable | Inconsistency Rate |",
+    "| ---: | ---: | ---: | ---: | ---: |",
+    `| ${report.repeat} | ${report.cases} | ${report.stableCases} | ${report.unstableCases} | ${percent(report.unstableCases, report.cases)} |`,
+    "",
+  ];
+  if (report.unstable.length > 0) {
+    lines.push("Unstable cases:", "");
+    for (const unstable of report.unstable) {
+      lines.push(
+        `- ${unstable.id}: ${unstable.signatures.length} distinct signature(s), pass values=${unstable.passValues.join(",")}`,
+      );
+    }
+    lines.push("");
+  }
+  return lines.join("\n");
+}
+
+function renderCrossModelComparison(reports: ModelReport[]) {
+  if (reports.length < 2) return "";
+  const modelNames = reports.map((report) => report.model);
+  const caseIds = Array.from(
+    new Set(
+      reports.flatMap((report) => report.results.map((result) => result.id)),
+    ),
+  ).sort();
+  const divergent = caseIds.flatMap((caseId) => {
+    const byModel = reports.map((report) => {
+      const caseResults = report.results.filter(
+        (result) => result.id === caseId,
+      );
+      const passed = caseResults.filter((result) => result.passed).length;
+      return {
+        model: report.model,
+        passed,
+        total: caseResults.length,
+      };
+    });
+    const rates = new Set(
+      byModel.map((item) =>
+        item.total === 0 ? "missing" : `${item.passed}/${item.total}`,
+      ),
+    );
+    return rates.size > 1 ? [{ caseId, byModel }] : [];
+  });
+
+  const lines = ["## Cross-Model Comparison", ""];
+  if (divergent.length === 0) {
+    lines.push("_No pass-rate divergence across selected models._", "");
+    return lines.join("\n");
+  }
+  lines.push(
+    `Found ${divergent.length} case(s) with cross-model pass-rate divergence.`,
+    "",
+  );
+  lines.push(
+    `| Case | ${modelNames.map((model) => `${model} Pass`).join(" | ")} |`,
+  );
+  lines.push(`| --- | ${modelNames.map(() => "---:").join(" | ")} |`);
+  for (const item of divergent) {
+    const byModel = new Map(
+      item.byModel.map((entry) => [
+        entry.model,
+        `${entry.passed}/${entry.total}`,
+      ]),
+    );
+    lines.push(
+      `| ${item.caseId} | ${modelNames.map((model) => byModel.get(model) ?? "0/0").join(" | ")} |`,
+    );
+  }
+  lines.push("");
+  return lines.join("\n");
+}
+
 function renderMarkdown(reports: ModelReport[]) {
   const lines: string[] = [
     "# Intent Eval Report",
@@ -1205,6 +1453,11 @@ function renderMarkdown(reports: ModelReport[]) {
       "",
       renderConfidenceCalibration(report.confidenceCalibration),
     );
+    lines.push(
+      "### Repeat Consistency",
+      "",
+      renderConsistency(report.consistency),
+    );
     const failures = report.results.filter((result) => !result.passed);
     lines.push("### Failures", "");
     if (failures.length === 0) {
@@ -1226,6 +1479,9 @@ function renderMarkdown(reports: ModelReport[]) {
     }
   }
 
+  const crossModel = renderCrossModelComparison(reports);
+  if (crossModel) lines.push(crossModel);
+
   return lines.join("\n");
 }
 
@@ -1235,6 +1491,7 @@ type PolicyTraceBaseline = {
     model: string;
     cases: Array<{
       id: string;
+      runKey?: string;
       passed: boolean;
       reasonCodes: string[];
       trace: Array<
@@ -1262,6 +1519,7 @@ function buildPolicyTraceBaseline(reports: ModelReport[]): PolicyTraceBaseline {
         }));
         return {
           id: result.id,
+          runKey: result.runKey,
           passed: result.passed,
           reasonCodes: trace.map((entry) => entry.reasonCode),
           trace,
@@ -1293,12 +1551,16 @@ function comparePolicyTraceBaseline(
       continue;
     }
     const actualCases = new Map(
-      actualReport.cases.map((caseResult) => [caseResult.id, caseResult]),
+      actualReport.cases.map((caseResult) => [
+        caseResult.runKey ?? caseResult.id,
+        caseResult,
+      ]),
     );
     for (const expectedCase of expectedReport.cases) {
-      const actualCase = actualCases.get(expectedCase.id);
+      const expectedKey = expectedCase.runKey ?? expectedCase.id;
+      const actualCase = actualCases.get(expectedKey);
       if (!actualCase) {
-        diffs.push(`${model}/${expectedCase.id}: missing case`);
+        diffs.push(`${model}/${expectedKey}: missing case`);
         continue;
       }
       const expectedSignature = formatPolicyTraceSignature(expectedCase.trace);
@@ -1310,11 +1572,14 @@ function comparePolicyTraceBaseline(
       }
     }
     const expectedCaseIds = new Set(
-      expectedReport.cases.map((caseResult) => caseResult.id),
+      expectedReport.cases.map(
+        (caseResult) => caseResult.runKey ?? caseResult.id,
+      ),
     );
     for (const actualCase of actualReport.cases) {
-      if (!expectedCaseIds.has(actualCase.id)) {
-        diffs.push(`${model}/${actualCase.id}: unexpected case`);
+      const actualKey = actualCase.runKey ?? actualCase.id;
+      if (!expectedCaseIds.has(actualKey)) {
+        diffs.push(`${model}/${actualKey}: unexpected case`);
       }
     }
   }
@@ -1344,6 +1609,7 @@ type EvalCandidate = {
   generatedAt: string;
   model: string;
   id: string;
+  runKey: string;
   prompt: string;
   history: ConversationTurn[];
   tags: string[];
@@ -1367,6 +1633,7 @@ function buildEvalCandidates(reports: ModelReport[]): EvalCandidate[] {
           generatedAt,
           model: report.model,
           id: `${result.id}.${report.model.replace(/[^a-zA-Z0-9]+/g, "_")}`,
+          runKey: result.runKey,
           prompt: result.prompt,
           history: result.history,
           tags: [...result.tags, "candidate", "from-eval-failure"],
@@ -1399,9 +1666,12 @@ function writeEvalCandidates(pathname: string, candidates: EvalCandidate[]) {
 async function main() {
   const args = parseArgs(process.argv.slice(2));
   let cases = readCases(args.casesPath);
+  if (args.listSuites) {
+    printSuites(cases);
+    return;
+  }
   if (args.suite) {
-    const suiteTag = `suite:${args.suite}`;
-    cases = cases.filter((evalCase) => caseHasTag(evalCase, suiteTag));
+    cases = cases.filter((evalCase) => suiteIncludesCase(args.suite, evalCase));
   }
   if (args.tag)
     cases = cases.filter((evalCase) => caseHasTag(evalCase, args.tag));
@@ -1418,6 +1688,7 @@ async function main() {
   console.log(
     `Running ${cases.length} intent eval case(s) across ${args.models.length} model(s).`,
   );
+  if (args.repeat > 1) console.log(`Repeat: ${args.repeat}`);
   console.log(`Cases: ${args.casesPath}`);
   console.log(`Ollama: ${args.baseUrl}`);
   if (args.suite) console.log(`Suite: ${args.suite}`);
@@ -1430,14 +1701,24 @@ async function main() {
   for (const model of args.models) {
     console.log(`\n--- Model: ${model} ---`);
     const results: CaseResult[] = [];
-    for (const evalCase of cases) {
-      const result = await runCase(model, evalCase, {
-        baseUrl: args.baseUrl,
-        timeoutMs: args.timeoutMs,
-      });
-      results.push(result);
-      const marker = result.passed ? "PASS" : "FAIL";
-      console.log(`${marker} ${evalCase.id} (${result.durationMs}ms)`);
+    for (let runIndex = 0; runIndex < args.repeat; runIndex += 1) {
+      if (args.repeat > 1) {
+        console.log(`Run ${runIndex + 1}/${args.repeat}`);
+      }
+      for (const evalCase of cases) {
+        const result = await runCase(
+          model,
+          evalCase,
+          {
+            baseUrl: args.baseUrl,
+            timeoutMs: args.timeoutMs,
+          },
+          runIndex,
+        );
+        results.push(result);
+        const marker = result.passed ? "PASS" : "FAIL";
+        console.log(`${marker} ${result.runKey} (${result.durationMs}ms)`);
+      }
     }
     const report = summarizeModel(model, results);
     reports.push(report);
@@ -1459,8 +1740,10 @@ async function main() {
       tag: args.tag || null,
       tags: args.tags,
       limit: args.limit || null,
+      repeat: args.repeat,
     },
     minPassRate: args.minPassRate,
+    maxInconsistencyRate: args.maxInconsistencyRate,
     reports,
   };
   const policyBaseline = buildPolicyTraceBaseline(reports);
@@ -1502,6 +1785,24 @@ async function main() {
       (report) =>
         report.total === 0 || report.passed / report.total < args.minPassRate!,
     );
+  const missesConsistency =
+    args.maxInconsistencyRate !== null &&
+    reports.some(
+      (report) =>
+        report.consistency.inconsistencyRate > args.maxInconsistencyRate!,
+    );
+  if (missesConsistency) {
+    console.error(
+      `\nConsistency gate failed: max allowed ${args.maxInconsistencyRate}`,
+    );
+    for (const report of reports) {
+      if (report.consistency.inconsistencyRate > args.maxInconsistencyRate!) {
+        console.error(
+          `- ${report.model}: ${report.consistency.unstableCases}/${report.consistency.cases} unstable case(s)`,
+        );
+      }
+    }
+  }
   let policyBaselineDiffs: string[] = [];
   if (args.comparePolicyBaseline) {
     const expectedBaseline = JSON.parse(
@@ -1519,7 +1820,12 @@ async function main() {
     }
   }
   process.exitCode =
-    hasFailures || missesPassRate || policyBaselineDiffs.length > 0 ? 1 : 0;
+    hasFailures ||
+    missesPassRate ||
+    missesConsistency ||
+    policyBaselineDiffs.length > 0
+      ? 1
+      : 0;
 }
 
 main().catch((error) => {
