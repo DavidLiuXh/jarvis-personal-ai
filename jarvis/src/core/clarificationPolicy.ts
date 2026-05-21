@@ -15,18 +15,38 @@ export type ClarificationPolicyInput = {
   recentHistoryLength?: number;
 };
 
+export type ClarificationState =
+  | "ready"
+  | "awaiting_user"
+  | "blocked_without_channel";
+
+export type ClarificationScope = "none" | "intent" | "step";
+
+export type ClarificationStepRequirement = {
+  stepId: string;
+  stepType: IntentFrame["intentSteps"][number]["type"];
+  reason: string;
+  blocking: boolean;
+};
+
 export type ClarificationDecision = {
+  state: ClarificationState;
+  scope: ClarificationScope;
   shouldAsk: boolean;
   blocking: boolean;
   questions: AskUserQuestion[];
   reasons: string[];
+  stepRequirements: ClarificationStepRequirement[];
 };
 
 export type ClarificationTrace = {
   enabled: true;
+  state: ClarificationState;
+  scope: ClarificationScope;
   shouldAsk: boolean;
   blocking: boolean;
   reasons: string[];
+  stepRequirements: ClarificationStepRequirement[];
   questionHeaders: string[];
   intent: null | {
     subject: IntentFrame["subject"];
@@ -67,15 +87,89 @@ function addQuestion(
   questions.push(question);
 }
 
+function hasScheduleTimeCue(text: string): boolean {
+  return /(\d{1,2}\s*点|\d{1,2}:\d{2}|今天|明天|后天|今晚|早上|上午|中午|下午|晚上|每[天日周月年]|每周[一二三四五六日天]?|周[一二三四五六日天]|星期[一二三四五六日天]|下周|本周|\d{4}-\d{1,2}-\d{1,2})/i.test(
+    text,
+  );
+}
+
+function hasConcreteScheduleTime(
+  intent: IntentFrame,
+  userPrompt: string,
+): boolean {
+  return (
+    intent.resolvedDateRange !== null ||
+    intent.timeWindowDays !== null ||
+    intent.dateFrom !== null ||
+    intent.dateTo !== null ||
+    hasScheduleTimeCue(userPrompt) ||
+    hasScheduleTimeCue(intent.semanticEvidence.actionRequest.object ?? "")
+  );
+}
+
+function addStepRequirement(
+  requirements: ClarificationStepRequirement[],
+  requirement: ClarificationStepRequirement,
+): void {
+  if (
+    requirements.some(
+      (existing) =>
+        existing.stepId === requirement.stepId &&
+        existing.reason === requirement.reason,
+    )
+  ) {
+    return;
+  }
+  requirements.push(requirement);
+}
+
+function buildDecision(args: {
+  questions: AskUserQuestion[];
+  reasons: string[];
+  stepRequirements: ClarificationStepRequirement[];
+}): ClarificationDecision {
+  const shouldAsk = args.questions.length > 0;
+  const blocking =
+    args.questions.length > 0 ||
+    args.stepRequirements.some((requirement) => requirement.blocking);
+  return {
+    state: shouldAsk ? "awaiting_user" : "ready",
+    scope:
+      args.stepRequirements.length > 0
+        ? "step"
+        : args.reasons.length > 0
+          ? "intent"
+          : "none",
+    shouldAsk,
+    blocking,
+    questions: args.questions,
+    reasons: args.reasons,
+    stepRequirements: args.stepRequirements,
+  };
+}
+
+export function applyClarificationChannelState(
+  decision: ClarificationDecision,
+  hasInteractiveChannel: boolean,
+): ClarificationDecision {
+  if (!decision.shouldAsk || hasInteractiveChannel) return decision;
+  return {
+    ...decision,
+    state: "blocked_without_channel",
+    blocking: true,
+  };
+}
+
 export function buildClarificationDecision(
   input: ClarificationPolicyInput,
 ): ClarificationDecision {
   const questions: AskUserQuestion[] = [];
   const reasons: string[] = [];
+  const stepRequirements: ClarificationStepRequirement[] = [];
   const { intent } = input;
 
   if (!intent) {
-    return { shouldAsk: false, blocking: false, questions, reasons };
+    return buildDecision({ questions, reasons, stepRequirements });
   }
 
   const dimension = intent.confidenceByDimension;
@@ -90,6 +184,59 @@ export function buildClarificationDecision(
   const targetAmbiguous =
     hasHighSeverityAmbiguity(intent, ["target", "file", "agent", "object"]) ||
     intent.richIntent.targets.length === 0;
+
+  for (const step of intent.intentSteps) {
+    if (
+      step.type === "schedule" &&
+      !hasConcreteScheduleTime(intent, input.userPrompt)
+    ) {
+      addStepRequirement(stepRequirements, {
+        stepId: step.id,
+        stepType: step.type,
+        reason: "schedule_step_missing_time",
+        blocking: true,
+      });
+      reasons.push("schedule_step_missing_time");
+      addQuestion(questions, {
+        header: `Schedule ${step.id}`,
+        question: "这个提醒或计划步骤需要安排在什么时候？",
+        type: "text",
+        placeholder: "例如：明天早上 9 点、每周一 8 点",
+      });
+    }
+
+    if (
+      (step.type === "execute" || step.type === "delegate") &&
+      step.requiresConfirmation &&
+      (actionAmbiguous || targetAmbiguous)
+    ) {
+      const reason =
+        step.type === "delegate"
+          ? "delegate_step_target_ambiguous"
+          : "execute_step_action_ambiguous";
+      addStepRequirement(stepRequirements, {
+        stepId: step.id,
+        stepType: step.type,
+        reason,
+        blocking: true,
+      });
+      reasons.push(reason);
+    }
+
+    if (
+      step.type === "recall" &&
+      input.querySubject !== "external" &&
+      dimension.memoryTarget < LOW_CONFIDENCE_THRESHOLD
+    ) {
+      addStepRequirement(stepRequirements, {
+        stepId: step.id,
+        stepType: step.type,
+        reason: "recall_step_memory_target_ambiguous",
+        blocking: true,
+      });
+      reasons.push("recall_step_memory_target_ambiguous");
+    }
+  }
 
   if (highRiskExecution && (actionAmbiguous || targetAmbiguous)) {
     reasons.push("high_risk_action_ambiguous");
@@ -123,8 +270,7 @@ export function buildClarificationDecision(
 
   if (
     intent.taskType === "schedule" &&
-    intent.resolvedDateRange === null &&
-    intent.timeWindowDays === null
+    !hasConcreteScheduleTime(intent, input.userPrompt)
   ) {
     reasons.push("schedule_time_ambiguous");
     addQuestion(questions, {
@@ -138,9 +284,15 @@ export function buildClarificationDecision(
   const memoryTargetAmbiguous =
     dimension.memoryTarget < LOW_CONFIDENCE_THRESHOLD ||
     hasHighSeverityAmbiguity(intent, ["memory", "context"]);
+  const memoryLookupRequested =
+    intent.semanticEvidence.memoryRecall.target !== "none" ||
+    intent.referencesRecentHistory ||
+    (intent.semanticEvidence.personalContext.present &&
+      intent.needsExternalKnowledge);
   if (
     input.querySubject !== "external" &&
     intent.needsMemory &&
+    memoryLookupRequested &&
     memoryTargetAmbiguous
   ) {
     reasons.push("memory_target_ambiguous");
@@ -179,12 +331,11 @@ export function buildClarificationDecision(
     });
   }
 
-  return {
-    shouldAsk: questions.length > 0,
-    blocking: questions.length > 0,
+  return buildDecision({
     questions,
-    reasons,
-  };
+    reasons: Array.from(new Set(reasons)),
+    stepRequirements,
+  });
 }
 
 export function buildClarifiedPrompt(
@@ -225,9 +376,12 @@ export function buildClarificationTrace(
 ): ClarificationTrace {
   return {
     enabled: true,
+    state: decision.state,
+    scope: decision.scope,
     shouldAsk: decision.shouldAsk,
     blocking: decision.blocking,
     reasons: decision.reasons,
+    stepRequirements: decision.stepRequirements,
     questionHeaders: decision.questions.map(
       (question) => question.header ?? question.question.slice(0, 40),
     ),

@@ -52,6 +52,7 @@ import { buildIntentPlanSection } from "./intentPlan.js";
 import { buildRecentConversationRecallCandidates } from "./conversationRecall.js";
 import { buildIntentAwareMemoryPolicy } from "./intentAwareMemoryPolicy.js";
 import {
+  applyClarificationChannelState,
   buildClarificationDecision,
   buildClarificationTrace,
   buildClarifiedPrompt,
@@ -1145,7 +1146,10 @@ export class JarvisAgent extends EventEmitter {
             candidateAgents: intentFrame?.candidateAgents ?? [],
             recentHistoryLength: conversationHistory.length,
           };
-          const clarification = buildClarificationDecision(clarificationInput);
+          const clarification = applyClarificationChannelState(
+            buildClarificationDecision(clarificationInput),
+            this.pendingAskUserWs?.ws.readyState === 1,
+          );
           if (this.jarvisConfig.routing?.clarificationObservability === true) {
             console.error(
               `[clarification] ${JSON.stringify(buildClarificationTrace(clarificationInput, clarification))}`,

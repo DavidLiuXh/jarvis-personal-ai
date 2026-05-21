@@ -1407,14 +1407,39 @@ function buildStepTarget(
   return matchingTarget?.value || richIntent.userGoal || fallback;
 }
 
+const INTENT_STEP_TYPE_ORDER: IntentTaskType[] = [
+  "recall",
+  "analyze",
+  "delegate",
+  "execute",
+  "schedule",
+  "chat",
+];
+
 function dedupeIntentSteps(steps: IntentStep[]): IntentStep[] {
   const seen = new Set<string>();
   return steps.filter((step) => {
-    const key = `${step.type}:${step.action}:${step.target}`;
+    const key = `${step.type}:${step.action.toLowerCase()}:${step.target.toLowerCase()}`;
     if (seen.has(key)) return false;
     seen.add(key);
     return true;
   });
+}
+
+function hasEquivalentIntentStep(
+  steps: IntentStep[],
+  type: IntentTaskType,
+  action: string,
+  target: string,
+): boolean {
+  const normalizedAction = action.toLowerCase();
+  const normalizedTarget = target.toLowerCase();
+  return steps.some(
+    (step) =>
+      step.type === type &&
+      step.action.toLowerCase() === normalizedAction &&
+      step.target.toLowerCase() === normalizedTarget,
+  );
 }
 
 function buildIntentStep(args: {
@@ -1437,6 +1462,18 @@ function buildIntentStep(args: {
   };
 }
 
+function sortIntentSteps(steps: IntentStep[]): IntentStep[] {
+  return [...steps].sort((left, right) => {
+    const leftRank = INTENT_STEP_TYPE_ORDER.indexOf(left.type);
+    const rightRank = INTENT_STEP_TYPE_ORDER.indexOf(right.type);
+    const normalizedLeftRank =
+      leftRank === -1 ? INTENT_STEP_TYPE_ORDER.length : leftRank;
+    const normalizedRightRank =
+      rightRank === -1 ? INTENT_STEP_TYPE_ORDER.length : rightRank;
+    return normalizedLeftRank - normalizedRightRank;
+  });
+}
+
 function deriveIntentSteps(args: {
   prompt: string;
   parsedIntentSteps: unknown;
@@ -1450,6 +1487,7 @@ function deriveIntentSteps(args: {
 }): IntentStep[] {
   const parsedSteps = normalizeIntentSteps(args.parsedIntentSteps);
   const steps: IntentStep[] = [];
+  const hasUsableParsedPlan = parsedSteps.length > 1;
 
   const append = (
     type: IntentTaskType,
@@ -1459,7 +1497,10 @@ function deriveIntentSteps(args: {
       Omit<IntentStep, "id" | "type" | "action" | "target">
     > = {},
   ) => {
-    if (steps.some((step) => step.type === type)) return;
+    if (hasUsableParsedPlan && steps.some((step) => step.type === type)) {
+      return;
+    }
+    if (hasEquivalentIntentStep(steps, type, action, target)) return;
     steps.push(
       buildIntentStep({
         index: steps.length + 1,
@@ -1473,17 +1514,19 @@ function deriveIntentSteps(args: {
     );
   };
 
-  const hasUsableParsedPlan = parsedSteps.length > 1;
   if (hasUsableParsedPlan) {
     steps.push(...parsedSteps);
   }
 
-  if (
-    args.needsMemory ||
-    args.semanticEvidence.personalContext.present ||
-    args.semanticEvidence.memoryRecall.target === "conversation_history" ||
-    args.semanticEvidence.memoryRecall.target === "user_memory"
-  ) {
+  const memoryRecallTarget = args.semanticEvidence.memoryRecall.target;
+  const explicitMemoryStep =
+    memoryRecallTarget === "conversation_history" ||
+    memoryRecallTarget === "user_memory" ||
+    memoryRecallTarget === "current_context_reference";
+  const personalContextAnalysisStep =
+    args.semanticEvidence.personalContext.present &&
+    (args.needsExternalKnowledge || args.taskType === "analyze");
+  if (explicitMemoryStep || personalContextAnalysisStep) {
     append(
       "recall",
       "retrieve relevant user context",
@@ -1562,19 +1605,27 @@ function deriveIntentSteps(args: {
     );
   }
 
-  return dedupeIntentSteps(steps).map((step, index, allSteps) => {
+  const deduped = sortIntentSteps(dedupeIntentSteps(steps));
+  const idMap = new Map(
+    deduped.map((step, index) => [step.id, `step-${index + 1}`]),
+  );
+
+  return deduped.map((step, index) => {
     const id = `step-${index + 1}`;
-    const previousId = allSteps[index - 1]?.id;
+    const previousId = index > 0 ? `step-${index}` : null;
+    const normalizedDependsOn = step.dependsOn
+      .map((dependency) => idMap.get(dependency) ?? dependency)
+      .filter((dependency) => dependency !== id);
     const dependsOn =
-      step.dependsOn.length > 0 && previousId
-        ? step.dependsOn.map((dependency) =>
-            dependency === step.id ? previousId : dependency,
-          )
-        : step.dependsOn;
+      normalizedDependsOn.length > 0
+        ? normalizedDependsOn
+        : previousId
+          ? [previousId]
+          : [];
     return {
       ...step,
       id,
-      dependsOn: dependsOn.filter((dependency) => dependency !== id),
+      dependsOn,
     };
   });
 }

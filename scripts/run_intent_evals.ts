@@ -9,6 +9,11 @@ import {
   type IntentFrame,
 } from "../jarvis/src/core/intentResolver.js";
 import type { IntentPolicyTraceEntry } from "../jarvis/src/core/intentPolicy.js";
+import {
+  applyClarificationChannelState,
+  buildClarificationDecision,
+  type ClarificationDecision,
+} from "../jarvis/src/core/clarificationPolicy.js";
 
 type IntentEvalCase = {
   id: string;
@@ -79,6 +84,20 @@ type IntentExpectation = {
     reasonCodesContain?: string[];
     reasonCodesNotContain?: string[];
   };
+  clarification?: {
+    interactiveChannel?: boolean;
+    state?: ClarificationDecision["state"];
+    scope?: ClarificationDecision["scope"];
+    shouldAsk?: boolean;
+    blocking?: boolean;
+    reasonsContain?: string[];
+    reasonsNotContain?: string[];
+    stepRequirementsContain?: Array<{
+      stepType?: IntentFrame["intentSteps"][number]["type"];
+      reason?: string;
+      blocking?: boolean;
+    }>;
+  };
   confidenceByDimensionMin?: Partial<IntentFrame["confidenceByDimension"]>;
 };
 
@@ -101,6 +120,7 @@ type Dimension =
   | "intentSteps"
   | "topicAnalysis"
   | "policyTrace"
+  | "clarification"
   | "dimensionConfidence";
 
 type CheckResult = {
@@ -119,6 +139,7 @@ type CaseResult = {
   durationMs: number;
   checks: CheckResult[];
   intent?: IntentFrame;
+  clarification?: ClarificationDecision;
   error?: string;
 };
 
@@ -685,6 +706,97 @@ function compareIntent(intent: IntentFrame, expect: IntentExpectation) {
   return checks;
 }
 
+function compareClarification(
+  decision: ClarificationDecision,
+  expect: IntentExpectation["clarification"],
+) {
+  const checks: CheckResult[] = [];
+  if (expect === undefined) return checks;
+
+  if (expect.state !== undefined) {
+    addCheck(
+      checks,
+      "clarification",
+      expect.state,
+      decision.state,
+      decision.state === expect.state,
+      "clarification state matches",
+    );
+  }
+  if (expect.scope !== undefined) {
+    addCheck(
+      checks,
+      "clarification",
+      expect.scope,
+      decision.scope,
+      decision.scope === expect.scope,
+      "clarification scope matches",
+    );
+  }
+  if (expect.shouldAsk !== undefined) {
+    addCheck(
+      checks,
+      "clarification",
+      expect.shouldAsk,
+      decision.shouldAsk,
+      decision.shouldAsk === expect.shouldAsk,
+      "clarification shouldAsk matches",
+    );
+  }
+  if (expect.blocking !== undefined) {
+    addCheck(
+      checks,
+      "clarification",
+      expect.blocking,
+      decision.blocking,
+      decision.blocking === expect.blocking,
+      "clarification blocking matches",
+    );
+  }
+  if (expect.reasonsContain !== undefined) {
+    addCheck(
+      checks,
+      "clarification",
+      expect.reasonsContain,
+      decision.reasons,
+      includesAll(decision.reasons, expect.reasonsContain),
+      "clarification reasons contain expected values",
+    );
+  }
+  if (expect.reasonsNotContain !== undefined) {
+    addCheck(
+      checks,
+      "clarification",
+      expect.reasonsNotContain,
+      decision.reasons,
+      includesNone(decision.reasons, expect.reasonsNotContain),
+      "clarification reasons exclude forbidden values",
+    );
+  }
+  if (expect.stepRequirementsContain !== undefined) {
+    for (const requirement of expect.stepRequirementsContain) {
+      addCheck(
+        checks,
+        "clarification",
+        requirement,
+        decision.stepRequirements,
+        decision.stepRequirements.some(
+          (actual) =>
+            (requirement.stepType === undefined ||
+              actual.stepType === requirement.stepType) &&
+            (requirement.reason === undefined ||
+              actual.reason === requirement.reason) &&
+            (requirement.blocking === undefined ||
+              actual.blocking === requirement.blocking),
+        ),
+        "clarification step requirements contain expected requirement",
+      );
+    }
+  }
+
+  return checks;
+}
+
 async function runCase(
   model: string,
   evalCase: IntentEvalCase,
@@ -701,7 +813,20 @@ async function runCase(
       userPrompt: evalCase.prompt,
       history: evalCase.history ?? [],
     });
-    const checks = compareIntent(intent, evalCase.expect);
+    const clarification = applyClarificationChannelState(
+      buildClarificationDecision({
+        userPrompt: evalCase.prompt,
+        intent,
+        querySubject: intent.subject,
+        candidateAgents: intent.candidateAgents,
+        recentHistoryLength: evalCase.history?.length ?? 0,
+      }),
+      evalCase.expect.clarification?.interactiveChannel ?? true,
+    );
+    const checks = [
+      ...compareIntent(intent, evalCase.expect),
+      ...compareClarification(clarification, evalCase.expect.clarification),
+    ];
     addCheck(
       checks,
       "schemaValid",
@@ -718,6 +843,7 @@ async function runCase(
       durationMs: Date.now() - started,
       checks,
       intent,
+      clarification,
     };
   } catch (error: any) {
     return {

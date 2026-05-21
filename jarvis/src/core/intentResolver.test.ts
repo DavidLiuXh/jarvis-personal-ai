@@ -1289,12 +1289,95 @@ ${modelResponse({
     expect(intent.intentSteps[1]).toMatchObject({
       type: "analyze",
       target: "NVDA",
+      dependsOn: ["step-1"],
+    });
+    expect(intent.intentSteps[2]).toMatchObject({
+      type: "execute",
+      dependsOn: ["step-2"],
     });
     expect(intent.intentSteps.at(-1)).toMatchObject({
       type: "schedule",
+      dependsOn: ["step-3"],
       requiresConfirmation: true,
       riskLevel: "medium",
     });
+  });
+
+  it("canonicalizes parsed multi-intent steps and preserves repeated step types for different targets", async () => {
+    const resolver = makeResolver();
+    mockGenerate.mockResolvedValueOnce(
+      modelResponse({
+        query_subject: "external",
+        task_type: "execute",
+        needs_external_knowledge: false,
+        needs_tool: true,
+        semantic_evidence: {
+          personalContext: { present: false, reason: "", span: "" },
+          memoryRecall: {
+            present: false,
+            target: "none",
+            reason: "",
+            span: "",
+          },
+          actionRequest: {
+            present: true,
+            action: "write",
+            object: "docs and tests",
+          },
+          entityHints: {
+            tickers: [],
+            technicalTerms: [],
+            peopleOrCompanies: [],
+          },
+        },
+        intent_steps: [
+          {
+            id: "b",
+            type: "execute",
+            action: "update docs",
+            target: "docs",
+            depends_on: ["a"],
+            requires_confirmation: false,
+            risk_level: "medium",
+          },
+          {
+            id: "a",
+            type: "analyze",
+            action: "inspect current implementation",
+            target: "intent layer",
+            depends_on: [],
+            requires_confirmation: false,
+            risk_level: "low",
+          },
+          {
+            id: "c",
+            type: "execute",
+            action: "add tests",
+            target: "tests",
+            depends_on: ["b"],
+            requires_confirmation: false,
+            risk_level: "medium",
+          },
+        ],
+      }),
+    );
+
+    const intent = await resolver.resolve({
+      userPrompt: "先检查 intent layer，再更新文档并补测试",
+    });
+
+    expect(intent.intentSteps.map((step) => step.type)).toEqual([
+      "analyze",
+      "execute",
+      "execute",
+    ]);
+    expect(intent.intentSteps.map((step) => step.target)).toEqual([
+      "intent layer",
+      "docs",
+      "tests",
+    ]);
+    expect(intent.intentSteps[1].dependsOn).toEqual(["step-1"]);
+    expect(intent.intentSteps[2].dependsOn).toEqual(["step-2"]);
   });
 
   it("keeps schedule as the primary task when delegate and schedule cues both appear", async () => {

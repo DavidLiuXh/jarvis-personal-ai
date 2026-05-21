@@ -7,6 +7,7 @@
 import { describe, expect, it } from "vitest";
 import type { IntentFrame } from "./intentResolver.js";
 import {
+  applyClarificationChannelState,
   buildClarificationDecision,
   buildClarificationTrace,
   buildClarifiedPrompt,
@@ -110,6 +111,8 @@ describe("buildClarificationDecision", () => {
 
     expect(decision.shouldAsk).toBe(false);
     expect(decision.questions).toHaveLength(0);
+    expect(decision.state).toBe("ready");
+    expect(decision.scope).toBe("none");
   });
 
   it("does not ask for low-risk analysis with low subject confidence", () => {
@@ -180,6 +183,50 @@ describe("buildClarificationDecision", () => {
 
     expect(decision.shouldAsk).toBe(true);
     expect(decision.reasons).toContain("schedule_time_ambiguous");
+    expect(decision.state).toBe("awaiting_user");
+    expect(decision.scope).toBe("intent");
+  });
+
+  it("asks from a schedule step even when schedule is not the primary task type", () => {
+    const decision = buildClarificationDecision({
+      userPrompt: "分析 NVDA，然后提醒我复盘",
+      querySubject: "external",
+      candidateAgents: [],
+      intent: intent({
+        taskType: "analyze",
+        needsScheduling: true,
+        intentSteps: [
+          {
+            id: "step-1",
+            type: "analyze",
+            action: "analyze external/domain context",
+            target: "NVDA",
+            dependsOn: [],
+            requiresConfirmation: false,
+            riskLevel: "low",
+          },
+          {
+            id: "step-2",
+            type: "schedule",
+            action: "schedule future follow-up",
+            target: "reminder",
+            dependsOn: ["step-1"],
+            requiresConfirmation: true,
+            riskLevel: "medium",
+          },
+        ],
+      }),
+    });
+
+    expect(decision.shouldAsk).toBe(true);
+    expect(decision.scope).toBe("step");
+    expect(decision.reasons).toContain("schedule_step_missing_time");
+    expect(decision.stepRequirements).toContainEqual({
+      stepId: "step-2",
+      stepType: "schedule",
+      reason: "schedule_step_missing_time",
+      blocking: true,
+    });
   });
 
   it("asks when delegate has multiple plausible agents", () => {
@@ -258,6 +305,26 @@ describe("buildClarificationDecision", () => {
           ...intent().semanticEvidence,
           personalContext: { present: true, reason: "", span: "适合我" },
         },
+        intentSteps: [
+          {
+            id: "step-1",
+            type: "recall",
+            action: "retrieve relevant user context",
+            target: "user_context",
+            dependsOn: [],
+            requiresConfirmation: false,
+            riskLevel: "low",
+          },
+          {
+            id: "step-2",
+            type: "analyze",
+            action: "analyze external/domain context",
+            target: "framework",
+            dependsOn: ["step-1"],
+            requiresConfirmation: false,
+            riskLevel: "low",
+          },
+        ],
         richIntent: {
           ...intent().richIntent,
           contextDependency: {
@@ -272,6 +339,12 @@ describe("buildClarificationDecision", () => {
 
     expect(decision.shouldAsk).toBe(true);
     expect(decision.reasons).toContain("memory_target_ambiguous");
+    expect(decision.stepRequirements).toContainEqual({
+      stepId: "step-1",
+      stepType: "recall",
+      reason: "recall_step_memory_target_ambiguous",
+      blocking: true,
+    });
   });
 
   it("does not ask for external past events", () => {
@@ -294,6 +367,34 @@ describe("buildClarificationDecision", () => {
     });
 
     expect(decision.shouldAsk).toBe(false);
+  });
+});
+
+describe("applyClarificationChannelState", () => {
+  it("marks blocking clarification as blocked when no interactive channel is available", () => {
+    const decision = buildClarificationDecision({
+      userPrompt: "提醒我复盘投资组合",
+      querySubject: "external",
+      candidateAgents: [],
+      intent: intent({
+        taskType: "schedule",
+        needsScheduling: true,
+        needsTool: true,
+        richIntent: {
+          ...intent().richIntent,
+          primaryAction: "schedule",
+          targets: [{ type: "calendar", value: "portfolio review" }],
+          riskLevel: "medium",
+        },
+      }),
+    });
+
+    const withoutChannel = applyClarificationChannelState(decision, false);
+    const withChannel = applyClarificationChannelState(decision, true);
+
+    expect(withoutChannel.state).toBe("blocked_without_channel");
+    expect(withoutChannel.blocking).toBe(true);
+    expect(withChannel.state).toBe("awaiting_user");
   });
 });
 
@@ -358,6 +459,8 @@ describe("buildClarificationTrace", () => {
     const trace = buildClarificationTrace(input, decision);
 
     expect(trace.enabled).toBe(true);
+    expect(trace.state).toBe("awaiting_user");
+    expect(trace.scope).toBe("intent");
     expect(trace.shouldAsk).toBe(true);
     expect(trace.questionHeaders).toEqual(["Clarify action"]);
     expect(trace.intent?.taskType).toBe("execute");
