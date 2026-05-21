@@ -1579,33 +1579,55 @@ LLM 负责开放语义理解，代码负责安全边界和一致性。
 ## 20. 当前距离工业级的具体差距
 
 如果用“能不能稳定支撑真实长期使用、模型切换、复杂请求和持续演进”这个标准来看，
-Jarvis 当前的 intent-understanding 层离工业级还有这些明确差距。
+Jarvis 当前的 intent-understanding 层已经完成了一批关键工程化补强，但离工业级仍有一些
+明确差距。下面按维度区分“已完成/部分完成/仍需加强”。
 
 ### 20.1 输出稳定性还不够
 
+状态：部分完成。
+
 当前最明显的问题不是“完全不会判断”，而是“判断结果偶尔不稳定”：
 
-- 本地模型仍会频繁输出非法 JSON，需要 repair 才能继续；
-- repair 本身也不是 100% 成功，因此必须依赖 deterministic fallback；
-- 同一个 case 多次运行，topic relation、topic grounding、candidate agents 仍会有波动；
-- 小模型在 schema 变长后更容易掉字段、偷懒泛化、用抽象句子代替 grounded evidence。
+已完成：
+
+- 已经有 JSON parse / repair / deterministic fallback；
+- 已经把复杂 schema 拆出 focused extractors，例如 memory target 和 entity hints；
+- 已经通过 policy layer 对高风险误判做确定性修正；
+- 已经把非法 JSON、repair、fallback、policy trace 纳入可观测日志。
+
+仍需加强：
+
+- 本地小模型仍可能输出非法 JSON，需要 repair 才能继续；
+- repair 本身不是 100% 成功，因此 fallback 仍是必要兜底；
+- 同一个 case 多次运行，topic relation、topic grounding、candidate agents 仍可能波动；
+- 小模型在 schema 变长后仍容易掉字段、偷懒泛化、用抽象句子代替 grounded evidence。
 
 这说明当前系统已经具备纠错能力，但还没有达到“输出天然稳定、错误率足够低”的工业级状态。
 
 ### 20.2 语义表达仍偏薄
 
-虽然已经引入 `richIntent`、`confidenceByDimension`、`intentSteps`，但整体上仍然更像
-增强版路由结果，还不是完整的任务语义表示：
+状态：部分完成。
 
-- `intentSteps` 现在主要服务于 prompt 注入，还没有成为系统级执行契约；
+已完成：
+
+- 已经引入 `richIntent`、`confidenceByDimension`、`intentSteps`；
+- `intentSteps` 已不再只服务 prompt 注入，已经进入 `IntentExecutionPlan` 和运行时 enforcement；
+- 已经能表达 recall / analyze / execute / delegate / schedule 等多步骤任务；
+- clarification 和 memory policy 已开始消费 step 信息。
+
+仍需加强：
+
 - step 的 `action` 和 `target` 仍然比较粗，很多时候是 fallback 文本，而不是精确参数；
 - 缺少更强的 argument extraction，例如 reminder time、output format、deliverable path、
   comparison set、约束条件、成功标准；
-- 当前 schema 仍偏向单轮理解，还没有把“用户期望的最终产物”表达得足够清楚。
+- 当前 schema 仍偏向单轮理解，还没有把“用户期望的最终产物”表达得足够清楚；
+- 对文件路径、工具参数、交付物格式这类可执行参数，还没有统一参数 schema。
 
 工业级系统通常不只知道“这是 recall + analyze + schedule”，还要知道“分析什么、产出什么格式、提醒在什么时间、缺什么参数、哪些步骤必须确认”。
 
 ### 20.3 Multi-Intent 已进入执行层，但还不是完整 orchestrator
+
+状态：部分完成，且相比早期差距已经明显收敛。
 
 这块已经从“阶段一识别”推进到“执行契约”：
 
@@ -1627,56 +1649,111 @@ Jarvis 当前的 intent-understanding 层离工业级还有这些明确差距。
 
 ### 20.4 Topic understanding 仍然受模型表述噪声影响
 
+状态：部分完成。
+
 Topic grounding 已经比之前稳定，但仍有现实问题：
 
-- 模型会把普通新问题误判成 `current_context_reference`；
-- 模型会给出抽象总结，而不是来自原文的 grounded evidence；
+- 已经增加 grounded topic analysis，要求 history/current label 必须有 evidence；
+- 已经修正 `referencesRecentHistory=false` 与 `topicAnalysis.relation=current_context_reference`
+  的一部分冲突；
+- 已经为短个人事实声明增加 topic 重建 guardrail，避免“我是 David Liu”被吸附到上一轮电商话题；
+- 已经增加 topic grounding eval case。
+
+仍需加强：
+
+- 模型仍可能把普通新问题误判成 `current_context_reference`；
+- 模型仍可能给出抽象总结，而不是来自原文的 grounded evidence；
 - `referencesRecentHistory=false` 与 `topicAnalysis.relation=current_context_reference`
-  这种语义冲突仍会出现，需要代码层再修正。
+  这种语义冲突仍可能出现，需要继续靠 policy 修正；
+- topic label 与 evidence 的一致性目前主要通过局部 guardrail 和 eval 约束，还不是完整的语义校验器。
 
 工业级 topic inference 要求 relation、history topic、current topic、evidence 之间高度一致，不能靠日志里人工解释。
 
 ### 20.5 Recall / personal / mixed 的边界仍然脆弱
 
+状态：部分完成。
+
 这部分已经比最初稳很多，但仍不是彻底解决：
 
-- “记得”“之前”“上次”这类自然语言在中文里高度多义，容易引入假阳性；
-- `recallCue`、`personalCue`、external entity 之间的优先级需要大量 policy；
+已完成：
+
+- 已经修复“记得保存这个文件吗”这类 remember-to-action 假阳性；
+- 已经修复“上次苹果发布会”这类 external past event 被误升 personal recall 的问题；
+- 已经修复短个人事实声明，例如“Javis，我是David Liu”被误判为 recall / topic follow-up；
+- 已经通过 reason-coded policy trace 固化 recallCue、personalCue、external entity 等优先级；
+- 已经增加相关 unit test 和真实模型 eval case。
+
+仍需加强：
+
+- “记得”“之前”“上次”这类自然语言在中文里仍高度多义，长尾假阳性不可避免；
 - 同一句话既可能是“问我的偏好”，也可能是“结合我的偏好分析外部对象”，语义边界很细；
-- 当前很多正确结果来自 policy 组合，而不是模型本身天然稳定地区分。
+- 当前很多正确结果仍来自 policy 组合，而不是模型本身天然稳定地区分；
+- policy 已系统化，但长尾 case 增长后仍需要更强的语义分类和 eval 自动回灌来控制维护成本。
 
 工业级系统可以接受 policy，但不能长期依赖不断叠加 case-by-case 规则，否则维护成本会持续上升。
 
 ### 20.6 评测覆盖仍不足以证明工业级
 
-已经有真实模型 eval，这是关键基础，但距离工业级验证还有差距：
+状态：部分完成。
+
+已完成：
+
+- 已经有真实模型 eval；
+- 已经有 `suite:core`、topic grounding、personal fact、multi-intent、proactive clarification 等回归 case；
+- 已经具备失败样本 candidate 输出；
+- 已经有 policy trace reason code 和部分 baseline 能力；
+- eval runner 已支持 clarification execution context，能覆盖 proactive task 这类非交互场景。
+
+仍需加强：
 
 - 当前 case 数量还不够大，覆盖的业务面有限；
-- 已经具备失败样本 candidate 输出，但还缺少大规模真实 query 回放、按分布采样和线上日志自动回灌；
-- 已经有 core policy trace baseline，但还没有稳定的跨模型回归基线、分版本趋势追踪、失败聚类分析；
-- 还没有把波动性本身做成指标，例如同一 case 重跑 10 次的一致性。
+- 还缺少大规模真实 query 回放、按分布采样和线上日志自动回灌；
+- 还没有稳定的跨模型回归基线、分版本趋势追踪、失败聚类分析；
+- 还没有把波动性本身做成指标，例如同一 case 重跑 10 次的一致性；
+- 当前 eval 更偏功能回归，还不是完整质量运营体系。
 
 工业级不是“这一轮通过”，而是长期、跨模型、跨版本、跨分布地稳定通过。
 
 ### 20.7 与下游模块的契约还不够硬
 
+状态：部分完成。
+
 当前 intent layer 已经开始影响 memory injection、clarification、agent routing，但耦合还不够深：
 
-- memory policy 已开始识别 recall step，但还没有对每个 step 独立生成 memory scope；
-- clarification policy 已开始按 `intentSteps` 和 step risk 驱动，但还不是多轮状态机；
+已完成：
+
+- memory policy 已开始识别 recall step；
+- clarification policy 已开始按 `intentSteps` 和 step risk 驱动；
+- proactive task 已能通过 `executionContext=proactive_task` 影响 clarification 行为；
+- `IntentExecutionPlan` 已开始约束 required tool，例如 schedule step 对 `task_add` 的 enforcement；
+- memory injection planner 已基于 intent-aware policy 做最终过滤。
+
+仍需加强：
+
+- memory policy 还没有对每个 step 独立生成 memory scope；
+- clarification policy 已有 step 粒度，但还不是完整多轮 state machine；
 - agent routing 仍然部分依赖 candidate heuristic，而不是完整 execution plan；
-- 执行失败后的反馈还不会反向修正 intent understanding。
+- 执行失败后的反馈还不会反向修正 intent understanding；
+- tool/subagent 层还没有完全统一消费同一份 memory / execution contract。
 
 工业级系统通常要求 intent layer 成为统一语义入口，下游模块消费同一份 contract，而不是每层都再做一次自己的轻量理解。
 
 ### 20.8 观测与运营能力还偏初级
 
-当前已经有日志和 targeted eval，但还缺少工程化运营能力：
+状态：部分完成。
+
+已完成：
+
+- 已经有可开关的 clarification observability；
+- 已经有 `policyTrace`，每条 deterministic rule 有 reason code / category / severity；
+- eval 报告已经按 dimension、tag、policy reason code 汇总；
+- 已经开始记录 JSON repair、fallback、focused extractor、topic analysis、memory policy 等关键日志。
+
+仍需加强：
 
 - 没有统一 dashboard 看 subject/taskType/memoryTarget 的错误率走势；
-- 已经开始按 policy reason 和 confidence dimension 分桶，但还没有按模型、场景、语言、
-  query length 建立长期质量统计；
-- 没有 failure taxonomy 和 root-cause 标注体系；
+- 还没有按模型、场景、语言、query length 建立长期质量统计；
+- 没有完整 failure taxonomy 和 root-cause 标注体系；
 - 还没有把 repair rate、fallback rate、topic conflict rate 作为健康指标长期监控。
 
 工业级 intent system 必须既能做对，也能看见自己什么时候没做对。
