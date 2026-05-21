@@ -1,8 +1,12 @@
-# Jarvis 意图理解到最终响应全链路
+# Jarvis 意图理解层全链路与架构设计
 
 本文档说明 Jarvis 在收到一条用户输入后，如何逐层理解意图、选择模型、决定是否追问、决定是否注入记忆、构造上下文、执行工具，并最终返回响应。
 
-重点覆盖当前 Intent Understanding 层的实际实现，而不是未来路线图。
+它同时覆盖三件事：
+
+- 当前 Intent Understanding 层的实际运行链路；
+- 最近围绕 `IntentFrame`、policy layer、confidence calibration、feedback loop 做的架构改造；
+- 当前距离工业级强意图理解系统的差距和后续演进路线。
 
 ## 0. 总览
 
@@ -15,7 +19,7 @@ flowchart TD
     C -- "是" --> C1["走专用处理路径并返回"]
     C -- "否" --> D["LocalModelRouter.route()"]
     D --> E["IntentResolver.resolve() 生成 IntentFrame"]
-    E --> F["确定性 guardrails 修正 IntentFrame"]
+    E --> F["确定性 policy layer 修正 IntentFrame"]
     F --> G["模型路由: complexityScore 选择 pro/flash"]
     G --> H["ClarificationPolicy"]
     H --> I{"是否需要阻塞式追问"}
@@ -47,11 +51,264 @@ flowchart TD
 - `jarvis/src/core/memoryInjectionPlanner.ts`
 - `jarvis/src/core/toolRouter.ts`
 
-## 1. 第一层：输入前置拦截
+## 1. 设计目标
+
+Jarvis 的意图理解层不是一个简单分类器。它的目标是把用户自然语言请求转换成一个可被
+后续模块稳定消费的语义契约。
+
+这个语义契约至少要回答：
+
+- 用户请求主要依赖个人上下文、外部知识，还是两者都有；
+- 用户是在聊天、召回记忆、分析、执行、委派，还是创建提醒；
+- 请求是否引用当前对话、长期记忆、本地 workspace、外部世界或专门 agent；
+- 是否存在多个子意图；
+- 是否存在不应静默猜测的歧义或风险；
+- 是否应该注入 facts、summary、prewarm memories；
+- 是否应该追问；
+- 哪些 deterministic policy 修改过模型输出，以及为什么修改。
+
+这种设计的核心判断是：
+
+> LLM 负责开放语义理解，代码负责可解释性、一致性、边界控制和回归稳定性。
+
+如果完全依赖主 LLM 自由发挥，下游 memory、tool、agent 会各自重新理解用户请求，行为
+不可解释，也难以回归。如果完全依赖关键词规则，中文里的“之前”“上次”“记得”“帮我处理”
+这类多义表达又会造成大量误判。因此 Jarvis 采用“本地模型语义判断、确定性 policy 治理
+和 eval 回归”组合的结构。
+
+## 2. 分层设计原则
+
+Jarvis 的 intent understanding 被拆成多个相对独立的层级。这样做不只是为了代码整洁，
+而是为了把“概率判断”和“确定性治理”分开，让每层承担不同责任。
+
+### 2.1 本地模型层：负责语义判断
+
+用途：
+
+- 从用户输入和近期 history 中提取 `IntentFrame`；
+- 判断 subject、taskType、memoryTarget、topic relation；
+- 输出 rich intent、entity hints、intent steps 和 confidence。
+
+原因：
+
+- 这些判断依赖自然语言理解，不能靠关键词完整覆盖；
+- 中文里的“之前”“记得”“上次”“帮我处理一下”高度多义，模型比规则更适合给出初始语义解释；
+- 将模型限制在“产生结构化语义证据”，而不是直接决定所有下游行为，可以降低模型误判的破坏范围；
+- 本地模型可替换，后续可以通过 eval 对比 `gemma`、`qwen` 等模型，而不需要重写下游逻辑。
+
+### 2.2 Schema validation / repair 层：负责输入可信度边界
+
+用途：
+
+- 校验本地模型输出是否符合 expected schema；
+- 对非法 JSON 或缺字段结果进行 repair；
+- repair 失败时进入保守 fallback；
+- 记录 repair/fallback 现象，作为模型稳定性指标。
+
+原因：
+
+- 小模型在长 schema 下天然会出现非法 JSON、漏字段、字段类型错误；
+- 如果把不合法输出直接交给 resolver，下游会同时承担“语义错误”和“结构错误”，问题难定位；
+- 单独抽出 validation/repair 可以把模型能力问题显式化，便于统计 repair rate 和模型切换风险；
+- fallback 策略需要稳定、确定、可测试，不能依赖模型再猜一次。
+
+### 2.3 Policy layer：负责确定性语义治理
+
+用途：
+
+- 对模型输出执行稳定的 normalize、guardrail、override、finalize；
+- 统一处理 recall/personal/mixed、external past event、ticker false positive、delegate false positive 等边界；
+- 输出 `policyTrace`，记录每次修正的 rule、reason、before/after。
+
+原因：
+
+- 模型输出是概率性的，但 memory injection、tool execution、agent routing 需要可预测行为；
+- 一些错误的代价不对称，例如把 external 问题误判为 personal 会污染上下文，把 execute 误判为 chat 会漏执行；
+- 如果 guardrail 分散在 resolver 各处，优先级、覆盖率和回归路径都会变得不可控；
+- 独立 policy layer 让每条规则都有 id、priority、reason 和测试 case，便于 code review 和 eval 回归。
+
+### 2.4 Eval / calibration 层：负责质量度量
+
+用途：
+
+- 用真实本地模型跑 intent eval；
+- 统计维度 pass rate、tag pass rate、policy reason coverage；
+- 基于 pass/fail 分布生成 confidence calibration；
+- 对 core policy trace 做 baseline compare。
+
+原因：
+
+- intent understanding 的质量不能只靠几个手工案例判断；
+- 模型升级、prompt 调整、schema 扩展都可能导致“结果还对，但路径变了”，这类 drift 需要被看见；
+- confidence 阈值如果只靠经验，会在数据分布变化时失效；
+- baseline 和 calibration 把“是否稳定”从主观感觉变成可重复的工程指标。
+
+### 2.5 Feedback loop 层：负责把真实失败变成资产
+
+用途：
+
+- 把 eval 失败输出成 JSONL candidate；
+- 保留 prompt、history、failed checks、observed intent、clarification decision；
+- 让失败样本经过人工审核后进入正式 regression case。
+
+原因：
+
+- 真实用户失败通常比预设测试更能暴露系统边界；
+- 如果失败只停留在日志里，后续修改很容易再次引入同类问题；
+- candidate 格式把“发现问题”到“补充 eval”之间的成本降下来；
+- 长期看，feedback loop 是 intent system 从项目功能走向运营系统的关键。
+
+## 3. 当前架构能力概览
+
+Jarvis 当前使用本地 Ollama 模型生成 `IntentFrame`，再由代码层执行 deterministic
+policies。相比纯关键词路由，这个设计要求本地模型输出结构化语义证据：
+
+- `personalContext`
+- `memoryRecall.target`
+- `actionRequest`
+- `entityHints`
+- `richIntent`
+- `intentSteps`
+- `confidenceByDimension`
+
+随后代码会对模型输出做 schema validation、repair、normalize 和 policy 修正，例如：
+
+- 把外部历史事件误判成个人记忆召回；
+- 把技术缩写误判成股票 ticker；
+- 把泛泛分析误判成明确 agent delegation；
+- 把低置信度 external 请求保守升级为 mixed；
+- 把多步骤请求暴露为 `intentSteps` 并注入 `<intent_plan>`；
+- 根据 intent-aware memory policy 决定 facts、summary、prewarm memories 是否可注入。
+
+当前系统已经超过“弱规则路由”和“完全依赖 LLM 自由发挥”，更准确地说，它是：
+
+> 一个有 schema、有 repair、有 deterministic policy、有 eval、有 policy trace 的中级语义路由和意图治理系统。
+
+它还没有完全达到工业级强意图理解系统，主要差距在执行编排、长期运营指标、跨模型稳定性、
+真实线上回灌和 step-level contract。
+
+## 4. 最近一次架构调整：Policy Trace、置信度校准与失败样本闭环
+
+最近这轮改动的核心目标不是继续增加零散 guardrail，而是把 intent understanding 里的
+确定性修正规则，升级成可解释、可回归、可运营的 policy layer。
+
+### 4.1 Policy trace 标准化
+
+每一条 deterministic policy 现在都必须带稳定的 reason metadata：
+
+```ts
+type IntentPolicyReason = {
+  code: string;
+  category:
+    | "semantic_evidence"
+    | "subject_boundary"
+    | "task_boundary"
+    | "agent_routing";
+  severity: "info" | "warning" | "critical";
+};
+```
+
+过去只有 `reasonCode`，适合人工阅读，但不利于统计和 eval 分桶。现在每条
+`policyTrace` 同时包含：
+
+- `ruleId`
+- `stage`
+- `priority`
+- `reasonCode`
+- `reason.code`
+- `reason.category`
+- `reason.severity`
+- `before`
+- `after`
+
+这样设计的原因是：`reasonCode` 适合单点调试，但不适合长期运营。工业级系统需要回答：
+
+- 最近 subject boundary 的 critical 修正规则是否变多了；
+- 某个模型是否更容易触发 agent routing 修正；
+- 某次改动是否改变了 policy path。
+
+这些问题都要求 reason 既稳定又可聚合。
+
+### 4.2 Confidence calibration
+
+eval runner 会按 confidence dimension 聚合真实模型输出：
+
+- 样本数；
+- pass 样本数；
+- fail 样本数；
+- pass 最低值；
+- pass P10；
+- pass 平均值；
+- fail 最高值；
+- suggested floor；
+- 当前默认 floor。
+
+这一步暂时不直接改 runtime 阈值。它的价值是让 Jarvis 从“经验阈值”进入“数据支持的
+阈值治理”。当 eval 样本足够多时，可以基于真实 pass/fail 分布调整
+`LOW_CONFIDENCE_THRESHOLD`、clarification threshold、entity confidence threshold 等关键
+阈值。
+
+这样设计的原因是：confidence 本身不是事实，它只是模型对自己判断的估计。如果不把
+confidence 和实际 pass/fail 关联起来，阈值就是经验常量。calibration 层把 confidence
+变成可校准信号，使后续阈值调整有数据依据。
+
+### 4.3 线上反馈闭环
+
+eval runner 支持把失败样本输出成 JSONL candidate：
+
+```bash
+npx tsx scripts/run_intent_evals.ts \
+  --models gemma4:e2b \
+  --write-eval-candidates evals/intent/candidates/intent-eval-candidates-latest.jsonl
+```
+
+candidate 会保留：
+
+- 原始 prompt；
+- history；
+- tags；
+- failed checks；
+- observed intent；
+- clarification decision；
+- 可继续补齐 expected 的 `candidateCase` skeleton。
+
+这让真实失败可以从“日志里偶然发现的问题”变成“可审核、可补标、可回归”的测试资产。
+后续如果把线上日志中的失败样本接入同一格式，就能形成稳定的反馈闭环：
+
+> 线上失败 → 生成 candidate → 人工审核补 expected → 进入 eval case → 后续每次修改回归。
+
+这样设计的原因是：intent system 的真实难点来自长尾表达。人工预设 case 永远不可能覆盖
+所有长尾，必须让真实失败样本进入测试资产。candidate 不是直接变成测试，因为 observed
+output 不等于 expected truth，中间需要人工审核；但它把回灌路径标准化了。
+
+### 4.4 本次实现边界
+
+已经完成：
+
+- policy registry 校验 reason metadata；
+- `IntentFrame.policyTrace` 输出标准化 reason；
+- policy trace baseline 升级到 v2，并比较 `reason.category` / `reason.severity`；
+- eval markdown/json 报告展示 policy reason code 的 category 和 severity；
+- eval 报告生成 confidence calibration 表；
+- eval 失败时生成 JSONL candidate；
+- 单元测试覆盖 policy reason metadata 和 trace 输出；
+- 使用 `gemma4:e2b` 跑通 core baseline、baseline compare、full eval 和失败样本 smoke test。
+
+尚未完成：
+
+- runtime 阈值还没有自动读取 calibration 结果；
+- 线上真实日志还没有自动接入 candidate 生成流程；
+- 还没有 dashboard 展示长期趋势；
+- 还没有对不同模型建立长期稳定性曲线。
+
+因此当前状态是：policy layer 已经具备工业级治理骨架，但 confidence 和 feedback loop
+仍处于“可生产数据、可人工闭环”的阶段，还没有完全自动化运营。
+
+## 5. 第一层：输入前置拦截
 
 Jarvis 并不是所有输入都先交给 LLM。`processMessage()` 前面有几类快速路径。
 
-### 1.1 `!clear`
+### 5.1 `!clear`
 
 `!clear` 会压缩或清空当前会话历史：
 
@@ -60,17 +317,17 @@ Jarvis 并不是所有输入都先交给 LLM。`processMessage()` 前面有几�
 - 保留 `conversationSummary` 供后续 summary chunk 检索；
 - 不进入 intent routing。
 
-### 1.2 `!task`
+### 5.2 `!task`
 
 `!task` 命令直接交给 `TaskCommandHandler`。
 
 这类请求不需要 LLM，也不需要 memory injection。
 
-### 1.3 `!skill`
+### 5.3 `!skill`
 
 `!skill` 命令直接交给 `SkillCommandHandler`。
 
-### 1.4 后台任务前缀
+### 5.4 后台任务前缀
 
 如果输入形如：
 
@@ -81,7 +338,7 @@ Jarvis 并不是所有输入都先交给 LLM。`processMessage()` 前面有几�
 
 会进入 `BackgroundTaskRunner`，立即返回后台任务已启动，本轮主 LLM 不继续执行。
 
-### 1.5 显式 `agent:`
+### 5.5 显式 `agent:`
 
 如果输入以 `agent:` 开头，Jarvis 会绕过普通 LLM 路径，调用 `LocalModelRouter.routeAgentCall()` 做显式 agent routing。
 
@@ -90,7 +347,7 @@ Jarvis 并不是所有输入都先交给 LLM。`processMessage()` 前面有几�
 - `agent:` 是用户明确要求启动 agent；
 - 普通输入里的 `candidateAgents` 只是 intent 结果里的建议，不等于自动委派。
 
-## 2. 第二层：LocalModelRouter
+## 6. 第二层：LocalModelRouter
 
 普通输入进入 `LocalModelRouter.route(userPrompt, history)`。
 
@@ -126,11 +383,11 @@ type RoutingResult = {
 
 这里的 fallback 是保守策略：宁可使用强模型和 mixed subject，也不要把可能需要个人上下文的请求误判成 external。
 
-## 3. 第三层：IntentResolver
+## 7. 第三层：IntentResolver
 
 `IntentResolver` 是当前意图理解层的核心。它不是简单分类器，而是“本地模型 + schema 归一化 + focused extractors + deterministic guardrails”的组合。
 
-### 3.1 本地模型生成 IntentFrame seed
+### 7.1 本地模型生成 IntentFrame seed
 
 本地 Ollama 模型被要求输出一个 raw JSON object。它要同时判断：
 
@@ -148,7 +405,7 @@ type RoutingResult = {
 
 这里本地模型不是直接控制执行，而是产出一个候选结构。
 
-### 3.2 IntentFrame 的核心字段
+### 7.2 IntentFrame 的核心字段
 
 当前标准化后的 `IntentFrame` 大致分为几组。
 
@@ -381,7 +638,7 @@ richIntent: {
 - prewarm query 构造；
 - 判断是否依赖长期记忆、当前上下文、本地 workspace、外部世界。
 
-### 3.3 JSON 解析与修复
+### 7.3 JSON 解析与修复
 
 本地小模型可能输出非法 JSON。当前流程是：
 
@@ -393,7 +650,7 @@ richIntent: {
 
 这让 Jarvis 可以使用较小本地模型，同时把 schema 风险控制在意图层内部。
 
-### 3.4 Focused Extractors
+### 7.4 Focused Extractors
 
 主 intent JSON 之后，还可能按需调用更小范围的 focused extractor。
 
@@ -425,9 +682,24 @@ richIntent: {
 - `ONNX`、`RAG`、`API`、`LLM` 应更多进入 technicalTerms；
 - 不再单纯依赖 `/\b[A-Z]{2,5}\b/` 这种宽泛正则。
 
-### 3.5 Deterministic Guardrails
+### 7.5 Deterministic Policy Layer
 
-模型输出不是最终真理。`IntentResolver` 后续会用代码规则修正高风险误判。
+模型输出不是最终真理。`IntentResolver` 后续会通过 `intentPolicy.ts` 中的规则修正高风险误判。
+
+policy layer 使用显式 rule model：
+
+- `id`：稳定规则标识，例如 `subject.recall_cue_override`；
+- `stage`：`normalize` / `guardrail` / `override` / `finalize`；
+- `priority`：同组内优先级；
+- `reasonCode`：稳定外部解释码；
+- `reason`：标准化 `{code, category, severity}`；
+- `applies(state)`：确定性 predicate；
+- `apply(state)`：确定性 patch；
+- `snapshot(state)`：before/after trace payload。
+
+这样拆出来的原因是：intent policy 的影响面很大，一个优先级或分支顺序变化就可能影响
+memory injection、clarification、agent routing 或 taskType。独立 rule model 让 reviewer
+能分别检查 predicate、patch、priority、reason，而不是从长 resolver 分支里推断意图。
 
 关键 guardrails 包括：
 
@@ -493,7 +765,7 @@ richIntent: {
 
 普通“分析 NVDA”可以添加 `investment-analysis` 到 candidateAgents，但不等于立即 delegate。
 
-## 4. 第四层：模型选择
+## 8. 第四层：模型选择
 
 `LocalModelRouter` 使用 `complexityScore` 选择本轮主模型：
 
@@ -522,7 +794,7 @@ model = score >= threshold ? proModel : flashModel;
 
 如果本地 intent 模型失败，默认使用 `proModel`。
 
-## 5. 第五层：Clarification Policy
+## 9. 第五层：Clarification Policy
 
 `ClarificationPolicy` 位于 local routing 之后、memory injection 之前。
 
@@ -530,7 +802,7 @@ model = score >= threshold ? proModel : flashModel;
 
 > 继续执行的风险是否高于追问成本。
 
-### 5.1 输入
+### 9.1 输入
 
 ```ts
 type ClarificationPolicyInput = {
@@ -542,7 +814,7 @@ type ClarificationPolicyInput = {
 };
 ```
 
-### 5.2 输出
+### 9.2 输出
 
 ```ts
 type ClarificationDecision = {
@@ -571,7 +843,7 @@ type ClarificationDecision = {
 - time range；
 - model selection。
 
-### 5.3 触发条件
+### 9.3 触发条件
 
 #### 高风险执行不明确
 
@@ -633,7 +905,7 @@ Jarvis 不应猜“处理”是格式化、删除、提交还是运行测试。
 
 则追问用户“这个/刚才/继续”具体指什么。
 
-### 5.4 可观测性开关
+### 9.4 可观测性开关
 
 配置：
 
@@ -665,7 +937,7 @@ Jarvis 不应猜“处理”是格式化、删除、提交还是运行测试。
 
 默认值是 `false`，避免日志过多。
 
-## 6. 第六层：Topic Shift
+## 10. 第六层：Topic Shift
 
 clarification 之后，Jarvis 才处理 topic shift。
 
@@ -684,7 +956,7 @@ clarification 之后，Jarvis 才处理 topic shift。
 
 但如果用户是“继续”“这个”“刚才那个”等当前上下文引用，guardrails 会把 `topicShifted` 强制为 false。
 
-### 6.1 Grounded Topic Analysis
+### 10.1 Grounded Topic Analysis
 
 Topic analysis 已从简单的：
 
@@ -728,7 +1000,7 @@ Topic analysis 已从简单的：
 - 如果 evidence 缺失，会用当前 prompt 或对应 history turn 作为 grounding fallback；
 - `lowGrounding=true` 会降低 `topicShift` 维度置信度，提醒后续策略保守处理。
 
-## 7. 第七层：Intent-Aware Memory Policy
+## 11. 第七层：Intent-Aware Memory Policy
 
 `refreshContext()` 会先调用 `buildIntentAwareMemoryPolicy()`。
 
@@ -738,7 +1010,7 @@ Topic analysis 已从简单的：
 - summary；
 - prewarm vector memories。
 
-### 7.1 输出
+### 11.1 输出
 
 ```ts
 type IntentAwareMemoryPolicy = {
@@ -755,7 +1027,7 @@ type IntentAwareMemoryPolicy = {
 };
 ```
 
-### 7.2 默认逻辑
+### 11.2 默认逻辑
 
 如果没有 `IntentFrame`，退回旧逻辑：
 
@@ -764,7 +1036,7 @@ type IntentAwareMemoryPolicy = {
 
 如果有 `IntentFrame`，以 `intent.needsMemory` 为基础。
 
-### 7.3 强约束
+### 11.3 强约束
 
 #### `external`
 
@@ -821,7 +1093,7 @@ type IntentAwareMemoryPolicy = {
 
 这是为了减少语义检索带来的上下文污染。
 
-### 7.4 查询构造
+### 11.4 查询构造
 
 `prewarmQuery` 会把以下信息合并：
 
@@ -839,11 +1111,11 @@ PRIVATE_USER_DATA: User Query - ...
 
 这是为了让 fact retrieval 更偏向用户私有事实。
 
-## 8. 第八层：上下文检索
+## 12. 第八层：上下文检索
 
 `refreshContext()` 继续执行实际检索。
 
-### 8.1 Facts
+### 12.1 Facts
 
 当 `memoryPolicy.allowFacts=true`：
 
@@ -853,7 +1125,7 @@ memoryService.searchFacts(memoryPolicy.factQuery);
 
 返回结构化长期事实，例如偏好、身份、项目设定等。
 
-### 8.2 Skills
+### 12.2 Skills
 
 如果可用 skills 数量超过配置上限：
 
@@ -863,7 +1135,7 @@ memoryService.searchFacts(memoryPolicy.factQuery);
 
 这一层和 intent memory policy 相对独立，主要控制技能说明是否进入 system prompt。
 
-### 8.3 Prewarm Memories
+### 12.3 Prewarm Memories
 
 当 `memoryPolicy.allowPrewarm=true`：
 
@@ -880,7 +1152,7 @@ memoryService.searchFacts(memoryPolicy.factQuery);
 
 reranker 开启时，使用 `reranker.memoryRelevanceThreshold` 过滤。
 
-### 8.4 Summary Chunks
+### 12.4 Summary Chunks
 
 当 `memoryPolicy.allowSummary=true` 且存在 `conversationSummary`：
 
@@ -889,7 +1161,7 @@ reranker 开启时，使用 `reranker.memoryRelevanceThreshold` 过滤。
 
 `current_context_reference` 和 `external_past_event` 会禁用 summary 注入。
 
-## 9. 第九层：MemoryInjectionPlanner
+## 13. 第九层：MemoryInjectionPlanner
 
 检索到候选项后，不会直接全部塞进 prompt，而是交给 `MemoryInjectionPlanner`。
 
@@ -902,7 +1174,7 @@ reranker 开启时，使用 `reranker.memoryRelevanceThreshold` 过滤。
 - 单条 item 最大长度；
 - personal/mixed 下不同 item 数量限制。
 
-### 9.1 external 二次保护
+### 13.1 external 二次保护
 
 如果 `querySubject=external`，planner 会拒绝所有：
 
@@ -912,7 +1184,7 @@ reranker 开启时，使用 `reranker.memoryRelevanceThreshold` 过滤。
 
 这是一道二次保险。即使前面 policy 某处失误，planner 仍能避免 external 请求注入个人记忆。
 
-### 9.2 mixed 更保守
+### 13.2 mixed 更保守
 
 mixed 查询比 personal 更容易污染上下文，因此：
 
@@ -921,7 +1193,7 @@ mixed 查询比 personal 更容易污染上下文，因此：
 - prewarm items 更少；
 - prewarm distance 更严格。
 
-### 9.3 输出
+### 13.3 输出
 
 ```ts
 type MemoryInjectionPlan = {
@@ -945,7 +1217,7 @@ Jarvis preamble
 + prewarm section
 ```
 
-## 10. 第十层：主 LLM 响应循环
+## 14. 第十层：主 LLM 响应循环
 
 系统 prompt 刷新后，Jarvis 调用：
 
@@ -967,7 +1239,7 @@ Jarvis 会：
 - 过滤 `ModelInfo`，避免模型名出现在聊天输出；
 - 遇到 tool calls 时进入工具执行循环。
 
-### 10.1 工具循环保护
+### 14.1 工具循环保护
 
 有两类安全限制：
 
@@ -978,7 +1250,7 @@ Jarvis 会：
 
 如果所有网络重试失败，可按配置清理 orphaned user turn。
 
-## 11. 第十一层：ToolRouter
+## 15. 第十一层：ToolRouter
 
 工具调用由 `ToolRouter.route()` 处理。
 
@@ -987,7 +1259,7 @@ Jarvis 会：
 - Jarvis native tools；
 - Gemini/Scheduler 标准工具。
 
-### 11.1 Jarvis native tools
+### 15.1 Jarvis native tools
 
 当前 native tools 包括：
 
@@ -1040,7 +1312,7 @@ Jarvis 会：
 
 通过 `ChannelRegistry` 推送到 Feishu/WeChat 等渠道。
 
-### 11.2 标准工具
+### 15.2 标准工具
 
 非 native tools 交给 Gemini scheduler。
 
@@ -1053,11 +1325,11 @@ Jarvis 会：
 
 这是 subagent memory injection，目前还不完全受 P3 的 intent-aware memory policy 控制，需要后续继续收敛。
 
-## 12. 第十二层：响应结束后的异步善后
+## 16. 第十二层：响应结束后的异步善后
 
 主循环结束后，如果本轮不是纯 task tools，Jarvis 会异步做三件事。
 
-### 12.1 会话记忆入队
+### 16.1 会话记忆入队
 
 ```ts
 memoryService.enqueue(sessionId, userPrompt, finalAssistantText);
@@ -1065,19 +1337,19 @@ memoryService.enqueue(sessionId, userPrompt, finalAssistantText);
 
 用于后续向量记忆、会话记录等。
 
-### 12.2 BackgroundDistiller
+### 16.2 BackgroundDistiller
 
 如果启用 distiller，会从用户输入和助手输出中提炼持久事实。
 
 它重点避免把助手自己编出来的内容当成用户事实。
 
-### 12.3 history compression
+### 16.3 history compression
 
 如果内存中的 chat history 超过阈值，会压缩为 summary，并只保留最近若干 raw turns。
 
 压缩后的 summary 也会进入 summary chunk index，供后续 memory policy 允许时检索。
 
-## 13. 关键场景决策表
+## 17. 关键场景决策表
 
 | 用户请求                    | subject                 | taskType     | memory target             | 主要行为                                                |
 | --------------------------- | ----------------------- | ------------ | ------------------------- | ------------------------------------------------------- |
@@ -1092,13 +1364,13 @@ memoryService.enqueue(sessionId, userPrompt, finalAssistantText);
 | `帮我处理一下这个文件`      | external/mixed          | execute      | none/current_context      | 高风险且动作不清，先追问                                |
 | `提醒我复盘投资组合`        | mixed/external          | schedule     | none/user_memory          | 没有明确时间则先追问                                    |
 
-## 14. 当前设计的边界
+## 18. 当前设计的边界
 
-### 14.1 IntentFrame 是决策输入，不是最终答案
+### 18.1 IntentFrame 是决策输入，不是最终答案
 
 IntentFrame 只决定路由、追问、上下文注入、工具 fallback 参数。最终回答仍由主 LLM 生成。
 
-### 14.2 规则不是为了替代 LLM
+### 18.2 规则不是为了替代 LLM
 
 deterministic guardrails 只处理高频、高风险、可明确编码的失败模式。
 
@@ -1111,7 +1383,7 @@ deterministic guardrails 只处理高频、高风险、可明确编码的失败�
 
 LLM 负责开放语义理解，代码负责安全边界和一致性。
 
-### 14.3 ClarificationPolicy 当前是 blocking-only
+### 18.3 ClarificationPolicy 当前是 blocking-only
 
 当前版本只支持前置阻塞式追问。
 
@@ -1121,23 +1393,23 @@ LLM 负责开放语义理解，代码负责安全边界和一致性。
 - non-blocking advisory clarification；
 - 自动提出默认方案并让用户确认。
 
-### 14.4 Subagent memory injection 仍需收敛
+### 18.4 Subagent memory injection 仍需收敛
 
 `ToolRouter` 里对 `generalist` / `codebase_investigator` 的 memory injection 仍是工具层独立逻辑。
 
 它还没有完全复用 `IntentAwareMemoryPolicy`，后续可以把 subagent request 也纳入同一套 policy。
 
-### 14.5 外部知识仍依赖主模型或工具能力
+### 18.5 外部知识仍依赖主模型或工具能力
 
 `needsExternalKnowledge=true` 目前主要影响 intent 表达和后续规划，不等于一定会自动搜索互联网。
 
 是否搜索外部世界仍取决于主模型工具调用和运行环境能力。
 
-## 15. 如何调试一次意图理解
+## 19. 如何调试一次意图理解
 
 建议按以下顺序看日志。
 
-### 15.1 Local routing 日志
+### 19.1 Local routing 日志
 
 ```text
 🔀 [Jarvis] Local routing: ...
@@ -1152,7 +1424,7 @@ LLM 负责开放语义理解，代码负责安全边界和一致性。
 - classifier reason；
 - source。
 
-### 15.2 Clarification trace
+### 19.2 Clarification trace
 
 开启：
 
@@ -1179,7 +1451,7 @@ LLM 负责开放语义理解，代码负责安全边界和一致性。
 - `memoryTarget`;
 - `riskLevel`。
 
-### 15.3 Intent-aware memory policy 日志
+### 19.3 Intent-aware memory policy 日志
 
 ```text
 🔍 [Jarvis] Intent-aware memory policy — skipping facts (...)
@@ -1193,7 +1465,7 @@ LLM 负责开放语义理解，代码负责安全边界和一致性。
 - mixed 是否使用更严格的 limit/distance；
 - low confidence 是否禁用了 summary/prewarm。
 
-### 15.4 MemoryInjectionPlanner 日志
+### 19.4 MemoryInjectionPlanner 日志
 
 ```text
 🧠 [MemoryInjectionPlanner] candidates(...) → injected(...)
@@ -1206,7 +1478,7 @@ LLM 负责开放语义理解，代码负责安全边界和一致性。
 - rejected reason；
 - used chars。
 
-### 15.5 ToolRouter 日志
+### 19.5 ToolRouter 日志
 
 ```text
 🧠 [Jarvis] Active Recall initiated ...
@@ -1220,13 +1492,230 @@ LLM 负责开放语义理解，代码负责安全边界和一致性。
 - ask_user 是前置 clarification 还是 LLM 工具中途追问；
 - task tools 是否导致跳过 memory distill。
 
-## 16. 一句话总结
+## 20. 当前距离工业级的具体差距
 
-当前 Jarvis 的意图理解层已经不是“让 LLM 自己看着办”，而是分成了四层：
+如果用“能不能稳定支撑真实长期使用、模型切换、复杂请求和持续演进”这个标准来看，
+Jarvis 当前的 intent-understanding 层离工业级还有这些明确差距。
+
+### 20.1 输出稳定性还不够
+
+当前最明显的问题不是“完全不会判断”，而是“判断结果偶尔不稳定”：
+
+- 本地模型仍会频繁输出非法 JSON，需要 repair 才能继续；
+- repair 本身也不是 100% 成功，因此必须依赖 deterministic fallback；
+- 同一个 case 多次运行，topic relation、topic grounding、candidate agents 仍会有波动；
+- 小模型在 schema 变长后更容易掉字段、偷懒泛化、用抽象句子代替 grounded evidence。
+
+这说明当前系统已经具备纠错能力，但还没有达到“输出天然稳定、错误率足够低”的工业级状态。
+
+### 20.2 语义表达仍偏薄
+
+虽然已经引入 `richIntent`、`confidenceByDimension`、`intentSteps`，但整体上仍然更像
+增强版路由结果，还不是完整的任务语义表示：
+
+- `intentSteps` 现在主要服务于 prompt 注入，还没有成为系统级执行契约；
+- step 的 `action` 和 `target` 仍然比较粗，很多时候是 fallback 文本，而不是精确参数；
+- 缺少更强的 argument extraction，例如 reminder time、output format、deliverable path、
+  comparison set、约束条件、成功标准；
+- 当前 schema 仍偏向单轮理解，还没有把“用户期望的最终产物”表达得足够清楚。
+
+工业级系统通常不只知道“这是 recall + analyze + schedule”，还要知道“分析什么、产出什么格式、提醒在什么时间、缺什么参数、哪些步骤必须确认”。
+
+### 20.3 Multi-Intent 只完成了识别层，尚未进入执行层
+
+这块现在处于阶段一可用：
+
+- 已经能识别并暴露多步骤意图；
+- 已经把 `<intent_plan>` 注入给主模型；
+- 但 executor、tool orchestration、subagent routing 仍然主要按旧执行模式工作。
+
+这意味着系统已经看见多意图，但还不能严格保证按 step 顺序执行。step 之间的依赖关系还没有成为 runtime 约束，clarification policy 和 memory policy 也还没有完整按 step 粒度消费。
+
+### 20.4 Topic understanding 仍然受模型表述噪声影响
+
+Topic grounding 已经比之前稳定，但仍有现实问题：
+
+- 模型会把普通新问题误判成 `current_context_reference`；
+- 模型会给出抽象总结，而不是来自原文的 grounded evidence；
+- `referencesRecentHistory=false` 与 `topicAnalysis.relation=current_context_reference`
+  这种语义冲突仍会出现，需要代码层再修正。
+
+工业级 topic inference 要求 relation、history topic、current topic、evidence 之间高度一致，不能靠日志里人工解释。
+
+### 20.5 Recall / personal / mixed 的边界仍然脆弱
+
+这部分已经比最初稳很多，但仍不是彻底解决：
+
+- “记得”“之前”“上次”这类自然语言在中文里高度多义，容易引入假阳性；
+- `recallCue`、`personalCue`、external entity 之间的优先级需要大量 policy；
+- 同一句话既可能是“问我的偏好”，也可能是“结合我的偏好分析外部对象”，语义边界很细；
+- 当前很多正确结果来自 policy 组合，而不是模型本身天然稳定地区分。
+
+工业级系统可以接受 policy，但不能长期依赖不断叠加 case-by-case 规则，否则维护成本会持续上升。
+
+### 20.6 评测覆盖仍不足以证明工业级
+
+已经有真实模型 eval，这是关键基础，但距离工业级验证还有差距：
+
+- 当前 case 数量还不够大，覆盖的业务面有限；
+- 已经具备失败样本 candidate 输出，但还缺少大规模真实 query 回放、按分布采样和线上日志自动回灌；
+- 已经有 core policy trace baseline，但还没有稳定的跨模型回归基线、分版本趋势追踪、失败聚类分析；
+- 还没有把波动性本身做成指标，例如同一 case 重跑 10 次的一致性。
+
+工业级不是“这一轮通过”，而是长期、跨模型、跨版本、跨分布地稳定通过。
+
+### 20.7 与下游模块的契约还不够硬
+
+当前 intent layer 已经开始影响 memory injection、clarification、agent routing，但耦合还不够深：
+
+- memory policy 还主要是按 subject / memoryTarget / contextDependency 推断；
+- clarification policy 还没有完全按 `intentSteps` 和 step risk 驱动；
+- agent routing 仍然部分依赖 candidate heuristic，而不是完整 execution plan；
+- 执行失败后的反馈还不会反向修正 intent understanding。
+
+工业级系统通常要求 intent layer 成为统一语义入口，下游模块消费同一份 contract，而不是每层都再做一次自己的轻量理解。
+
+### 20.8 观测与运营能力还偏初级
+
+当前已经有日志和 targeted eval，但还缺少工程化运营能力：
+
+- 没有统一 dashboard 看 subject/taskType/memoryTarget 的错误率走势；
+- 已经开始按 policy reason 和 confidence dimension 分桶，但还没有按模型、场景、语言、
+  query length 建立长期质量统计；
+- 没有 failure taxonomy 和 root-cause 标注体系；
+- 还没有把 repair rate、fallback rate、topic conflict rate 作为健康指标长期监控。
+
+工业级 intent system 必须既能做对，也能看见自己什么时候没做对。
+
+## 21. 后续演进路线
+
+### 21.1 P0：扩大真实模型 Intent Eval
+
+最高优先级仍然是扩大 intent evaluation harness，而且要跑真实 Ollama 模型，不只验证 mock 结果。
+
+评测数据集应继续覆盖：
+
+- 个人记忆召回 vs 外部历史事件；
+- 当前会话指代 vs 长期记忆召回；
+- `chat` vs `analyze` vs `execute`；
+- 明确 delegation vs candidate agent 推荐；
+- schedule/reminder；
+- 金融 ticker vs 技术缩写；
+- mixed 和多步骤请求。
+
+指标应该按维度统计，而不是只给整体 pass/fail。这样可以看出某个模型到底是弱在 memory recall、entity typing、delegation，还是 action detection。
+
+### 21.2 P1：让 `IntentFrame` 成为更硬的执行契约
+
+当前 `IntentFrame` 仍保留兼容字段 `subject` 和 `taskType`，但强意图理解系统需要更明确表达用户到底想完成什么：
+
+- user goal；
+- primary action；
+- targets；
+- context dependency；
+- ambiguity；
+- risk level；
+- success criteria；
+- output constraints。
+
+这不是为了让 schema 更复杂，而是为了让 clarification、memory、tool、agent 不再各自重做轻量理解。
+
+### 21.3 P1：Multi-Intent / IntentSteps 进入执行层
+
+当前 Multi-Intent 已经完成识别和 prompt 注入。下一步是让后续模块按 step 消费：
+
+- 任一 step 是 `schedule` 且缺时间，则 clarification policy 追问；
+- 任一 step 是 `execute` 且 action/target 不清楚，则追问；
+- 任一 step 需要 memory，则 memory policy 允许必要的记忆注入；
+- external analyze + personal recall 同时存在时，subject 应保持 `mixed`；
+- delegate step 可保留 candidate agent，但不一定自动启动。
+
+长期可以引入：
+
+```ts
+type ExecutionPlan = {
+  steps: IntentStep[];
+  mode: "single_llm" | "orchestrated";
+};
+```
+
+短期仍使用 `single_llm`，长期再考虑 Jarvis 按 step 主动调 retrieval、file write、schedule tool 或 subagent。
+
+### 21.4 P1：Clarification state machine
+
+ClarificationPolicy 当前是 blocking-only。下一步需要把它变成状态机：
+
+- 记录已问过的问题；
+- 记录用户回答映射到哪个 intent field；
+- 支持多轮补参；
+- 支持默认方案确认；
+- 支持执行前确认和执行后纠偏；
+- 避免重复追问同一个字段。
+
+这样做的原因是：执行、调度、delegate、memory 边界都可能需要补参。如果 clarification 只是一次性判断，很难支撑可靠 agent。
+
+### 21.5 P1：统一 Memory Policy 到 subagent/tool 层
+
+当前主路径的 memory injection 已经 intent-aware，但 subagent/tool 层仍有独立 memory 注入逻辑。
+
+后续应把 tool/subagent request 也纳入同一套 policy：
+
+- external 请求不能在 subagent 层泄漏 personal memory；
+- mixed 请求要按 step 和 target 注入；
+- tool 层 recall fallback 要继承 router 的 time range 和 memory target；
+- subagent prompt 应显式携带 memory policy decision，而不是自己再猜。
+
+### 21.6 P2：模型稳定性治理
+
+需要继续评估不同本地模型：
+
+- `gemma4:e2b`
+- `gemma4:e4b`
+- `qwen3:0.6b`
+- 更大 qwen / gemma 模型
+
+评估维度不只是 pass rate，还包括：
+
+- JSON repair rate；
+- latency；
+- fallback rate；
+- confidence calibration；
+- policy reason distribution；
+- 同 case 多次运行的一致性。
+
+### 21.7 P2：Confidence calibration 落到 runtime 阈值
+
+当前 calibration 已经能生成报告，但 runtime 阈值还没有自动引用 calibration 结果。
+
+后续可以让阈值配置来自 eval 统计：
+
+- 对不同 confidence dimension 使用不同 floor；
+- 对不同 model 使用不同 floor；
+- 对高风险 task 使用更高 floor；
+- 对低风险 chat 使用更低 floor；
+- 阈值调整必须通过 regression gate。
+
+### 21.8 P3：线上反馈闭环自动化
+
+当前 eval failure 可以生成 candidates。下一步是把真实使用失败也转成同一格式：
+
+- 用户反馈“这不对”；
+- clarification 后仍失败；
+- tool execution 因 intent 参数不完整失败；
+- memory injection 明显错注入；
+- policy trace 出现 critical correction 但最终用户不满意。
+
+这些样本不应直接进入正式 eval，而应进入 candidate queue，经过人工审核后补 expected，再进入 regression cases。
+
+## 22. 一句话总结
+
+当前 Jarvis 的意图理解层已经不是“让 LLM 自己看着办”，而是一个分层治理系统：
 
 1. 本地模型输出结构化 `IntentFrame`；
-2. deterministic guardrails 修正高风险误判；
-3. clarification / memory policy 把 intent 变成可执行决策；
-4. 主 LLM 在被约束过的上下文和工具环境里完成最终响应。
+2. schema validation / repair 控制模型输出可信边界；
+3. deterministic policy layer 修正高风险误判并输出 trace；
+4. clarification / memory policy 把 intent 变成可执行决策；
+5. eval / calibration / feedback loop 把质量治理变成可回归系统；
+6. 主 LLM 在被约束过的上下文和工具环境里完成最终响应。
 
 这个架构的关键价值是：LLM 负责语义弹性，代码负责可解释性、一致性和安全边界。
