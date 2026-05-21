@@ -765,6 +765,64 @@ memory injection、clarification、agent routing 或 taskType。独立 rule mode
 
 普通“分析 NVDA”可以添加 `investment-analysis` 到 candidateAgents，但不等于立即 delegate。
 
+### 7.6 Multi-Intent 拆分与执行计划
+
+Multi-Intent 现在不再只是“识别出多个 step 并注入 prompt”。当前实现分为三层。
+
+第一层是 step 识别和拆分：
+
+- 本地模型可以直接输出 `intent_steps`；
+- resolver 会 normalize 每个 step 的 `id`、`type`、`action`、`target`、`dependsOn`、
+  `requiresConfirmation`、`riskLevel`；
+- 如果模型漏掉 steps，resolver 会根据 memory recall、personal context、external entity、
+  action cue、delegate cue、schedule cue 做确定性补全；
+- 对模型明确给出的 multi-step plan，Jarvis 保留原始顺序，只在 dependency 要求时做拓扑修正；
+- 对确定性补全出来的 plan，Jarvis 使用默认顺序：`recall → analyze → delegate → execute → schedule`。
+
+这样设计的原因是：用户表达的顺序本身可能有语义，例如“先提醒我，再分析”与“先分析，再提醒”
+不是同一个执行计划。过去如果无条件按 step type 排序，会把模型或用户给出的执行顺序抹掉。
+现在只有在模型没有给出可用 plan 时，才使用系统默认顺序。
+
+第二层是 execution contract：
+
+```ts
+type IntentExecutionPlan = {
+  mode: "single_llm" | "orchestrated";
+  steps: Array<{
+    step: IntentStep;
+    mode: "context" | "llm" | "tool" | "agent" | "confirm";
+    requiredTool: string | null;
+    instruction: string;
+    completionCriteria: string;
+  }>;
+  requiredTools: string[];
+  completionCriteria: string[];
+};
+```
+
+它把 `IntentStep` 从“语义描述”升级为“运行时契约”：
+
+- `recall` step 通常是 `context` mode，优先使用已注入 memory/current context；
+- `analyze` step 通常是 `llm` mode；
+- `execute` step 在涉及 workspace/write/run 时是 `tool` mode；
+- `schedule` step 在时间明确时要求 `task_add`，时间缺失时进入 `confirm` mode；
+- `delegate` step 在 agent target 明确时进入 `agent` mode，否则进入 `confirm` mode。
+
+这样设计的原因是：只把 `<intent_plan>` 放进 system prompt，主模型仍可能漏掉某个工具步骤。
+execution contract 明确告诉主模型“哪些 step 必须用工具完成、怎样才算完成、缺什么时应该阻塞”，
+让 multi-intent 从提示升级为执行约束。
+
+第三层是 required-tool enforcement：
+
+- 主响应循环会记录本轮实际调用过的工具；
+- 如果 execution plan 里存在可强制的 required tool，例如 `task_add`，但模型直接给了最终答案；
+- Jarvis 会自动追加一轮 system follow-up，要求模型继续完成缺失的工具步骤；
+- 最多重试固定次数，避免无限循环。
+
+这样设计的原因是：Jarvis 不能只相信主模型会遵守计划。对于 schedule 这类有明确工具语义的
+step，如果没有观察到 `task_add` 结果，就不能声称“已经提醒”。required-tool enforcement 把
+“必须执行”从软提示变成运行时检查。
+
 ## 8. 第四层：模型选择
 
 `LocalModelRouter` 使用 `complexityScore` 选择本轮主模型：
@@ -1521,15 +1579,25 @@ Jarvis 当前的 intent-understanding 层离工业级还有这些明确差距。
 
 工业级系统通常不只知道“这是 recall + analyze + schedule”，还要知道“分析什么、产出什么格式、提醒在什么时间、缺什么参数、哪些步骤必须确认”。
 
-### 20.3 Multi-Intent 只完成了识别层，尚未进入执行层
+### 20.3 Multi-Intent 已进入执行层，但还不是完整 orchestrator
 
-这块现在处于阶段一可用：
+这块已经从“阶段一识别”推进到“执行契约”：
 
 - 已经能识别并暴露多步骤意图；
-- 已经把 `<intent_plan>` 注入给主模型；
-- 但 executor、tool orchestration、subagent routing 仍然主要按旧执行模式工作。
+- 已经保留模型/用户给出的 step 顺序，并按 dependency 做规范化；
+- 已经生成 `IntentExecutionPlan`；
+- 已经注入 `<intent_execution_contract>`；
+- 已经对 `task_add` 等可强制 required tool 做运行时 enforcement；
+- clarification 和 memory policy 已开始按 step 粒度消费。
 
-这意味着系统已经看见多意图，但还不能严格保证按 step 顺序执行。step 之间的依赖关系还没有成为 runtime 约束，clarification policy 和 memory policy 也还没有完整按 step 粒度消费。
+但它还不是完整 orchestrator：
+
+- `analyze`、`execute`、`delegate` 的很多行为仍由主 LLM 和工具可用性共同完成；
+- `delegate` step 目前更多是 execution contract 和 agent target 约束，还没有统一自动启动所有 candidate agent；
+- `execute` step 只能强约束已知 required tool，不能保证所有 workspace 操作都被静态验证；
+- step 级状态还没有持久化为可恢复的 runtime state machine。
+
+因此当前状态是：Multi-Intent 已经具备识别、拆分、执行契约和部分 runtime enforcement，但还没有升级为完全独立的 step orchestrator。
 
 ### 20.4 Topic understanding 仍然受模型表述噪声影响
 
@@ -1568,8 +1636,8 @@ Topic grounding 已经比之前稳定，但仍有现实问题：
 
 当前 intent layer 已经开始影响 memory injection、clarification、agent routing，但耦合还不够深：
 
-- memory policy 还主要是按 subject / memoryTarget / contextDependency 推断；
-- clarification policy 还没有完全按 `intentSteps` 和 step risk 驱动；
+- memory policy 已开始识别 recall step，但还没有对每个 step 独立生成 memory scope；
+- clarification policy 已开始按 `intentSteps` 和 step risk 驱动，但还不是多轮状态机；
 - agent routing 仍然部分依赖 candidate heuristic，而不是完整 execution plan；
 - 执行失败后的反馈还不会反向修正 intent understanding。
 
@@ -1620,15 +1688,17 @@ Topic grounding 已经比之前稳定，但仍有现实问题：
 
 这不是为了让 schema 更复杂，而是为了让 clarification、memory、tool、agent 不再各自重做轻量理解。
 
-### 21.3 P1：Multi-Intent / IntentSteps 进入执行层
+### 21.3 P1：Multi-Intent / IntentSteps 进入完整 orchestrator
 
-当前 Multi-Intent 已经完成识别和 prompt 注入。下一步是让后续模块按 step 消费：
+当前 Multi-Intent 已经完成识别、拆分、execution contract 和部分 required-tool enforcement。
+下一步是把它升级成完整 orchestrator：
 
-- 任一 step 是 `schedule` 且缺时间，则 clarification policy 追问；
-- 任一 step 是 `execute` 且 action/target 不清楚，则追问；
-- 任一 step 需要 memory，则 memory policy 允许必要的记忆注入；
-- external analyze + personal recall 同时存在时，subject 应保持 `mixed`；
-- delegate step 可保留 candidate agent，但不一定自动启动。
+- 每个 step 有显式 state：`pending` / `running` / `completed` / `blocked` / `failed`；
+- 每个 step 的 tool call、agent task、memory retrieval 都能被记录和恢复；
+- dependent step 只有在 dependency completed 后才运行；
+- `delegate` step 可按 agent target 自动启动，并把结果回填给后续 step；
+- `execute` step 的 workspace/file/tool side effect 能被验证；
+- final response 基于 step 状态生成，而不是只依赖主 LLM 自述。
 
 长期可以引入：
 
@@ -1639,7 +1709,8 @@ type ExecutionPlan = {
 };
 ```
 
-短期仍使用 `single_llm`，长期再考虑 Jarvis 按 step 主动调 retrieval、file write、schedule tool 或 subagent。
+当前短期实现仍以主 LLM 为执行中心，但已经有 execution contract 和 required-tool enforcement。
+长期目标是 Jarvis 自己按 step 主动调 retrieval、file write、schedule tool 或 subagent。
 
 ### 21.4 P1：Clarification state machine
 

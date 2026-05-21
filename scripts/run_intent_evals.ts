@@ -18,6 +18,10 @@ import {
   buildClarificationDecision,
   type ClarificationDecision,
 } from "../jarvis/src/core/clarificationPolicy.js";
+import {
+  buildIntentExecutionPlan,
+  type IntentExecutionMode,
+} from "../jarvis/src/core/intentExecutionPlan.js";
 
 type IntentEvalCase = {
   id: string;
@@ -67,11 +71,21 @@ type IntentExpectation = {
   };
   intentSteps?: {
     minCount?: number;
+    order?: Array<IntentFrame["intentSteps"][number]["type"]>;
     contains?: Array<{
       type: IntentFrame["intentSteps"][number]["type"];
       actionIncludes?: string;
       targetIncludes?: string;
       requiresConfirmation?: boolean;
+    }>;
+  };
+  executionPlan?: {
+    mode?: "single_llm" | "orchestrated";
+    requiredToolsContain?: string[];
+    stepsContain?: Array<{
+      stepType?: IntentFrame["intentSteps"][number]["type"];
+      mode?: IntentExecutionMode;
+      requiredTool?: string;
     }>;
   };
   topicAnalysis?: {
@@ -122,6 +136,7 @@ type Dimension =
   | "entityHints"
   | "richIntent"
   | "intentSteps"
+  | "executionPlan"
   | "topicAnalysis"
   | "policyTrace"
   | "clarification"
@@ -567,6 +582,19 @@ function compareIntent(intent: IntentFrame, expect: IntentExpectation) {
       "intentSteps has enough steps",
     );
   }
+  if (intentSteps?.order !== undefined) {
+    const actualOrder = intent.intentSteps
+      .slice(0, intentSteps.order.length)
+      .map((step) => step.type);
+    addCheck(
+      checks,
+      "intentSteps",
+      intentSteps.order,
+      actualOrder,
+      JSON.stringify(actualOrder) === JSON.stringify(intentSteps.order),
+      "intentSteps order matches",
+    );
+  }
   if (intentSteps?.contains) {
     for (const expectedStep of intentSteps.contains) {
       addCheck(
@@ -591,6 +619,53 @@ function compareIntent(intent: IntentFrame, expect: IntentExpectation) {
         ),
         "intentSteps contains expected step",
       );
+    }
+  }
+
+  const executionPlan = expect.executionPlan;
+  if (executionPlan) {
+    const actualPlan = buildIntentExecutionPlan(intent);
+    if (executionPlan.mode !== undefined) {
+      addCheck(
+        checks,
+        "executionPlan",
+        executionPlan.mode,
+        actualPlan?.mode ?? null,
+        actualPlan?.mode === executionPlan.mode,
+        "executionPlan.mode matches",
+      );
+    }
+    if (executionPlan.requiredToolsContain) {
+      for (const tool of executionPlan.requiredToolsContain) {
+        addCheck(
+          checks,
+          "executionPlan",
+          tool,
+          actualPlan?.requiredTools ?? [],
+          actualPlan?.requiredTools.includes(tool) === true,
+          "executionPlan includes required tool",
+        );
+      }
+    }
+    if (executionPlan.stepsContain) {
+      for (const expectedStep of executionPlan.stepsContain) {
+        addCheck(
+          checks,
+          "executionPlan",
+          expectedStep,
+          actualPlan?.steps ?? [],
+          actualPlan?.steps.some(
+            (actual) =>
+              (expectedStep.stepType === undefined ||
+                actual.step.type === expectedStep.stepType) &&
+              (expectedStep.mode === undefined ||
+                actual.mode === expectedStep.mode) &&
+              (expectedStep.requiredTool === undefined ||
+                actual.requiredTool === expectedStep.requiredTool),
+          ) === true,
+          "executionPlan contains expected step",
+        );
+      }
     }
   }
 

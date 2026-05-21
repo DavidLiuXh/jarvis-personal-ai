@@ -68,14 +68,25 @@ export function buildIntentAwareMemoryPolicy(args: {
   }
 
   if (intent) {
-    allowFacts = intent.needsMemory;
-    allowSummary = intent.needsMemory;
-    allowPrewarm = intent.needsMemory;
+    const hasRecallStep = intent.intentSteps.some(
+      (step) => step.type === "recall",
+    );
+    const stepNeedsLongTermMemory =
+      hasRecallStep &&
+      memoryTarget !== "current_context_reference" &&
+      memoryTarget !== "external_past_event";
 
-    if (!intent.needsMemory) {
+    allowFacts = intent.needsMemory || stepNeedsLongTermMemory;
+    allowSummary = intent.needsMemory || stepNeedsLongTermMemory;
+    allowPrewarm = intent.needsMemory || stepNeedsLongTermMemory;
+
+    if (!intent.needsMemory && !stepNeedsLongTermMemory) {
       reasons.push("intent_needs_memory_false");
     }
-    if (intent.richIntent.contextDependency.longTermMemory === false) {
+    if (
+      intent.richIntent.contextDependency.longTermMemory === false &&
+      !stepNeedsLongTermMemory
+    ) {
       allowFacts = false;
       allowPrewarm = false;
       reasons.push("rich_intent_no_long_term_memory");
@@ -96,7 +107,8 @@ export function buildIntentAwareMemoryPolicy(args: {
       (intent.taskType === "execute" ||
         intent.taskType === "delegate" ||
         intent.taskType === "schedule") &&
-      intent.richIntent.contextDependency.longTermMemory === false
+      intent.richIntent.contextDependency.longTermMemory === false &&
+      !stepNeedsLongTermMemory
     ) {
       allowFacts = false;
       allowSummary = false;

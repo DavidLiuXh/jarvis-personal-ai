@@ -230,4 +230,66 @@ describe("buildIntentAwareMemoryPolicy", () => {
     expect(policy.allowPrewarm).toBe(false);
     expect(policy.reasons).toContain("low_intent_confidence");
   });
+
+  it("allows memory for multi-intent tool tasks when a recall step requires it", () => {
+    const policy = buildIntentAwareMemoryPolicy({
+      userPrompt: "先总结我们之前关于 Jarvis 的讨论，再整理成 markdown",
+      querySubject: "personal",
+      config: CONFIG,
+      intent: intent({
+        taskType: "execute",
+        needsMemory: false,
+        needsTool: true,
+        semanticEvidence: {
+          ...intent().semanticEvidence,
+          memoryRecall: {
+            present: true,
+            target: "conversation_history",
+            reason: "asks for prior discussion",
+            span: "之前关于 Jarvis 的讨论",
+          },
+          actionRequest: {
+            present: true,
+            action: "write",
+            object: "markdown",
+          },
+        },
+        richIntent: {
+          ...intent().richIntent,
+          primaryAction: "modify",
+          contextDependency: {
+            recentConversation: false,
+            longTermMemory: false,
+            localWorkspace: true,
+            externalWorld: false,
+          },
+        },
+        intentSteps: [
+          {
+            id: "step-1",
+            type: "recall",
+            action: "retrieve relevant user context",
+            target: "conversation_history",
+            dependsOn: [],
+            requiresConfirmation: false,
+            riskLevel: "low",
+          },
+          {
+            id: "step-2",
+            type: "execute",
+            action: "produce markdown",
+            target: "markdown",
+            dependsOn: ["step-1"],
+            requiresConfirmation: false,
+            riskLevel: "medium",
+          },
+        ],
+      }),
+    });
+
+    expect(policy.allowFacts).toBe(true);
+    expect(policy.allowSummary).toBe(true);
+    expect(policy.allowPrewarm).toBe(true);
+    expect(policy.reasons).not.toContain("tool_task_without_memory_dependency");
+  });
 });

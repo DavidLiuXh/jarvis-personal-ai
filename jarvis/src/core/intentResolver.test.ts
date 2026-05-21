@@ -1380,6 +1380,68 @@ ${modelResponse({
     expect(intent.intentSteps[2].dependsOn).toEqual(["step-2"]);
   });
 
+  it("preserves parsed multi-intent order when dependencies do not require reordering", async () => {
+    const resolver = makeResolver();
+    mockGenerate.mockResolvedValueOnce(
+      modelResponse({
+        query_subject: "external",
+        task_type: "execute",
+        needs_tool: true,
+        semantic_evidence: {
+          personalContext: { present: false, reason: "", span: "" },
+          memoryRecall: {
+            present: false,
+            target: "none",
+            reason: "",
+            span: "",
+          },
+          actionRequest: {
+            present: true,
+            action: "write",
+            object: "reminder then analysis note",
+          },
+          entityHints: {
+            tickers: ["NVDA"],
+            technicalTerms: [],
+            peopleOrCompanies: [],
+          },
+        },
+        intent_steps: [
+          {
+            id: "a",
+            type: "schedule",
+            action: "create reminder",
+            target: "tomorrow review",
+          },
+          {
+            id: "b",
+            type: "analyze",
+            action: "analyze company",
+            target: "NVDA",
+          },
+          {
+            id: "c",
+            type: "execute",
+            action: "write note",
+            target: "markdown",
+          },
+        ],
+      }),
+    );
+
+    const intent = await resolver.resolve({
+      userPrompt: "先设一个明天复盘提醒，再分析 NVDA 并整理成 markdown",
+    });
+
+    expect(intent.intentSteps.map((step) => step.type)).toEqual([
+      "schedule",
+      "analyze",
+      "execute",
+    ]);
+    expect(intent.intentSteps[1].dependsOn).toEqual(["step-1"]);
+    expect(intent.intentSteps[2].dependsOn).toEqual(["step-2"]);
+  });
+
   it("keeps schedule as the primary task when delegate and schedule cues both appear", async () => {
     const resolver = makeResolver();
     mockGenerate.mockResolvedValueOnce(

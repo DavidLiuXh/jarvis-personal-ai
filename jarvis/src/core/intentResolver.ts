@@ -1426,6 +1426,75 @@ function dedupeIntentSteps(steps: IntentStep[]): IntentStep[] {
   });
 }
 
+function normalizeIntentStepOrder(steps: IntentStep[]): IntentStep[] {
+  const idMap = new Map(
+    steps.map((step, index) => [step.id, `step-${index + 1}`]),
+  );
+
+  return steps.map((step, index) => {
+    const id = `step-${index + 1}`;
+    const previousId = index > 0 ? `step-${index}` : null;
+    const normalizedDependsOn = step.dependsOn
+      .map((dependency) => idMap.get(dependency) ?? dependency)
+      .filter((dependency) => dependency !== id);
+    const dependsOn =
+      normalizedDependsOn.length > 0
+        ? normalizedDependsOn
+        : previousId
+          ? [previousId]
+          : [];
+    return {
+      ...step,
+      id,
+      dependsOn,
+    };
+  });
+}
+
+function topologicalIntentStepOrder(steps: IntentStep[]): IntentStep[] {
+  const byId = new Map(steps.map((step) => [step.id, step]));
+  const visited = new Set<string>();
+  const visiting = new Set<string>();
+  const ordered: IntentStep[] = [];
+
+  const visit = (step: IntentStep) => {
+    if (visited.has(step.id)) return;
+    if (visiting.has(step.id)) return;
+    visiting.add(step.id);
+    for (const dependency of step.dependsOn) {
+      const dependencyStep = byId.get(dependency);
+      if (dependencyStep) visit(dependencyStep);
+    }
+    visiting.delete(step.id);
+    visited.add(step.id);
+    ordered.push(step);
+  };
+
+  for (const step of steps) {
+    visit(step);
+  }
+
+  return ordered;
+}
+
+function enforceRecallPrerequisite(
+  steps: IntentStep[],
+  enabled: boolean,
+): IntentStep[] {
+  if (!enabled) return steps;
+  const recallStep = steps.find((step) => step.type === "recall");
+  if (!recallStep) return steps;
+  return steps.map((step) => {
+    if (step.id === recallStep.id || step.type === "recall") return step;
+    if (step.dependsOn.includes(recallStep.id)) return step;
+    if (step.dependsOn.length > 0) return step;
+    return {
+      ...step,
+      dependsOn: [recallStep.id, ...step.dependsOn],
+    };
+  });
+}
+
 function hasEquivalentIntentStep(
   steps: IntentStep[],
   type: IntentTaskType,
@@ -1605,29 +1674,14 @@ function deriveIntentSteps(args: {
     );
   }
 
-  const deduped = sortIntentSteps(dedupeIntentSteps(steps));
-  const idMap = new Map(
-    deduped.map((step, index) => [step.id, `step-${index + 1}`]),
+  const deduped = enforceRecallPrerequisite(
+    dedupeIntentSteps(steps),
+    explicitMemoryStep || personalContextAnalysisStep,
   );
-
-  return deduped.map((step, index) => {
-    const id = `step-${index + 1}`;
-    const previousId = index > 0 ? `step-${index}` : null;
-    const normalizedDependsOn = step.dependsOn
-      .map((dependency) => idMap.get(dependency) ?? dependency)
-      .filter((dependency) => dependency !== id);
-    const dependsOn =
-      normalizedDependsOn.length > 0
-        ? normalizedDependsOn
-        : previousId
-          ? [previousId]
-          : [];
-    return {
-      ...step,
-      id,
-      dependsOn,
-    };
-  });
+  const ordered = hasUsableParsedPlan
+    ? topologicalIntentStepOrder(deduped)
+    : sortIntentSteps(deduped);
+  return normalizeIntentStepOrder(ordered);
 }
 
 function buildConfidenceByDimension(args: {

@@ -48,6 +48,7 @@ import {
 import { buildHistoryFromMessages } from "./resumeFromDisk.js";
 import { LocalModelRouter } from "./localModelRouter.js";
 import type { IntentFrame } from "./intentResolver.js";
+import { buildIntentExecutionPlan } from "./intentExecutionPlan.js";
 import { buildIntentPlanSection } from "./intentPlan.js";
 import { buildRecentConversationRecallCandidates } from "./conversationRecall.js";
 import { buildIntentAwareMemoryPolicy } from "./intentAwareMemoryPolicy.js";
@@ -78,6 +79,34 @@ function extractSummaryCandidatesFromSection(
       source: "fallback" as const,
     }))
     .filter((item) => item.text);
+}
+
+const ENFORCEABLE_INTENT_TOOLS = new Set(["recall_memory", "task_add"]);
+
+function buildMissingIntentToolPrompt(
+  intent: IntentFrame | null,
+  calledTools: Set<string>,
+): string | null {
+  const executionPlan = buildIntentExecutionPlan(intent);
+  if (!executionPlan) return null;
+  const missingTools = executionPlan.requiredTools.filter(
+    (tool) => ENFORCEABLE_INTENT_TOOLS.has(tool) && !calledTools.has(tool),
+  );
+  if (missingTools.length === 0) return null;
+  const affectedSteps = executionPlan.steps.filter(
+    (step) => step.requiredTool && missingTools.includes(step.requiredTool),
+  );
+  return [
+    "SYSTEM: The multi-intent execution contract is not complete.",
+    `Missing required tool call(s): ${missingTools.join(", ")}.`,
+    "You must continue the same user request and execute the missing tool-backed step(s) before giving the final answer.",
+    "Do not claim completion until the required tool result is observed.",
+    "Affected steps:",
+    ...affectedSteps.map(
+      (step) =>
+        `- ${step.step.id} ${step.step.type}: ${step.step.action} -> ${step.step.target}; required_tool=${step.requiredTool}; done_when=${step.completionCriteria}`,
+    ),
+  ].join("\n");
 }
 
 /**
@@ -1247,8 +1276,10 @@ export class JarvisAgent extends EventEmitter {
         const MAX_TOOL_ITERATIONS = networkConfig?.maxToolIterations ?? 30;
         const MAX_CONSECUTIVE_TOOL_FAILURES =
           networkConfig?.maxConsecutiveToolFailures ?? 3;
+        const MAX_INTENT_TOOL_ENFORCEMENTS = 2;
         let toolIterations = 0;
         let consecutiveToolFailures = 0;
+        let intentToolEnforcements = 0;
 
         while (true) {
           let retryCount = 0;
@@ -1340,10 +1371,23 @@ export class JarvisAgent extends EventEmitter {
 
                 currentQueryParts = responseParts;
               } else {
-                success = true;
+                const missingToolPrompt =
+                  intentToolEnforcements < MAX_INTENT_TOOL_ENFORCEMENTS
+                    ? buildMissingIntentToolPrompt(intentFrame, allToolsCalled)
+                    : null;
+                if (missingToolPrompt) {
+                  intentToolEnforcements++;
+                  console.error(
+                    `🧭 [Jarvis] Multi-intent execution incomplete — forcing missing tool step(s), attempt ${intentToolEnforcements}/${MAX_INTENT_TOOL_ENFORCEMENTS}.`,
+                  );
+                  currentQueryParts = [{ text: missingToolPrompt }];
+                  success = false;
+                } else {
+                  success = true;
+                }
               }
 
-              if (!toolCallRequests.length) {
+              if (!toolCallRequests.length && success) {
                 success = true;
               }
             } catch (err: any) {

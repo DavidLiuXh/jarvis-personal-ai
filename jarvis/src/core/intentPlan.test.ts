@@ -5,6 +5,7 @@
  */
 
 import { describe, expect, it } from "vitest";
+import { buildIntentExecutionPlan } from "./intentExecutionPlan.js";
 import type { IntentFrame } from "./intentResolver.js";
 import { buildIntentPlanSection } from "./intentPlan.js";
 
@@ -40,7 +41,12 @@ function intent(steps: IntentFrame["intentSteps"]): IntentFrame {
     evidence: [],
     semanticEvidence: {
       personalContext: { present: true, reason: "", span: "" },
-      memoryRecall: { present: false, target: "none", reason: "", span: "" },
+      memoryRecall: {
+        present: true,
+        target: "user_memory",
+        reason: "",
+        span: "",
+      },
       actionRequest: { present: true, action: "schedule", object: "" },
       entityHints: {
         tickers: ["NVDA"],
@@ -132,9 +138,42 @@ describe("buildIntentPlanSection", () => {
     );
 
     expect(section).toContain("<intent_plan>");
+    expect(section).toContain("<intent_execution_contract>");
+    expect(section).toContain("mode=orchestrated");
+    expect(section).toContain("required_tool=task_add");
     expect(section).toContain("[step-1] recall");
     expect(section).toContain("[step-2] analyze");
     expect(section).toContain("depends_on=step-1");
     expect(section).toContain("requires_confirmation=true");
+    expect(section).toContain("Do not claim a tool-backed step is complete");
+  });
+
+  it("builds an execution contract with required tools for schedule and recall steps", () => {
+    const plan = buildIntentExecutionPlan(
+      intent([
+        {
+          id: "step-1",
+          type: "recall",
+          action: "retrieve relevant user context",
+          target: "risk preference",
+          dependsOn: [],
+          requiresConfirmation: false,
+          riskLevel: "low",
+        },
+        {
+          id: "step-2",
+          type: "schedule",
+          action: "schedule future follow-up",
+          target: "明天早上9点提醒我复盘",
+          dependsOn: ["step-1"],
+          requiresConfirmation: false,
+          riskLevel: "medium",
+        },
+      ]),
+    );
+
+    expect(plan?.mode).toBe("orchestrated");
+    expect(plan?.requiredTools).toEqual(expect.arrayContaining(["task_add"]));
+    expect(plan?.steps.map((step) => step.mode)).toEqual(["context", "tool"]);
   });
 });
