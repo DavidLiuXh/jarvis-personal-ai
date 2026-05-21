@@ -24,6 +24,232 @@ guardrails。相比纯关键词路由，这个设计已经更稳，因为它要�
 可评测、可修复、可解释，并且足够明确地服务后续 planning、memory injection
 和 agent routing。
 
+## 最近一次架构调整：Policy Trace、置信度校准与失败样本闭环
+
+最近这轮改动的核心目标不是继续增加零散 guardrail，而是把 intent understanding
+里的确定性修正规则，升级成可解释、可回归、可运营的 policy layer。
+
+这次调整可以理解为三层：
+
+1. **Policy trace 标准化**
+
+   每一条 deterministic policy 现在都必须带稳定的 reason metadata：
+
+   ```ts
+   type IntentPolicyReason = {
+     code: string;
+     category:
+       | "semantic_evidence"
+       | "subject_boundary"
+       | "task_boundary"
+       | "agent_routing";
+     severity: "info" | "warning" | "critical";
+   };
+   ```
+
+   过去只有 `reasonCode`，适合人工阅读，但不利于统计和 eval 分桶。现在每条
+   `policyTrace` 同时包含：
+   - `ruleId`
+   - `stage`
+   - `priority`
+   - `reasonCode`
+   - `reason.code`
+   - `reason.category`
+   - `reason.severity`
+   - `before`
+   - `after`
+
+   这意味着一次 subject/taskType/memoryTarget 的修正，不再只是日志里的一句话，而是
+   一个可被测试、可被聚合、可被基线比较的结构化事件。
+
+2. **Confidence calibration**
+
+   eval runner 现在会按 confidence dimension 聚合真实模型输出：
+   - 样本数；
+   - pass 样本数；
+   - fail 样本数；
+   - pass 最低值；
+   - pass P10；
+   - pass 平均值；
+   - fail 最高值；
+   - suggested floor；
+   - 当前默认 floor。
+
+   这一步暂时不直接改 runtime 阈值。它的价值是让 Jarvis 从“经验阈值”进入“数据支持的
+   阈值治理”。当 eval 样本足够多时，我们可以基于真实 pass/fail 分布调整
+   `LOW_CONFIDENCE_THRESHOLD`、clarification threshold、entity confidence threshold
+   等关键阈值，而不是凭感觉调参数。
+
+3. **线上反馈闭环**
+
+   eval runner 新增失败样本沉淀能力。任何 eval 失败都可以输出成 JSONL candidate：
+
+   ```bash
+   npx tsx scripts/run_intent_evals.ts \
+     --models gemma4:e2b \
+     --write-eval-candidates evals/intent/candidates/intent-eval-candidates-latest.jsonl
+   ```
+
+   candidate 会保留：
+   - 原始 prompt；
+   - history；
+   - tags；
+   - failed checks；
+   - observed intent；
+   - clarification decision；
+   - 可继续补齐 expected 的 `candidateCase` skeleton。
+
+   这让真实失败可以从“日志里偶然发现的问题”变成“可审核、可补标、可回归”的测试资产。
+   后续如果把线上日志中的失败样本接入同一格式，就能形成稳定的反馈闭环：
+
+   > 线上失败 → 生成 candidate → 人工审核补 expected → 进入 eval case → 后续每次修改回归。
+
+### 本次实现边界
+
+这轮已经完成：
+
+- policy registry 校验 reason metadata；
+- `IntentFrame.policyTrace` 输出标准化 reason；
+- policy trace baseline 升级到 v2，并比较 `reason.category` / `reason.severity`；
+- eval markdown/json 报告展示 policy reason code 的 category 和 severity；
+- eval 报告生成 confidence calibration 表；
+- eval 失败时生成 JSONL candidate；
+- 单元测试覆盖 policy reason metadata 和 trace 输出；
+- 使用 `gemma4:e2b` 跑通 core baseline、baseline compare、full eval 和失败样本 smoke test。
+
+这轮尚未完成：
+
+- runtime 阈值还没有自动读取 calibration 结果；
+- 线上真实日志还没有自动接入 candidate 生成流程；
+- 还没有 dashboard 展示长期趋势；
+- 还没有对不同模型建立长期稳定性曲线。
+
+因此当前状态是：policy layer 已经具备工业级治理骨架，但 confidence 和 feedback loop
+仍处于“可生产数据、可人工闭环”的阶段，还没有完全自动化运营。
+
+## 当前距离工业级的具体差距
+
+如果用“能不能稳定支撑真实长期使用、模型切换、复杂请求和持续演进”这个标准来看，
+Jarvis 当前的 intent-understanding 层离工业级还有这些明确差距：
+
+### 1. 输出稳定性还不够
+
+当前最明显的问题不是“完全不会判断”，而是“判断结果偶尔不稳定”：
+
+- 本地模型仍会频繁输出非法 JSON，需要 repair 才能继续；
+- repair 本身也不是 100% 成功，因此必须依赖 deterministic fallback；
+- 同一个 case 多次运行，topic relation、topic grounding、candidate agents 仍会有波动；
+- 小模型在 schema 变长后更容易掉字段、偷懒泛化、用抽象句子代替 grounded evidence。
+
+这说明当前系统已经具备“纠错能力”，但还没有达到“输出天然稳定、错误率足够低”的
+工业级状态。
+
+### 2. 语义表达仍偏薄
+
+虽然我们已经引入了 `richIntent`、`confidenceByDimension`、`intentSteps`，但整体上
+仍然更像“增强版路由结果”，还不是完整的任务语义表示：
+
+- `intentSteps` 现在主要服务于 prompt 注入，还没有成为系统级执行契约；
+- step 的 `action` 和 `target` 仍然比较粗，很多时候是 fallback 文本，而不是精确参数；
+- 缺少更强的 argument extraction，例如 reminder time、output format、deliverable path、
+  comparison set、约束条件、成功标准；
+- 当前 schema 仍偏向单轮理解，还没有把“用户期望的最终产物”表达得足够清楚。
+
+工业级系统通常不只知道“这是 recall + analyze + schedule”，还要知道“分析什么、产出
+什么格式、提醒在什么时间、缺什么参数、哪些步骤必须确认”。
+
+### 3. Multi-Intent 只完成了识别层，尚未进入执行层
+
+这块现在处于“阶段一可用”：
+
+- 我们已经能识别并暴露多步骤意图；
+- 也已经把 `<intent_plan>` 注入给主模型；
+- 但 executor、tool orchestration、subagent routing 仍然主要按旧执行模式工作。
+
+这意味着：
+
+- 系统已经“看见”多意图，但还不能严格保证按 step 顺序执行；
+- step 之间的依赖关系还没有成为 runtime 约束；
+- clarification policy 和 memory policy 还没有完整按 step 粒度消费；
+- 最终成功很大程度仍依赖主 LLM 一次性把所有步骤都处理对。
+
+工业级多意图系统通常需要从“识别 steps”进一步走到“按 steps 规划并执行 steps”。
+
+### 4. topic understanding 仍然受模型表述噪声影响
+
+这轮演进里，topic grounding 已经明显比之前好，但它仍暴露出一个现实问题：
+
+- 模型会把普通新问题误判成 `current_context_reference`；
+- 模型会给出抽象总结，而不是来自原文的 grounded evidence；
+- `referencesRecentHistory=false` 与 `topicAnalysis.relation=current_context_reference`
+  这种语义冲突仍会出现，需要代码层再修正。
+
+这说明 topic understanding 还没有完全从“模型主观总结”升级为“有证据约束的 topic
+inference”。工业级系统一般要求 relation、history topic、current topic、evidence
+之间高度一致，不能靠日志里人工解释。
+
+### 5. recall / personal / mixed 的边界仍然脆弱
+
+这部分已经比最初稳很多，但仍不是彻底解决：
+
+- “记得”“之前”“上次”这类自然语言在中文里高度多义，容易引入假阳性；
+- `recallCue`、`personalCue`、external entity 之间的优先级需要大量 guardrail；
+- 同一句话既可能是“问我的偏好”，也可能是“结合我的偏好分析外部对象”，语义边界很细；
+- 当前很多正确结果来自 guardrail 组合，而不是模型本身天然稳定地区分。
+
+工业级系统可以接受 guardrail，但不能长期依赖不断叠加 case-by-case 规则，否则维护
+成本会持续上升。
+
+### 6. 评测覆盖仍不足以证明“工业级”
+
+我们已经有真实模型 eval，这非常关键，但它距离工业级验证还有差距：
+
+- 当前 case 数量还不够大，覆盖的业务面有限；
+- 已经具备失败样本 candidate 输出，但还缺少大规模真实 query 回放、按分布采样和线上日志自动回灌；
+- 已经有 core policy trace baseline，但还没有稳定的跨模型回归基线、分版本趋势追踪、失败聚类分析；
+- 还没有把“波动性”本身做成指标，例如同一 case 重跑 10 次的一致性。
+
+工业级不是“这一轮 23/23 通过”，而是“长期、跨模型、跨版本、跨分布地稳定通过”。
+
+### 7. 与下游模块的契约还不够硬
+
+当前 intent layer 已经开始影响 memory injection、clarification、agent routing，
+但耦合还不够深：
+
+- memory policy 还主要是按 subject / memoryTarget / contextDependency 推断；
+- clarification policy 还没有完全按 `intentSteps` 和 step risk 驱动；
+- agent routing 仍然部分依赖 candidate heuristic，而不是完整 execution plan；
+- 执行失败后的反馈还不会反向修正 intent understanding。
+
+工业级系统通常要求 intent layer 成为“统一语义入口”，下游模块消费同一份 contract，
+而不是每层都再做一次自己的轻量理解。
+
+### 8. 观测与运营能力还偏初级
+
+当前已经有日志和 targeted eval，但还缺少工程化运营能力：
+
+- 没有统一 dashboard 看 subject/taskType/memoryTarget 的错误率走势；
+- 已经开始按 policy reason 和 confidence dimension 分桶，但还没有按模型、场景、语言、
+  query length 建立长期质量统计；
+- 没有 failure taxonomy 和 root-cause 标注体系；
+- 还没有把 repair rate、fallback rate、topic conflict rate 作为健康指标长期监控。
+
+工业级 intent system 必须既能“做对”，也能“看见自己什么时候没做对”。
+
+## 一个务实判断
+
+如果分级来看，我会把 Jarvis 当前的 intent-understanding 层放在：
+
+- 不是“弱规则路由”；
+- 已经超过“单纯依赖 LLM 自由发挥”；
+- 属于“有 schema、有 guardrail、有 eval 的中级语义路由系统”；
+- 但还没有进入“工业级强意图理解系统”。
+
+它现在最接近的状态是：
+
+> 一个已经具备正确演进方向、局部能力较强、但在稳定性、执行闭环和运营能力上仍需
+> 明显补强的 intent platform。
+
 ## 目标状态
 
 一个强意图理解系统应该具备这些能力：
