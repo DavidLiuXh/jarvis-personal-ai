@@ -13,6 +13,7 @@ export type ClarificationPolicyInput = {
   querySubject: QuerySubject;
   candidateAgents: string[];
   recentHistoryLength?: number;
+  executionContext?: "interactive" | "proactive_task";
 };
 
 export type ClarificationState =
@@ -63,6 +64,7 @@ export type ClarificationTrace = {
     querySubject: QuerySubject;
     candidateAgents: string[];
     recentHistoryLength: number;
+    executionContext: "interactive" | "proactive_task";
   };
 };
 
@@ -167,6 +169,7 @@ export function buildClarificationDecision(
   const reasons: string[] = [];
   const stepRequirements: ClarificationStepRequirement[] = [];
   const { intent } = input;
+  const isProactiveTask = input.executionContext === "proactive_task";
 
   if (!intent) {
     return buildDecision({ questions, reasons, stepRequirements });
@@ -187,6 +190,7 @@ export function buildClarificationDecision(
 
   for (const step of intent.intentSteps) {
     if (
+      !isProactiveTask &&
       step.type === "schedule" &&
       !hasConcreteScheduleTime(intent, input.userPrompt)
     ) {
@@ -269,6 +273,7 @@ export function buildClarificationDecision(
   }
 
   if (
+    !isProactiveTask &&
     intent.taskType === "schedule" &&
     !hasConcreteScheduleTime(intent, input.userPrompt)
   ) {
@@ -402,6 +407,7 @@ export function buildClarificationTrace(
       querySubject: input.querySubject,
       candidateAgents: input.candidateAgents,
       recentHistoryLength: input.recentHistoryLength ?? 0,
+      executionContext: input.executionContext ?? "interactive",
     },
   };
 }

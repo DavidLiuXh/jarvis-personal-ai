@@ -229,6 +229,53 @@ describe("buildClarificationDecision", () => {
     });
   });
 
+  it("does not ask for schedule timing when an existing proactive task is already running", () => {
+    const decision = buildClarificationDecision({
+      userPrompt:
+        "[PROACTIVE TASK — delivery channel: websocket]\nGenerate the daily AI report",
+      querySubject: "mixed",
+      candidateAgents: [],
+      executionContext: "proactive_task",
+      intent: intent({
+        subject: "mixed",
+        taskType: "schedule",
+        needsScheduling: true,
+        needsTool: true,
+        intentSteps: [
+          {
+            id: "step-1",
+            type: "analyze",
+            action: "generate report",
+            target: "daily AI report",
+            dependsOn: [],
+            requiresConfirmation: false,
+            riskLevel: "low",
+          },
+          {
+            id: "step-2",
+            type: "schedule",
+            action: "schedule future follow-up",
+            target: "daily report",
+            dependsOn: ["step-1"],
+            requiresConfirmation: true,
+            riskLevel: "medium",
+          },
+        ],
+        richIntent: {
+          ...intent().richIntent,
+          primaryAction: "schedule",
+          targets: [{ type: "external_entity", value: "daily AI report" }],
+          riskLevel: "medium",
+        },
+      }),
+    });
+
+    expect(decision.shouldAsk).toBe(false);
+    expect(decision.reasons).not.toContain("schedule_step_missing_time");
+    expect(decision.reasons).not.toContain("schedule_time_ambiguous");
+    expect(decision.state).toBe("ready");
+  });
+
   it("asks when delegate has multiple plausible agents", () => {
     const decision = buildClarificationDecision({
       userPrompt: "帮我分析一下 NVDA",

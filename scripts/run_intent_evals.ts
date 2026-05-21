@@ -103,6 +103,7 @@ type IntentExpectation = {
     reasonCodesNotContain?: string[];
   };
   clarification?: {
+    executionContext?: "interactive" | "proactive_task";
     interactiveChannel?: boolean;
     state?: ClarificationDecision["state"];
     scope?: ClarificationDecision["scope"];
@@ -931,6 +932,8 @@ async function runCase(
         querySubject: intent.subject,
         candidateAgents: intent.candidateAgents,
         recentHistoryLength: evalCase.history?.length ?? 0,
+        executionContext:
+          evalCase.expect.clarification?.executionContext ?? "interactive",
       }),
       evalCase.expect.clarification?.interactiveChannel ?? true,
     );

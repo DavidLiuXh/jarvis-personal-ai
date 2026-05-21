@@ -9,7 +9,11 @@ import type { TriggeredTask } from "./taskScheduler.js";
 import type { ChannelRegistry } from "./channelRegistry.js";
 
 type AgentLike = {
-  processMessage: (prompt: string) => Promise<void>;
+  processMessage: (
+    prompt: string,
+    imageAttachment?: { data: Buffer; mimeType: string },
+    options?: { executionContext?: "interactive" | "proactive_task" },
+  ) => Promise<void>;
   on: (event: string, listener: (...args: any[]) => void) => void;
   once: (event: string, listener: (...args: any[]) => void) => void;
   removeListener: (event: string, listener: (...args: any[]) => void) => void;
@@ -84,6 +88,19 @@ export class ProactiveTaskRunner {
 
       const agent = await this.getAgent(sessionId);
       let accumulatedText = "";
+      let deliveryChannel = task.channel;
+      let deliveryChatId = task.chatId ?? "";
+      if (
+        deliveryChannel &&
+        !registry.isRegistered(deliveryChannel) &&
+        registry.isRegistered("websocket")
+      ) {
+        console.error(
+          `⚠️ [ProactiveTaskRunner] Channel "${deliveryChannel}" not registered; falling back to websocket for task "${task.id}".`,
+        );
+        deliveryChannel = "websocket";
+        deliveryChatId = "";
+      }
 
       await new Promise<void>((resolve, reject) => {
         const contentHandler = (event: any) => {
@@ -104,33 +121,45 @@ export class ProactiveTaskRunner {
         agent.once(JarvisEventType.DONE, doneHandler);
         agent.once(JarvisEventType.ERROR, errorHandler);
 
-        // If the task has a push channel, prepend explicit instructions:
-        // 1. Include "push to wechat/feishu" keyword so refreshContext injects
-        //    the push_to_channel protocol (LLM learns the tool exists).
+        // If the task has a delivery channel, prepend explicit instructions:
+        // 1. Mention push_to_channel so refreshContext injects the protocol
+        //    while avoiding schedule/reminder wording in the visible prompt.
         // 2. Immediately clarify NOT to call it — the runner pushes automatically.
         // Without this, LLM has no knowledge of push_to_channel and tries to
         // use run_shell_command or looks for executables in /usr/bin.
-        const prompt = task.channel
-          ? `[SCHEDULED TASK — push to ${task.channel}]\nIMPORTANT: Do NOT call push_to_channel. The system will automatically push your response to ${task.channel} when you finish. Just generate the content.\n\n${task.prompt}`
+        const prompt = deliveryChannel
+          ? `[PROACTIVE TASK — delivery channel: ${deliveryChannel}]\nIMPORTANT: Do NOT call push_to_channel. The system will deliver your response to ${deliveryChannel} after you finish. Just generate the content.\n\n${task.prompt}`
           : task.prompt;
-        agent.processMessage(prompt).catch(reject);
+        agent
+          .processMessage(prompt, undefined, {
+            executionContext: "proactive_task",
+          })
+          .catch(reject);
       });
 
       if (accumulatedText.trim()) {
-        if (task.channel) {
+        if (deliveryChannel) {
           // chatId may be empty — pushSafe will fall back to adapter.defaultChatId
           const pushed = await registry.pushSafe(
-            task.channel,
-            task.chatId ?? "",
+            deliveryChannel,
+            deliveryChatId,
             accumulatedText,
           );
           if (pushed) {
             console.error(
-              `✅ [ProactiveTaskRunner] Task "${task.id}" completed, result pushed to ${task.channel}.`,
+              `✅ [ProactiveTaskRunner] Task "${task.id}" completed, result pushed to ${deliveryChannel}.`,
+            );
+          } else if (
+            deliveryChannel !== "websocket" &&
+            registry.isRegistered("websocket") &&
+            (await registry.pushSafe("websocket", "", accumulatedText))
+          ) {
+            console.error(
+              `✅ [ProactiveTaskRunner] Task "${task.id}" completed, primary push to ${deliveryChannel} failed, result pushed to websocket.`,
             );
           } else {
             console.error(
-              `⚠️ [ProactiveTaskRunner] Task "${task.id}" completed but push to ${task.channel} failed.`,
+              `⚠️ [ProactiveTaskRunner] Task "${task.id}" completed but push to ${deliveryChannel} failed.`,
             );
           }
         } else {

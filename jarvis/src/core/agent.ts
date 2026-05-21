@@ -880,6 +880,7 @@ export class JarvisAgent extends EventEmitter {
   public async processMessage(
     userPrompt: string,
     imageAttachment?: { data: Buffer; mimeType: string },
+    options: { executionContext?: "interactive" | "proactive_task" } = {},
   ) {
     // Intercept !clear — compress current history into summary, drop all raw turns
     if (userPrompt.trim() === "!clear") {
@@ -1174,6 +1175,7 @@ export class JarvisAgent extends EventEmitter {
             querySubject,
             candidateAgents: intentFrame?.candidateAgents ?? [],
             recentHistoryLength: conversationHistory.length,
+            executionContext: options.executionContext ?? "interactive",
           };
           const clarification = applyClarificationChannelState(
             buildClarificationDecision(clarificationInput),
