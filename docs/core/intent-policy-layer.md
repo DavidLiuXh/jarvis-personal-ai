@@ -22,9 +22,22 @@ Each policy rule is represented as an explicit unit:
 - `apply(state)`: deterministic state patch.
 - `snapshot(state)`: compact before/after trace payload.
 
+This exists because intent policy changes are high-leverage and easy to make
+fragile. A small ordering change can alter memory injection, clarification,
+agent routing, or task type. Representing each policy as an explicit unit makes
+the behavior reviewable: reviewers can inspect the predicate, the patch, the
+priority, and the reason independently instead of reading a long resolver
+branch and inferring intent from control flow.
+
 Rules live in `jarvis/src/core/intentPolicy.ts`. `intentResolver.ts` constructs policy state and calls the registry, but rule definitions and manifests are kept out of the resolver.
 
 The registry is validated at construction time. Validation enforces non-empty rules, unique ids, unique reason codes, uppercase reason codes, group-prefixed rule ids, integer priorities, and no duplicate priority inside the same rule group. This keeps execution order explicit instead of relying on array position.
+
+The registry is separate from the resolver for two reasons. First, the resolver
+should compose model output, local evidence, and downstream intent fields; it
+should not also own policy governance. Second, policies need their own
+manifest, validation, and tests. Keeping the registry independent makes it
+possible to audit policy coverage without running the full resolver path.
 
 The resolver returns `IntentFrame.policyTrace`, where every applied rule includes:
 
@@ -37,6 +50,11 @@ The resolver returns `IntentFrame.policyTrace`, where every applied rule include
 - `after`
 
 `reason.category` is one of `semantic_evidence`, `subject_boundary`, `task_boundary`, or `agent_routing`. `reason.severity` is one of `info`, `warning`, or `critical`. Registry validation fails if a rule has no reason metadata, so evals and runtime logs can group policy behavior without parsing free-form strings.
+
+The standardized reason object exists because a flat string reason code is not
+enough for operations. `reasonCode` answers "which rule fired"; `category`
+answers "which semantic boundary was affected"; `severity` answers "how risky
+this correction is." Eval reports and production diagnostics need all three.
 
 The policy runner also supports skipped-decision tracing for focused debugging via `recordSkipped`; normal resolver output keeps the trace to applied rules so runtime payloads stay compact.
 
@@ -51,6 +69,10 @@ Runtime stderr output is controlled by config:
 ```
 
 The trace is always available on `IntentFrame.policyTrace`; the switch only controls structured stderr logging in normal Jarvis runtime.
+
+This split is intentional. Runtime code and evals should always receive the
+trace so behavior is reproducible. Console logging is a separate observability
+concern and must be switchable to avoid noisy normal runs.
 
 ## Stages
 
@@ -154,3 +176,10 @@ Every registered policy rule must have a deterministic unit case in `jarvis/src/
 The core real-model baseline is a path-stability gate: it detects when a case still passes but reaches the answer through a different policy trace.
 
 The baseline comparison is exact for applied policy path: it compares `ruleId`, `stage`, `priority`, `reasonCode`, `reason.category`, and `reason.severity`, and it fails on missing or unexpected cases. A passing eval with a different policy path is treated as a regression until the baseline is intentionally regenerated.
+
+The baseline checks path stability because final labels alone are too weak for
+policy governance. Two runs can both return `subject=mixed`, but one may get
+there through a low-confidence fallback while another gets there through a
+personal-context rule. Those paths have different implications for trust,
+memory injection, and future regressions, so the policy path is part of the
+contract.

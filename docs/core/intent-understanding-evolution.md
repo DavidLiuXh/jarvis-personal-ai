@@ -24,6 +24,88 @@ guardrails。相比纯关键词路由，这个设计已经更稳，因为它要�
 可评测、可修复、可解释，并且足够明确地服务后续 planning、memory injection
 和 agent routing。
 
+## 分层设计原则
+
+Jarvis 的 intent understanding 现在被拆成多个相对独立的层级。这样做不只是为了代码
+整洁，而是为了把“概率判断”和“确定性治理”分开，让每层承担不同责任。
+
+### 1. 本地模型层：负责语义判断
+
+用途：
+
+- 从用户输入和近期 history 中提取 `IntentFrame`；
+- 判断 subject、taskType、memoryTarget、topic relation；
+- 输出 rich intent、entity hints、intent steps 和 confidence。
+
+原因：
+
+- 这些判断依赖自然语言理解，不能靠关键词完整覆盖；
+- 中文里的“之前”“记得”“上次”“帮我处理一下”高度多义，模型比规则更适合给出初始语义解释；
+- 将模型限制在“产生结构化语义证据”，而不是直接决定所有下游行为，可以降低模型误判的破坏范围；
+- 本地模型可替换，后续可以通过 eval 对比 `gemma`、`qwen` 等模型，而不需要重写下游逻辑。
+
+### 2. Schema validation / repair 层：负责输入可信度边界
+
+用途：
+
+- 校验本地模型输出是否符合 expected schema；
+- 对非法 JSON 或缺字段结果进行 repair；
+- repair 失败时进入保守 fallback；
+- 记录 repair/fallback 现象，作为模型稳定性指标。
+
+原因：
+
+- 小模型在长 schema 下天然会出现非法 JSON、漏字段、字段类型错误；
+- 如果把不合法输出直接交给 resolver，下游会同时承担“语义错误”和“结构错误”，问题难定位；
+- 单独抽出 validation/repair 可以把模型能力问题显式化，便于统计 repair rate 和模型切换风险；
+- fallback 策略需要稳定、确定、可测试，不能依赖模型再猜一次。
+
+### 3. Policy layer：负责确定性语义治理
+
+用途：
+
+- 对模型输出执行稳定的 guardrail、override、finalize；
+- 统一处理 recall/personal/mixed、external past event、ticker false positive、delegate false positive 等边界；
+- 输出 `policyTrace`，记录每次修正的 rule、reason、before/after。
+
+原因：
+
+- 模型输出是概率性的，但 memory injection、tool execution、agent routing 需要可预测行为；
+- 一些错误的代价不对称，例如把 external 问题误判为 personal 会污染上下文，把 execute 误判为 chat 会漏执行；
+- 如果 guardrail 分散在 resolver 各处，优先级、覆盖率和回归路径都会变得不可控；
+- 独立 policy layer 让每条规则都有 id、priority、reason 和测试 case，便于 code review 和 eval 回归。
+
+### 4. Eval / calibration 层：负责质量度量
+
+用途：
+
+- 用真实本地模型跑 intent eval；
+- 统计维度 pass rate、tag pass rate、policy reason coverage；
+- 基于 pass/fail 分布生成 confidence calibration；
+- 对 core policy trace 做 baseline compare。
+
+原因：
+
+- intent understanding 的质量不能只靠几个手工案例判断；
+- 模型升级、prompt 调整、schema 扩展都可能导致“结果还对，但路径变了”，这类 drift 需要被看见；
+- confidence 阈值如果只靠经验，会在数据分布变化时失效；
+- baseline 和 calibration 把“是否稳定”从主观感觉变成可重复的工程指标。
+
+### 5. Feedback loop 层：负责把真实失败变成资产
+
+用途：
+
+- 把 eval 失败输出成 JSONL candidate；
+- 保留 prompt、history、failed checks、observed intent、clarification decision；
+- 让失败样本经过人工审核后进入正式 regression case。
+
+原因：
+
+- 真实用户失败通常比预设测试更能暴露系统边界；
+- 如果失败只停留在日志里，后续修改很容易再次引入同类问题；
+- candidate 格式把“发现问题”到“补充 eval”之间的成本降下来；
+- 长期看，feedback loop 是 intent system 从项目功能走向运营系统的关键。
+
 ## 最近一次架构调整：Policy Trace、置信度校准与失败样本闭环
 
 最近这轮改动的核心目标不是继续增加零散 guardrail，而是把 intent understanding
@@ -62,6 +144,11 @@ guardrails。相比纯关键词路由，这个设计已经更稳，因为它要�
    这意味着一次 subject/taskType/memoryTarget 的修正，不再只是日志里的一句话，而是
    一个可被测试、可被聚合、可被基线比较的结构化事件。
 
+   这样设计的原因是：`reasonCode` 适合单点调试，但不适合长期运营。工业级系统需要
+   回答“最近 subject boundary 的 critical 修正规则是否变多了”“某个模型是否更容易触发
+   agent routing 修正”“某次改动是否改变了 policy path”。这些问题都要求 reason 既稳定
+   又可聚合。
+
 2. **Confidence calibration**
 
    eval runner 现在会按 confidence dimension 聚合真实模型输出：
@@ -79,6 +166,10 @@ guardrails。相比纯关键词路由，这个设计已经更稳，因为它要�
    阈值治理”。当 eval 样本足够多时，我们可以基于真实 pass/fail 分布调整
    `LOW_CONFIDENCE_THRESHOLD`、clarification threshold、entity confidence threshold
    等关键阈值，而不是凭感觉调参数。
+
+   这样设计的原因是：confidence 本身不是事实，它只是模型对自己判断的估计。如果不把
+   confidence 和实际 pass/fail 关联起来，阈值就是经验常量。calibration 层把 confidence
+   变成可校准信号，使后续阈值调整有数据依据。
 
 3. **线上反馈闭环**
 
@@ -103,6 +194,10 @@ guardrails。相比纯关键词路由，这个设计已经更稳，因为它要�
    后续如果把线上日志中的失败样本接入同一格式，就能形成稳定的反馈闭环：
 
    > 线上失败 → 生成 candidate → 人工审核补 expected → 进入 eval case → 后续每次修改回归。
+
+   这样设计的原因是：intent system 的真实难点来自长尾表达。人工预设 case 永远不可能
+   覆盖所有长尾，必须让真实失败样本进入测试资产。candidate 不是直接变成测试，因为
+   observed output 不等于 expected truth，中间需要人工审核；但它把回灌路径标准化了。
 
 ### 本次实现边界
 
