@@ -715,6 +715,30 @@ memory injection、clarification、agent routing 或 taskType。独立 rule mode
 
 则 external 可升级为 mixed。
 
+#### personal fact assertion
+
+如果当前请求是短个人事实声明，例如：
+
+- “Javis，我是David Liu”
+- “我的名字是 David”
+- “我喜欢用 TypeScript 写后端”
+- “my name is David Liu”
+
+则它不是对旧对话的召回，也不是对最近 topic 的 follow-up。policy 会把这类请求治理为：
+
+- `subject=personal`；
+- `taskType=chat`；
+- `semanticEvidence.memoryRecall.target=none`；
+- `needsMemory=false`；
+- `referencesRecentHistory=false`；
+- 有 recent history 时 `topicShifted=true`；
+- `topic_analysis.current` 重建为当前 personal fact assertion，evidence 固定来自当前 prompt。
+
+这样做的原因是：短个人事实声明通常会被小模型“吸附”到最近强上下文上，尤其当上一轮是
+电商、投资、代码等内容丰富的话题时，模型容易把“我是 David Liu”解释成“继续某个业务构思”。
+但这类输入本质上是在更新当前用户事实，不需要检索旧 memory；如果误判为 recall，会触发
+不必要的 memory injection，并让 topic analysis 日志显示一个没有被当前 prompt 支撑的话题。
+
 #### recall cue
 
 如果明确问过去对话或 Jarvis 记忆：
@@ -1057,6 +1081,8 @@ Topic analysis 已从简单的：
 - 没有 relation 但有 recent history 时，默认回退到 `adjacent_topic`，避免不可解释的 unknown；
 - 如果 evidence 缺失，会用当前 prompt 或对应 history turn 作为 grounding fallback；
 - `lowGrounding=true` 会降低 `topicShift` 维度置信度，提醒后续策略保守处理。
+- 对短个人事实声明，topic analysis 不信任模型继承的 history topic，而是强制重建 current label
+  与 evidence，避免出现 `new="电商领域AI工具构思"` 但 evidence 只有“我是David Liu”的日志错配。
 
 ## 11. 第七层：Intent-Aware Memory Policy
 

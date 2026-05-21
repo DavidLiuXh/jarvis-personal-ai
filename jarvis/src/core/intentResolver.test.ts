@@ -1584,4 +1584,92 @@ ${modelResponse({
       },
     });
   });
+
+  it("treats short personal identity assertions as standalone facts, not history recall", async () => {
+    const resolver = makeResolver();
+    mockGenerate.mockResolvedValueOnce(
+      modelResponse({
+        query_subject: "personal",
+        task_type: "recall",
+        needs_external_knowledge: true,
+        semantic_evidence: {
+          personalContext: {
+            present: true,
+            reason: "identity statement",
+            span: "Javis，我是David Liu",
+          },
+          memoryRecall: {
+            present: true,
+            target: "conversation_history",
+            reason: "model incorrectly treated it as prior-context recall",
+            span: "Javis，我是David Liu",
+          },
+          actionRequest: { present: false, action: "none", object: "" },
+          entityHints: {
+            tickers: [],
+            technicalTerms: [],
+            peopleOrCompanies: ["David Liu"],
+          },
+        },
+        topic_analysis: {
+          history: {
+            label: "AI monetization in ecommerce",
+            evidence: ["电商领域找到一个电商人的小痛点"],
+            source_turns: [-2],
+            confidence: 0.9,
+          },
+          current: {
+            label: "电商领域AI工具构思",
+            evidence: ["Javis，我是David Liu"],
+            source_turns: [0],
+            confidence: 0.9,
+          },
+          relation: "subtopic",
+          relation_reason: "incorrectly carried over the previous topic",
+          confidence: 0.9,
+        },
+        references_recent_history: false,
+        topic_shifted: false,
+      }),
+    );
+
+    const intent = await resolver.resolve({
+      userPrompt: "Javis，我是David Liu",
+      history: [
+        {
+          role: "user",
+          content:
+            "我是希望在电商领域找到一个电商人的小痛点，据此我有针对性的作一个AI工具来帮它们解决痛点。",
+        },
+        {
+          role: "assistant",
+          content: "可以从小商家高频工作流里寻找 AI 工具切入点。",
+        },
+      ],
+    });
+
+    expect(intent.subject).toBe("personal");
+    expect(intent.taskType).toBe("chat");
+    expect(intent.needsMemory).toBe(false);
+    expect(intent.referencesRecentHistory).toBe(false);
+    expect(intent.topicShifted).toBe(true);
+    expect(intent.semanticEvidence.memoryRecall).toMatchObject({
+      present: false,
+      target: "none",
+    });
+    expect(intent.topicAnalysis).toMatchObject({
+      relation: "new_topic",
+      current: {
+        label: "Personal identity assertion",
+        evidence: ["Javis，我是David Liu"],
+      },
+    });
+    expect(intent.topicAnalysis.current.label).not.toContain("电商");
+    expect(policyReasonCodes(intent)).toEqual(
+      expect.arrayContaining([
+        "PERSONAL_FACT_ASSERTION_NOT_RECALL",
+        "PERSONAL_FACT_ASSERTION_TASK_NOT_RECALL",
+      ]),
+    );
+  });
 });

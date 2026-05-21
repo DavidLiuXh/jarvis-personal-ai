@@ -302,6 +302,8 @@ const EXPLICIT_DELEGATE_CUE_RE =
 const INVESTMENT_ANALYSIS_CUE_RE =
   /投资价值|基本面|财报|估值|股票|股价|买入|卖出|持有|分析.*(nvda|googl|aapl|msft|tsla)|investment|fundamental|valuation|earnings|stock/i;
 
+const ASSISTANT_ADDRESS_RE = /^(?:jarvis|javis|贾维斯)[，,：:\s]+/i;
+
 const ENTITY_REFINEMENT_CUE_RE =
   /\b[A-Z]{2,5}\b|React|Vue|TypeScript|JavaScript|Node\.?js|英伟达|苹果|微软|特斯拉|谷歌|亚马逊|Nvidia|Apple|Microsoft|Tesla|Google|Amazon/;
 
@@ -354,6 +356,45 @@ function hasUserPreferenceCue(prompt: string): boolean {
   return /我.*(偏好|习惯|风格|喜好)|我的.*(偏好|习惯|风格|喜好)|my .*(preference|style|habit)/i.test(
     prompt,
   );
+}
+
+function stripAssistantAddress(prompt: string): string {
+  return prompt.trim().replace(ASSISTANT_ADDRESS_RE, "").trim();
+}
+
+function hasPersonalIdentityAssertionCue(prompt: string): boolean {
+  const text = stripAssistantAddress(prompt);
+  if (!text || /[?？]$/.test(text)) return false;
+  const zhIdentity =
+    /^(?:我是|我叫|我的名字是|我的姓名是|本人是)(?!希望|想|准备|打算|要|来|为了|不是|否|觉得|认为)[\s\S]{1,80}[。.!！]?$/.test(
+      text,
+    );
+  const enIdentity =
+    /^(?:i am|i'm|my name is|this is)(?!\s+(?:hoping|looking|trying|going|planning|asking)\b)\s+[a-z][a-z0-9 .'-]{1,80}[.!]?$/i.test(
+      text,
+    );
+  return zhIdentity || enIdentity;
+}
+
+function hasPersonalPreferenceAssertionCue(prompt: string): boolean {
+  const text = stripAssistantAddress(prompt);
+  if (!text || /[?？]$/.test(text)) return false;
+  return /^(?:我喜欢|我偏好|我更喜欢|我习惯|我的(?:偏好|习惯|风格|名字|姓名|英文名|中文名)是|i prefer|i like|my (?:preference|style|habit|name) is)\s*[\s\S]{1,100}[。.!！]?$/i.test(
+    text,
+  );
+}
+
+export function hasPersonalFactAssertionCue(prompt: string): boolean {
+  return (
+    hasPersonalIdentityAssertionCue(prompt) ||
+    hasPersonalPreferenceAssertionCue(prompt)
+  );
+}
+
+function personalFactTopicLabel(prompt: string): string {
+  return hasPersonalIdentityAssertionCue(prompt)
+    ? "Personal identity assertion"
+    : "Personal fact assertion";
 }
 
 function hasMemoryRecallCue(prompt: string): boolean {
@@ -2053,6 +2094,7 @@ export class IntentResolver {
     const prompt = args.userPrompt;
     const preResolved = extractDateRange(prompt, now);
     const anaphoric = hasAnaphoricReference(prompt, history);
+    const personalFactAssertionCue = hasPersonalFactAssertionCue(prompt);
 
     if (anaphoric) {
       console.error(
@@ -2093,6 +2135,7 @@ export class IntentResolver {
     const policyRegistry = createIntentPolicyRegistry({
       lowConfidenceThreshold: LOW_CONFIDENCE_THRESHOLD,
       hasRememberToActionCue,
+      hasPersonalFactAssertionCue,
       hasAnaphoricReference,
       hasMemoryRecallCue,
       hasConversationHistoryRecallCue,
@@ -2126,7 +2169,9 @@ export class IntentResolver {
       memoryRecallTarget === "current_context_reference";
     const semanticActionPresent = semanticEvidence.actionRequest.present;
     const personalCue =
-      semanticEvidence.personalContext.present || hasPersonalContextCue(prompt);
+      personalFactAssertionCue ||
+      semanticEvidence.personalContext.present ||
+      hasPersonalContextCue(prompt);
     const recallCue =
       !externalPastEventCue &&
       (semanticRecallCue || hasMemoryRecallCue(prompt));
@@ -2158,6 +2203,7 @@ export class IntentResolver {
       semanticRecallCue,
       externalPastEventCue,
       currentContextReferenceCue,
+      personalFactAssertionCue,
       personalCue,
       recallCue,
       scheduleCue,
@@ -2272,6 +2318,7 @@ export class IntentResolver {
         "current_context_reference";
     const lexicalCurrentContextCue = hasCurrentContextReferenceCue(prompt);
     const referencesRecentHistory =
+      !personalFactAssertionCue &&
       recentTurns.length > 0 &&
       (anaphoric ||
         currentContextReferenceCue ||
@@ -2281,23 +2328,25 @@ export class IntentResolver {
         `🔗 [IntentResolver] Semantic current-context reference detected — topic_shifted forced false`,
       );
     }
-    const topicRelation = normalizeTopicRelation(
-      asRecord(parsed.topic_analysis).relation,
-    );
+    const topicRelation = personalFactAssertionCue
+      ? "new_topic"
+      : normalizeTopicRelation(asRecord(parsed.topic_analysis).relation);
     // No history → topic shift is meaningless; force false to avoid spurious clears.
     const topicShifted =
       recentTurns.length === 0
         ? false
-        : referencesRecentHistory
-          ? false
-          : topicRelation === "same_topic" || topicRelation === "subtopic"
+        : personalFactAssertionCue
+          ? true
+          : referencesRecentHistory
             ? false
-            : topicRelation === "adjacent_topic"
+            : topicRelation === "same_topic" || topicRelation === "subtopic"
               ? false
-              : topicRelation === "new_topic"
-                ? true
-                : parsed.topic_shifted === true;
-    const topicAnalysis = normalizeTopicAnalysis({
+              : topicRelation === "adjacent_topic"
+                ? false
+                : topicRelation === "new_topic"
+                  ? true
+                  : parsed.topic_shifted === true;
+    let topicAnalysis = normalizeTopicAnalysis({
       value: parsed.topic_analysis,
       legacyHistoryTopic: parsed.history_topic,
       legacyNewTopic: parsed.new_topic,
@@ -2307,6 +2356,22 @@ export class IntentResolver {
       topicShifted,
       recentHistoryLength: recentTurns.length,
     });
+    if (personalFactAssertionCue) {
+      topicAnalysis = {
+        ...topicAnalysis,
+        current: {
+          label: personalFactTopicLabel(prompt),
+          evidence: [prompt.slice(0, 160)],
+          sourceTurns: [0],
+          confidence: Math.max(topicAnalysis.current.confidence, 0.9),
+        },
+        relation: recentTurns.length > 0 ? "new_topic" : "unknown",
+        relationReason:
+          "current request is a standalone personal fact assertion, not a follow-up to recent history",
+        confidence: Math.max(topicAnalysis.confidence, 0.9),
+        lowGrounding: false,
+      };
+    }
 
     if (parsed.history_topic || parsed.new_topic || parsed.topic_analysis) {
       console.error(
@@ -2327,7 +2392,9 @@ export class IntentResolver {
         semanticEvidence.actionRequest.action !== "read" &&
         semanticEvidence.actionRequest.action !== "none") ||
       (!delegateDowngraded && normalizeBoolean(parsed.needs_tool));
-    const needsMemory = subject !== "external" || taskType === "recall";
+    const needsMemory = personalFactAssertionCue
+      ? false
+      : subject !== "external" || taskType === "recall";
     const needsExternalKnowledge =
       subject === "external" ||
       subject === "mixed" ||

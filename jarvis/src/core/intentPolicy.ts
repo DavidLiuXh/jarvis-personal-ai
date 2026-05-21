@@ -22,6 +22,7 @@ export type IntentPolicyReasonCategory =
   | "semantic_evidence"
   | "subject_boundary"
   | "task_boundary"
+  | "topic_boundary"
   | "agent_routing";
 
 export type IntentPolicyReasonSeverity = "info" | "warning" | "critical";
@@ -71,6 +72,7 @@ export type IntentCueState = {
   semanticRecallCue: boolean;
   externalPastEventCue: boolean;
   currentContextReferenceCue: boolean;
+  personalFactAssertionCue: boolean;
   personalCue: boolean;
   recallCue: boolean;
   scheduleCue: boolean;
@@ -120,6 +122,7 @@ export type IntentPolicyRegistry = {
 export type IntentPolicyDeps = {
   lowConfidenceThreshold: number;
   hasRememberToActionCue(prompt: string): boolean;
+  hasPersonalFactAssertionCue(prompt: string): boolean;
   hasAnaphoricReference(prompt: string, history: ConversationTurn[]): boolean;
   hasMemoryRecallCue(prompt: string): boolean;
   hasConversationHistoryRecallCue(prompt: string): boolean;
@@ -169,6 +172,14 @@ const POLICY_REASON_METADATA: Record<
     category: "semantic_evidence",
     severity: "info",
   },
+  PERSONAL_FACT_ASSERTION_NOT_RECALL: {
+    category: "semantic_evidence",
+    severity: "warning",
+  },
+  PERSONAL_FACT_ASSERTION_SUBJECT: {
+    category: "subject_boundary",
+    severity: "warning",
+  },
   RECALL_CUE_SUBJECT_OVERRIDE: {
     category: "subject_boundary",
     severity: "warning",
@@ -190,6 +201,10 @@ const POLICY_REASON_METADATA: Record<
     severity: "warning",
   },
   REMEMBER_TO_ACTION_TASK_NOT_RECALL: {
+    category: "task_boundary",
+    severity: "warning",
+  },
+  PERSONAL_FACT_ASSERTION_TASK_NOT_RECALL: {
     category: "task_boundary",
     severity: "warning",
   },
@@ -358,6 +373,34 @@ function semanticEvidencePolicyRules(
       }),
     },
     {
+      id: "semantic.personal_fact_assertion_not_recall",
+      stage: "guardrail",
+      priority: 480,
+      reasonCode: "PERSONAL_FACT_ASSERTION_NOT_RECALL",
+      snapshot: semanticEvidenceSnapshot,
+      applies: (state) =>
+        deps.hasPersonalFactAssertionCue(state.prompt) &&
+        state.semanticEvidence.memoryRecall.target !== "external_past_event",
+      apply: (state) => ({
+        ...state,
+        semanticEvidence: {
+          ...state.semanticEvidence,
+          personalContext: {
+            present: true,
+            reason: "short personal fact assertion in current request",
+            span: state.prompt,
+          },
+          memoryRecall: {
+            present: false,
+            target: "none",
+            reason:
+              "current personal fact assertion is not a memory recall request",
+            span: state.prompt,
+          },
+        },
+      }),
+    },
+    {
       id: "semantic.anaphora_current_context",
       stage: "normalize",
       priority: 420,
@@ -512,6 +555,23 @@ function subjectPolicyRules(
 ): IntentPolicyRule<SubjectPolicyState>[] {
   return [
     {
+      id: "subject.personal_fact_assertion",
+      stage: "guardrail",
+      priority: 520,
+      reasonCode: "PERSONAL_FACT_ASSERTION_SUBJECT",
+      snapshot: subjectPolicySnapshot,
+      applies: (state) =>
+        state.cues.personalFactAssertionCue && state.subject !== "personal",
+      apply: (state) => ({
+        ...state,
+        subject: "personal",
+        evidence: appendPolicyEvidence(
+          state.evidence,
+          "personal_fact_assertion",
+        ),
+      }),
+    },
+    {
       id: "subject.recall_cue_override",
       stage: "override",
       priority: 500,
@@ -556,6 +616,7 @@ function subjectPolicyRules(
       applies: (state) =>
         state.subject === "personal" &&
         state.cues.personalCue &&
+        !state.cues.personalFactAssertionCue &&
         (!state.cues.recallCue || state.cues.recallWithExternalWork) &&
         (state.semanticEvidence.entityHints.tickers.length > 0 ||
           state.semanticEvidence.entityHints.peopleOrCompanies.length > 0 ||
@@ -624,6 +685,24 @@ function taskPolicyRules(
         evidence: appendPolicyEvidence(
           state.evidence,
           "remember_to_action_not_recall",
+        ),
+      }),
+    },
+    {
+      id: "task.personal_fact_assertion_not_recall",
+      stage: "guardrail",
+      priority: 550,
+      reasonCode: "PERSONAL_FACT_ASSERTION_TASK_NOT_RECALL",
+      snapshot: taskPolicySnapshot,
+      applies: (state) =>
+        state.cues.personalFactAssertionCue &&
+        (state.taskType === "recall" || state.taskType === "analyze"),
+      apply: (state) => ({
+        ...state,
+        taskType: "chat",
+        evidence: appendPolicyEvidence(
+          state.evidence,
+          "personal_fact_assertion",
         ),
       }),
     },
