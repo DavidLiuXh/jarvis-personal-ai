@@ -8,7 +8,7 @@ regression gates.
 
 - Runner: `scripts/run_intent_evals.ts`
 - Default cases: `evals/intent/cases.jsonl`
-- Current coverage: 39 cases
+- Current coverage: 40 cases
 - Core suite: cases tagged `suite:core`
 - Primary eval model for now: `gemma4:e2b`
 
@@ -54,8 +54,34 @@ The runner supports:
 - `--tag <tag>`: filters one tag
 - `--tags <a,b>`: filters cases containing any listed tag
 - `--min-pass-rate <0..1>`: fails the process if any model misses the minimum
+- `--write-policy-baseline <path>`: writes exact policy trace path baselines
+- `--compare-policy-baseline <path>`: fails when policy paths drift
+- `--write-eval-candidates <path>`: writes failed cases as JSONL candidates
 - per-dimension and per-tag markdown summaries
+- policy reason-code summaries grouped by category and severity
+- confidence calibration summaries using pass/fail confidence distributions
 - JSON reports for downstream tooling
+
+## Confidence Calibration
+
+Every report now includes `confidenceCalibration` per model. For each
+confidence dimension, the runner records pass samples, fail samples, pass P10,
+pass average, fail max, and a suggested floor. This is not an automatic runtime
+threshold change; it is an evidence table for replacing experience-based
+thresholds with eval-backed thresholds after enough samples accumulate.
+
+## Failure Candidate Loop
+
+When any case fails, the runner writes JSONL candidates to:
+
+```bash
+evals/intent/candidates/intent-eval-candidates-latest.jsonl
+```
+
+Each candidate includes the original prompt, history, tags, failed checks,
+observed intent, clarification decision, and a draft `candidateCase` skeleton.
+Use this file as the review queue for promoting real failures into
+`evals/intent/cases.jsonl`.
 
 ## Next Industrialization Steps
 

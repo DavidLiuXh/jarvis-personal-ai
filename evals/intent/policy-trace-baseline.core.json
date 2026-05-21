@@ -1,5 +1,5 @@
 {
-  "version": 1,
+  "version": 2,
   "reports": [
     {
       "model": "gemma4:e2b",
@@ -25,7 +25,12 @@
               "ruleId": "task.external_past_event_not_recall",
               "stage": "guardrail",
               "priority": 450,
-              "reasonCode": "EXTERNAL_PAST_EVENT_NOT_RECALL"
+              "reasonCode": "EXTERNAL_PAST_EVENT_NOT_RECALL",
+              "reason": {
+                "code": "EXTERNAL_PAST_EVENT_NOT_RECALL",
+                "category": "task_boundary",
+                "severity": "critical"
+              }
             }
           ]
         },
@@ -44,7 +49,12 @@
               "ruleId": "semantic.anaphora_current_context",
               "stage": "normalize",
               "priority": 420,
-              "reasonCode": "ANAPHORA_CURRENT_CONTEXT_REFERENCE"
+              "reasonCode": "ANAPHORA_CURRENT_CONTEXT_REFERENCE",
+              "reason": {
+                "code": "ANAPHORA_CURRENT_CONTEXT_REFERENCE",
+                "category": "semantic_evidence",
+                "severity": "info"
+              }
             }
           ]
         },
@@ -60,13 +70,23 @@
               "ruleId": "semantic.remember_to_action_not_recall",
               "stage": "guardrail",
               "priority": 500,
-              "reasonCode": "REMEMBER_TO_ACTION_NOT_MEMORY_RECALL"
+              "reasonCode": "REMEMBER_TO_ACTION_NOT_MEMORY_RECALL",
+              "reason": {
+                "code": "REMEMBER_TO_ACTION_NOT_MEMORY_RECALL",
+                "category": "semantic_evidence",
+                "severity": "warning"
+              }
             },
             {
               "ruleId": "task.remember_to_action_not_recall",
               "stage": "guardrail",
               "priority": 600,
-              "reasonCode": "REMEMBER_TO_ACTION_TASK_NOT_RECALL"
+              "reasonCode": "REMEMBER_TO_ACTION_TASK_NOT_RECALL",
+              "reason": {
+                "code": "REMEMBER_TO_ACTION_TASK_NOT_RECALL",
+                "category": "task_boundary",
+                "severity": "warning"
+              }
             }
           ]
         },
@@ -79,7 +99,12 @@
               "ruleId": "task.external_past_event_not_recall",
               "stage": "guardrail",
               "priority": 450,
-              "reasonCode": "EXTERNAL_PAST_EVENT_NOT_RECALL"
+              "reasonCode": "EXTERNAL_PAST_EVENT_NOT_RECALL",
+              "reason": {
+                "code": "EXTERNAL_PAST_EVENT_NOT_RECALL",
+                "category": "task_boundary",
+                "severity": "critical"
+              }
             }
           ]
         },
@@ -92,7 +117,12 @@
               "ruleId": "semantic.technical_entity_normalization",
               "stage": "normalize",
               "priority": 190,
-              "reasonCode": "TECHNICAL_TERM_NORMALIZATION"
+              "reasonCode": "TECHNICAL_TERM_NORMALIZATION",
+              "reason": {
+                "code": "TECHNICAL_TERM_NORMALIZATION",
+                "category": "semantic_evidence",
+                "severity": "info"
+              }
             }
           ]
         },
@@ -111,7 +141,12 @@
               "ruleId": "task.schedule_cue_override",
               "stage": "override",
               "priority": 500,
-              "reasonCode": "SCHEDULE_CUE_TASK_OVERRIDE"
+              "reasonCode": "SCHEDULE_CUE_TASK_OVERRIDE",
+              "reason": {
+                "code": "SCHEDULE_CUE_TASK_OVERRIDE",
+                "category": "task_boundary",
+                "severity": "info"
+              }
             }
           ]
         },

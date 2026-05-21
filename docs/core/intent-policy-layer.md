@@ -32,8 +32,11 @@ The resolver returns `IntentFrame.policyTrace`, where every applied rule include
 - `stage`
 - `priority`
 - `reasonCode`
+- `reason`: standardized `{code, category, severity}`
 - `before`
 - `after`
+
+`reason.category` is one of `semantic_evidence`, `subject_boundary`, `task_boundary`, or `agent_routing`. `reason.severity` is one of `info`, `warning`, or `critical`. Registry validation fails if a rule has no reason metadata, so evals and runtime logs can group policy behavior without parsing free-form strings.
 
 The policy runner also supports skipped-decision tracing for focused debugging via `recordSkipped`; normal resolver output keeps the trace to applied rules so runtime payloads stay compact.
 
@@ -150,4 +153,4 @@ Every registered policy rule must have a deterministic unit case in `jarvis/src/
 
 The core real-model baseline is a path-stability gate: it detects when a case still passes but reaches the answer through a different policy trace.
 
-The baseline comparison is exact for applied policy path: it compares `ruleId`, `stage`, `priority`, and `reasonCode`, and it fails on missing or unexpected cases. A passing eval with a different policy path is treated as a regression until the baseline is intentionally regenerated.
+The baseline comparison is exact for applied policy path: it compares `ruleId`, `stage`, `priority`, `reasonCode`, `reason.category`, and `reason.severity`, and it fails on missing or unexpected cases. A passing eval with a different policy path is treated as a regression until the baseline is intentionally regenerated.

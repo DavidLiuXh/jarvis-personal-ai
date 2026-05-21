@@ -9,6 +9,7 @@ import { describe, expect, it } from "vitest";
 import {
   createIntentPolicyRegistry,
   listIntentPolicyRules,
+  normalizeIntentPolicyReason,
   runIntentPolicyRules,
   validateIntentPolicyRegistry,
   type AgentPolicyState,
@@ -174,6 +175,30 @@ describe("intent policy registry", () => {
     expect(validateIntentPolicyRegistry(registry)).toEqual([]);
   });
 
+  it("attaches standardized reason metadata to every policy manifest", () => {
+    const rules = listIntentPolicyRules(registry);
+
+    for (const rule of rules) {
+      expect(rule.reason).toEqual(
+        expect.objectContaining({
+          code: rule.reasonCode,
+          category: expect.any(String),
+          severity: expect.any(String),
+        }),
+      );
+    }
+  });
+
+  it("normalizes policy reason code metadata", () => {
+    expect(
+      normalizeIntentPolicyReason("EXTERNAL_PAST_EVENT_NOT_RECALL"),
+    ).toEqual({
+      code: "EXTERNAL_PAST_EVENT_NOT_RECALL",
+      category: "task_boundary",
+      severity: "critical",
+    });
+  });
+
   it("reports registry contract violations", () => {
     const duplicateRule: IntentPolicyRule<SemanticPolicyState> = {
       ...registry.semantic[0],
@@ -206,6 +231,11 @@ describe("intent policy registry", () => {
       expect.objectContaining({
         ruleId: "semantic.remember_to_action_not_recall",
         applied: false,
+        reason: {
+          code: "REMEMBER_TO_ACTION_NOT_MEMORY_RECALL",
+          category: "semantic_evidence",
+          severity: "warning",
+        },
         skippedReason: "applies_false",
       }),
     ]);

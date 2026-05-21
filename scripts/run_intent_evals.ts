@@ -8,7 +8,11 @@ import {
   type ConversationTurn,
   type IntentFrame,
 } from "../jarvis/src/core/intentResolver.js";
-import type { IntentPolicyTraceEntry } from "../jarvis/src/core/intentPolicy.js";
+import type {
+  IntentPolicyReasonCategory,
+  IntentPolicyReasonSeverity,
+  IntentPolicyTraceEntry,
+} from "../jarvis/src/core/intentPolicy.js";
 import {
   applyClarificationChannelState,
   buildClarificationDecision,
@@ -135,6 +139,7 @@ type CaseResult = {
   id: string;
   tags: string[];
   prompt: string;
+  history: ConversationTurn[];
   passed: boolean;
   durationMs: number;
   checks: CheckResult[];
@@ -154,10 +159,35 @@ type ModelReport = {
   tagStats: Record<string, { passed: number; total: number }>;
   policyReasonCodeStats: Record<
     string,
-    { cases: number; applications: number }
+    {
+      cases: number;
+      applications: number;
+      category: IntentPolicyReasonCategory;
+      severity: IntentPolicyReasonSeverity;
+    }
   >;
+  confidenceCalibration: ConfidenceCalibrationReport;
   results: CaseResult[];
 };
+
+type ConfidenceDimension = keyof IntentFrame["confidenceByDimension"];
+
+type ConfidenceCalibrationReport = Partial<
+  Record<
+    ConfidenceDimension,
+    {
+      samples: number;
+      passSamples: number;
+      failSamples: number;
+      passMin: number | null;
+      passP10: number | null;
+      passAvg: number | null;
+      failMax: number | null;
+      suggestedFloor: number | null;
+      currentDefaultFloor: number;
+    }
+  >
+>;
 
 const repoRoot = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -182,6 +212,7 @@ function parseArgs(argv: string[]) {
     minPassRate: null as number | null,
     writePolicyBaseline: "",
     comparePolicyBaseline: "",
+    writeEvalCandidates: "",
   };
 
   for (let i = 0; i < argv.length; i += 1) {
@@ -228,6 +259,9 @@ function parseArgs(argv: string[]) {
       i += 1;
     } else if (arg === "--compare-policy-baseline" && next) {
       args.comparePolicyBaseline = path.resolve(next);
+      i += 1;
+    } else if (arg === "--write-eval-candidates" && next) {
+      args.writeEvalCandidates = path.resolve(next);
       i += 1;
     } else if (arg === "--help" || arg === "-h") {
       printHelp();
@@ -276,6 +310,8 @@ Options:
                        Write compact policy trace baseline JSON
   --compare-policy-baseline <path>
                        Fail if compact policy trace differs from baseline
+  --write-eval-candidates <path>
+                       Write failed cases as JSONL eval candidates
 `);
 }
 
@@ -839,6 +875,7 @@ async function runCase(
       id: evalCase.id,
       tags: evalCase.tags ?? [],
       prompt: evalCase.prompt,
+      history: evalCase.history ?? [],
       passed: checks.every((check) => check.pass),
       durationMs: Date.now() - started,
       checks,
@@ -850,6 +887,7 @@ async function runCase(
       id: evalCase.id,
       tags: evalCase.tags ?? [],
       prompt: evalCase.prompt,
+      history: evalCase.history ?? [],
       passed: false,
       durationMs: Date.now() - started,
       checks: [
@@ -891,6 +929,8 @@ function summarizeModel(model: string, results: CaseResult[]): ModelReport {
       policyReasonCodeStats[entry.reasonCode] ??= {
         cases: 0,
         applications: 0,
+        category: entry.reason.category,
+        severity: entry.reason.severity,
       };
       policyReasonCodeStats[entry.reasonCode].applications += 1;
       caseReasonCodes.add(entry.reasonCode);
@@ -912,8 +952,87 @@ function summarizeModel(model: string, results: CaseResult[]): ModelReport {
     dimensionStats,
     tagStats,
     policyReasonCodeStats,
+    confidenceCalibration: buildConfidenceCalibration(results),
     results,
   };
+}
+
+const CONFIDENCE_DIMENSIONS: ConfidenceDimension[] = [
+  "subject",
+  "taskType",
+  "memoryTarget",
+  "action",
+  "entityHints",
+  "topicShift",
+  "richIntent",
+];
+
+const CURRENT_DEFAULT_CONFIDENCE_FLOOR = 0.55;
+
+function roundConfidence(value: number | null): number | null {
+  return value === null ? null : Number(value.toFixed(3));
+}
+
+function average(values: number[]): number | null {
+  if (values.length === 0) return null;
+  return values.reduce((sum, value) => sum + value, 0) / values.length;
+}
+
+function percentile(values: number[], p: number): number | null {
+  if (values.length === 0) return null;
+  const sorted = [...values].sort((left, right) => left - right);
+  const index = Math.min(
+    sorted.length - 1,
+    Math.max(0, Math.floor((sorted.length - 1) * p)),
+  );
+  return sorted[index];
+}
+
+function buildConfidenceCalibration(
+  results: CaseResult[],
+): ConfidenceCalibrationReport {
+  const report: ConfidenceCalibrationReport = {};
+
+  for (const dimension of CONFIDENCE_DIMENSIONS) {
+    const passValues: number[] = [];
+    const failValues: number[] = [];
+
+    for (const result of results) {
+      const confidence = result.intent?.confidenceByDimension[dimension];
+      if (confidence === undefined) continue;
+      if (result.passed) {
+        passValues.push(confidence);
+      } else {
+        failValues.push(confidence);
+      }
+    }
+
+    const passP10 = percentile(passValues, 0.1);
+    const failMax = failValues.length === 0 ? null : Math.max(...failValues);
+    const suggestedFloor =
+      passP10 === null
+        ? null
+        : failMax === null
+          ? passP10
+          : Math.max(failMax, passP10);
+
+    report[dimension] = {
+      samples: passValues.length + failValues.length,
+      passSamples: passValues.length,
+      failSamples: failValues.length,
+      passMin:
+        passValues.length === 0
+          ? null
+          : roundConfidence(Math.min(...passValues)),
+      passP10: roundConfidence(passP10),
+      passAvg: roundConfidence(average(passValues)),
+      failMax: roundConfidence(failMax),
+      suggestedFloor: roundConfidence(suggestedFloor),
+      currentDefaultFloor: CURRENT_DEFAULT_CONFIDENCE_FLOOR,
+    };
+  }
+
+  return report;
 }
 
 function percent(passed: number, total: number) {
@@ -938,16 +1057,40 @@ function renderStatsTable(
 }
 
 function renderPolicyReasonCodeStats(
-  stats: Record<string, { cases: number; applications: number }>,
+  stats: ModelReport["policyReasonCodeStats"],
 ) {
   const rows = Object.entries(stats).sort(([a], [b]) => a.localeCompare(b));
   if (rows.length === 0) return "_No policy rules applied._\n";
   return [
-    "| Reason Code | Cases | Applications |",
-    "| --- | ---: | ---: |",
+    "| Reason Code | Category | Severity | Cases | Applications |",
+    "| --- | --- | --- | ---: | ---: |",
     ...rows.map(
       ([reasonCode, stat]) =>
-        `| ${reasonCode} | ${stat.cases} | ${stat.applications} |`,
+        `| ${reasonCode} | ${stat.category} | ${stat.severity} | ${stat.cases} | ${stat.applications} |`,
+    ),
+    "",
+  ].join("\n");
+}
+
+function renderConfidenceCalibration(report: ConfidenceCalibrationReport) {
+  const rows = CONFIDENCE_DIMENSIONS.map(
+    (dimension) => [dimension, report[dimension]] as const,
+  ).filter(([, stat]) => stat !== undefined);
+  if (rows.length === 0) return "_No confidence samples._\n";
+  return [
+    "| Dimension | Samples | Pass P10 | Pass Avg | Fail Max | Suggested Floor | Current Floor |",
+    "| --- | ---: | ---: | ---: | ---: | ---: | ---: |",
+    ...rows.map(([dimension, stat]) =>
+      [
+        `| ${dimension}`,
+        stat!.samples,
+        stat!.passP10 ?? "n/a",
+        stat!.passAvg ?? "n/a",
+        stat!.failMax ?? "n/a",
+        stat!.suggestedFloor ?? "n/a",
+        stat!.currentDefaultFloor,
+        "|",
+      ].join(" | "),
     ),
     "",
   ].join("\n");
@@ -979,6 +1122,11 @@ function renderMarkdown(reports: ModelReport[]) {
       "",
       renderPolicyReasonCodeStats(report.policyReasonCodeStats),
     );
+    lines.push(
+      "### Confidence Calibration",
+      "",
+      renderConfidenceCalibration(report.confidenceCalibration),
+    );
     const failures = report.results.filter((result) => !result.passed);
     lines.push("### Failures", "");
     if (failures.length === 0) {
@@ -1004,7 +1152,7 @@ function renderMarkdown(reports: ModelReport[]) {
 }
 
 type PolicyTraceBaseline = {
-  version: 1;
+  version: 2;
   reports: Array<{
     model: string;
     cases: Array<{
@@ -1014,7 +1162,7 @@ type PolicyTraceBaseline = {
       trace: Array<
         Pick<
           IntentPolicyTraceEntry,
-          "ruleId" | "stage" | "priority" | "reasonCode"
+          "ruleId" | "stage" | "priority" | "reasonCode" | "reason"
         >
       >;
     }>;
@@ -1023,7 +1171,7 @@ type PolicyTraceBaseline = {
 
 function buildPolicyTraceBaseline(reports: ModelReport[]): PolicyTraceBaseline {
   return {
-    version: 1,
+    version: 2,
     reports: reports.map((report) => ({
       model: report.model,
       cases: report.results.map((result) => {
@@ -1032,6 +1180,7 @@ function buildPolicyTraceBaseline(reports: ModelReport[]): PolicyTraceBaseline {
           stage: entry.stage,
           priority: entry.priority,
           reasonCode: entry.reasonCode,
+          reason: entry.reason,
         }));
         return {
           id: result.id,
@@ -1107,9 +1256,66 @@ function formatPolicyTraceSignature(
   return trace
     .map(
       (entry) =>
-        `${entry.ruleId}@${entry.stage}:${entry.priority}:${entry.reasonCode}`,
+        `${entry.ruleId}@${entry.stage}:${entry.priority}:${entry.reasonCode}:${entry.reason.category}:${entry.reason.severity}`,
     )
     .join(",");
+}
+
+type EvalCandidate = {
+  source: "intent_eval_failure";
+  generatedAt: string;
+  model: string;
+  id: string;
+  prompt: string;
+  history: ConversationTurn[];
+  tags: string[];
+  failedChecks: CheckResult[];
+  observed: {
+    intent?: IntentFrame;
+    clarification?: ClarificationDecision;
+  };
+  candidateCase: IntentEvalCase;
+};
+
+function buildEvalCandidates(reports: ModelReport[]): EvalCandidate[] {
+  const generatedAt = new Date().toISOString();
+  return reports.flatMap((report) =>
+    report.results
+      .filter((result) => !result.passed)
+      .map((result) => {
+        const failedChecks = result.checks.filter((check) => !check.pass);
+        return {
+          source: "intent_eval_failure" as const,
+          generatedAt,
+          model: report.model,
+          id: `${result.id}.${report.model.replace(/[^a-zA-Z0-9]+/g, "_")}`,
+          prompt: result.prompt,
+          history: result.history,
+          tags: [...result.tags, "candidate", "from-eval-failure"],
+          failedChecks,
+          observed: {
+            intent: result.intent,
+            clarification: result.clarification,
+          },
+          candidateCase: {
+            id: `${result.id}.candidate`,
+            prompt: result.prompt,
+            history: result.history,
+            expect: {},
+            tags: [...result.tags, "candidate"],
+          },
+        };
+      }),
+  );
+}
+
+function writeEvalCandidates(pathname: string, candidates: EvalCandidate[]) {
+  fs.mkdirSync(path.dirname(pathname), { recursive: true });
+  fs.writeFileSync(
+    pathname,
+    candidates.map((candidate) => JSON.stringify(candidate)).join("\n") +
+      (candidates.length > 0 ? "\n" : ""),
+  );
 }
 
 async function main() {
@@ -1180,6 +1386,7 @@ async function main() {
     reports,
   };
   const policyBaseline = buildPolicyTraceBaseline(reports);
+  const evalCandidates = buildEvalCandidates(reports);
 
   fs.writeFileSync(jsonPath, JSON.stringify(payload, null, 2));
   const markdown = renderMarkdown(reports);
@@ -1192,6 +1399,18 @@ async function main() {
       JSON.stringify(policyBaseline, null, 2),
     );
     console.log(`Policy baseline: ${args.writePolicyBaseline}`);
+  }
+  const candidatePath =
+    args.writeEvalCandidates ||
+    (evalCandidates.length > 0
+      ? path.join(
+          repoRoot,
+          "evals/intent/candidates/intent-eval-candidates-latest.jsonl",
+        )
+      : "");
+  if (candidatePath) {
+    writeEvalCandidates(candidatePath, evalCandidates);
+    console.log(`Eval candidates: ${candidatePath} (${evalCandidates.length})`);
   }
 
   console.log(`\nJSON report: ${jsonPath}`);

@@ -18,11 +18,26 @@ export type IntentPolicyStage =
   | "override"
   | "finalize";
 
+export type IntentPolicyReasonCategory =
+  | "semantic_evidence"
+  | "subject_boundary"
+  | "task_boundary"
+  | "agent_routing";
+
+export type IntentPolicyReasonSeverity = "info" | "warning" | "critical";
+
+export type IntentPolicyReason = {
+  code: string;
+  category: IntentPolicyReasonCategory;
+  severity: IntentPolicyReasonSeverity;
+};
+
 export type IntentPolicyTraceEntry = {
   ruleId: string;
   stage: IntentPolicyStage;
   priority: number;
   reasonCode: string;
+  reason: IntentPolicyReason;
   applied: boolean;
   before?: Record<string, unknown>;
   after?: Record<string, unknown>;
@@ -49,6 +64,7 @@ export type IntentPolicyRuleManifest = {
   priority: number;
   reasonCode: string;
   group: "semantic" | "subject" | "task" | "agent";
+  reason: IntentPolicyReason;
 };
 
 export type IntentCueState = {
@@ -121,6 +137,109 @@ export type IntentPolicyDeps = {
   ): IntentEvidence;
 };
 
+const POLICY_REASON_METADATA: Record<
+  string,
+  Pick<IntentPolicyReason, "category" | "severity">
+> = {
+  REMEMBER_TO_ACTION_NOT_MEMORY_RECALL: {
+    category: "semantic_evidence",
+    severity: "warning",
+  },
+  ANAPHORA_CURRENT_CONTEXT_REFERENCE: {
+    category: "semantic_evidence",
+    severity: "info",
+  },
+  CONVERSATION_HISTORY_CUE_FROM_NONE: {
+    category: "semantic_evidence",
+    severity: "info",
+  },
+  CONVERSATION_HISTORY_CUE_TARGET_CORRECTION: {
+    category: "semantic_evidence",
+    severity: "warning",
+  },
+  ACTION_CUE_FROM_NONE: {
+    category: "semantic_evidence",
+    severity: "info",
+  },
+  INVESTMENT_TICKER_NORMALIZATION: {
+    category: "semantic_evidence",
+    severity: "info",
+  },
+  TECHNICAL_TERM_NORMALIZATION: {
+    category: "semantic_evidence",
+    severity: "info",
+  },
+  RECALL_CUE_SUBJECT_OVERRIDE: {
+    category: "subject_boundary",
+    severity: "warning",
+  },
+  RECALL_CUE_KEEP_MIXED_FOR_EXTERNAL_WORK: {
+    category: "subject_boundary",
+    severity: "info",
+  },
+  PERSONAL_CONTEXT_WITH_EXTERNAL_ENTITY: {
+    category: "subject_boundary",
+    severity: "warning",
+  },
+  EXTERNAL_WITH_PERSONAL_CONTEXT_CUE: {
+    category: "subject_boundary",
+    severity: "warning",
+  },
+  LOW_CONFIDENCE_EXTERNAL_TO_MIXED: {
+    category: "subject_boundary",
+    severity: "warning",
+  },
+  REMEMBER_TO_ACTION_TASK_NOT_RECALL: {
+    category: "task_boundary",
+    severity: "warning",
+  },
+  SCHEDULE_CUE_TASK_OVERRIDE: {
+    category: "task_boundary",
+    severity: "info",
+  },
+  EXTERNAL_PAST_EVENT_NOT_RECALL: {
+    category: "task_boundary",
+    severity: "critical",
+  },
+  RECALL_CUE_TASK_OVERRIDE: {
+    category: "task_boundary",
+    severity: "warning",
+  },
+  DELEGATE_CUE_TASK_OVERRIDE: {
+    category: "task_boundary",
+    severity: "info",
+  },
+  ACTION_CUE_EXECUTE: {
+    category: "task_boundary",
+    severity: "info",
+  },
+  INVESTMENT_ANALYSIS_CANDIDATE: {
+    category: "agent_routing",
+    severity: "info",
+  },
+  IMPLICIT_DELEGATE_DOWNGRADE: {
+    category: "agent_routing",
+    severity: "warning",
+  },
+};
+
+export function normalizeIntentPolicyReason(
+  reasonCode: string,
+): IntentPolicyReason {
+  const metadata = POLICY_REASON_METADATA[reasonCode];
+  if (!metadata) {
+    return {
+      code: reasonCode,
+      category: "semantic_evidence",
+      severity: "warning",
+    };
+  }
+  return {
+    code: reasonCode,
+    ...metadata,
+  };
+}
+
 export function runIntentPolicyRules<TState>(
   state: TState,
   rules: IntentPolicyRule<TState>[],
@@ -137,6 +256,7 @@ export function runIntentPolicyRules<TState>(
           stage: rule.stage,
           priority: rule.priority,
           reasonCode: rule.reasonCode,
+          reason: normalizeIntentPolicyReason(rule.reasonCode),
           applied: false,
           before,
           skippedReason: "applies_false",
@@ -151,6 +271,7 @@ export function runIntentPolicyRules<TState>(
       stage: rule.stage,
       priority: rule.priority,
       reasonCode: rule.reasonCode,
+      reason: normalizeIntentPolicyReason(rule.reasonCode),
       applied: true,
       before,
       after,
@@ -171,6 +292,7 @@ export function logAppliedPolicyTrace(trace: IntentPolicyTraceEntry[]): void {
   const compact = trace.map((entry) => ({
     ruleId: entry.ruleId,
     reasonCode: entry.reasonCode,
+    reason: entry.reason,
     stage: entry.stage,
     priority: entry.priority,
     before: entry.before,
@@ -654,6 +776,7 @@ export function listIntentPolicyRules(
       stage: rule.stage,
       priority: rule.priority,
       reasonCode: rule.reasonCode,
+      reason: normalizeIntentPolicyReason(rule.reasonCode),
     })),
   );
 }
@@ -682,6 +805,9 @@ export function validateIntentPolicyRegistry(
       errors.push(
         `${rule.id}: reason code ${rule.reasonCode} must be uppercase snake case`,
       );
+    }
+    if (!POLICY_REASON_METADATA[rule.reasonCode]) {
+      errors.push(`${rule.id}: missing reason metadata for ${rule.reasonCode}`);
     }
     if (!Number.isFinite(rule.priority) || !Number.isInteger(rule.priority)) {
       errors.push(`${rule.id}: priority must be an integer`);
