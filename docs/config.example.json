@@ -37,6 +37,14 @@
     "proModel": "gemini-2.5-pro",
     "flashModel": "gemini-2.5-flash"
   },
+  "intentFeedback": {
+    "enabled": false,
+    "captureAll": false,
+    "redact": true,
+    "maxPromptChars": 800,
+    "maxHistoryTurns": 6,
+    "maxHistoryChars": 240
+  },
   "summarizer": {
     "provider": "ollama",
     "model": "gemma4:e2b",

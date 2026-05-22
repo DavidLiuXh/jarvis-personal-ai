@@ -65,6 +65,7 @@ import {
   extractBackgroundPrompt,
   type BackgroundTaskRunner,
 } from "./backgroundTaskRunner.js";
+import { RuntimeIntentFeedbackCollector } from "./runtimeIntentFeedbackCollector.js";
 
 function extractSummaryCandidatesFromSection(
   section: string,
@@ -135,6 +136,9 @@ export class JarvisAgent extends EventEmitter {
   private localModelRouter: LocalModelRouter | null = null;
   private agentManager: AgentManager | null = null;
   private backgroundTaskRunner: BackgroundTaskRunner | null = null;
+  private runtimeIntentFeedbackCollector = new RuntimeIntentFeedbackCollector(
+    this.jarvisConfig.intentFeedback,
+  );
   private conversationTurnCount = 0;
   private summarizerGenerateText: ((prompt: string) => Promise<string>) | null =
     null;
@@ -1181,6 +1185,21 @@ export class JarvisAgent extends EventEmitter {
             buildClarificationDecision(clarificationInput),
             this.pendingAskUserWs?.ws.readyState === 1,
           );
+          this.runtimeIntentFeedbackCollector.record({
+            sessionId: this.sessionId,
+            userPrompt,
+            history,
+            intent: intentFrame,
+            clarification,
+            routing: {
+              source: result.source,
+              model: result.model,
+              score: result.score,
+              decision: result.decision,
+              classifierReason: result.classifierReason,
+            },
+            executionContext: options.executionContext ?? "interactive",
+          });
           if (this.jarvisConfig.routing?.clarificationObservability === true) {
             console.error(
               `[clarification] ${JSON.stringify(buildClarificationTrace(clarificationInput, clarification))}`,

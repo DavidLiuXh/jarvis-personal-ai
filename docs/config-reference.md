@@ -144,6 +144,30 @@ Configuration file location: `~/.gemini-jarvis/config.json`
   },
 
   // ─────────────────────────────────────────────
+  // Intent Feedback — runtime eval candidate collection
+  // ─────────────────────────────────────────────
+  "intentFeedback": {
+    // Enable runtime collection of high-signal intent cases. Default: false
+    "enabled": false,
+
+    // Optional JSONL output path. Default:
+    // ~/.gemini-jarvis/intent-feedback/runtime-intent-candidates-latest.jsonl
+    "outputPath": "",
+
+    // Capture every routed request instead of only high-signal cases.
+    // Keep false for normal use. Default: false
+    "captureAll": false,
+
+    // Redact emails, phone-like values, and token/password-like fields. Default: true
+    "redact": true,
+
+    // Truncation limits for collected prompt/history snippets.
+    "maxPromptChars": 800,
+    "maxHistoryTurns": 6,
+    "maxHistoryChars": 240,
+  },
+
+  // ─────────────────────────────────────────────
   // Reranker — cross-encoder precision re-scoring of retrieval candidates.
   //
   // Two backend options:

@@ -1873,7 +1873,25 @@ ClarificationPolicy 当前是 blocking-only。下一步需要把它变成状态�
 
 ### 21.8 P3：线上反馈闭环自动化
 
-当前 eval failure 可以生成 candidates。下一步是把真实使用失败也转成同一格式：
+当前 eval failure 可以生成 candidates；真实使用中的高价值 intent 样本也可以通过
+`intentFeedback.enabled=true` 进入 runtime candidate queue。
+
+当前 runtime collector 已支持的信号：
+
+- router fallback；
+- deterministic parse fallback；
+- warning / critical policy correction；
+- low-confidence dimension；
+- topic low-grounding；
+- clarification requested / blocking / blocked_without_channel。
+
+输出位置：
+
+```text
+~/.gemini-jarvis/intent-feedback/runtime-intent-candidates-latest.jsonl
+```
+
+后续还可以继续接入更强的用户反馈信号：
 
 - 用户反馈“这不对”；
 - clarification 后仍失败；

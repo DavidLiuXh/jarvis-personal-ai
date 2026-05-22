@@ -146,12 +146,43 @@ run key, observed intent, clarification decision, and a draft `candidateCase`
 skeleton. Use this file as the review queue for promoting real failures into
 `evals/intent/cases.jsonl`.
 
+## Runtime Feedback Loop
+
+Real Jarvis usage can also generate reviewable intent candidates. This is
+disabled by default and controlled by `intentFeedback` in `config.json`:
+
+```json
+{
+  "intentFeedback": {
+    "enabled": true,
+    "captureAll": false,
+    "redact": true
+  }
+}
+```
+
+When enabled, Jarvis appends high-signal runtime samples to:
+
+```bash
+~/.gemini-jarvis/intent-feedback/runtime-intent-candidates-latest.jsonl
+```
+
+Collected signals include router fallback, deterministic parse fallback,
+warning/critical policy corrections, low-confidence dimensions, topic
+low-grounding, and clarification requests/blocks. The collector truncates
+prompt/history snippets, redacts common sensitive patterns, and does not store
+the final assistant answer.
+
+Runtime candidates are not promoted automatically. Review the JSONL, fill in
+the expected fields in `candidateCase.expect`, then copy approved cases into
+`evals/intent/cases.jsonl`.
+
 ## Next Industrialization Steps
 
 This P0 expansion is still the start of the eval program. To get closer to
 industrial quality, the next eval improvements should be:
 
-- add real user query replay sets
+- convert reviewed runtime feedback candidates into real user query replay sets
 - record nightly baselines and trend lines
 - track repair rate, fallback rate, clarification rate, and topic conflict rate
 - add failure taxonomy and root-cause labels

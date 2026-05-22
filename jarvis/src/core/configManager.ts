@@ -97,6 +97,20 @@ export interface JarvisConfig {
     intentPolicyObservability?: boolean;
   };
   /**
+   * Runtime intent feedback collector.
+   * When enabled, high-signal real usage cases are appended as JSONL eval
+   * candidates for manual review. Default: disabled.
+   */
+  intentFeedback?: {
+    enabled?: boolean;
+    outputPath?: string;
+    captureAll?: boolean;
+    redact?: boolean;
+    maxPromptChars?: number;
+    maxHistoryTurns?: number;
+    maxHistoryChars?: number;
+  };
+  /**
    * Session summarizer configuration.
    * Used by resumeFromDisk() to compress conversation history on startup.
    */
@@ -512,6 +526,14 @@ export class ConfigManager {
         clarificationObservability: false,
         intentPolicyObservability: false,
       },
+      intentFeedback: {
+        enabled: false,
+        captureAll: false,
+        redact: true,
+        maxPromptChars: 800,
+        maxHistoryTurns: 6,
+        maxHistoryChars: 240,
+      },
     };
 
     if (fs.existsSync(CONFIG_PATH)) {
@@ -547,6 +569,10 @@ export class ConfigManager {
           wechat: { ...defaults.wechat, ...saved.wechat },
           session: { ...defaults.session, ...saved.session },
           routing: { ...defaults.routing, ...saved.routing },
+          intentFeedback: {
+            ...defaults.intentFeedback,
+            ...saved.intentFeedback,
+          },
         };
       } catch (e) {
         console.error(

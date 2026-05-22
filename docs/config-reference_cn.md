@@ -140,6 +140,30 @@
   },
 
   // ─────────────────────────────────────────────
+  // Intent Feedback — 运行时 eval candidate 采集
+  // ─────────────────────────────────────────────
+  "intentFeedback": {
+    // 启用运行时高价值 intent 样本采集。默认：false
+    "enabled": false,
+
+    // 可选 JSONL 输出路径。默认：
+    // ~/.gemini-jarvis/intent-feedback/runtime-intent-candidates-latest.jsonl
+    "outputPath": "",
+
+    // 是否采集所有已路由请求，而不是只采集高价值信号。日常使用建议 false。
+    // 默认：false
+    "captureAll": false,
+
+    // 是否脱敏 email、手机号样式文本、token/password 字段。默认：true
+    "redact": true,
+
+    // prompt/history 片段截断限制。
+    "maxPromptChars": 800,
+    "maxHistoryTurns": 6,
+    "maxHistoryChars": 240,
+  },
+
+  // ─────────────────────────────────────────────
   // Reranker — cross-encoder 精排服务
   // 通过本地 FastAPI 服务（jarvis/reranker/reranker_service.py）对 bi-encoder 候选
   // 使用 ms-marco-MiniLM-L6-v2（ONNX Runtime）进行精确重排序。
