@@ -28,6 +28,7 @@ export * from "./clarificationPolicy.js";
 export * from "./intentAwareMemoryPolicy.js";
 export * from "./intentPolicy.js";
 export * from "./memoryInjectionPlanner.js";
+export * from "./retrieval.js";
 export type {
   ClarificationQuestion,
   ConversationRole,

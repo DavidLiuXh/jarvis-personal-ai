@@ -584,8 +584,45 @@ jarvis/src/memory-runtime/
 剩余限制：
 
 - Jarvis 主流程还没有整体改为调用 `DefaultMemoryRuntime`；
-- `DefaultMemoryRuntime.retrieve()` 仍需要由宿主项目注入具体 retrieval 实现；
-- fact / entry / session store adapter 尚未抽出。
+- `DefaultMemoryRuntime.retrieve()` 仍需要由宿主项目注入具体 retrieval 实现。
+
+### Phase 7：Storage / Retrieval Adapter
+
+目标：
+
+- 抽出 session / fact / entry 三类 store adapter；
+- 提供默认 `DefaultMemoryRetriever`；
+- 用 Jarvis `MemoryService` 包装出默认 adapter；
+- 保持 Jarvis 当前主流程行为不变。
+
+原因：
+
+- `MemoryContract` 只说明“该不该查、查哪层、用什么 query”，还不应该知道底层数据库；
+- 不同 agent 项目的事实库、会话库、向量库和 reranker 差异很大，必须通过 store adapter 隔离；
+- 先把 retrieval adapter 抽出来，可以让其他项目复用 contract 和 retrieval lifecycle，同时不强迫 Jarvis 立即改写主流程；
+- Jarvis 当前 `refreshContext()` 里还有 query rewrite、recent conversation recall、summary fallback、skill retrieval 等行为，直接替换成默认 retriever 会带来行为漂移。
+
+当前实现状态：
+
+- `memory-runtime/retrieval.ts` 已定义：
+  - `FactMemoryStore`
+  - `EntryMemoryStore`
+  - `SessionMemoryStore`
+  - `DefaultMemoryRetriever`
+- `DefaultMemoryRetriever` 根据 `MemoryContract` 决定是否检索 session / fact / entry；
+- external 或 no-memory contract 不会调用任何 store；
+- `core/jarvisMemoryStores.ts` 已提供 Jarvis adapter：
+  - `JarvisFactMemoryStore` 包装 `MemoryService.searchFacts()`
+  - `JarvisEntryMemoryStore` 包装 `MemoryService.searchWithScore()`
+  - `JarvisSessionMemoryStore` 包装 `MemoryService.searchSummaryChunks()`
+  - `createJarvisMemoryStores()` 一次性生成三类 adapter
+- 新增单测覆盖默认 retriever 和 Jarvis adapter。
+
+剩余限制：
+
+- Jarvis `agent.ts` 的主响应路径暂未整体切换到 `DefaultMemoryRetriever`；
+- `DefaultMemoryRetriever` 尚未承载 Jarvis 的 recent conversation recall、summary fallback、skill retrieval 和 query rewrite；
+- runtime feedback collector 还没有统一接入 `MemoryRuntime.observe()`。
 
 ## 10. Eval 和反馈闭环
 
@@ -634,7 +671,7 @@ Jarvis 当前实现已经具备抽象出 Universal Memory Layer 的基础，但�
 
 - 作为参考实现：已经可用；
 - 作为 Jarvis 内部子系统：已经基本成型；
-- 作为其他 agent 项目的可复用库：意图、policy、contract、injection planner 和 runtime lifecycle 已具备复用基础；
+- 作为其他 agent 项目的可复用库：意图、policy、contract、retrieval adapter、injection planner 和 runtime lifecycle 已具备复用基础；
 - 作为通用开源 package：还需要迁移、文档、eval 和 API 稳定化。
 
-当前最实际的下一步是抽 storage / retrieval adapter，并把 Jarvis `MemoryService` 包装成这些 adapter 的默认实现。完成后，Universal Memory Layer 才能从“可复用意图和策略层”进一步变成“可嵌入的完整记忆运行时”。
+当前最实际的下一步是将 Jarvis 主响应路径逐步改为调用 `DefaultMemoryRuntime` / `DefaultMemoryRetriever`，但要先把 Jarvis 特有的 query rewrite、recent conversation recall、summary fallback 和 skill retrieval 纳入 runtime extension points。这样可以避免为了抽象而牺牲现有召回质量。
