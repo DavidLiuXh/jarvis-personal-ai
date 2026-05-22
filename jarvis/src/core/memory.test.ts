@@ -2751,4 +2751,152 @@ describe("MemoryService skill index", () => {
       homedirSpy.mockRestore();
     }
   });
+
+  // P0: Chinese entity extraction via bigram approach
+  it("searchConversationHistoryLexical extracts entity bigrams and matches recall query", async () => {
+    const { MemoryService } = await import("./memory.js");
+    const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "jarvis-home-"));
+    const chatsDir = path.join(tmpHome, ".gemini-jarvis", "storage", "chats");
+    fs.mkdirSync(chatsDir, { recursive: true });
+    // Chat contains "梓潼" as an entity
+    fs.writeFileSync(
+      path.join(chatsDir, "session-2026-05-10-zitong.jsonl"),
+      [
+        JSON.stringify({ sessionId: "s1", kind: "main" }),
+        JSON.stringify({ $set: { sessionId: "s1" } }),
+        JSON.stringify({
+          id: "u1",
+          timestamp: "2026-05-10T09:00:00.000Z",
+          type: "user",
+          content: "梓潼的文化意义是什么？",
+        }),
+        JSON.stringify({
+          id: "a1",
+          timestamp: "2026-05-10T09:01:00.000Z",
+          type: "gemini",
+          content: "梓潼是文昌帝君的发源地，古蜀道上的重要文化节点。",
+        }),
+      ].join("\n") + "\n",
+    );
+    const homedirSpy = vi.spyOn(os, "homedir").mockReturnValue(tmpHome);
+    try {
+      const service = new (MemoryService as new (
+        root: string,
+        dbPath?: string,
+      ) => InstanceType<typeof MemoryService>)(
+        "",
+        fs.mkdtempSync(path.join(os.tmpdir(), "jarvis-memory-db-")),
+      );
+      // Query contains "梓潼" buried inside meta words — previously extracted "帮我梓潼的" (unusable)
+      const results =
+        await service.searchConversationHistoryLexical(
+          "帮我汇总之前梓潼相关的探讨内容",
+        );
+      expect(results.length).toBeGreaterThan(0);
+      expect(results[0].text).toContain("梓潼");
+    } finally {
+      homedirSpy.mockRestore();
+    }
+  });
+
+  // P2b: tool messages between user and gemini should not break pairing
+  it("searchConversationHistoryLexical finds gemini reply across tool messages", async () => {
+    const { MemoryService } = await import("./memory.js");
+    const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "jarvis-home-"));
+    const chatsDir = path.join(tmpHome, ".gemini-jarvis", "storage", "chats");
+    fs.mkdirSync(chatsDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(chatsDir, "session-tool-call.jsonl"),
+      [
+        JSON.stringify({ sessionId: "s2", kind: "main" }),
+        JSON.stringify({ $set: { sessionId: "s2" } }),
+        JSON.stringify({
+          id: "u1",
+          timestamp: "2026-05-20T10:00:00.000Z",
+          type: "user",
+          content: "ONNX模型的配置步骤是什么？",
+        }),
+        // Tool messages in between
+        JSON.stringify({
+          id: "t1",
+          type: "tool_call",
+          content: "search(ONNX)",
+        }),
+        JSON.stringify({ id: "t2", type: "tool_result", content: "result" }),
+        JSON.stringify({ id: "t3", type: "tool_result", content: "result2" }),
+        // Actual reply at index+4
+        JSON.stringify({
+          id: "a1",
+          timestamp: "2026-05-20T10:02:00.000Z",
+          type: "gemini",
+          content: "ONNX配置需要先安装onnx-manager，然后执行pull命令。",
+        }),
+      ].join("\n") + "\n",
+    );
+    const homedirSpy = vi.spyOn(os, "homedir").mockReturnValue(tmpHome);
+    try {
+      const service = new (MemoryService as new (
+        root: string,
+        dbPath?: string,
+      ) => InstanceType<typeof MemoryService>)(
+        "",
+        fs.mkdtempSync(path.join(os.tmpdir(), "jarvis-memory-db-")),
+      );
+      const results =
+        await service.searchConversationHistoryLexical("ONNX配置");
+      expect(results.length).toBeGreaterThan(0);
+      // Must contain both user question and assistant answer
+      expect(results[0].text).toContain("ONNX模型");
+      expect(results[0].text).toContain("onnx-manager");
+    } finally {
+      homedirSpy.mockRestore();
+    }
+  });
+
+  // P2a: filename date used as timestamp when message has no timestamp field
+  it("searchConversationHistoryLexical uses filename date for timestamp when message has none", async () => {
+    const { MemoryService } = await import("./memory.js");
+    const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "jarvis-home-"));
+    const chatsDir = path.join(tmpHome, ".gemini-jarvis", "storage", "chats");
+    fs.mkdirSync(chatsDir, { recursive: true });
+    // File named with date 2026-05-01, messages have NO timestamp field
+    fs.writeFileSync(
+      path.join(chatsDir, "session-2026-05-01-notimestamp.jsonl"),
+      [
+        JSON.stringify({ sessionId: "s3", kind: "main" }),
+        JSON.stringify({ $set: { sessionId: "s3" } }),
+        JSON.stringify({ id: "u1", type: "user", content: "投资风格偏好讨论" }),
+        JSON.stringify({
+          id: "a1",
+          type: "gemini",
+          content: "用户偏好稳健型投资风格。",
+        }),
+      ].join("\n") + "\n",
+    );
+    const homedirSpy = vi.spyOn(os, "homedir").mockReturnValue(tmpHome);
+    try {
+      const service = new (MemoryService as new (
+        root: string,
+        dbPath?: string,
+      ) => InstanceType<typeof MemoryService>)(
+        "",
+        fs.mkdtempSync(path.join(os.tmpdir(), "jarvis-memory-db-")),
+      );
+      // Filter to May 1 only — if filename date is used, the entry should be found
+      const results = await service.searchConversationHistoryLexical(
+        "投资风格",
+        {
+          limit: 5,
+          dateRange: {
+            from: Date.parse("2026-05-01T00:00:00+08:00"),
+            to: Date.parse("2026-05-02T00:00:00+08:00"),
+          },
+        },
+      );
+      expect(results.length).toBeGreaterThan(0);
+      expect(results[0].text).toContain("投资风格");
+    } finally {
+      homedirSpy.mockRestore();
+    }
+  });
 });
