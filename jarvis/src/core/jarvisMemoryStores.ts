@@ -25,6 +25,13 @@ export type JarvisMemoryServiceHandle = {
     dateRange?: { from: number; to: number } | null,
     maxDistanceOverride?: number,
   ) => Promise<Array<{ text: string; score: number }>>;
+  searchConversationHistoryLexical?: (
+    query: string,
+    options?: {
+      limit?: number;
+      dateRange?: { from: number; to: number } | null;
+    },
+  ) => Promise<Array<{ text: string; score: number; timestamp?: number }>>;
   searchSummaryChunks?: (
     sessionId: string,
     query: string,
@@ -74,20 +81,51 @@ export class JarvisEntryMemoryStore implements EntryMemoryStore {
       contract?: MemoryContract;
     },
   ) {
+    const limit = options?.limit ?? 3;
     const entries = await this.memoryService.searchWithScore(
       query,
-      options?.limit ?? 3,
+      limit,
       null,
       options?.dateRange ?? null,
       options?.maxDistance,
     );
-    return entries.map((entry, index) => ({
+
+    const shouldUseHistoryFallback =
+      this.memoryService.searchConversationHistoryLexical &&
+      options?.contract?.memoryTarget === "conversation_history" &&
+      entries.length < limit;
+    const fallbackLimit =
+      options?.dateRange &&
+      options?.contract?.memoryTarget === "conversation_history"
+        ? Math.max(limit, 8)
+        : limit;
+    const fallbackEntries = shouldUseHistoryFallback
+      ? await this.memoryService.searchConversationHistoryLexical!(query, {
+          limit: fallbackLimit,
+          dateRange: options?.dateRange ?? null,
+        })
+      : [];
+    const seen = new Set(entries.map((entry) => entry.text));
+    const merged = [
+      ...entries,
+      ...fallbackEntries
+        .filter((entry) => !seen.has(entry.text))
+        .slice(0, Math.max(0, fallbackLimit - entries.length)),
+    ];
+
+    return merged.map((entry, index) => ({
       id: `jarvis-entry-${index}`,
       kind: "conversation" as const,
       content: entry.text,
       score: entry.score,
       entities: options?.contract?.query.entities ?? [],
-      metadata: { source: "memory" },
+      timestamp: entry.timestamp
+        ? new Date(entry.timestamp).toISOString()
+        : undefined,
+      metadata: {
+        source:
+          index < entries.length ? "memory" : "conversation_history_lexical",
+      },
     }));
   }
 }

@@ -38,6 +38,71 @@ function hashText(text: string): string {
   return crypto.createHash("sha1").update(text).digest("hex");
 }
 
+const HISTORY_RECALL_STOPWORDS = new Set([
+  "conversation_history",
+  "recall",
+  "memory",
+  "history",
+  "previous",
+  "conversation",
+  "discussion",
+  "discuss",
+  "what",
+  "which",
+  "when",
+  "where",
+  "about",
+  "before",
+  "yesterday",
+  "today",
+  "内容",
+  "哪些",
+  "什么",
+  "之前",
+  "以前",
+  "上次",
+  "昨天",
+  "前天",
+  "今天",
+  "我们",
+  "咱们",
+  "聊了",
+  "聊过",
+  "讨论",
+  "探讨",
+  "相关",
+  "汇总",
+  "总结",
+]);
+
+function extractHistoryRecallTerms(query: string): string[] {
+  const terms = new Set<string>();
+  const lower = query.toLowerCase();
+  for (const match of lower.matchAll(/[a-z0-9][a-z0-9_-]{1,}/g)) {
+    const term = match[0];
+    if (!HISTORY_RECALL_STOPWORDS.has(term)) terms.add(term);
+  }
+  for (const match of query.matchAll(/[\p{Script=Han}]{2,}/gu)) {
+    const term = match[0]
+      .replace(
+        /之前|以前|上次|昨天|前天|今天|我们|咱们|聊了|聊过|讨论|探讨|相关|内容|哪些|什么|汇总|总结/g,
+        "",
+      )
+      .trim();
+    if (term.length >= 2 && !HISTORY_RECALL_STOPWORDS.has(term)) {
+      terms.add(term);
+    }
+  }
+  return Array.from(terms);
+}
+
+function toTimestamp(value: unknown): number | null {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value !== "string" || !value.trim()) return null;
+  const parsed = new Date(value).getTime();
+  return Number.isNaN(parsed) ? null : parsed;
+}
+
 /**
  * Call the cross-encoder reranker service with timeout and retry.
  * Returns null on all failures so callers fall back to original ranking.
@@ -1498,6 +1563,94 @@ ${factsText}
     } catch (_e) {
       return [];
     }
+  }
+
+  public async searchConversationHistoryLexical(
+    query: string,
+    options?: {
+      limit?: number;
+      dateRange?: { from: number; to: number } | null;
+    },
+  ): Promise<Array<{ text: string; score: number; timestamp?: number }>> {
+    const chatsDir = path.join(
+      os.homedir(),
+      ".gemini-jarvis",
+      "storage",
+      "chats",
+    );
+    if (!fs.existsSync(chatsDir)) return [];
+
+    const limit = options?.limit ?? 5;
+    const dateRange = options?.dateRange ?? null;
+    const terms = extractHistoryRecallTerms(query);
+    const files = fs
+      .readdirSync(chatsDir)
+      .filter((f) => f.endsWith(".json") || f.endsWith(".jsonl"))
+      .map((file) => {
+        const filePath = path.join(chatsDir, file);
+        return { file, filePath, mtime: fs.statSync(filePath).mtimeMs };
+      })
+      .sort((a, b) => b.mtime - a.mtime);
+
+    const candidates: Array<{
+      text: string;
+      score: number;
+      timestamp?: number;
+    }> = [];
+    for (const { filePath, mtime } of files) {
+      try {
+        const messages = this.parseSessionMessages(filePath);
+        for (let index = 0; index < messages.length; index++) {
+          const userMsg = messages[index];
+          if (userMsg?.type !== "user") continue;
+          const assistantMsg = messages
+            .slice(index + 1, index + 4)
+            .find((msg) => msg.type === "gemini");
+          const timestamp =
+            toTimestamp((userMsg as { timestamp?: unknown }).timestamp) ??
+            toTimestamp((assistantMsg as { timestamp?: unknown })?.timestamp) ??
+            mtime;
+          if (
+            dateRange &&
+            (timestamp < dateRange.from || timestamp >= dateRange.to)
+          ) {
+            continue;
+          }
+
+          const userText = String(userMsg.content ?? "").trim();
+          const assistantText = String(assistantMsg?.content ?? "").trim();
+          if (!userText && !assistantText) continue;
+          const combined = `User: ${userText}\nJarvis: ${assistantText}`.trim();
+          const combinedLower = combined.toLowerCase();
+          const matchedTerms = terms.filter((term) =>
+            combinedLower.includes(term.toLowerCase()),
+          );
+          if (terms.length > 0 && matchedTerms.length === 0) continue;
+          const score =
+            terms.length === 0
+              ? 0.55
+              : Math.min(0.95, 0.55 + matchedTerms.length / terms.length);
+          candidates.push({ text: combined, score, timestamp });
+        }
+      } catch {
+        /* skip unreadable files */
+      }
+    }
+
+    candidates.sort((a, b) => {
+      if (b.score !== a.score) return b.score - a.score;
+      return (b.timestamp ?? 0) - (a.timestamp ?? 0);
+    });
+    const results = candidates.slice(0, limit);
+    if (results.length > 0) {
+      const rangeLabel = dateRange
+        ? `${toLocalDateString(dateRange.from)}~${toLocalDateString(dateRange.to)}`
+        : "all-time";
+      console.error(
+        `🔎 [conversation-history] lexical fallback query="${query.slice(0, 80)}" range=${rangeLabel} terms=${terms.join(",") || "-"} returned=${results.length}`,
+      );
+    }
+    return results;
   }
 
   public getCoreFacts(): string[] {
