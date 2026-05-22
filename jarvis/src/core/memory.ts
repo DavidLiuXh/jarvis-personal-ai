@@ -63,16 +63,27 @@ const HISTORY_RECALL_STOPWORDS = new Set([
   "上次",
   "昨天",
   "前天",
+  "大前天",
   "今天",
   "我们",
   "咱们",
+  "聊",
   "聊了",
   "聊过",
+  "说",
+  "说了",
+  "说过",
   "讨论",
+  "讨论了",
+  "讨论过",
   "探讨",
+  "探讨了",
+  "探讨过",
   "相关",
   "汇总",
   "总结",
+  "大",
+  "了",
 ]);
 
 function extractHistoryRecallTerms(query: string): string[] {
@@ -85,7 +96,7 @@ function extractHistoryRecallTerms(query: string): string[] {
   for (const match of query.matchAll(/[\p{Script=Han}]{2,}/gu)) {
     const term = match[0]
       .replace(
-        /之前|以前|上次|昨天|前天|今天|我们|咱们|聊了|聊过|讨论|探讨|相关|内容|哪些|什么|汇总|总结/g,
+        /之前|以前|上次|昨天|前天|大前天|今天|我们|咱们|聊|聊了|聊过|说|说了|说过|讨论|讨论了|讨论过|探讨|探讨了|探讨过|相关|内容|哪些|什么|汇总|总结|大|了/g,
         "",
       )
       .trim();
@@ -101,6 +112,28 @@ function toTimestamp(value: unknown): number | null {
   if (typeof value !== "string" || !value.trim()) return null;
   const parsed = new Date(value).getTime();
   return Number.isNaN(parsed) ? null : parsed;
+}
+
+function extractSessionMessageText(content: unknown): string {
+  if (typeof content === "string") return content;
+  if (Array.isArray(content)) {
+    return content
+      .map((part) => {
+        if (typeof part === "string") return part;
+        if (part && typeof part === "object" && "text" in part) {
+          const text = (part as { text?: unknown }).text;
+          return typeof text === "string" ? text : "";
+        }
+        return "";
+      })
+      .filter(Boolean)
+      .join("\n");
+  }
+  if (content && typeof content === "object" && "text" in content) {
+    const text = (content as { text?: unknown }).text;
+    return typeof text === "string" ? text : "";
+  }
+  return "";
 }
 
 /**
@@ -1642,14 +1675,12 @@ ${factsText}
       return (b.timestamp ?? 0) - (a.timestamp ?? 0);
     });
     const results = candidates.slice(0, limit);
-    if (results.length > 0) {
-      const rangeLabel = dateRange
-        ? `${toLocalDateString(dateRange.from)}~${toLocalDateString(dateRange.to)}`
-        : "all-time";
-      console.error(
-        `🔎 [conversation-history] lexical fallback query="${query.slice(0, 80)}" range=${rangeLabel} terms=${terms.join(",") || "-"} returned=${results.length}`,
-      );
-    }
+    const rangeLabel = dateRange
+      ? `${toLocalDateString(dateRange.from)}~${toLocalDateString(dateRange.to)}`
+      : "all-time";
+    console.error(
+      `🔎 [conversation-history] lexical fallback query="${query.slice(0, 80)}" range=${rangeLabel} terms=${terms.join(",") || "-"} candidates=${candidates.length} returned=${results.length}`,
+    );
     return results;
   }
 
@@ -3560,34 +3591,50 @@ Events:`;
    * .json: single object with messages array
    * .jsonl: first line = metadata, remaining lines = individual message objects
    */
-  private parseSessionMessages(
-    filePath: string,
-  ): Array<{ type: string; content: string; toolCalls?: unknown[] }> {
+  private parseSessionMessages(filePath: string): Array<{
+    type: string;
+    content: string;
+    timestamp?: string | number;
+    toolCalls?: unknown[];
+  }> {
     const content = fs.readFileSync(filePath, "utf8");
     if (!filePath.endsWith(".jsonl")) {
       const parsed = JSON.parse(content) as {
-        messages?: Array<{ type: string; content: string }>;
+        messages?: Array<{
+          type: string;
+          content: unknown;
+          timestamp?: string | number;
+          toolCalls?: unknown[];
+        }>;
       };
-      return parsed.messages ?? [];
+      return (parsed.messages ?? []).map((msg) => ({
+        ...msg,
+        content: extractSessionMessageText(msg.content),
+      }));
     }
     // .jsonl: skip first line (metadata), parse remaining lines as messages
     const lines = content.split("\n").filter((l) => l.trim());
     const messages: Array<{
       type: string;
       content: string;
+      timestamp?: string | number;
       toolCalls?: unknown[];
     }> = [];
     for (let i = 1; i < lines.length; i++) {
       try {
         const msg = JSON.parse(lines[i]) as {
           type?: string;
-          content?: string;
+          content?: unknown;
+          timestamp?: string | number;
           toolCalls?: unknown[];
         };
         if (msg.type && msg.content !== undefined) {
-          messages.push(
-            msg as { type: string; content: string; toolCalls?: unknown[] },
-          );
+          messages.push({
+            type: msg.type,
+            content: extractSessionMessageText(msg.content),
+            timestamp: msg.timestamp,
+            toolCalls: msg.toolCalls,
+          });
         }
       } catch {
         /* skip malformed lines */

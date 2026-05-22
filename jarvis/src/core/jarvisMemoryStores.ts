@@ -105,6 +105,11 @@ export class JarvisEntryMemoryStore implements EntryMemoryStore {
           dateRange: options?.dateRange ?? null,
         })
       : [];
+    if (options?.contract?.memoryTarget === "conversation_history") {
+      console.error(
+        `🔎 [JarvisEntryMemoryStore] conversation_history fallback=${shouldUseHistoryFallback ? "enabled" : "skipped"} vector=${entries.length}/${limit} lexical=${fallbackEntries.length}`,
+      );
+    }
     const seen = new Set(entries.map((entry) => entry.text));
     const merged = [
       ...entries,

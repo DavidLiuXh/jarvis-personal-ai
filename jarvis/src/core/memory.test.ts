@@ -2696,4 +2696,59 @@ describe("MemoryService skill index", () => {
       2,
     );
   });
+
+  it("searchConversationHistoryLexical parses JSONL array content and filters by message timestamp", async () => {
+    const { MemoryService } = await import("./memory.js");
+    const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "jarvis-home-"));
+    const chatsDir = path.join(tmpHome, ".gemini-jarvis", "storage", "chats");
+    fs.mkdirSync(chatsDir, { recursive: true });
+    const sessionPath = path.join(chatsDir, "session-2026-05-19-test.jsonl");
+    fs.writeFileSync(
+      sessionPath,
+      [
+        JSON.stringify({ sessionId: "test", kind: "main" }),
+        JSON.stringify({ $set: { sessionId: "test" } }),
+        JSON.stringify({
+          id: "u1",
+          timestamp: "2026-05-19T10:00:00.000Z",
+          type: "user",
+          content: [{ text: "构建专用Agent，需要分层考虑哪些因素？" }],
+        }),
+        JSON.stringify({
+          id: "a1",
+          timestamp: "2026-05-19T10:01:00.000Z",
+          type: "gemini",
+          content: "需要从战略定位、知识能力、技术架构和运营安全分层考虑。",
+        }),
+      ].join("\n") + "\n",
+    );
+
+    const homedirSpy = vi.spyOn(os, "homedir").mockReturnValue(tmpHome);
+    try {
+      const service = new (MemoryService as new (
+        root: string,
+        dbPath?: string,
+      ) => InstanceType<typeof MemoryService>)(
+        "",
+        fs.mkdtempSync(path.join(os.tmpdir(), "jarvis-memory-db-")),
+      );
+
+      const results = await service.searchConversationHistoryLexical(
+        "大前天我们讨论了什么内容？ conversation_history",
+        {
+          limit: 5,
+          dateRange: {
+            from: Date.parse("2026-05-19T00:00:00+08:00"),
+            to: Date.parse("2026-05-20T00:00:00+08:00"),
+          },
+        },
+      );
+
+      expect(results).toHaveLength(1);
+      expect(results[0].text).toContain("构建专用Agent");
+      expect(results[0].text).toContain("战略定位");
+    } finally {
+      homedirSpy.mockRestore();
+    }
+  });
 });
