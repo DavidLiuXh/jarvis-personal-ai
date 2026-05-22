@@ -282,6 +282,19 @@ export interface MemoryRuntime {
 }
 ```
 
+当前实现状态：
+
+- `jarvis/src/memory-runtime/runtime.ts` 已提供 `MemoryRuntime` 接口；
+- 同文件已提供 `DefaultMemoryRuntime`，通过依赖注入串联 `understand -> planMemory -> retrieve -> inject -> observe`；
+- 这层不直接依赖 JarvisAgent、ToolRouter、Gemini CLI 或具体数据库；
+- Jarvis 当前主路径暂未整体切到 `DefaultMemoryRuntime`，仍由 `agent.ts` 编排，以降低迁移风险。
+
+原因：
+
+- 先提供可执行 runtime class，可以让其他 agent 项目按同一个生命周期接入；
+- 通过依赖注入保持具体 resolver、store、reranker、observer 可替换；
+- Jarvis 主流程先保持稳定，避免把 runtime 抽象和线上行为迁移混在同一次改动里。
+
 ### 6.2 Adapter 边界
 
 通用层不直接绑定具体模型或存储。
@@ -338,28 +351,35 @@ export interface Reranker {
 | Model Routing        | `jarvis/src/core/localModelRouter.ts`                      |
 | Fact / Entry Storage | `MemoryService` 及其底层存储                               |
 
-当前最有价值、也最应该先抽出的模块：
+当前已经抽到通用层的模块：
 
-1. `IntentFrame` types；
+1. `IntentFrame` / `MemoryContract` / `ClarificationQuestion` 等通用 types；
 2. `intentPolicy.ts`；
 3. `clarificationPolicy.ts`；
 4. `intentAwareMemoryPolicy.ts`；
 5. `memoryInjectionPlanner.ts`；
-6. `runtimeIntentFeedbackCollector.ts`。
+6. `DefaultMemoryRuntime` 和 adapter interfaces。
+
+仍主要停留在 Jarvis core 的模块：
+
+1. `IntentResolver` 实现本体；
+2. `runtimeIntentFeedbackCollector.ts`；
+3. `MemoryService` 及具体 fact / entry / vector store 实现；
+4. Jarvis 主流程中的 retrieval / prompt refresh 编排。
 
 ## 8. 当前阻碍复用的耦合点
 
 ### 8.1 模型调用耦合
 
-`intentResolver.ts` 当前直接依赖 `ollamaGenerate`。
+`intentResolver.ts` 当前依赖 `IntentModelClient`，不再直接依赖 `ollamaGenerate`。
 
-应改为依赖 `IntentModelClient` adapter。Jarvis 可以提供 `OllamaIntentModelClient`，其他项目可以提供 OpenAI / Gemini / vLLM adapter。
+Jarvis 默认路径通过 `JarvisOllamaIntentModelClient` 使用本地 Ollama。通用层同时提供不依赖 Jarvis core 的 `OllamaIntentModelClient`，其他项目可以提供 OpenAI / Gemini / vLLM adapter。
 
 ### 8.2 ToolRouter 类型耦合
 
-`clarificationPolicy.ts` 当前依赖 `toolRouter.ts` 的 `AskUserQuestion` 类型。
+`clarificationPolicy.ts` 已不再依赖 `toolRouter.ts` 的 `AskUserQuestion` 类型。
 
-应把 question schema 移到通用 intent package 中，让 ToolRouter 反向消费它。
+`ClarificationQuestion` 已迁入通用 `memory-runtime/types.ts`。ToolRouter 反向消费该 schema。
 
 ### 8.3 Jarvis 领域语义耦合
 
@@ -374,7 +394,25 @@ export interface Reranker {
 
 当前 memory planning、retrieval、prompt refresh、tool execution 编排仍在 `agent.ts`。
 
-应通过 `MemoryRuntime` 暴露稳定接口，让 `agent.ts` 只负责调用，不直接承载 memory 决策逻辑。
+`DefaultMemoryRuntime` 已存在，但 Jarvis 主流程尚未整体切换。后续应让 `agent.ts` 只负责调用 runtime，不直接承载 memory retrieval / injection 编排。
+
+### 8.5 Memory Store 耦合
+
+`MemoryService`、session summary、fact search、entry search、entity expansion 和 reranker 仍是 Jarvis 具体实现。
+
+后续应抽出：
+
+- `SessionMemoryStore`；
+- `FactMemoryStore`；
+- `EntryMemoryStore`；
+- `MemoryRetriever`；
+- `MemoryObserver`。
+
+原因：
+
+- 当前 policy 和 contract 已通用，但 retrieval 仍绑定 Jarvis 数据结构；
+- 不抽 store adapter，其他 agent 项目只能复用意图和策略，不能复用完整记忆检索链路；
+- store adapter 是从“参考实现”走向“可嵌入 runtime”的关键剩余边界。
 
 ## 9. 迁移路线
 
@@ -432,8 +470,13 @@ jarvis/src/memory-runtime/
   index.ts
 ```
 
-这一阶段只冻结通用契约，不迁移 resolver、policy、retrieval 或 injection 的具体实现。
-Jarvis 现有运行路径保持不变。
+当前实现状态：
+
+- `IntentModelClient`、`MemoryContract`、`MemoryRuntime` 类型已稳定；
+- `IntentFrame`、`IntentStep`、`IntentEvidence`、`IntentPolicyTraceEntry` 等 intent schema 已迁入 `memory-runtime/types.ts`；
+- `ClarificationQuestion` 已从 ToolRouter 类型中解耦；
+- `memory-runtime` 目录已经没有对 `core/*` 的反向 import；
+- Jarvis 现有运行路径保持兼容。
 
 ### Phase 3：迁移纯逻辑模块
 
@@ -463,6 +506,7 @@ Jarvis 现有运行路径保持不变。
 - `clarificationPolicy.ts` 已迁移到 `jarvis/src/memory-runtime/clarificationPolicy.ts`；
 - `intentAwareMemoryPolicy.ts` 已迁移到 `jarvis/src/memory-runtime/intentAwareMemoryPolicy.ts`；
 - `memoryInjectionPlanner.ts` 已迁移到 `jarvis/src/memory-runtime/memoryInjectionPlanner.ts`；
+- 上述模块已改为依赖 `memory-runtime/types.ts`，不再反向依赖 `jarvis/src/core/*`；
 - `jarvis/src/core/*` 保留兼容 re-export，现有 Jarvis import 路径不变。
 
 ### Phase 4：抽 IntentResolver adapter
@@ -482,7 +526,8 @@ Jarvis 现有运行路径保持不变。
 当前实现状态：
 
 - `IntentResolver` 依赖通用 `IntentModelClient`；
-- 默认 Jarvis 路径使用 `OllamaIntentModelClient`，行为保持为本地 Ollama；
+- 默认 Jarvis 路径使用 `JarvisOllamaIntentModelClient`，行为保持为本地 Ollama，并兼容现有 core 测试 mock；
+- 通用 `memory-runtime/OllamaIntentModelClient` 已独立实现，不依赖 Jarvis core；
 - JSON repair、memory target extractor、entity hints extractor 和主 intent seed 都通过同一个 model adapter；
 - `scripts/run_intent_evals.ts` 显式构造 `OllamaIntentModelClient` 后传入 resolver，为后续切换 OpenAI/Gemini/vLLM adapter 留出入口；
 - `IntentResolver` 不再直接 import `ollamaClient.ts`。
@@ -511,6 +556,36 @@ Jarvis 现有运行路径保持不变。
 - external / external_past_event / no-memory contract 会阻止 subagent personal memory 注入；
 - `recall_memory` 在 contract 禁止 personal entries 时返回拒绝说明，不读取长期个人记忆；
 - `recall_memory` 空 query fallback 优先使用 contract 的 rewritten query，并继续继承 router 的 time range / date range。
+
+### Phase 6：DefaultMemoryRuntime 和 core 反向依赖清理
+
+目标：
+
+- 提供可执行的 `DefaultMemoryRuntime`；
+- 将 `IntentFrame` 等 intent schema 迁入通用层；
+- 清理 `memory-runtime` 对 `core/*` 的反向依赖；
+- 保持 Jarvis 当前 import 路径和运行行为兼容。
+
+原因：
+
+- 没有 runtime class 时，通用层只有接口和散落函数，其他项目仍需要自己拼生命周期；
+- `memory-runtime -> core` 的反向依赖会阻止它成为独立 package；
+- 先清理类型和纯逻辑依赖，再迁移 storage / retrieval，风险更低。
+
+当前实现状态：
+
+- `DefaultMemoryRuntime` 已实现；
+- `IntentFrame`、`IntentStep`、`IntentEvidence`、`TopicAnalysis`、`IntentPolicyTraceEntry` 等 schema 已迁入 `memory-runtime/types.ts`；
+- `intentPolicy`、`clarificationPolicy`、`intentAwareMemoryPolicy`、`memoryInjectionPlanner` 已不再 import `core/*`；
+- 通用 `OllamaIntentModelClient` 已不再 import `core/ollamaClient.ts`；
+- Jarvis core 增加 `JarvisOllamaIntentModelClient`，用于保持现有默认 Ollama 行为和测试兼容；
+- `IntentResolver` 继续作为 Jarvis core 实现，但其公开类型从通用层 re-export。
+
+剩余限制：
+
+- Jarvis 主流程还没有整体改为调用 `DefaultMemoryRuntime`；
+- `DefaultMemoryRuntime.retrieve()` 仍需要由宿主项目注入具体 retrieval 实现；
+- fact / entry / session store adapter 尚未抽出。
 
 ## 10. Eval 和反馈闭环
 
@@ -558,8 +633,8 @@ Jarvis 当前实现已经具备抽象出 Universal Memory Layer 的基础，但�
 当前状态可以判断为：
 
 - 作为参考实现：已经可用；
-- 作为 Jarvis 内部子系统：基本成型；
-- 作为其他 agent 项目的可复用库：需要完成 adapter 化和类型边界抽取；
+- 作为 Jarvis 内部子系统：已经基本成型；
+- 作为其他 agent 项目的可复用库：意图、policy、contract、injection planner 和 runtime lifecycle 已具备复用基础；
 - 作为通用开源 package：还需要迁移、文档、eval 和 API 稳定化。
 
-下一步最实际的动作是 Phase 2：新增接口层，不移动实现，先冻结 Memory Contract 和 adapter 边界。
+当前最实际的下一步是抽 storage / retrieval adapter，并把 Jarvis `MemoryService` 包装成这些 adapter 的默认实现。完成后，Universal Memory Layer 才能从“可复用意图和策略层”进一步变成“可嵌入的完整记忆运行时”。

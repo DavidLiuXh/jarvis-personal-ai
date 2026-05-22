@@ -4,9 +4,9 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { buildSummarySectionFromChunks } from "../core/sessionSummarizer.js";
+import type { QuerySubject } from "./types.js";
 
-export type QuerySubject = "personal" | "external" | "mixed";
+export type { QuerySubject } from "./types.js";
 
 export type FactCandidate = {
   category: string;
@@ -264,6 +264,24 @@ function compactText(text: string, maxChars: number): string {
   const compacted = firstSentence || cleaned;
   if (compacted.length <= maxChars) return compacted;
   return `${compacted.slice(0, maxChars).trimEnd()}…`;
+}
+
+function buildSummarySectionFromChunks(chunks: string[]): string {
+  if (chunks.length === 0) return "";
+
+  const compactSnippet = (text: string, maxLen = 300): string => {
+    const cleaned = text.replace(/\s+/g, " ").trim();
+    const firstSentence =
+      cleaned.split(/(?<=[。！？.!?；;])/u)[0]?.trim() ?? cleaned;
+    if (firstSentence.length <= maxLen) return firstSentence;
+    return `${firstSentence.slice(0, maxLen).trimEnd()}…`;
+  };
+
+  return (
+    "\n<relevant_session_summary>\n" +
+    chunks.map((item) => `- ${compactSnippet(item)}`).join("\n") +
+    "\n</relevant_session_summary>"
+  );
 }
 
 function buildPrewarmSection(candidates: PrewarmCandidate[]): string {

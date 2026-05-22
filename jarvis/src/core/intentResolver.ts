@@ -6,7 +6,7 @@
 
 import { extractDateRange, type DateRange } from "./dateRange.js";
 import type { IntentModelClient } from "../memory-runtime/adapters.js";
-import { OllamaIntentModelClient } from "../memory-runtime/ollamaIntentModelClient.js";
+import { JarvisOllamaIntentModelClient } from "./jarvisOllamaIntentModelClient.js";
 import {
   createIntentPolicyRegistry,
   logAppliedPolicyTrace,
@@ -14,174 +14,43 @@ import {
   type IntentCueState,
   type IntentPolicyTraceEntry,
 } from "./intentPolicy.js";
+import type {
+  ActionRequestType,
+  ConversationTurn,
+  GroundedTopic,
+  IntentConfidenceByDimension,
+  IntentEvidence,
+  IntentFrame,
+  IntentStep,
+  IntentTaskType,
+  MemoryRecallTarget,
+  QuerySubject,
+  RichIntent,
+  RichIntentPrimaryAction,
+  RichIntentRiskLevel,
+  RichIntentTargetType,
+  TopicAnalysis,
+  TopicRelation,
+} from "../memory-runtime/types.js";
 
-export type QuerySubject = "personal" | "external" | "mixed";
-
-export type IntentTaskType =
-  | "chat"
-  | "recall"
-  | "analyze"
-  | "execute"
-  | "delegate"
-  | "schedule";
-
-export type ConversationTurn = {
-  role: "user" | "assistant";
-  content: string;
-};
-
-export type MemoryRecallTarget =
-  | "conversation_history"
-  | "user_memory"
-  | "external_past_event"
-  | "current_context_reference"
-  | "none";
-
-export type ActionRequestType =
-  | "read"
-  | "write"
-  | "run"
-  | "schedule"
-  | "delegate"
-  | "none";
-
-export type IntentEvidence = {
-  personalContext: {
-    present: boolean;
-    reason: string;
-    span?: string;
-  };
-  memoryRecall: {
-    present: boolean;
-    target: MemoryRecallTarget;
-    reason: string;
-    span?: string;
-  };
-  actionRequest: {
-    present: boolean;
-    action: ActionRequestType;
-    object?: string;
-  };
-  entityHints: {
-    tickers: string[];
-    technicalTerms: string[];
-    peopleOrCompanies: string[];
-  };
-};
-
-export type RichIntentPrimaryAction =
-  | "answer"
-  | "recall"
-  | "analyze"
-  | "modify"
-  | "run"
-  | "schedule"
-  | "delegate";
-
-export type RichIntentTargetType =
-  | "memory"
-  | "file"
-  | "code"
-  | "external_entity"
-  | "agent"
-  | "calendar"
-  | "current_context";
-
-export type RichIntentRiskLevel = "low" | "medium" | "high";
-
-export type RichIntent = {
-  userGoal: string;
-  primaryAction: RichIntentPrimaryAction;
-  targets: Array<{
-    type: RichIntentTargetType;
-    value: string;
-  }>;
-  contextDependency: {
-    recentConversation: boolean;
-    longTermMemory: boolean;
-    localWorkspace: boolean;
-    externalWorld: boolean;
-  };
-  ambiguity: Array<{
-    field: string;
-    reason: string;
-    severity: "low" | "medium" | "high";
-  }>;
-  riskLevel: RichIntentRiskLevel;
-};
-
-export type IntentStep = {
-  id: string;
-  type: IntentTaskType;
-  action: string;
-  target: string;
-  dependsOn: string[];
-  requiresConfirmation: boolean;
-  riskLevel: RichIntentRiskLevel;
-};
-
-export type IntentConfidenceByDimension = {
-  subject: number;
-  taskType: number;
-  memoryTarget: number;
-  action: number;
-  entityHints: number;
-  topicShift: number;
-  richIntent: number;
-};
-
-export type TopicRelation =
-  | "same_topic"
-  | "subtopic"
-  | "adjacent_topic"
-  | "new_topic"
-  | "current_context_reference"
-  | "unknown";
-
-export type GroundedTopic = {
-  label: string;
-  evidence: string[];
-  sourceTurns: number[];
-  confidence: number;
-};
-
-export type TopicAnalysis = {
-  history: GroundedTopic;
-  current: GroundedTopic;
-  relation: TopicRelation;
-  relationReason: string;
-  confidence: number;
-  lowGrounding: boolean;
-};
-
-export type IntentFrame = {
-  subject: QuerySubject;
-  taskType: IntentTaskType;
-  needsMemory: boolean;
-  needsExternalKnowledge: boolean;
-  needsTool: boolean;
-  needsScheduling: boolean;
-  candidateAgents: string[];
-  timeWindowDays: number | null;
-  dateFrom: string | null;
-  dateTo: string | null;
-  resolvedDateRange: { from: number; to: number } | null;
-  topicShifted: boolean;
-  referencesRecentHistory: boolean;
-  complexityScore: number;
-  knowledgeScore: number | null;
-  operationScore: number | null;
-  reason: string;
-  confidence: number;
-  confidenceByDimension: IntentConfidenceByDimension;
-  evidence: string[];
-  semanticEvidence: IntentEvidence;
-  richIntent: RichIntent;
-  intentSteps: IntentStep[];
-  topicAnalysis: TopicAnalysis;
-  policyTrace: IntentPolicyTraceEntry[];
-  source: string;
-};
+export type {
+  ActionRequestType,
+  ConversationTurn,
+  GroundedTopic,
+  IntentConfidenceByDimension,
+  IntentEvidence,
+  IntentFrame,
+  IntentStep,
+  IntentTaskType,
+  MemoryRecallTarget,
+  QuerySubject,
+  RichIntent,
+  RichIntentPrimaryAction,
+  RichIntentRiskLevel,
+  RichIntentTargetType,
+  TopicAnalysis,
+  TopicRelation,
+} from "../memory-runtime/types.js";
 
 export type IntentResolverOptions = {
   baseUrl?: string;
@@ -1973,7 +1842,7 @@ export class IntentResolver {
     if (!options.model) {
       throw new Error("IntentResolver requires either model or modelClient");
     }
-    this.modelClient = new OllamaIntentModelClient({
+    this.modelClient = new JarvisOllamaIntentModelClient({
       model: options.model,
       baseUrl: options.baseUrl,
       timeoutMs: options.timeoutMs,

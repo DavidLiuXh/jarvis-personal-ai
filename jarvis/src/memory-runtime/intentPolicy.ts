@@ -8,42 +8,27 @@ import type {
   ActionRequestType,
   ConversationTurn,
   IntentEvidence,
+  IntentPolicyReason,
+  IntentPolicyReasonCategory,
+  IntentPolicyReasonSeverity,
+  IntentPolicyStage,
+  IntentPolicyTraceEntry,
   IntentTaskType,
   QuerySubject,
-} from "../core/intentResolver.js";
+} from "./types.js";
 
-export type IntentPolicyStage =
-  | "normalize"
-  | "guardrail"
-  | "override"
-  | "finalize";
-
-export type IntentPolicyReasonCategory =
-  | "semantic_evidence"
-  | "subject_boundary"
-  | "task_boundary"
-  | "topic_boundary"
-  | "agent_routing";
-
-export type IntentPolicyReasonSeverity = "info" | "warning" | "critical";
-
-export type IntentPolicyReason = {
-  code: string;
-  category: IntentPolicyReasonCategory;
-  severity: IntentPolicyReasonSeverity;
-};
-
-export type IntentPolicyTraceEntry = {
-  ruleId: string;
-  stage: IntentPolicyStage;
-  priority: number;
-  reasonCode: string;
-  reason: IntentPolicyReason;
-  applied: boolean;
-  before?: Record<string, unknown>;
-  after?: Record<string, unknown>;
-  skippedReason?: string;
-};
+export type {
+  ActionRequestType,
+  ConversationTurn,
+  IntentEvidence,
+  IntentPolicyReason,
+  IntentPolicyReasonCategory,
+  IntentPolicyReasonSeverity,
+  IntentPolicyStage,
+  IntentPolicyTraceEntry,
+  IntentTaskType,
+  QuerySubject,
+} from "./types.js";
 
 export type IntentPolicyRunOptions = {
   recordSkipped?: boolean;

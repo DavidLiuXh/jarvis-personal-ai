@@ -5,7 +5,7 @@
  */
 
 import { describe, expect, it } from "vitest";
-import type { AskUserQuestion } from "../core/toolRouter.js";
+import { DefaultMemoryRuntime } from "./runtime.js";
 import type {
   ClarificationQuestion,
   MemoryContract,
@@ -49,7 +49,7 @@ describe("memory-runtime contracts", () => {
       type: "text",
       placeholder: "例如：明天早上 9 点",
     };
-    const askUserQuestion: AskUserQuestion = question;
+    const askUserQuestion: ClarificationQuestion = question;
 
     expect(askUserQuestion.type).toBe("text");
   });
@@ -104,5 +104,71 @@ describe("memory-runtime contracts", () => {
         history: [],
       }),
     ).resolves.toEqual({ subject: "personal" });
+  });
+
+  it("provides a default executable runtime implementation", async () => {
+    const events: string[] = [];
+    const contract: MemoryContract = {
+      needMemory: true,
+      subjectBoundary: "personal",
+      targetScopes: ["entry"],
+      memoryTarget: "conversation_history",
+      query: { raw: "recall TypeScript", entities: ["TypeScript"] },
+      confidence: { subject: 0.9, target: 0.9, query: 0.9 },
+      constraints: {
+        allowPersonalFacts: false,
+        allowSessionHistory: false,
+        allowEntries: true,
+        maxChars: 500,
+      },
+      reasons: ["test"],
+      policyTrace: [],
+    };
+    const runtime = new DefaultMemoryRuntime<{ subject: "personal" }>({
+      async understand() {
+        return { subject: "personal" };
+      },
+      async planMemory() {
+        return contract;
+      },
+      async retrieve(inputContract) {
+        return { contract: inputContract, session: [], facts: [], entries: [] };
+      },
+      async inject() {
+        return {
+          text: "<memory />",
+          usedChars: 10,
+          injected: { session: 0, facts: 0, entries: 0 },
+          rejected: [],
+          trace: [],
+        };
+      },
+      observe(event) {
+        events.push(event.type);
+      },
+    });
+
+    const input = { sessionId: "s1", prompt: "hello", history: [] };
+    const intent = await runtime.understand(input);
+    const planned = await runtime.planMemory({
+      prompt: input.prompt,
+      history: input.history,
+      intent,
+    });
+    const retrieval = await runtime.retrieve(planned);
+    const injected = await runtime.inject({
+      prompt: input.prompt,
+      intent,
+      contract: planned,
+      retrieval,
+      budget: { maxChars: 500 },
+    });
+
+    expect(injected.text).toBe("<memory />");
+    expect(events).toEqual([
+      "intent_resolved",
+      "memory_retrieved",
+      "memory_injected",
+    ]);
   });
 });

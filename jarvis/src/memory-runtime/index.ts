@@ -14,7 +14,16 @@ export type {
 } from "./adapters.js";
 export type { OllamaIntentModelClientOptions } from "./ollamaIntentModelClient.js";
 export { OllamaIntentModelClient } from "./ollamaIntentModelClient.js";
-export type { MemoryRuntime } from "./runtime.js";
+export {
+  DefaultMemoryRuntime,
+  type DefaultMemoryRuntimeOptions,
+  type MemoryRuntime,
+  type MemoryRuntimeInject,
+  type MemoryRuntimeObserve,
+  type MemoryRuntimePlanMemory,
+  type MemoryRuntimeRetrieve,
+  type MemoryRuntimeUnderstand,
+} from "./runtime.js";
 export * from "./clarificationPolicy.js";
 export * from "./intentAwareMemoryPolicy.js";
 export * from "./intentPolicy.js";
@@ -26,6 +35,17 @@ export type {
   DateRange,
   EntryMemory,
   FactMemory,
+  GroundedTopic,
+  IntentConfidenceByDimension,
+  IntentEvidence,
+  IntentFrame,
+  IntentPolicyReason,
+  IntentPolicyReasonCategory,
+  IntentPolicyReasonSeverity,
+  IntentPolicyStage,
+  IntentPolicyTraceEntry,
+  IntentStep,
+  IntentTaskType,
   MemoryContract,
   MemoryInjectionRejectedItem,
   MemoryInjectionResult,
@@ -37,7 +57,10 @@ export type {
   MemoryRuntimeEvent,
   SessionMemory,
   SubjectBoundary,
+  QuerySubject,
   TokenBudget,
   TopicState,
+  TopicAnalysis,
+  TopicRelation,
   UserTurnInput,
 } from "./types.js";

@@ -4,8 +4,14 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import type { IntentFrame, QuerySubject } from "../core/intentResolver.js";
-import type { MemoryContract, MemoryScope } from "./types.js";
+import type {
+  IntentFrame,
+  MemoryContract,
+  MemoryScope,
+  QuerySubject,
+} from "./types.js";
+
+export type { IntentFrame, QuerySubject } from "./types.js";
 
 export type IntentAwareMemoryPolicy = {
   querySubject: QuerySubject;

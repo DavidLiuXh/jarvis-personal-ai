@@ -4,8 +4,13 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import type { IntentFrame, QuerySubject } from "../core/intentResolver.js";
-import type { ClarificationQuestion } from "./types.js";
+import type {
+  ClarificationQuestion,
+  IntentFrame,
+  QuerySubject,
+} from "./types.js";
+
+export type { IntentFrame, QuerySubject } from "./types.js";
 
 export type ClarificationPolicyInput = {
   userPrompt: string;
