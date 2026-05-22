@@ -10,6 +10,7 @@ import { JarvisOllamaIntentModelClient } from "./jarvisOllamaIntentModelClient.j
 import {
   createIntentPolicyRegistry,
   logAppliedPolicyTrace,
+  normalizeIntentPolicyReason,
   runIntentPolicyRules,
   type IntentCueState,
   type IntentPolicyTraceEntry,
@@ -156,6 +157,12 @@ const MEMORY_RECALL_CUE_RE =
 const CONVERSATION_HISTORY_RECALL_CUE_RE =
   /我们聊过|我们讨论过|咱们聊过|咱们讨论过|你之前说|你以前说|你上次说|我之前说|我以前说|我上次说|之前.*(对话|聊天|讨论|探讨|聊过|说过|提到|内容)|以前.*(对话|聊天|讨论|探讨|聊过|说过|提到|内容)|上次.*(对话|聊天|讨论|探讨|聊过|说过|提到|内容)|what did we discuss|our previous conversation|our last conversation|you previously said|you said last time|last time we discussed/i;
 
+const DATE_HISTORY_RECALL_CUE_RE =
+  /(昨天|前天|今天|上周|上个月|两天前|三天前|last\s+(?:time|week|month)|yesterday|today).*(聊|讨论|探讨|说|内容|conversation|discuss|talk)|(?:聊|讨论|探讨).*(哪些|什么|内容|what)/i;
+
+const USER_MEMORY_RECALL_CUE_RE =
+  /(还记得|记得|remember).*(我|我的|偏好|习惯|风格|喜好|爱好|名字|身份|目标|风险偏好)|我有哪些(爱好|偏好|习惯)|我的(爱好|偏好|习惯|风格|目标|风险偏好)|my .*(hobbies|preferences|habits|style|goals|risk profile)/i;
+
 const REMEMBER_TO_ACTION_CUE_RE =
   /记得(保存|提交|运行|创建|打开|关闭|下载|上传|备份|删除|发送|检查|更新|修改|写|做)|remember to (save|commit|run|create|open|close|download|upload|delete|send|check|update|modify|write|do)/i;
 
@@ -280,7 +287,34 @@ function hasMemoryRecallCue(prompt: string): boolean {
 }
 
 function hasConversationHistoryRecallCue(prompt: string): boolean {
-  return CONVERSATION_HISTORY_RECALL_CUE_RE.test(prompt);
+  return (
+    CONVERSATION_HISTORY_RECALL_CUE_RE.test(prompt) ||
+    DATE_HISTORY_RECALL_CUE_RE.test(prompt)
+  );
+}
+
+function inferRecallTargetFromTurnText(
+  text: string,
+): MemoryRecallTarget | null {
+  if (hasConversationHistoryRecallCue(text)) return "conversation_history";
+  if (USER_MEMORY_RECALL_CUE_RE.test(text)) return "user_memory";
+  return null;
+}
+
+function inferRecentRecallTarget(
+  turns: ConversationTurn[],
+): MemoryRecallTarget | null {
+  for (let index = turns.length - 1; index >= 0; index--) {
+    const turn = turns[index];
+    if (turn.role !== "user") continue;
+    const target = inferRecallTargetFromTurnText(turn.content);
+    if (target) return target;
+  }
+  return null;
+}
+
+function isRecallBoundaryTarget(target: MemoryRecallTarget): boolean {
+  return target === "conversation_history" || target === "user_memory";
 }
 
 function hasRememberToActionCue(prompt: string): boolean {
@@ -2211,7 +2245,7 @@ export class IntentResolver {
       ? "new_topic"
       : normalizeTopicRelation(asRecord(parsed.topic_analysis).relation);
     // No history → topic shift is meaningless; force false to avoid spurious clears.
-    const topicShifted =
+    let topicShifted =
       recentTurns.length === 0
         ? false
         : personalFactAssertionCue
@@ -2225,6 +2259,42 @@ export class IntentResolver {
                 : topicRelation === "new_topic"
                   ? true
                   : parsed.topic_shifted === true;
+    const previousRecallTarget = inferRecentRecallTarget(recentTurns);
+    const memoryTargetChanged =
+      !referencesRecentHistory &&
+      previousRecallTarget !== null &&
+      isRecallBoundaryTarget(previousRecallTarget) &&
+      isRecallBoundaryTarget(memoryRecallTarget) &&
+      previousRecallTarget !== memoryRecallTarget;
+    if (memoryTargetChanged) {
+      const beforeTopicShifted = topicShifted;
+      topicShifted = true;
+      policyTrace.push({
+        ruleId: "topic.memory_target_changed",
+        stage: "guardrail",
+        priority: 420,
+        reasonCode: "MEMORY_TARGET_TOPIC_SHIFT",
+        reason: normalizeIntentPolicyReason("MEMORY_TARGET_TOPIC_SHIFT"),
+        applied: true,
+        before: {
+          topicShifted: beforeTopicShifted,
+          relation: topicRelation,
+          previousMemoryTarget: previousRecallTarget,
+          currentMemoryTarget: memoryRecallTarget,
+          referencesRecentHistory,
+        },
+        after: {
+          topicShifted,
+          relation: "new_topic",
+          previousMemoryTarget: previousRecallTarget,
+          currentMemoryTarget: memoryRecallTarget,
+          referencesRecentHistory,
+        },
+      });
+      console.error(
+        `🧭 [IntentResolver] Memory target changed ${previousRecallTarget} → ${memoryRecallTarget}; topic_shifted forced true`,
+      );
+    }
     let topicAnalysis = normalizeTopicAnalysis({
       value: parsed.topic_analysis,
       legacyHistoryTopic: parsed.history_topic,
@@ -2247,6 +2317,14 @@ export class IntentResolver {
         relation: recentTurns.length > 0 ? "new_topic" : "unknown",
         relationReason:
           "current request is a standalone personal fact assertion, not a follow-up to recent history",
+        confidence: Math.max(topicAnalysis.confidence, 0.9),
+        lowGrounding: false,
+      };
+    } else if (memoryTargetChanged) {
+      topicAnalysis = {
+        ...topicAnalysis,
+        relation: "new_topic",
+        relationReason: `memory recall target changed from ${previousRecallTarget} to ${memoryRecallTarget}`,
         confidence: Math.max(topicAnalysis.confidence, 0.9),
         lowGrounding: false,
       };

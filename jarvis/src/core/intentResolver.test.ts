@@ -1610,6 +1610,145 @@ ${modelResponse({
     });
   });
 
+  it("forces topic shift when recall memory target changes from conversation history to user memory", async () => {
+    const resolver = makeResolver();
+    mockGenerate.mockResolvedValueOnce(
+      modelResponse({
+        query_subject: "personal",
+        task_type: "recall",
+        needs_external_knowledge: false,
+        semantic_evidence: {
+          personalContext: {
+            present: true,
+            reason: "asks about user's personal profile",
+            span: "你还记得我有哪些爱好吗？",
+          },
+          memoryRecall: {
+            present: true,
+            target: "user_memory",
+            reason: "asks for remembered user hobbies",
+            span: "你还记得我有哪些爱好吗？",
+          },
+          actionRequest: { present: false, action: "none", object: "" },
+          entityHints: {
+            tickers: [],
+            technicalTerms: [],
+            peopleOrCompanies: [],
+          },
+        },
+        topic_analysis: {
+          history: {
+            label: "History Retrieval",
+            evidence: ["前天我们聊了哪些内容？"],
+            source_turns: [-2],
+            confidence: 1,
+          },
+          current: {
+            label: "Personal Recall",
+            evidence: ["你还记得我有哪些爱好吗？"],
+            source_turns: [0],
+            confidence: 1,
+          },
+          relation: "subtopic",
+          relation_reason: "both are recall requests",
+          confidence: 1,
+        },
+        references_recent_history: false,
+        topic_shifted: false,
+      }),
+    );
+
+    const intent = await resolver.resolve({
+      userPrompt: "你还记得我有哪些爱好吗？",
+      history: [
+        { role: "user", content: "前天我们聊了哪些内容？" },
+        {
+          role: "assistant",
+          content:
+            "今天是2026年5月22日，星期五。两天前的对话历史我无法直接取回。",
+        },
+      ],
+    });
+
+    expect(intent.referencesRecentHistory).toBe(false);
+    expect(intent.topicShifted).toBe(true);
+    expect(intent.topicAnalysis).toMatchObject({
+      relation: "new_topic",
+      relationReason:
+        "memory recall target changed from conversation_history to user_memory",
+    });
+    expect(policyReasonCodes(intent)).toContain("MEMORY_TARGET_TOPIC_SHIFT");
+  });
+
+  it("forces topic shift when recall memory target changes from user memory to conversation history", async () => {
+    const resolver = makeResolver();
+    mockGenerate.mockResolvedValueOnce(
+      modelResponse({
+        query_subject: "personal",
+        task_type: "recall",
+        needs_external_knowledge: false,
+        semantic_evidence: {
+          personalContext: {
+            present: true,
+            reason: "asks about prior conversation",
+            span: "前天我们聊了哪些内容？",
+          },
+          memoryRecall: {
+            present: true,
+            target: "conversation_history",
+            reason: "asks for conversation history",
+            span: "前天我们聊了哪些内容？",
+          },
+          actionRequest: { present: false, action: "none", object: "" },
+          entityHints: {
+            tickers: [],
+            technicalTerms: [],
+            peopleOrCompanies: [],
+          },
+        },
+        topic_analysis: {
+          history: {
+            label: "Personal Recall",
+            evidence: ["你还记得我有哪些爱好吗？"],
+            source_turns: [-2],
+            confidence: 1,
+          },
+          current: {
+            label: "History Retrieval",
+            evidence: ["前天我们聊了哪些内容？"],
+            source_turns: [0],
+            confidence: 1,
+          },
+          relation: "subtopic",
+          relation_reason: "both are recall requests",
+          confidence: 1,
+        },
+        references_recent_history: false,
+        topic_shifted: false,
+      }),
+    );
+
+    const intent = await resolver.resolve({
+      userPrompt: "前天我们聊了哪些内容？",
+      history: [
+        { role: "user", content: "你还记得我有哪些爱好吗？" },
+        {
+          role: "assistant",
+          content: "我可以从长期记忆里帮你回顾你的兴趣爱好。",
+        },
+      ],
+    });
+
+    expect(intent.referencesRecentHistory).toBe(false);
+    expect(intent.topicShifted).toBe(true);
+    expect(intent.topicAnalysis).toMatchObject({
+      relation: "new_topic",
+      relationReason:
+        "memory recall target changed from user_memory to conversation_history",
+    });
+    expect(policyReasonCodes(intent)).toContain("MEMORY_TARGET_TOPIC_SHIFT");
+  });
+
   it("treats short personal identity assertions as standalone facts, not history recall", async () => {
     const resolver = makeResolver();
     mockGenerate.mockResolvedValueOnce(

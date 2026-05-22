@@ -221,6 +221,10 @@ const POLICY_REASON_METADATA: Record<
     category: "agent_routing",
     severity: "warning",
   },
+  MEMORY_TARGET_TOPIC_SHIFT: {
+    category: "topic_boundary",
+    severity: "warning",
+  },
 };
 
 export function normalizeIntentPolicyReason(
