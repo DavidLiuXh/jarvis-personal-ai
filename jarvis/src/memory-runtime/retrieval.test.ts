@@ -103,4 +103,45 @@ describe("DefaultMemoryRetriever", () => {
     expect(stores.session.searchSession).not.toHaveBeenCalled();
     expect(result).toMatchObject({ session: [], facts: [], entries: [] });
   });
+
+  it("supports query planning, entry augmentation, and session fallback extensions", async () => {
+    const searchFacts = vi.fn().mockResolvedValue([]);
+    const searchEntries = vi.fn().mockResolvedValue([]);
+    const searchSession = vi.fn().mockResolvedValue([]);
+    const retriever = new DefaultMemoryRetriever({
+      stores: {
+        facts: { searchFacts },
+        entries: { searchEntries },
+        session: { searchSession },
+      },
+      extensions: {
+        planQuery: ({ scope, defaultQuery }) =>
+          scope === "entry" ? "rewritten entry query" : defaultQuery,
+        augmentEntries: () => [
+          {
+            id: "recent-1",
+            content: "recent conversation hit",
+            score: 1,
+            metadata: { source: "recent_conversation" },
+          },
+        ],
+        fallbackSession: () => [
+          {
+            sessionId: "s1",
+            summary: "fallback summary",
+            metadata: { source: "fallback" },
+          },
+        ],
+      },
+    });
+
+    const result = await retriever.retrieve(contract());
+
+    expect(searchEntries).toHaveBeenCalledWith(
+      "rewritten entry query",
+      expect.any(Object),
+    );
+    expect(result.entries[0].item.content).toBe("recent conversation hit");
+    expect(result.session[0].item.summary).toBe("fallback summary");
+  });
 });

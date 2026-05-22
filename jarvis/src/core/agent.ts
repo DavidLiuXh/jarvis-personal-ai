@@ -66,7 +66,14 @@ import {
   type BackgroundTaskRunner,
 } from "./backgroundTaskRunner.js";
 import { RuntimeIntentFeedbackCollector } from "./runtimeIntentFeedbackCollector.js";
-import type { MemoryContract } from "../memory-runtime/index.js";
+import {
+  DefaultMemoryRetriever,
+  type EntryMemorySearchResult,
+  type MemoryContract,
+  type MemoryRetrievalResult,
+  type SkillRetrievalExtension,
+} from "../memory-runtime/index.js";
+import { createJarvisMemoryStores } from "./jarvisMemoryStores.js";
 
 function extractSummaryCandidatesFromSection(
   section: string,
@@ -81,6 +88,92 @@ function extractSummaryCandidatesFromSection(
       source: "fallback" as const,
     }))
     .filter((item) => item.text);
+}
+
+function summaryCandidatesFromRetrieval(
+  retrieval: MemoryRetrievalResult,
+): SummaryCandidate[] {
+  return retrieval.session
+    .map(({ item }) => ({
+      text: item.summary ?? "",
+      source:
+        item.metadata?.source === "fallback"
+          ? ("fallback" as const)
+          : ("vector" as const),
+    }))
+    .filter((item) => item.text.trim());
+}
+
+function factRecordsFromRetrieval(
+  retrieval: MemoryRetrievalResult,
+): FactRecord[] {
+  return retrieval.facts.map(({ item }) => ({
+    category:
+      typeof item.metadata?.category === "string"
+        ? item.metadata.category
+        : item.subject,
+    content: item.content,
+  }));
+}
+
+function prewarmCandidatesFromRetrieval(args: {
+  retrieval: MemoryRetrievalResult;
+  rerankerEnabled: boolean;
+  rerankerThreshold: number;
+}): PrewarmCandidate[] {
+  const recent = args.retrieval.entries
+    .filter(({ item }) => item.metadata?.source === "recent_conversation")
+    .map(({ item, score }) => ({
+      text: item.content,
+      score,
+      tier: "verified" as const,
+    }));
+  const memories = args.retrieval.entries.filter(
+    ({ item }) => item.metadata?.source !== "recent_conversation",
+  );
+  if (memories.length === 0) return recent;
+
+  const MIN_TOP1_SCORE = 0.5;
+  const MIN_MARGIN = 0.1;
+  let toInject = memories;
+  if (!args.rerankerEnabled && memories.length > 0) {
+    if (memories[0].score < MIN_TOP1_SCORE) {
+      console.error(
+        `🧠 [prewarm] top-1 score ${memories[0].score.toFixed(3)} < ${MIN_TOP1_SCORE}, skipping injection`,
+      );
+      toInject = [];
+    } else if (
+      memories.length > 1 &&
+      memories[0].score - memories[1].score < MIN_MARGIN
+    ) {
+      toInject = memories.slice(0, 1);
+      console.error(
+        `🧠 [prewarm] low margin (${(memories[0].score - memories[1].score).toFixed(3)}), capping to top-1`,
+      );
+    }
+  }
+
+  const VERIFIED_THRESHOLD = 0.7;
+  const verified = args.rerankerEnabled
+    ? toInject.filter((m) => m.score >= args.rerankerThreshold)
+    : toInject.filter((m) => m.score >= VERIFIED_THRESHOLD);
+  const uncertain = args.rerankerEnabled
+    ? []
+    : toInject.filter((m) => m.score < VERIFIED_THRESHOLD);
+
+  return [
+    ...recent,
+    ...verified.map(({ item, score }) => ({
+      text: item.content,
+      score,
+      tier: "verified" as const,
+    })),
+    ...uncertain.map(({ item, score }) => ({
+      text: item.content,
+      score,
+      tier: "uncertain" as const,
+    })),
+  ];
 }
 
 const ENFORCEABLE_INTENT_TOOLS = new Set(["recall_memory", "task_add"]);
@@ -557,226 +650,189 @@ export class JarvisAgent extends EventEmitter {
     });
     querySubject = memoryPolicy.querySubject;
 
-    let facts: FactRecord[] = [];
-    if (memoryPolicy.allowFacts) {
-      const hasPrefix = memoryPolicy.factQuery !== userPrompt;
-      console.error(
-        `🔍 [Jarvis] searchFacts (subject=${querySubject}, prefix=${hasPrefix}): "${memoryPolicy.factQuery.slice(0, 80)}"`,
-      );
-      facts = (await this.memoryService.searchFacts(
-        memoryPolicy.factQuery,
-      )) as FactRecord[];
-    } else {
-      console.error(
-        `🔍 [Jarvis] Intent-aware memory policy — skipping facts (${memoryPolicy.reasons.join(",") || "not_needed"}).`,
-      );
-    }
-
     // Skill retrieval: search for relevant skills instead of injecting all.
     // Falls back to full list when index is unavailable or building (cold start,
     // no embedder, or backfill still in progress to avoid partial results).
     const skillSearchLimit = this.jarvisConfig.memory.skillSearchLimit ?? 5;
     const skillMaxDistance = this.jarvisConfig.memory.skillMaxDistance ?? 0.9;
-    let relevantSkills: SkillInfo[] = this.availableSkills;
-    if (this.availableSkills.length > skillSearchLimit) {
-      // Don't use retrieval while the index is still being built — a partial
-      // index would silently drop skills that haven't been embedded yet.
-      if (this.memoryService.skillIndexBuilding) {
-        console.error(
-          `🔍 [SkillRetrieval] Index building — using full skill list (${this.availableSkills.length} skills)`,
-        );
-      } else {
+    const skillRetrievalExtension: SkillRetrievalExtension<SkillInfo> = {
+      retrieveSkills: async ({ prompt, limit, maxDistance }) => {
+        if (this.availableSkills.length <= limit) return this.availableSkills;
+        // Don't use retrieval while the index is still being built — a partial
+        // index would silently drop skills that haven't been embedded yet.
+        if (this.memoryService.skillIndexBuilding) {
+          console.error(
+            `🔍 [SkillRetrieval] Index building — using full skill list (${this.availableSkills.length} skills)`,
+          );
+          return this.availableSkills;
+        }
         const retrieved = await this.memoryService.searchSkills(
-          userPrompt,
-          skillSearchLimit,
-          skillMaxDistance,
+          prompt,
+          limit,
+          maxDistance,
         );
         if (retrieved.length > 0) {
-          relevantSkills = retrieved;
           console.error(
             `🔍 [SkillRetrieval] ${retrieved.length}/${this.availableSkills.length} skills injected: ${retrieved.map((s) => s.name).join(", ")}`,
           );
-        } else {
-          // No skills met the relevance threshold — inject none.
-          // Low-relevance skills add noise without value (e.g. "Hi Jarvis").
-          relevantSkills = [];
-          console.error(
-            `🔍 [SkillRetrieval] No relevant skills found — skipping skill injection`,
-          );
+          return retrieved;
         }
-      }
-    }
+        // No skills met the relevance threshold — inject none.
+        // Low-relevance skills add noise without value (e.g. "Hi Jarvis").
+        console.error(
+          `🔍 [SkillRetrieval] No relevant skills found — skipping skill injection`,
+        );
+        return [];
+      },
+    };
+    const relevantSkills = await skillRetrievalExtension.retrieveSkills({
+      prompt: userPrompt,
+      limit: skillSearchLimit,
+      maxDistance: skillMaxDistance,
+      context: { prompt: userPrompt, history: conversationHistory, intent },
+    });
 
     // Use Jarvis slim preamble — GEMINI.md (userMemory) intentionally excluded
     // as it is Gemini CLI global config irrelevant to personal assistant use
     const defaultInstruction = buildJarvisPreamble();
 
-    const prewarmCandidates: PrewarmCandidate[] = [];
-    if (memoryPolicy.allowPrewarm && memoryPolicy.prewarmLimit > 0) {
-      const effectiveLimit = memoryPolicy.prewarmLimit;
-      const effectiveMaxDistance = memoryPolicy.prewarmMaxDistance;
-      // Query rewriting: for personal queries, expand/de-reference the query
-      // before vector search to improve retrieval accuracy.
-      let searchQuery = memoryPolicy.prewarmQuery;
-      const queryRewriteEnabled =
-        this.jarvisConfig.routing?.queryRewrite === true;
-      if (queryRewriteEnabled && !this.localModelRouter) {
-        console.error(
-          "⚠️ [prewarm] routing.queryRewrite=true but localModelRouter is not initialized — query rewrite skipped. Set routing.enabled=true and routing.model to enable.",
-        );
-      }
-      if (
-        queryRewriteEnabled &&
-        memoryPolicy.shouldRewritePrewarmQuery &&
-        this.localModelRouter
-      ) {
-        const rewritten = await this.localModelRouter.rewriteMemoryQuery(
-          memoryPolicy.prewarmQuery,
-          conversationHistory,
-        );
-        if (rewritten) {
-          searchQuery = rewritten;
-          console.error(
-            `🔍 [prewarm] query rewrite: "${userPrompt.slice(0, 80)}" → "${rewritten}"`,
-          );
-        }
-      }
-
-      const scoredMemories = await this.memoryService.searchWithScore(
-        searchQuery,
-        effectiveLimit,
-        timeWindowDays,
-        resolvedDateRange,
-        effectiveMaxDistance,
+    if (!memoryPolicy.allowFacts) {
+      console.error(
+        `🔍 [Jarvis] Intent-aware memory policy — skipping facts (${memoryPolicy.reasons.join(",") || "not_needed"}).`,
       );
-
-      // top-1 margin filter: skip injection when retrieval confidence is low.
-      // Skipped when reranker is enabled — cross-encoder logits have a different
-      // scale from bi-encoder cosine similarity, making these thresholds meaningless.
-      const rerankerEnabled = this.jarvisConfig.reranker?.enabled === true;
-      const MIN_TOP1_SCORE = 0.5;
-      const MIN_MARGIN = 0.1;
-      let toInject = scoredMemories;
-      if (!rerankerEnabled && scoredMemories.length > 0) {
-        if (scoredMemories[0].score < MIN_TOP1_SCORE) {
-          console.error(
-            `🧠 [prewarm] top-1 score ${scoredMemories[0].score.toFixed(3)} < ${MIN_TOP1_SCORE}, skipping injection`,
-          );
-          toInject = [];
-        } else if (
-          scoredMemories.length > 1 &&
-          scoredMemories[0].score - scoredMemories[1].score < MIN_MARGIN
-        ) {
-          // Low margin: only inject top-1
-          toInject = scoredMemories.slice(0, 1);
-          console.error(
-            `🧠 [prewarm] low margin (${(scoredMemories[0].score - scoredMemories[1].score).toFixed(3)}), capping to top-1`,
-          );
-        }
-      }
-
-      if (toInject.length > 0) {
-        // When reranker is enabled, filter by cross-encoder logit threshold and
-        // treat all passing results as verified (no "possibly relevant" tier).
-        // The threshold guards against injecting irrelevant memories that happen
-        // to rank above the bi-encoder distance cutoff.
-        const VERIFIED_THRESHOLD = 0.7;
-        const RERANKER_THRESHOLD =
-          this.jarvisConfig.reranker?.memoryRelevanceThreshold ?? -2;
-        const verified = rerankerEnabled
-          ? toInject.filter((m) => m.score >= RERANKER_THRESHOLD)
-          : toInject.filter((m) => m.score >= VERIFIED_THRESHOLD);
-        const uncertain = rerankerEnabled
-          ? []
-          : toInject.filter((m) => m.score < VERIFIED_THRESHOLD);
-        prewarmCandidates.push(
-          ...verified.map((m) => ({
-            text: m.text,
-            score: m.score,
-            tier: "verified" as const,
-          })),
-          ...uncertain.map((m) => ({
-            text: m.text,
-            score: m.score,
-            tier: "uncertain" as const,
-          })),
-        );
-        const actualInjected = verified.length + uncertain.length;
-        const filteredOut = toInject.length - actualInjected;
-        console.error(
-          `🧠 [prewarm] subject=${querySubject}, limit=${effectiveLimit}, maxDist=${effectiveMaxDistance}, injected=${actualInjected}` +
-            (filteredOut > 0 ? ` (${filteredOut} below threshold)` : "") +
-            ":\n" +
-            [...verified, ...uncertain]
-              .map(
-                (m, i) =>
-                  `  [${i + 1}] score=${m.score.toFixed(3)} ${m.text.slice(0, 100)}`,
-              )
-              .join("\n"),
-        );
-      }
     } else {
+      const hasPrefix = memoryPolicy.factQuery !== userPrompt;
+      console.error(
+        `🔍 [Jarvis] searchFacts (subject=${querySubject}, prefix=${hasPrefix}): "${memoryPolicy.factQuery.slice(0, 80)}"`,
+      );
+    }
+    if (!memoryPolicy.allowPrewarm || memoryPolicy.prewarmLimit <= 0) {
       console.error(
         `🧠 [prewarm] disabled by intent-aware policy (${memoryPolicy.reasons.join(",") || "not_needed"})`,
       );
     }
-
-    const recentConversationRecallCandidates =
-      buildRecentConversationRecallCandidates({
-        userPrompt,
-        intent,
-        conversationHistory,
-        maxCandidates: 2,
-      });
-    if (recentConversationRecallCandidates.length > 0) {
-      prewarmCandidates.unshift(
-        ...recentConversationRecallCandidates.map((candidate) => ({
-          text: candidate.text,
-          score: 1,
-          tier: "verified" as const,
-        })),
-      );
-      console.error(
-        `🧠 [conversation-recall] recent matches(${recentConversationRecallCandidates.length}): ` +
-          recentConversationRecallCandidates
-            .map((candidate) => candidate.matchedTerms.join(","))
-            .join(" | "),
-      );
-    } else if (
-      intent?.semanticEvidence.memoryRecall.target === "conversation_history"
-    ) {
-      console.error(
-        `🧠 [conversation-recall] no recent chat history match for query="${memoryPolicy.prewarmQuery.slice(0, 80)}"`,
-      );
-    }
-
-    const summaryCandidates: SummaryCandidate[] = [];
-    if (memoryPolicy.allowSummary && this.conversationSummary.trim()) {
-      const summaryChunks = await this.memoryService.searchSummaryChunks(
-        this.sessionId,
-        memoryPolicy.prewarmQuery,
-        2,
-        0.72,
-      );
-      if (summaryChunks.length > 0) {
-        summaryCandidates.push(
-          ...summaryChunks.map((text) => ({
-            text,
-            source: "vector" as const,
-          })),
-        );
-      } else {
-        const fallbackSection = buildRelevantSummarySectionFallback(
-          this.conversationSummary,
-          memoryPolicy.prewarmQuery,
-        );
-        summaryCandidates.push(
-          ...extractSummaryCandidatesFromSection(fallbackSection),
-        );
-      }
-    } else if (this.conversationSummary.trim()) {
+    if (!memoryPolicy.allowSummary && this.conversationSummary.trim()) {
       console.error(
         `🧠 [summary] disabled by intent-aware policy (${memoryPolicy.reasons.join(",") || "not_needed"})`,
+      );
+    }
+    const memoryContract: MemoryContract = {
+      ...memoryPolicy.contract,
+      query: {
+        ...memoryPolicy.contract.query,
+        timeRange:
+          memoryPolicy.contract.query.timeRange ??
+          resolvedDateRange ??
+          undefined,
+      },
+    };
+    const queryRewriteEnabled =
+      this.jarvisConfig.routing?.queryRewrite === true;
+    const retriever = new DefaultMemoryRetriever({
+      stores: createJarvisMemoryStores(this.memoryService, this.sessionId),
+      factLimit: this.jarvisConfig.memory.factRelevanceLimit ?? 5,
+      entryLimit: memoryPolicy.prewarmLimit,
+      entryMaxDistance: memoryPolicy.prewarmMaxDistance,
+      sessionLimit: 2,
+      sessionMaxDistance: 0.72,
+      context: { prompt: userPrompt, history: conversationHistory, intent },
+      extensions: {
+        planQuery: async ({ scope, defaultQuery }) => {
+          if (scope === "fact") return memoryPolicy.factQuery;
+          if (scope === "session") return memoryPolicy.prewarmQuery;
+          if (scope !== "entry") return defaultQuery;
+          if (queryRewriteEnabled && !this.localModelRouter) {
+            console.error(
+              "⚠️ [prewarm] routing.queryRewrite=true but localModelRouter is not initialized — query rewrite skipped. Set routing.enabled=true and routing.model to enable.",
+            );
+            return memoryPolicy.prewarmQuery;
+          }
+          if (
+            queryRewriteEnabled &&
+            memoryPolicy.shouldRewritePrewarmQuery &&
+            this.localModelRouter
+          ) {
+            const rewritten = await this.localModelRouter.rewriteMemoryQuery(
+              memoryPolicy.prewarmQuery,
+              conversationHistory,
+            );
+            if (rewritten) {
+              console.error(
+                `🔍 [prewarm] query rewrite: "${userPrompt.slice(0, 80)}" → "${rewritten}"`,
+              );
+              return rewritten;
+            }
+          }
+          return memoryPolicy.prewarmQuery;
+        },
+        augmentEntries: (): EntryMemorySearchResult[] => {
+          const candidates = buildRecentConversationRecallCandidates({
+            userPrompt,
+            intent,
+            conversationHistory,
+            maxCandidates: 2,
+          });
+          if (candidates.length > 0) {
+            console.error(
+              `🧠 [conversation-recall] recent matches(${candidates.length}): ` +
+                candidates
+                  .map((candidate) => candidate.matchedTerms.join(","))
+                  .join(" | "),
+            );
+          } else if (
+            intent?.semanticEvidence.memoryRecall.target ===
+            "conversation_history"
+          ) {
+            console.error(
+              `🧠 [conversation-recall] no recent chat history match for query="${memoryPolicy.prewarmQuery.slice(0, 80)}"`,
+            );
+          }
+          return candidates.map((candidate, index) => ({
+            id: `recent-conversation-${index}`,
+            kind: "conversation" as const,
+            content: candidate.text,
+            score: 1,
+            entities: candidate.matchedTerms,
+            metadata: { source: "recent_conversation" },
+          }));
+        },
+        fallbackSession: ({ query }) => {
+          if (!this.conversationSummary.trim()) return [];
+          const fallbackSection = buildRelevantSummarySectionFallback(
+            this.conversationSummary,
+            query,
+          );
+          return extractSummaryCandidatesFromSection(fallbackSection).map(
+            (candidate, index) => ({
+              sessionId: this.sessionId,
+              summary: candidate.text,
+              score: 1,
+              reason: `summary_fallback_${index}`,
+              metadata: { source: "fallback" },
+            }),
+          );
+        },
+      },
+    });
+    const retrieval = await retriever.retrieve(memoryContract);
+    const facts = factRecordsFromRetrieval(retrieval);
+    const summaryCandidates = summaryCandidatesFromRetrieval(retrieval);
+    const prewarmCandidates = prewarmCandidatesFromRetrieval({
+      retrieval,
+      rerankerEnabled: this.jarvisConfig.reranker?.enabled === true,
+      rerankerThreshold:
+        this.jarvisConfig.reranker?.memoryRelevanceThreshold ?? -2,
+    });
+    if (prewarmCandidates.length > 0) {
+      console.error(
+        `🧠 [prewarm] subject=${querySubject}, limit=${memoryPolicy.prewarmLimit}, maxDist=${memoryPolicy.prewarmMaxDistance}, injected=${prewarmCandidates.length}` +
+          ":\n" +
+          prewarmCandidates
+            .map(
+              (m, i) =>
+                `  [${i + 1}] score=${m.score.toFixed(3)} ${m.text.slice(0, 100)}`,
+            )
+            .join("\n"),
       );
     }
 
@@ -828,7 +884,7 @@ export class JarvisAgent extends EventEmitter {
       `🔄 [Jarvis] System Prompt Refreshed (subject=${querySubject}, memoryPolicy=${memoryPolicy.reasons.join(",") || "enabled"}). Facts injected: ${injectionPlan.factsInjected}/${facts.length}. Summary bullets: ${injectionPlan.summaryInjected}. Prewarmed memories: ${memoryPolicy.allowPrewarm ? injectionPlan.prewarmInjected : "disabled"}. Memory chars: ${injectionPlan.usedChars}. Rejected: ${injectionPlan.rejected.length}.`,
     );
 
-    return memoryPolicy.contract;
+    return memoryContract;
   }
 
   private buildMemoryInjectionPlanner(): MemoryInjectionPlanner {

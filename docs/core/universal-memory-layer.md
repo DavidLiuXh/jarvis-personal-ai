@@ -611,17 +611,24 @@ jarvis/src/memory-runtime/
   - `DefaultMemoryRetriever`
 - `DefaultMemoryRetriever` 根据 `MemoryContract` 决定是否检索 session / fact / entry；
 - external 或 no-memory contract 不会调用任何 store；
+- `DefaultMemoryRetriever` 已支持 runtime extension points：
+  - `planQuery`：按 session / fact / entry 分别规划 query；
+  - `augmentEntries`：把 recent conversation recall 这类非 store 召回结果并入 entry memory；
+  - `fallbackSession`：在 session vector summary 无命中时执行 summary fallback；
+- `SkillRetrievalExtension` 已作为 prompt 侧资源检索扩展点定义；
 - `core/jarvisMemoryStores.ts` 已提供 Jarvis adapter：
   - `JarvisFactMemoryStore` 包装 `MemoryService.searchFacts()`
   - `JarvisEntryMemoryStore` 包装 `MemoryService.searchWithScore()`
   - `JarvisSessionMemoryStore` 包装 `MemoryService.searchSummaryChunks()`
   - `createJarvisMemoryStores()` 一次性生成三类 adapter
+- Jarvis `agent.ts` 的主响应路径已经开始通过 `DefaultMemoryRetriever` 检索 facts / entries / session summary；
+- Jarvis query rewrite、recent conversation recall、summary fallback 和 skill retrieval 已通过 extension points 保留；
 - 新增单测覆盖默认 retriever 和 Jarvis adapter。
 
 剩余限制：
 
-- Jarvis `agent.ts` 的主响应路径暂未整体切换到 `DefaultMemoryRetriever`；
-- `DefaultMemoryRetriever` 尚未承载 Jarvis 的 recent conversation recall、summary fallback、skill retrieval 和 query rewrite；
+- Jarvis `agent.ts` 尚未整体切换到 `DefaultMemoryRuntime`；
+- skill retrieval 仍在主响应路径调用，只是已经被抽象为 extension shape；
 - runtime feedback collector 还没有统一接入 `MemoryRuntime.observe()`。
 
 ## 10. Eval 和反馈闭环

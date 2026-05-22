@@ -87,6 +87,7 @@ export class JarvisEntryMemoryStore implements EntryMemoryStore {
       content: entry.text,
       score: entry.score,
       entities: options?.contract?.query.entities ?? [],
+      metadata: { source: "memory" },
     }));
   }
 }
@@ -117,6 +118,7 @@ export class JarvisSessionMemoryStore implements SessionMemoryStore {
       summary: chunk,
       score: 1,
       reason: `summary_chunk_${index}`,
+      metadata: { source: "vector" },
     }));
   }
 }
