@@ -43,6 +43,7 @@ const baseCues = (): IntentCueState => ({
   semanticRecallCue: false,
   externalPastEventCue: false,
   currentContextReferenceCue: false,
+  personalFactAssertionCue: false,
   personalCue: false,
   recallCue: false,
   scheduleCue: false,
@@ -55,6 +56,7 @@ const baseCues = (): IntentCueState => ({
 const deps: IntentPolicyDeps = {
   lowConfidenceThreshold: 0.55,
   hasRememberToActionCue: (prompt) => prompt.includes("remember-action"),
+  hasPersonalFactAssertionCue: (prompt) => prompt.includes("personal-fact"),
   hasAnaphoricReference: (prompt, history) =>
     prompt.includes("anaphora") && history.length > 0,
   hasMemoryRecallCue: (prompt) => prompt.includes("memory-recall"),

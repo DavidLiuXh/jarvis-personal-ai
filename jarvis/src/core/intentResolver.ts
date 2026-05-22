@@ -4,8 +4,9 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { ollamaGenerate } from "./ollamaClient.js";
 import { extractDateRange, type DateRange } from "./dateRange.js";
+import type { IntentModelClient } from "../memory-runtime/adapters.js";
+import { OllamaIntentModelClient } from "../memory-runtime/ollamaIntentModelClient.js";
 import {
   createIntentPolicyRegistry,
   logAppliedPolicyTrace,
@@ -179,12 +180,14 @@ export type IntentFrame = {
   intentSteps: IntentStep[];
   topicAnalysis: TopicAnalysis;
   policyTrace: IntentPolicyTraceEntry[];
-  source: "local-intent/ollama";
+  source: string;
 };
 
 export type IntentResolverOptions = {
   baseUrl?: string;
-  model: string;
+  model?: string;
+  modelClient?: IntentModelClient;
+  modelSource?: string;
   timeoutMs?: number;
   historyTurns?: number;
   intentPolicyObservability?: boolean;
@@ -1960,7 +1963,38 @@ function buildFallbackRawIntentResult(prompt: string): RawIntentModelResult {
 }
 
 export class IntentResolver {
-  constructor(private readonly options: IntentResolverOptions) {}
+  private readonly modelClient: IntentModelClient;
+
+  constructor(private readonly options: IntentResolverOptions) {
+    if (options.modelClient) {
+      this.modelClient = options.modelClient;
+      return;
+    }
+    if (!options.model) {
+      throw new Error("IntentResolver requires either model or modelClient");
+    }
+    this.modelClient = new OllamaIntentModelClient({
+      model: options.model,
+      baseUrl: options.baseUrl,
+      timeoutMs: options.timeoutMs,
+    });
+  }
+
+  private generateIntentJson(args: {
+    prompt: string;
+    timeoutMs?: number;
+    contextWindow?: number;
+    maxOutputTokens?: number;
+  }): Promise<string> {
+    return this.modelClient.generateJson({
+      prompt: args.prompt,
+      timeoutMs: args.timeoutMs ?? this.options.timeoutMs ?? 30_000,
+      responseFormat: "json",
+      contextWindow: args.contextWindow,
+      maxOutputTokens: args.maxOutputTokens,
+      temperature: 0,
+    });
+  }
 
   private async parseOrRepairJson(raw: string): Promise<RawIntentModelResult> {
     try {
@@ -1969,17 +2003,10 @@ export class IntentResolver {
       console.error(
         `⚠️ [IntentResolver] Invalid intent JSON, attempting repair: ${parseError.message}`,
       );
-      const repairedRaw = await ollamaGenerate(
-        this.options.model,
-        buildIntentRepairPrompt(raw),
-        {
-          baseUrl: this.options.baseUrl ?? "http://localhost:11434",
-          timeoutMs: this.options.timeoutMs ?? 30_000,
-          format: "json",
-          numCtx: 8192,
-          temperature: 0,
-        },
-      );
+      const repairedRaw = await this.generateIntentJson({
+        prompt: buildIntentRepairPrompt(raw),
+        contextWindow: 8192,
+      });
       try {
         const parsed = parseJsonObject(repairedRaw);
         console.error(`✅ [IntentResolver] Intent JSON repair succeeded`);
@@ -2009,17 +2036,10 @@ export class IntentResolver {
     }
 
     try {
-      const raw = await ollamaGenerate(
-        this.options.model,
-        buildMemoryTargetPrompt(prompt, history),
-        {
-          baseUrl: this.options.baseUrl ?? "http://localhost:11434",
-          timeoutMs: this.options.timeoutMs ?? 30_000,
-          format: "json",
-          numCtx: 4096,
-          temperature: 0,
-        },
-      );
+      const raw = await this.generateIntentJson({
+        prompt: buildMemoryTargetPrompt(prompt, history),
+        contextWindow: 4096,
+      });
       const parsed = parseMemoryTargetObject(raw);
       const target = normalizeMemoryRecallTarget(parsed.target);
       if (target === "none" && parsed.present !== true) {
@@ -2052,17 +2072,10 @@ export class IntentResolver {
     }
 
     try {
-      const raw = await ollamaGenerate(
-        this.options.model,
-        buildEntityHintsPrompt(prompt),
-        {
-          baseUrl: this.options.baseUrl ?? "http://localhost:11434",
-          timeoutMs: this.options.timeoutMs ?? 30_000,
-          format: "json",
-          numCtx: 4096,
-          temperature: 0,
-        },
-      );
+      const raw = await this.generateIntentJson({
+        prompt: buildEntityHintsPrompt(prompt),
+        contextWindow: 4096,
+      });
       const parsed = parseEntityHintsObject(raw);
       const entityHints = {
         tickers: normalizeStringArray(parsed.tickers),
@@ -2114,12 +2127,9 @@ export class IntentResolver {
         : "";
 
     const fullPrompt = `${buildIntentPrompt(preResolved, now)}${historySection}\nUser request: ${prompt}`;
-    const raw = await ollamaGenerate(this.options.model, fullPrompt, {
-      baseUrl: this.options.baseUrl ?? "http://localhost:11434",
-      timeoutMs: this.options.timeoutMs ?? 30_000,
-      format: "json",
-      numCtx: 8192,
-      temperature: 0,
+    const raw = await this.generateIntentJson({
+      prompt: fullPrompt,
+      contextWindow: 8192,
     });
     let parsed: RawIntentModelResult;
     try {
@@ -2465,7 +2475,7 @@ export class IntentResolver {
       confidence,
       confidenceByDimension,
       evidence,
-      source: "local-intent/ollama",
+      source: this.options.modelSource ?? "local-intent/ollama",
       semanticEvidence,
       richIntent,
       intentSteps,

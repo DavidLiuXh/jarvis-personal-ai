@@ -5,10 +5,13 @@
  */
 
 export type IntentModelClientRequest = {
-  system: string;
+  system?: string;
   prompt: string;
   temperature?: number;
   timeoutMs?: number;
+  responseFormat?: "json" | "text";
+  contextWindow?: number;
+  maxOutputTokens?: number;
   metadata?: Record<string, unknown>;
 };
 

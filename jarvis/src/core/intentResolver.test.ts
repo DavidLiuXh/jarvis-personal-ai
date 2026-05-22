@@ -160,6 +160,31 @@ describe("IntentResolver", () => {
     });
   });
 
+  it("can resolve intent through an injected model client", async () => {
+    const modelClient = {
+      generateJson: vi.fn().mockResolvedValue(modelResponse()),
+    };
+    const resolver = new IntentResolver({
+      modelClient,
+      timeoutMs: 5_000,
+      historyTurns: 5,
+    });
+
+    const intent = await resolver.resolve({
+      userPrompt: "天气怎么样",
+      history: [],
+    });
+
+    expect(intent.subject).toBe("external");
+    expect(modelClient.generateJson).toHaveBeenCalledWith(
+      expect.objectContaining({
+        responseFormat: "json",
+        contextWindow: 8192,
+      }),
+    );
+    expect(mockGenerate).not.toHaveBeenCalled();
+  });
+
   it("parses JSON-mode responses that wrap the intent object as a string", async () => {
     const resolver = makeResolver();
     mockGenerate.mockResolvedValueOnce(JSON.stringify(modelResponse()));

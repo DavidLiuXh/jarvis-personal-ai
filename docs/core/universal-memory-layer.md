@@ -457,6 +457,14 @@ Jarvis 现有运行路径保持不变。
 - 对 Gemini CLI runtime 依赖少；
 - 最适合作为通用层第一批资产。
 
+当前实现状态：
+
+- `intentPolicy.ts` 已迁移到 `jarvis/src/memory-runtime/intentPolicy.ts`；
+- `clarificationPolicy.ts` 已迁移到 `jarvis/src/memory-runtime/clarificationPolicy.ts`；
+- `intentAwareMemoryPolicy.ts` 已迁移到 `jarvis/src/memory-runtime/intentAwareMemoryPolicy.ts`；
+- `memoryInjectionPlanner.ts` 已迁移到 `jarvis/src/memory-runtime/memoryInjectionPlanner.ts`；
+- `jarvis/src/core/*` 保留兼容 re-export，现有 Jarvis import 路径不变。
+
 ### Phase 4：抽 IntentResolver adapter
 
 目标：
@@ -470,6 +478,14 @@ Jarvis 现有运行路径保持不变。
 - Jarvis 使用 Ollama adapter 行为不变；
 - eval runner 可以切换多个 model client；
 - resolver 不再直接 import `ollamaClient.ts`。
+
+当前实现状态：
+
+- `IntentResolver` 依赖通用 `IntentModelClient`；
+- 默认 Jarvis 路径使用 `OllamaIntentModelClient`，行为保持为本地 Ollama；
+- JSON repair、memory target extractor、entity hints extractor 和主 intent seed 都通过同一个 model adapter；
+- `scripts/run_intent_evals.ts` 显式构造 `OllamaIntentModelClient` 后传入 resolver，为后续切换 OpenAI/Gemini/vLLM adapter 留出入口；
+- `IntentResolver` 不再直接 import `ollamaClient.ts`。
 
 ### Phase 5：统一 main / tool / subagent memory policy
 

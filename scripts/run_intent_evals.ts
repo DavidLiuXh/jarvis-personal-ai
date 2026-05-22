@@ -8,6 +8,7 @@ import {
   type ConversationTurn,
   type IntentFrame,
 } from "../jarvis/src/core/intentResolver.js";
+import { OllamaIntentModelClient } from "../jarvis/src/memory-runtime/ollamaIntentModelClient.js";
 import type {
   IntentPolicyReasonCategory,
   IntentPolicyReasonSeverity,
@@ -999,9 +1000,13 @@ async function runCase(
   options: { baseUrl: string; timeoutMs: number },
   runIndex = 0,
 ): Promise<CaseResult> {
-  const resolver = new IntentResolver({
+  const modelClient = new OllamaIntentModelClient({
     model,
     baseUrl: options.baseUrl,
+    timeoutMs: options.timeoutMs,
+  });
+  const resolver = new IntentResolver({
+    modelClient,
     timeoutMs: options.timeoutMs,
   });
   const started = Date.now();

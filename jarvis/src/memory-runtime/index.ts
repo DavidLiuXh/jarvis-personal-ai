@@ -12,7 +12,13 @@ export type {
   Reranker,
   VectorStore,
 } from "./adapters.js";
+export type { OllamaIntentModelClientOptions } from "./ollamaIntentModelClient.js";
+export { OllamaIntentModelClient } from "./ollamaIntentModelClient.js";
 export type { MemoryRuntime } from "./runtime.js";
+export * from "./clarificationPolicy.js";
+export * from "./intentAwareMemoryPolicy.js";
+export * from "./intentPolicy.js";
+export * from "./memoryInjectionPlanner.js";
 export type {
   ClarificationQuestion,
   ConversationRole,
