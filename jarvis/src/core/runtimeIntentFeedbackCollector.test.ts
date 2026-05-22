@@ -11,6 +11,7 @@ import { describe, expect, it } from "vitest";
 import type { ClarificationDecision } from "./clarificationPolicy.js";
 import type { IntentFrame } from "./intentResolver.js";
 import {
+  collectMemorySignals,
   collectSignals,
   RuntimeIntentFeedbackCollector,
 } from "./runtimeIntentFeedbackCollector.js";
@@ -224,5 +225,92 @@ describe("RuntimeIntentFeedbackCollector", () => {
         "warning_policy_correction",
       ]),
     );
+  });
+
+  it("records memory runtime feedback events", () => {
+    const outputPath = path.join(
+      fs.mkdtempSync(path.join(os.tmpdir(), "intent-feedback-")),
+      "candidates.jsonl",
+    );
+    const collector = new RuntimeIntentFeedbackCollector({
+      enabled: true,
+      outputPath,
+    });
+    const contract = {
+      needMemory: true,
+      subjectBoundary: "personal" as const,
+      targetScopes: ["entry" as const],
+      memoryTarget: "conversation_history" as const,
+      query: { raw: "recall TypeScript", entities: ["TypeScript"] },
+      confidence: { subject: 0.9, target: 0.9, query: 0.9 },
+      constraints: {
+        allowPersonalFacts: false,
+        allowSessionHistory: false,
+        allowEntries: true,
+        maxChars: 1800,
+      },
+      reasons: ["test"],
+      policyTrace: [],
+    };
+
+    const wrote = collector.recordMemoryEvent({
+      type: "memory_retrieved",
+      sessionId: "session-1",
+      contract,
+      result: { contract, session: [], facts: [], entries: [] },
+    });
+
+    expect(wrote).toBe(true);
+    const [line] = fs.readFileSync(outputPath, "utf8").trim().split("\n");
+    const candidate = JSON.parse(line);
+    expect(candidate.source).toBe("runtime_memory_feedback");
+    expect(candidate.signals).toContain("memory_retrieval_empty");
+  });
+
+  it("detects memory leakage signals", () => {
+    const contract = {
+      needMemory: false,
+      subjectBoundary: "external" as const,
+      targetScopes: [],
+      memoryTarget: "none" as const,
+      query: { raw: "Apple launch", entities: [] },
+      confidence: { subject: 1, target: 1, query: 1 },
+      constraints: {
+        allowPersonalFacts: false,
+        allowSessionHistory: false,
+        allowEntries: false,
+        maxChars: 1800,
+      },
+      reasons: ["external"],
+      policyTrace: [],
+    };
+
+    expect(
+      collectMemorySignals({
+        type: "memory_retrieved",
+        sessionId: "session-1",
+        contract,
+        result: {
+          contract,
+          session: [],
+          facts: [
+            {
+              item: {
+                id: "f1",
+                scope: "fact",
+                subject: "profile",
+                content: "private",
+                confidence: 1,
+                sourceRefs: [],
+                createdAt: "now",
+                updatedAt: "now",
+              },
+              score: 1,
+            },
+          ],
+          entries: [],
+        },
+      }),
+    ).toContain("external_memory_leakage");
   });
 });

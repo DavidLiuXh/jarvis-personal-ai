@@ -10,6 +10,7 @@ import path from "node:path";
 import type { ClarificationDecision } from "./clarificationPolicy.js";
 import type { ConversationTurn, IntentFrame } from "./intentResolver.js";
 import type { RoutingResult } from "./localModelRouter.js";
+import type { MemoryRuntimeEvent } from "../memory-runtime/index.js";
 
 export type RuntimeIntentFeedbackConfig = {
   enabled?: boolean;
@@ -87,6 +88,52 @@ export class RuntimeIntentFeedbackCollector {
     return true;
   }
 
+  public recordMemoryEvent(event: MemoryRuntimeEvent): boolean {
+    if (this.config.enabled !== true) return false;
+    const signals = collectMemorySignals(event);
+    if (signals.length === 0 && this.config.captureAll !== true) return false;
+
+    const generatedAt = new Date().toISOString();
+    const id = `memory.${generatedAt.replace(/[^0-9TZ]/g, "")}.${sanitizeId(
+      event.sessionId,
+    )}`;
+    const outputPath = this.config.outputPath || DEFAULT_OUTPUT_PATH;
+    const redact = this.config.redact !== false;
+    const candidate = {
+      source: "runtime_memory_feedback",
+      generatedAt,
+      sessionId: sanitizeId(event.sessionId),
+      id,
+      signals,
+      observed: sanitizeRuntimeValue(event, redact),
+      candidateCase: {
+        id: `${id}.candidate`,
+        prompt:
+          event.type === "intent_resolved"
+            ? sanitizeAndTruncate(
+                event.prompt,
+                this.config.maxPromptChars ?? DEFAULT_MAX_PROMPT_CHARS,
+                redact,
+              )
+            : "",
+        history: [],
+        expect: {},
+        tags: [
+          "runtime-candidate",
+          "from-memory-runtime-feedback",
+          ...signals.map((signal) => `signal:${signal}`),
+        ],
+      },
+    };
+
+    fs.mkdirSync(path.dirname(outputPath), { recursive: true });
+    fs.appendFileSync(outputPath, `${JSON.stringify(candidate)}\n`);
+    console.error(
+      `🧪 [RuntimeMemoryFeedback] captured ${id} signals=${signals.join(",") || "capture_all"} path=${outputPath}`,
+    );
+    return true;
+  }
+
   private buildCandidate(
     input: RuntimeIntentFeedbackInput,
     signals: string[],
@@ -147,6 +194,41 @@ export class RuntimeIntentFeedbackCollector {
       },
     };
   }
+}
+
+export function collectMemorySignals(event: MemoryRuntimeEvent): string[] {
+  const signals = new Set<string>();
+
+  if (event.type === "memory_retrieved") {
+    const retrieved =
+      event.result.session.length +
+      event.result.facts.length +
+      event.result.entries.length;
+    if (event.contract.needMemory && retrieved === 0) {
+      signals.add("memory_retrieval_empty");
+    }
+    if (
+      event.contract.subjectBoundary === "external" &&
+      (event.result.facts.length > 0 || event.result.entries.length > 0)
+    ) {
+      signals.add("external_memory_leakage");
+    }
+  }
+
+  if (event.type === "memory_injected") {
+    if (event.result.rejected.length > 0) {
+      signals.add("memory_injection_rejected");
+    }
+    if (event.contract.needMemory && event.result.usedChars === 0) {
+      signals.add("memory_injection_empty");
+    }
+  }
+
+  if (event.type === "runtime_feedback") {
+    signals.add(event.signal);
+  }
+
+  return Array.from(signals);
 }
 
 export function collectSignals(input: RuntimeIntentFeedbackInput): string[] {

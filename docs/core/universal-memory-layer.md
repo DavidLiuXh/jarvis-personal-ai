@@ -583,8 +583,8 @@ jarvis/src/memory-runtime/
 
 剩余限制：
 
-- Jarvis 主流程还没有整体改为调用 `DefaultMemoryRuntime`；
-- `DefaultMemoryRuntime.retrieve()` 仍需要由宿主项目注入具体 retrieval 实现。
+- Jarvis 主流程已经开始调用 `DefaultMemoryRuntime`；
+- `DefaultMemoryRuntime.retrieve()` 仍需要由宿主项目注入具体 retrieval 实现，Jarvis 通过 `JarvisMemoryStores` 提供默认实现。
 
 ### Phase 7：Storage / Retrieval Adapter
 
@@ -627,9 +627,44 @@ jarvis/src/memory-runtime/
 
 剩余限制：
 
-- Jarvis `agent.ts` 尚未整体切换到 `DefaultMemoryRuntime`；
 - skill retrieval 仍在主响应路径调用，只是已经被抽象为 extension shape；
-- runtime feedback collector 还没有统一接入 `MemoryRuntime.observe()`。
+- runtime feedback collector 已接入 `MemoryRuntime.observe()` 的 intent / retrieval / injection 事件；
+- `DefaultMemoryRuntime` 目前接管的是主响应路径的 memory lifecycle，tool/subagent 执行层仍通过 `MemoryContract` 消费 memory decision。
+
+### Phase 8：DefaultMemoryRuntime 接入主响应路径
+
+目标：
+
+- Jarvis 主响应路径通过 `DefaultMemoryRuntime` 串起 `understand -> planMemory -> retrieve -> inject -> observe`；
+- 保留现有 prompt 注入质量和日志；
+- 将 memory runtime 事件进入统一反馈通道。
+
+原因：
+
+- 只有 store/retriever adapter 还不够，主流程必须真正消费 runtime lifecycle，Universal Memory Layer 才是运行时而不是工具函数集合；
+- `observe()` 必须成为 runtime 事件入口，才能沉淀 retrieval miss、injection empty、external leakage 等真实样本；
+- 先接入主响应路径，tool/subagent 已经通过 `MemoryContract` 共享同一份 decision，迁移风险可控。
+
+当前实现状态：
+
+- `agent.ts#refreshContext()` 已通过 `DefaultMemoryRuntime` 执行：
+  - `understand`：接收当前已解析的 `IntentFrame`，并发出 `intent_resolved` event；
+  - `planMemory`：调用 `buildIntentAwareMemoryPolicy()` 产出 `MemoryContract`；
+  - `retrieve`：调用 `DefaultMemoryRetriever`，并保留 query rewrite、recent conversation recall、summary fallback；
+  - `inject`：调用 `MemoryInjectionPlanner` 生成 facts / summary / prewarm 注入内容；
+  - `observe`：统一进入 `RuntimeIntentFeedbackCollector.recordMemoryEvent()`；
+- `RuntimeIntentFeedbackCollector` 已支持 memory runtime feedback：
+  - `memory_retrieval_empty`
+  - `external_memory_leakage`
+  - `memory_injection_rejected`
+  - `memory_injection_empty`
+- 新增单测覆盖 memory feedback 记录和 leakage signal。
+
+剩余限制：
+
+- `DefaultMemoryRuntime` 尚未接管 skill retrieval；
+- `DefaultMemoryRuntime` 尚未接管 tool/subagent 执行，只负责主响应 memory lifecycle；
+- memory feedback 目前进入 candidate JSONL，但还没有自动进入稳定 eval case。
 
 ## 10. Eval 和反馈闭环
 
