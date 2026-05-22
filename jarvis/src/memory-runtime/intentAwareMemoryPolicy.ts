@@ -5,6 +5,7 @@
  */
 
 import type { IntentFrame, QuerySubject } from "../core/intentResolver.js";
+import type { MemoryContract, MemoryScope } from "./types.js";
 
 export type IntentAwareMemoryPolicy = {
   querySubject: QuerySubject;
@@ -17,6 +18,7 @@ export type IntentAwareMemoryPolicy = {
   prewarmLimit: number;
   prewarmMaxDistance: number;
   reasons: string[];
+  contract: MemoryContract;
 };
 
 export type IntentAwareMemoryPolicyConfig = {
@@ -40,6 +42,18 @@ function buildTargetQuery(userPrompt: string, intent: IntentFrame): string {
   ].join(" ");
   const parts = [userPrompt, targetText, entityText].filter(Boolean);
   return Array.from(new Set(parts.join(" ").split(/\s+/))).join(" ");
+}
+
+function buildMemoryTargetScopes(args: {
+  allowFacts: boolean;
+  allowSummary: boolean;
+  allowPrewarm: boolean;
+}): MemoryScope[] {
+  const scopes: MemoryScope[] = [];
+  if (args.allowSummary) scopes.push("session");
+  if (args.allowFacts) scopes.push("fact");
+  if (args.allowPrewarm) scopes.push("entry");
+  return scopes;
 }
 
 export function buildIntentAwareMemoryPolicy(args: {
@@ -137,6 +151,56 @@ export function buildIntentAwareMemoryPolicy(args: {
   const prewarmMaxDistance = mixedLike
     ? args.config.prewarmMaxDistanceMixed
     : args.config.memoryMaxDistance;
+  const targetScopes = buildMemoryTargetScopes({
+    allowFacts,
+    allowSummary,
+    allowPrewarm,
+  });
+  const policyTrace =
+    intent?.policyTrace?.map((entry) => ({
+      ruleId: entry.ruleId,
+      reasonCode: entry.reasonCode,
+      applied: entry.applied,
+      severity: entry.reason.severity,
+      details: {
+        stage: entry.stage,
+        category: entry.reason.category,
+      },
+    })) ?? [];
+  const contract: MemoryContract = {
+    needMemory: targetScopes.length > 0,
+    subjectBoundary: querySubject,
+    targetScopes,
+    memoryTarget,
+    query: {
+      raw: args.userPrompt,
+      rewritten: targetQuery !== args.userPrompt ? targetQuery : undefined,
+      entities: intent
+        ? Array.from(
+            new Set([
+              ...intent.richIntent.targets.map((target) => target.value),
+              ...intent.semanticEvidence.entityHints.tickers,
+              ...intent.semanticEvidence.entityHints.technicalTerms,
+              ...intent.semanticEvidence.entityHints.peopleOrCompanies,
+            ]),
+          ).filter(Boolean)
+        : [],
+      timeRange: intent?.resolvedDateRange ?? undefined,
+    },
+    confidence: {
+      subject: confidence?.subject ?? 0.5,
+      target: confidence?.memoryTarget ?? 0.5,
+      query: confidence?.richIntent ?? intent?.confidence ?? 0.5,
+    },
+    constraints: {
+      allowPersonalFacts: allowFacts && querySubject !== "external",
+      allowSessionHistory: allowSummary,
+      allowEntries: allowPrewarm,
+      maxChars: 1800,
+    },
+    reasons,
+    policyTrace,
+  };
 
   return {
     querySubject,
@@ -152,5 +216,6 @@ export function buildIntentAwareMemoryPolicy(args: {
     prewarmLimit,
     prewarmMaxDistance,
     reasons,
+    contract,
   };
 }

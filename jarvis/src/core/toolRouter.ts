@@ -8,7 +8,10 @@ import {
   recordToolCallInteractions,
   type Part,
 } from "../../../gemini-cli/packages/core/src/index.js";
-import type { ClarificationQuestion } from "../memory-runtime/index.js";
+import type {
+  ClarificationQuestion,
+  MemoryContract,
+} from "../memory-runtime/index.js";
 import { getCategoryBaseScore, clampScore } from "./backgroundDistiller.js";
 
 export type ToolCallRequest = {
@@ -255,6 +258,36 @@ function buildAskUserResponse(questions: AskUserQuestion[]): string {
   return parts.join("\n");
 }
 
+function formatMemoryContractForSubagent(
+  contract: MemoryContract | null,
+): string {
+  if (!contract) {
+    return [
+      "<memory_decision>",
+      "status: unavailable",
+      "instruction: Do not assume personal memory was checked. Request explicit context if needed.",
+      "</memory_decision>",
+    ].join("\n");
+  }
+
+  return [
+    "<memory_decision>",
+    `subject: ${contract.subjectBoundary}`,
+    `need_memory: ${contract.needMemory}`,
+    `target: ${contract.memoryTarget}`,
+    `scopes: ${contract.targetScopes.join(",") || "none"}`,
+    `allow_personal_facts: ${contract.constraints.allowPersonalFacts}`,
+    `allow_entries: ${contract.constraints.allowEntries}`,
+    `allow_session_history: ${contract.constraints.allowSessionHistory}`,
+    `query: ${contract.query.rewritten || contract.query.raw}`,
+    `reasons: ${contract.reasons.join(",") || "none"}`,
+    contract.subjectBoundary === "external"
+      ? "instruction: Treat this as an external request. Do not use or infer personal memory."
+      : "instruction: Use only the memory snippets explicitly provided below. Do not infer additional personal history.",
+    "</memory_decision>",
+  ].join("\n");
+}
+
 type TaskCommandHandlerHandle = {
   handleTool: (
     action: string,
@@ -272,6 +305,7 @@ export class ToolRouter {
   private currentTimeWindowDays: number | null = null;
   private currentDateRange: { from: number; to: number } | null = null;
   private currentUserPrompt: string = "";
+  private currentMemoryContract: MemoryContract | null = null;
   private askUserHandler:
     | ((questions: AskUserQuestion[]) => Promise<Record<string, string>>)
     | null = null;
@@ -305,6 +339,11 @@ export class ToolRouter {
     this.currentUserPrompt = prompt;
   }
 
+  /** Called by agent.ts each turn after intent-aware memory planning. */
+  public setCurrentMemoryContract(contract: MemoryContract | null): void {
+    this.currentMemoryContract = contract;
+  }
+
   /**
    * Called by agent.ts each turn with the routing result's exact date range.
    * `resolved` is the pre-computed {from,to} ms object from extractDateRange()
@@ -335,8 +374,8 @@ export class ToolRouter {
     onToolResponse: (response: ToolCallResponse) => void,
   ): Promise<Part[]> {
     const nativeRequests = requests.filter((r) => isNativeTool(r.name));
-    // Inject Jarvis long-term memory into generalist/codebase_investigator requests
-    // so subagents have access to user preferences, past decisions, and context.
+    // Standard tools and subagents consume the same MemoryContract as the main
+    // response path. This prevents subagent-specific personal memory leakage.
     const standardRequests = await Promise.all(
       requests
         .filter((r) => !isNativeTool(r.name))
@@ -345,35 +384,7 @@ export class ToolRouter {
             (r.name === "generalist" || r.name === "codebase_investigator") &&
             typeof r.args.request === "string"
           ) {
-            const query = r.args.request;
-            const [facts, memories] = await Promise.all([
-              this.memoryService.searchFacts(query),
-              this.memoryService.search(query, 3),
-            ]);
-            const contextParts: string[] = [];
-            if (facts.length > 0) {
-              contextParts.push(
-                "<jarvis_memory>\n" +
-                  facts.map((f) => `[${f.category}] ${f.content}`).join("\n") +
-                  "\n</jarvis_memory>",
-              );
-            }
-            if (memories.length > 0) {
-              contextParts.push(
-                "<relevant_past_conversations>\n" +
-                  memories.map((m, i) => `[Memory ${i + 1}]: ${m}`).join("\n") +
-                  "\n</relevant_past_conversations>",
-              );
-            }
-            if (contextParts.length > 0) {
-              return {
-                ...r,
-                args: {
-                  ...r.args,
-                  request: contextParts.join("\n") + "\n\nTask: " + query,
-                },
-              };
-            }
+            return this.withSubagentMemoryContract(r);
           }
           return r;
         }),
@@ -418,6 +429,63 @@ export class ToolRouter {
     return [...directParts, ...standardParts];
   }
 
+  private async withSubagentMemoryContract(
+    request: ToolCallRequest,
+  ): Promise<ToolCallRequest> {
+    const query = request.args.request as string;
+    const contract = this.currentMemoryContract;
+    const memoryDecision = formatMemoryContractForSubagent(contract);
+    const contextParts = [memoryDecision];
+
+    if (
+      contract &&
+      contract.subjectBoundary !== "external" &&
+      contract.needMemory
+    ) {
+      const lookupQuery = contract.query.rewritten || query;
+      const [facts, memories] = await Promise.all([
+        contract.constraints.allowPersonalFacts
+          ? this.memoryService.searchFacts(lookupQuery)
+          : Promise.resolve([]),
+        contract.constraints.allowEntries
+          ? this.memoryService.search(
+              lookupQuery,
+              3,
+              this.currentTimeWindowDays,
+              this.currentDateRange,
+            )
+          : Promise.resolve([]),
+      ]);
+
+      if (facts.length > 0) {
+        contextParts.push(
+          "<jarvis_memory>\n" +
+            facts.map((f) => `[${f.category}] ${f.content}`).join("\n") +
+            "\n</jarvis_memory>",
+        );
+      }
+      if (memories.length > 0) {
+        contextParts.push(
+          "<relevant_past_conversations>\n" +
+            memories.map((m, i) => `[Memory ${i + 1}]: ${m}`).join("\n") +
+            "\n</relevant_past_conversations>",
+        );
+      }
+    } else {
+      console.error(
+        `🛡️ [ToolRouter] Subagent personal memory skipped by MemoryContract: subject=${contract?.subjectBoundary ?? "none"}, target=${contract?.memoryTarget ?? "none"}, reasons=${contract?.reasons.join(",") || "none"}`,
+      );
+    }
+
+    return {
+      ...request,
+      args: {
+        ...request.args,
+        request: contextParts.join("\n") + "\n\nTask: " + query,
+      },
+    };
+  }
+
   private async handleNative(
     req: ToolCallRequest,
     onToolResponse: (r: ToolCallResponse) => void,
@@ -450,6 +518,35 @@ export class ToolRouter {
         output = `Integrated into structured core: ${fact}`;
         console.error(`🛡️ [Jarvis] Memory Redirected: ${fact}`);
       } else if (req.name === "recall_memory") {
+        const memoryDenied =
+          this.currentMemoryContract !== null &&
+          (this.currentMemoryContract.subjectBoundary === "external" ||
+            this.currentMemoryContract.needMemory === false ||
+            !this.currentMemoryContract.targetScopes.includes("entry"));
+        if (memoryDenied) {
+          output =
+            `PERSONAL MEMORY ACCESS DENIED by current MemoryContract. ` +
+            `subject=${this.currentMemoryContract?.subjectBoundary ?? "unknown"}, ` +
+            `target=${this.currentMemoryContract?.memoryTarget ?? "unknown"}, ` +
+            `reasons=${this.currentMemoryContract?.reasons.join(",") || "none"}. ` +
+            `Proceed without personal long-term memory.`;
+          console.error(
+            `🛡️ [Jarvis] recall_memory denied by MemoryContract: subject=${this.currentMemoryContract?.subjectBoundary}, target=${this.currentMemoryContract?.memoryTarget}, reasons=${this.currentMemoryContract?.reasons.join(",") || "none"}`,
+          );
+          onToolResponse({
+            name: req.name,
+            status: "success",
+            output,
+            callId: req.callId,
+          });
+          const responsePayload: unknown =
+            this.client.config.api?.apiVersion === "v1"
+              ? output
+              : { result: output };
+          return {
+            functionResponse: { name: req.name, response: responsePayload },
+          } as Part;
+        }
         const query = (req.args.query as string)?.trim() || "";
         const limit = (req.args.limit as number) || 5;
         // Use LLM-provided time window, falling back to the routing-inferred
@@ -493,7 +590,9 @@ export class ToolRouter {
         }
 
         const effectiveQuery =
-          query || deriveRecallQuery(this.currentUserPrompt);
+          query ||
+          this.currentMemoryContract?.query.rewritten ||
+          deriveRecallQuery(this.currentUserPrompt);
         if (!effectiveQuery) {
           // Neither LLM nor router provided a query — give actionable guidance.
           output =

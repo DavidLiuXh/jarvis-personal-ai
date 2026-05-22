@@ -501,6 +501,17 @@ Jarvis 现有运行路径保持不变。
 - 当前主路径已经 intent-aware，但 subagent/tool 层仍可能独立注入 memory；
 - 这是从“Jarvis 内部优化”走向“通用 memory runtime”的关键边界。
 
+当前实现状态：
+
+- `IntentAwareMemoryPolicy` 现在同时产出 `MemoryContract`；
+- main response path 仍通过 intent-aware policy 做 facts / summary / entry 检索和注入；
+- `ToolRouter` 每轮接收同一份 `MemoryContract`；
+- `generalist` / `codebase_investigator` subagent prompt 会显式携带 `<memory_decision>`；
+- subagent 只有在 contract 允许时才检索 personal facts / entries；
+- external / external_past_event / no-memory contract 会阻止 subagent personal memory 注入；
+- `recall_memory` 在 contract 禁止 personal entries 时返回拒绝说明，不读取长期个人记忆；
+- `recall_memory` 空 query fallback 优先使用 contract 的 rewritten query，并继续继承 router 的 time range / date range。
+
 ## 10. Eval 和反馈闭环
 
 通用 memory 层必须内置 eval 思路，否则无法证明它比普通 RAG 更可靠。

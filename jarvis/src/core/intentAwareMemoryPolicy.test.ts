@@ -136,6 +136,13 @@ describe("buildIntentAwareMemoryPolicy", () => {
     expect(policy.allowSummary).toBe(false);
     expect(policy.allowPrewarm).toBe(false);
     expect(policy.reasons).toContain("external_past_event");
+    expect(policy.contract).toMatchObject({
+      needMemory: false,
+      subjectBoundary: "external",
+      targetScopes: [],
+      memoryTarget: "external_past_event",
+    });
+    expect(policy.contract.constraints.allowPersonalFacts).toBe(false);
   });
 
   it("skips long-term memory for current-context references", () => {
@@ -210,6 +217,12 @@ describe("buildIntentAwareMemoryPolicy", () => {
     expect(policy.prewarmMaxDistance).toBe(0.6);
     expect(policy.factQuery).toContain("PRIVATE_USER_DATA");
     expect(policy.prewarmQuery).toContain("NVDA");
+    expect(policy.contract).toMatchObject({
+      needMemory: true,
+      subjectBoundary: "mixed",
+      targetScopes: ["session", "fact", "entry"],
+    });
+    expect(policy.contract.query.entities).toContain("NVDA");
   });
 
   it("disables prewarm when subject or memory confidence is low", () => {

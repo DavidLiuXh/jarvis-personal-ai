@@ -11,6 +11,7 @@ vi.mock("../../../core/src/index.js", () => ({
 }));
 
 import { ToolRouter } from "./toolRouter.js";
+import type { MemoryContract } from "../memory-runtime/index.js";
 
 describe("ToolRouter", () => {
   const makeReq = (name: string, args: Record<string, unknown> = {}) => ({
@@ -62,6 +63,34 @@ describe("ToolRouter", () => {
       handleTool,
     };
   };
+
+  const memoryContract = (
+    overrides: Partial<MemoryContract> = {},
+  ): MemoryContract => ({
+    needMemory: true,
+    subjectBoundary: "personal",
+    targetScopes: ["fact", "entry"],
+    memoryTarget: "conversation_history",
+    query: {
+      raw: "summarize previous TypeScript discussion",
+      rewritten: "TypeScript discussion",
+      entities: ["TypeScript"],
+    },
+    confidence: {
+      subject: 0.95,
+      target: 0.9,
+      query: 0.9,
+    },
+    constraints: {
+      allowPersonalFacts: true,
+      allowSessionHistory: true,
+      allowEntries: true,
+      maxChars: 1800,
+    },
+    reasons: ["test"],
+    policyTrace: [],
+    ...overrides,
+  });
 
   it("routes save_memory (fact arg) with two-factor importance formula", async () => {
     const { router, saveFact } = makeRouter();
@@ -203,6 +232,38 @@ describe("ToolRouter", () => {
     expect(JSON.stringify(response)).toContain("memory item 1");
   });
 
+  it("recall_memory is denied when the MemoryContract forbids personal entries", async () => {
+    const search = vi.fn().mockResolvedValue(["should not be read"]);
+    const { router } = makeRouter({ search });
+    router.setCurrentMemoryContract(
+      memoryContract({
+        needMemory: false,
+        subjectBoundary: "external",
+        targetScopes: [],
+        memoryTarget: "external_past_event",
+        constraints: {
+          allowPersonalFacts: false,
+          allowSessionHistory: false,
+          allowEntries: false,
+          maxChars: 1800,
+        },
+        reasons: ["external_past_event"],
+      }),
+    );
+
+    const parts = await router.route(
+      [makeReq("recall_memory", { query: "Apple launch" })],
+      new AbortController().signal,
+      vi.fn(),
+    );
+
+    expect(search).not.toHaveBeenCalled();
+    const response = JSON.stringify(
+      (parts[0] as any).functionResponse.response,
+    );
+    expect(response).toContain("PERSONAL MEMORY ACCESS DENIED");
+  });
+
   it("recall_memory: derives topic keywords when LLM sends an empty query", async () => {
     const search = vi.fn().mockResolvedValue(["market research result"]);
     const { router } = makeRouter({ search });
@@ -267,6 +328,64 @@ describe("ToolRouter", () => {
       output: "file content",
       callId: "call-read_file",
     });
+  });
+
+  it("injects subagent memory only through the current MemoryContract", async () => {
+    const searchFacts = vi
+      .fn()
+      .mockResolvedValue([{ category: "preference", content: "likes TS" }]);
+    const search = vi.fn().mockResolvedValue(["previous TS discussion"]);
+    const schedule = vi.fn().mockResolvedValue([]);
+    const { router } = makeRouter({ searchFacts, search, schedule });
+    router.setCurrentMemoryContract(memoryContract());
+
+    const req = makeReq("generalist", {
+      request: "Summarize the TypeScript direction",
+    });
+    await router.route([req], new AbortController().signal, vi.fn());
+
+    expect(searchFacts).toHaveBeenCalledWith("TypeScript discussion");
+    expect(search).toHaveBeenCalledWith("TypeScript discussion", 3, null, null);
+    const scheduled = schedule.mock.calls[0][0][0];
+    expect(scheduled.args.request).toContain("<memory_decision>");
+    expect(scheduled.args.request).toContain("<jarvis_memory>");
+    expect(scheduled.args.request).toContain("<relevant_past_conversations>");
+  });
+
+  it("does not inject personal memory into subagents for external contracts", async () => {
+    const searchFacts = vi.fn().mockResolvedValue([]);
+    const search = vi.fn().mockResolvedValue([]);
+    const schedule = vi.fn().mockResolvedValue([]);
+    const { router } = makeRouter({ searchFacts, search, schedule });
+    router.setCurrentMemoryContract(
+      memoryContract({
+        needMemory: false,
+        subjectBoundary: "external",
+        targetScopes: [],
+        memoryTarget: "none",
+        constraints: {
+          allowPersonalFacts: false,
+          allowSessionHistory: false,
+          allowEntries: false,
+          maxChars: 1800,
+        },
+        reasons: ["external_subject"],
+      }),
+    );
+
+    const req = makeReq("codebase_investigator", {
+      request: "Analyze HTTP cache semantics",
+    });
+    await router.route([req], new AbortController().signal, vi.fn());
+
+    expect(searchFacts).not.toHaveBeenCalled();
+    expect(search).not.toHaveBeenCalled();
+    const scheduled = schedule.mock.calls[0][0][0];
+    expect(scheduled.args.request).toContain("subject: external");
+    expect(scheduled.args.request).toContain(
+      "Do not use or infer personal memory",
+    );
+    expect(scheduled.args.request).not.toContain("<jarvis_memory>");
   });
 
   it("routes task_list to taskCommandHandler.handleTool", async () => {

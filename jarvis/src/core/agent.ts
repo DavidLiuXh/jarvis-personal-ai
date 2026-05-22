@@ -66,6 +66,7 @@ import {
   type BackgroundTaskRunner,
 } from "./backgroundTaskRunner.js";
 import { RuntimeIntentFeedbackCollector } from "./runtimeIntentFeedbackCollector.js";
+import type { MemoryContract } from "../memory-runtime/index.js";
 
 function extractSummaryCandidatesFromSection(
   section: string,
@@ -534,7 +535,7 @@ export class JarvisAgent extends EventEmitter {
       content: string;
     }> = [],
     intent: IntentFrame | null = null,
-  ) {
+  ): Promise<MemoryContract> {
     // Strip thoughtSignature from historical turns to reduce token usage.
     // The active loop (turns after the last user text message) must keep
     // thoughtSignature for API validation; older turns have no such requirement.
@@ -826,6 +827,8 @@ export class JarvisAgent extends EventEmitter {
     console.error(
       `🔄 [Jarvis] System Prompt Refreshed (subject=${querySubject}, memoryPolicy=${memoryPolicy.reasons.join(",") || "enabled"}). Facts injected: ${injectionPlan.factsInjected}/${facts.length}. Summary bullets: ${injectionPlan.summaryInjected}. Prewarmed memories: ${memoryPolicy.allowPrewarm ? injectionPlan.prewarmInjected : "disabled"}. Memory chars: ${injectionPlan.usedChars}. Rejected: ${injectionPlan.rejected.length}.`,
     );
+
+    return memoryPolicy.contract;
   }
 
   private buildMemoryInjectionPlanner(): MemoryInjectionPlanner {
@@ -1258,7 +1261,7 @@ export class JarvisAgent extends EventEmitter {
           }
         }
 
-        await this.refreshContext(
+        const memoryContract = await this.refreshContext(
           userPrompt,
           querySubject,
           timeWindowDays,
@@ -1266,6 +1269,7 @@ export class JarvisAgent extends EventEmitter {
           conversationHistory,
           intentFrame,
         );
+        this.toolRouter.setCurrentMemoryContract(memoryContract);
 
         // Restore getModel() after refreshContext() — it reads config state
         // during skill/fact retrieval and must see the Jarvis-chosen model.

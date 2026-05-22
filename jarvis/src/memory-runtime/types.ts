@@ -32,8 +32,11 @@ export type MemoryScope = "session" | "fact" | "entry";
 export type MemoryTarget =
   | "none"
   | "current_context"
+  | "current_context_reference"
   | "conversation_history"
+  | "user_memory"
   | "user_profile"
+  | "external_past_event"
   | "episodic_event"
   | "project_context";
 
