@@ -422,6 +422,19 @@ packages/memory-runtime/
 - `ClarificationQuestion` 从 ToolRouter 类型中解耦；
 - 现有测试通过。
 
+当前实现入口：
+
+```text
+jarvis/src/memory-runtime/
+  adapters.ts
+  runtime.ts
+  types.ts
+  index.ts
+```
+
+这一阶段只冻结通用契约，不迁移 resolver、policy、retrieval 或 injection 的具体实现。
+Jarvis 现有运行路径保持不变。
+
 ### Phase 3：迁移纯逻辑模块
 
 目标：

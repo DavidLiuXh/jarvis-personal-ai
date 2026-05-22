@@ -8,6 +8,7 @@ import {
   recordToolCallInteractions,
   type Part,
 } from "../../../gemini-cli/packages/core/src/index.js";
+import type { ClarificationQuestion } from "../memory-runtime/index.js";
 import { getCategoryBaseScore, clampScore } from "./backgroundDistiller.js";
 
 export type ToolCallRequest = {
@@ -197,18 +198,7 @@ type ChannelRegistryHandle = {
   pushSafe: (channel: string, chatId: string, text: string) => Promise<boolean>;
 };
 
-export type AskUserQuestion = {
-  question: string;
-  header?: string;
-  /** Mirrors gemini-cli core QuestionType:
-   *  "choice" — radio/checkbox with options (default when options present)
-   *  "text"   — free-form textarea (default when no options)
-   *  "yesno"  — Yes / No buttons with optional Other feedback */
-  type?: "choice" | "text" | "yesno";
-  placeholder?: string;
-  options?: Array<{ label: string; description?: string }>;
-  multiSelect?: boolean;
-};
+export type AskUserQuestion = ClarificationQuestion;
 
 /** Converts ask_user answers map into LLM-readable text. */
 function buildAnswersText(

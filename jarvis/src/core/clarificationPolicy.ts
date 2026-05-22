@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import type { AskUserQuestion } from "./toolRouter.js";
+import type { ClarificationQuestion } from "../memory-runtime/index.js";
 import type { IntentFrame, QuerySubject } from "./intentResolver.js";
 
 export type ClarificationPolicyInput = {
@@ -35,7 +35,7 @@ export type ClarificationDecision = {
   scope: ClarificationScope;
   shouldAsk: boolean;
   blocking: boolean;
-  questions: AskUserQuestion[];
+  questions: ClarificationQuestion[];
   reasons: string[];
   stepRequirements: ClarificationStepRequirement[];
 };
@@ -82,8 +82,8 @@ function hasHighSeverityAmbiguity(
 }
 
 function addQuestion(
-  questions: AskUserQuestion[],
-  question: AskUserQuestion,
+  questions: ClarificationQuestion[],
+  question: ClarificationQuestion,
 ): void {
   if (questions.some((existing) => existing.header === question.header)) return;
   questions.push(question);
@@ -126,7 +126,7 @@ function addStepRequirement(
 }
 
 function buildDecision(args: {
-  questions: AskUserQuestion[];
+  questions: ClarificationQuestion[];
   reasons: string[];
   stepRequirements: ClarificationStepRequirement[];
 }): ClarificationDecision {
@@ -165,7 +165,7 @@ export function applyClarificationChannelState(
 export function buildClarificationDecision(
   input: ClarificationPolicyInput,
 ): ClarificationDecision {
-  const questions: AskUserQuestion[] = [];
+  const questions: ClarificationQuestion[] = [];
   const reasons: string[] = [];
   const stepRequirements: ClarificationStepRequirement[] = [];
   const { intent } = input;
