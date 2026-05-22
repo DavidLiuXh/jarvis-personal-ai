@@ -2,6 +2,9 @@
 
 本文档说明 Jarvis 在收到一条用户输入后，如何逐层理解意图、选择模型、决定是否追问、决定是否注入记忆、构造上下文、执行工具，并最终返回响应。
 
+如果从更大的可复用架构视角看，意图理解层也是通用 Memory Runtime 的入口控制器。相关三层记忆模型、Memory Contract 和迁移路线见
+[`docs/core/universal-memory-layer.md`](./universal-memory-layer.md)。
+
 它同时覆盖三件事：
 
 - 当前 Intent Understanding 层的实际运行链路；
