@@ -197,6 +197,7 @@ export function buildClarificationDecision(
     if (
       !isProactiveTask &&
       step.type === "schedule" &&
+      !["delete", "read"].includes(intent.richIntent.action) &&
       !hasConcreteScheduleTime(intent, input.userPrompt)
     ) {
       addStepRequirement(stepRequirements, {
@@ -280,6 +281,7 @@ export function buildClarificationDecision(
   if (
     !isProactiveTask &&
     intent.taskType === "schedule" &&
+    !["delete", "read"].includes(intent.richIntent.action) &&
     !hasConcreteScheduleTime(intent, input.userPrompt)
   ) {
     reasons.push("schedule_time_ambiguous");

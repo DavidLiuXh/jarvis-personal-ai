@@ -75,14 +75,27 @@ export type IntentEvidence = {
   };
 };
 
-export type RichIntentPrimaryAction =
-  | "answer"
-  | "recall"
-  | "analyze"
-  | "modify"
-  | "run"
+export type RichIntentDomain =
+  | "task_management"
+  | "memory_management"
+  | "code_modification"
+  | "system_control"
+  | "general_chat"
+  | "external_knowledge"
+  | "investment_analysis"
+  | "unknown";
+
+export type RichIntentAction =
+  | "create"
+  | "read"
+  | "update"
+  | "delete"
+  | "execute"
   | "schedule"
-  | "delegate";
+  | "answer"
+  | "analyze"
+  | "delegate"
+  | "recall";
 
 export type RichIntentTargetType =
   | "memory"
@@ -95,8 +108,19 @@ export type RichIntentTargetType =
 
 export type RichIntentRiskLevel = "low" | "medium" | "high";
 
+export type RichIntentPrimaryAction =
+  | "answer"
+  | "recall"
+  | "analyze"
+  | "modify"
+  | "run"
+  | "schedule"
+  | "delegate";
+
 export type RichIntent = {
   userGoal: string;
+  domain: RichIntentDomain;
+  action: RichIntentAction;
   primaryAction: RichIntentPrimaryAction;
   targets: Array<{
     type: RichIntentTargetType;
