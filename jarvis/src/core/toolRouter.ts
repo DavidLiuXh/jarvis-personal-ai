@@ -130,6 +130,110 @@ const RECALL_QUERY_STOPWORDS = new Set([
   "related",
 ]);
 
+function normalizePushChannel(value: unknown): string {
+  if (typeof value !== "string") return "";
+  const normalized = value.trim().toLowerCase();
+  if (
+    normalized === "wechat" ||
+    normalized === "微信" ||
+    normalized === "weixin"
+  ) {
+    return "wechat";
+  }
+  if (
+    normalized === "feishu" ||
+    normalized === "飞书" ||
+    normalized === "lark"
+  ) {
+    return "feishu";
+  }
+  return "";
+}
+
+function derivePushChannelFromPrompt(prompt: string): string {
+  const lower = prompt.toLowerCase();
+  if (
+    lower.includes("wechat") ||
+    lower.includes("weixin") ||
+    prompt.includes("微信")
+  ) {
+    return "wechat";
+  }
+  if (
+    lower.includes("feishu") ||
+    lower.includes("lark") ||
+    prompt.includes("飞书")
+  ) {
+    return "feishu";
+  }
+  return "";
+}
+
+function decodeShellEchoPayload(payload: string): string {
+  return payload
+    .replace(/\\n/g, "\n")
+    .replace(/\\"/g, '"')
+    .replace(/\\'/g, "'")
+    .replace(/\\\\/g, "\\");
+}
+
+function extractEchoContent(command: string): string {
+  const trimmed = command.trim();
+  const quoted = trimmed.match(
+    /^echo\s+(["'])([\s\S]*)\1\s*(?:\|\s*pbcopy\s*)?$/i,
+  );
+  if (quoted) return decodeShellEchoPayload(quoted[2]).trim();
+
+  const unquoted = trimmed.match(/^echo\s+([\s\S]+?)(?:\s*\|\s*pbcopy\s*)?$/i);
+  return unquoted ? decodeShellEchoPayload(unquoted[1]).trim() : "";
+}
+
+function isShellPushWorkaround(req: ToolCallRequest): boolean {
+  if (req.name !== "run_shell_command") return false;
+  const command =
+    typeof req.args.command === "string" ? req.args.command.toLowerCase() : "";
+  const description =
+    typeof req.args.description === "string"
+      ? req.args.description.toLowerCase()
+      : "";
+
+  return (
+    command.includes("pbcopy") ||
+    description.includes("clipboard") ||
+    description.includes("copy") ||
+    description.includes("剪贴板") ||
+    description.includes("粘贴") ||
+    description.includes("手动")
+  );
+}
+
+function buildPushRequestFromShellWorkarounds(
+  requests: ToolCallRequest[],
+  currentUserPrompt: string,
+): ToolCallRequest | null {
+  const channel = derivePushChannelFromPrompt(currentUserPrompt);
+  if (!channel) return null;
+
+  for (const req of requests) {
+    if (!isShellPushWorkaround(req)) continue;
+    const command =
+      typeof req.args.command === "string" ? req.args.command : "";
+    const content = extractEchoContent(command);
+    if (!content) continue;
+    return {
+      name: "push_to_channel",
+      callId: `${req.callId}-push_to_channel`,
+      args: {
+        channel,
+        content,
+        chat_id: "",
+      },
+    };
+  }
+
+  return null;
+}
+
 /** Returns 9 if the text contains an explicit "remember" intent, 6 otherwise. */
 function computeRememberIntentScore(text?: string): number {
   if (!text) return 6;
@@ -344,6 +448,24 @@ export class ToolRouter {
     this.currentMemoryContract = contract;
   }
 
+  public buildPushToChannelRequestFromContent(
+    content: string,
+    callId = `jarvis-auto-push-${Date.now()}`,
+  ): ToolCallRequest | null {
+    const channel = derivePushChannelFromPrompt(this.currentUserPrompt);
+    const trimmedContent = content.trim();
+    if (!channel || !trimmedContent) return null;
+    return {
+      name: "push_to_channel",
+      callId,
+      args: {
+        channel,
+        content: trimmedContent,
+        chat_id: "",
+      },
+    };
+  }
+
   /**
    * Called by agent.ts each turn with the routing result's exact date range.
    * `resolved` is the pre-computed {from,to} ms object from extractDateRange()
@@ -373,11 +495,30 @@ export class ToolRouter {
     signal: AbortSignal,
     onToolResponse: (response: ToolCallResponse) => void,
   ): Promise<Part[]> {
-    const nativeRequests = requests.filter((r) => isNativeTool(r.name));
+    const rewrittenPushRequest = buildPushRequestFromShellWorkarounds(
+      requests,
+      this.currentUserPrompt,
+    );
+    const effectiveRequests = rewrittenPushRequest
+      ? [
+          ...requests.filter((r) => !isShellPushWorkaround(r)),
+          rewrittenPushRequest,
+        ]
+      : requests;
+
+    if (rewrittenPushRequest) {
+      console.error(
+        "📤 [Jarvis] Rewriting shell clipboard workaround to push_to_channel.",
+      );
+    }
+
+    const nativeRequests = effectiveRequests.filter((r) =>
+      isNativeTool(r.name),
+    );
     // Standard tools and subagents consume the same MemoryContract as the main
     // response path. This prevents subagent-specific personal memory leakage.
     const standardRequests = await Promise.all(
-      requests
+      effectiveRequests
         .filter((r) => !isNativeTool(r.name))
         .map(async (r) => {
           if (
@@ -668,10 +809,22 @@ export class ToolRouter {
           output = buildAskUserResponse(questions);
         }
       } else if (req.name === "push_to_channel") {
-        const channel = req.args.channel as string;
+        const requestedChannel = normalizePushChannel(req.args.channel);
+        const fallbackChannel = derivePushChannelFromPrompt(
+          this.currentUserPrompt,
+        );
+        const channel = requestedChannel || fallbackChannel;
         const content = req.args.content as string;
         const chatId = (req.args.chat_id as string) || "";
-        if (this.channelRegistry) {
+        if (!channel) {
+          output =
+            '❌ push_to_channel requires a target channel. Supported values: "wechat" or "feishu".';
+        } else if (this.channelRegistry) {
+          if (!requestedChannel && fallbackChannel) {
+            console.error(
+              `📤 [Jarvis] push_to_channel missing channel arg — derived "${fallbackChannel}" from user prompt.`,
+            );
+          }
           console.error(`📤 [Jarvis] Pushing to ${channel}...`);
           const pushed = await this.channelRegistry.pushSafe(
             channel,

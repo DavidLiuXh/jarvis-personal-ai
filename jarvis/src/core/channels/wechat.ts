@@ -38,7 +38,17 @@ interface WechatSession {
   syncBuf: string;
   botId: string;
   userId: string;
+  lastInboundUserId?: string;
+  lastInboundContextToken?: string;
 }
+
+type WechatApiResult = {
+  ret?: number;
+  msg?: string;
+  errmsg?: string;
+  message?: string;
+  [key: string]: unknown;
+};
 
 /**
  * JARVIS WECHAT CHANNEL (Official Plugin Integration)
@@ -82,9 +92,9 @@ export class WechatChannel {
     fs.writeFileSync(SESSION_FILE, JSON.stringify(session, null, 2));
   }
 
-  /** Returns the logged-in user's ID for use as default push target. */
+  /** Returns the most recent verified chat peer for use as default push target. */
   public getDefaultUserId(): string {
-    return this.session?.userId ?? "";
+    return this.session?.lastInboundUserId || this.session?.userId || "";
   }
 
   /**
@@ -97,6 +107,35 @@ export class WechatChannel {
     const configUrl = config.wechat?.apiBaseUrl;
     const base = (configUrl || this.session?.baseUrl || "").trim();
     return base.endsWith("/") ? base : base + "/";
+  }
+
+  private async ensureWechatApiSuccess(
+    res: Awaited<ReturnType<typeof wfetch>>,
+    action: string,
+  ): Promise<WechatApiResult> {
+    if (!res.ok) {
+      throw new Error(`[Wechat] ${action} failed: HTTP ${res.status}`);
+    }
+
+    let payload: WechatApiResult = {};
+    try {
+      payload = (await res.json()) as WechatApiResult;
+    } catch {
+      return payload;
+    }
+
+    if (payload.ret !== undefined && payload.ret !== 0) {
+      const detail =
+        payload.msg ||
+        payload.errmsg ||
+        payload.message ||
+        JSON.stringify(payload);
+      throw new Error(
+        `[Wechat] ${action} failed: ret=${payload.ret}, detail=${detail}`,
+      );
+    }
+
+    return payload;
   }
 
   /** Proactively send a plain-text message to a user without waiting for user input. */
@@ -117,13 +156,18 @@ export class WechatChannel {
             message_type: 2,
             message_state: 2,
             item_list: [{ type: 1, text_item: { text } }],
+            ...(this.session?.lastInboundUserId === userId &&
+            this.session?.lastInboundContextToken
+              ? { context_token: this.session.lastInboundContextToken }
+              : {}),
           },
         }),
       },
     );
-    if (!res.ok) {
-      throw new Error(`[Wechat] sendProactive failed: HTTP ${res.status}`);
-    }
+    await this.ensureWechatApiSuccess(res, "sendProactive");
+    console.error(
+      `✅ [Wechat] Proactive message accepted by API for user ${userId}`,
+    );
   }
 
   public async start() {
@@ -274,6 +318,12 @@ export class WechatChannel {
 
     if (!textItem) return;
 
+    if (this.session) {
+      this.session.lastInboundUserId = fromUser;
+      if (contextToken) this.session.lastInboundContextToken = contextToken;
+      this.saveSession(this.session);
+    }
+
     console.error(`📩 [Wechat] Processing mission from [${fromUser}]`);
 
     const sessionId = `wechat-${fromUser}`;
@@ -284,7 +334,7 @@ export class WechatChannel {
     const reply = async (text: string, isFinish: boolean = false) => {
       if (!text.trim()) return;
       try {
-        await wfetch(
+        const res = await wfetch(
           new URL("ilink/bot/sendmessage", this.getBaseUrl()).toString(),
           {
             method: "POST",
@@ -302,6 +352,7 @@ export class WechatChannel {
             }),
           },
         );
+        await this.ensureWechatApiSuccess(res, "sendReply");
       } catch (e) {
         console.error(`❌ [Wechat] Failed to send reply: ${e.message}`);
       }

@@ -80,11 +80,26 @@ function deriveStyleFromIdentity(identityFacts: FactRecord[]): string | null {
 const PUSH_ACTION_KEYWORDS = [
   "发到",
   "推送到",
+  "发给",
+  "推给",
+  "转到",
+  "同步到",
+  "发送到",
+  "分享到",
   "send to",
   "push to",
+  "forward to",
+  "deliver to",
   "share on",
 ];
-const PUSH_TARGET_KEYWORDS = ["微信", "飞书", "wechat", "feishu"];
+const PUSH_TARGET_KEYWORDS = [
+  "微信",
+  "飞书",
+  "wechat",
+  "weixin",
+  "feishu",
+  "lark",
+];
 
 // Task: only inject when BOTH a time keyword AND an action keyword are present.
 // TASK_STRONG_PATTERNS was previously a subset of TASK_TIME_KEYWORDS, which
@@ -294,8 +309,12 @@ export class SystemPromptBuilder {
 
     if (protocols.pushToChannel) {
       sections.push(`${n++}. **PUSH_TO_CHANNEL (AVAILABLE — USE IMMEDIATELY)**:
-   - When the user asks to send content to WeChat or Feishu, call push_to_channel directly.
-   - Do not claim this capability is unavailable when the tool is registered.`);
+   - When the user asks to send or push content to WeChat or Feishu, call push_to_channel directly in the tool phase.
+   - Use exact channel values: "wechat" for WeChat and "feishu" for Feishu. Put the final message body in content.
+   - If the user names no chat_id, pass chat_id as an empty string and let the system use the default target.
+   - Do not tell the user to copy the content manually before attempting push_to_channel.
+   - Do not use run_shell_command, echo, or any shell workaround as a substitute for push_to_channel.
+   - Do not claim this capability is unavailable unless push_to_channel actually returns a failure.`);
     }
 
     if (protocols.taskManagement) {

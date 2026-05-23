@@ -496,6 +496,105 @@ describe("ToolRouter", () => {
     expect(pushSafe).toHaveBeenCalledWith("feishu", "oc_123", "Report");
   });
 
+  it("push_to_channel derives channel from current user prompt when arg is missing", async () => {
+    const pushSafe = vi.fn().mockResolvedValue(true);
+    const { router } = makeRouter({ pushSafe });
+
+    router.setCurrentUserPrompt("将上述关于dcf的内容推送到wechat");
+
+    const req = makeReq("push_to_channel", {
+      content: "DCF summary",
+    });
+    await router.route([req], new AbortController().signal, vi.fn());
+
+    expect(pushSafe).toHaveBeenCalledWith("wechat", "", "DCF summary");
+  });
+
+  it("push_to_channel normalizes localized channel aliases", async () => {
+    const pushSafe = vi.fn().mockResolvedValue(true);
+    const { router } = makeRouter({ pushSafe });
+
+    const req = makeReq("push_to_channel", {
+      channel: "微信",
+      content: "Hello",
+    });
+    await router.route([req], new AbortController().signal, vi.fn());
+
+    expect(pushSafe).toHaveBeenCalledWith("wechat", "", "Hello");
+  });
+
+  it("push_to_channel returns a clear error when channel cannot be inferred", async () => {
+    const pushSafe = vi.fn().mockResolvedValue(true);
+    const { router } = makeRouter({ pushSafe });
+
+    const req = makeReq("push_to_channel", {
+      content: "Hello",
+    });
+    const parts = await router.route(
+      [req],
+      new AbortController().signal,
+      vi.fn(),
+    );
+
+    expect(pushSafe).not.toHaveBeenCalled();
+    expect(
+      JSON.stringify((parts[0] as any).functionResponse.response),
+    ).toContain("push_to_channel requires a target channel");
+  });
+
+  it("builds a push_to_channel request from generated content for explicit channel push prompts", () => {
+    const { router } = makeRouter();
+
+    router.setCurrentUserPrompt("把这段总结推送到微信");
+
+    const req = router.buildPushToChannelRequestFromContent(
+      "### Summary\n\nContent body",
+      "auto-call-1",
+    );
+
+    expect(req).toEqual({
+      name: "push_to_channel",
+      callId: "auto-call-1",
+      args: {
+        channel: "wechat",
+        content: "### Summary\n\nContent body",
+        chat_id: "",
+      },
+    });
+  });
+
+  it("does not build a push_to_channel request when prompt has no channel target", () => {
+    const { router } = makeRouter();
+
+    router.setCurrentUserPrompt("整理一下这段内容");
+
+    expect(
+      router.buildPushToChannelRequestFromContent("Content body"),
+    ).toBeNull();
+  });
+
+  it("rewrites shell clipboard workaround to push_to_channel for channel push requests", async () => {
+    const pushSafe = vi.fn().mockResolvedValue(true);
+    const schedule = vi.fn().mockResolvedValue([]);
+    const { router } = makeRouter({ pushSafe, schedule });
+
+    router.setCurrentUserPrompt("将上述 AI 行业动态推送到微信");
+
+    const req = makeReq("run_shell_command", {
+      command:
+        'echo "### AI 行业动态\\n\\n**总结**：进入智能体时代。" | pbcopy',
+      description: "将动态内容复制到剪贴板以便用户手动粘贴。",
+    });
+    await router.route([req], new AbortController().signal, vi.fn());
+
+    expect(schedule).not.toHaveBeenCalled();
+    expect(pushSafe).toHaveBeenCalledWith(
+      "wechat",
+      "",
+      "### AI 行业动态\n\n**总结**：进入智能体时代。",
+    );
+  });
+
   it("recall_memory: router-set dateRange used as fallback when LLM omits date params", async () => {
     const search = vi.fn().mockResolvedValue(["monday result"]);
     const { router } = makeRouter({ search });

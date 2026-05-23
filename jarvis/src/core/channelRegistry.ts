@@ -94,6 +94,9 @@ export class ChannelRegistry {
         );
         return false;
       }
+      console.error(
+        `📨 [ChannelRegistry] pushSafe channel="${channel}" target="${resolvedChatId}" defaultTarget=${chatId ? "no" : "yes"}`,
+      );
       await adapter.push(resolvedChatId, text, type, meta);
       return true;
     } catch (e: any) {

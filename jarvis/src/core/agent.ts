@@ -1530,6 +1530,26 @@ export class JarvisAgent extends EventEmitter {
 
                 currentQueryParts = responseParts;
               } else {
+                const autoPushRequest = !allToolsCalled.has("push_to_channel")
+                  ? this.toolRouter.buildPushToChannelRequestFromContent(
+                      turnTextAccumulated,
+                    )
+                  : null;
+                if (autoPushRequest) {
+                  console.error(
+                    "📤 [Jarvis] Explicit channel push request completed by generated content — invoking push_to_channel.",
+                  );
+                  allToolsCalled.add("push_to_channel");
+                  currentQueryParts = await this.toolRouter.route(
+                    [autoPushRequest],
+                    abortController.signal,
+                    (resp) =>
+                      this.emit(JarvisEventType.TOOL_CALL_RESPONSE, resp),
+                  );
+                  success = false;
+                  continue;
+                }
+
                 const missingToolPrompt =
                   intentToolEnforcements < MAX_INTENT_TOOL_ENFORCEMENTS
                     ? buildMissingIntentToolPrompt(intentFrame, allToolsCalled)

@@ -352,14 +352,19 @@ export class AgentInitializer {
     const pushToChannelTool = {
       name: "push_to_channel",
       description:
-        'Push a message to WeChat or Feishu. Call this when user says "发到微信", "推送到飞书", "send to WeChat", "push to Feishu", or asks to share/send content to a messaging channel.',
+        'Push a message to WeChat or Feishu. Call this immediately when the user says "发到微信", "推送到飞书", "send to WeChat", "push to Feishu", or asks to share/send content to a messaging channel. Do not replace this with run_shell_command or manual copy instructions.',
       parameters: {
         type: "object",
         properties: {
-          channel: { type: "string", description: '"wechat" or "feishu"' },
+          channel: {
+            type: "string",
+            description:
+              'Target channel. Use exact lowercase values: "wechat" or "feishu".',
+          },
           content: {
             type: "string",
-            description: "The message content to push.",
+            description:
+              "The final message content to push. Can be multi-line markdown/plain text.",
           },
           chat_id: {
             type: "string",

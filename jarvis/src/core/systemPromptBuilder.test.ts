@@ -34,6 +34,12 @@ describe("SystemPromptBuilder", () => {
     expect(prompt).toContain("PUSH_TO_CHANNEL");
     expect(prompt).toContain("push_to_channel");
     expect(prompt).toContain("WeChat or Feishu");
+    expect(prompt).toContain(
+      'Use exact channel values: "wechat" for WeChat and "feishu" for Feishu',
+    );
+    expect(prompt).toContain(
+      "Do not use run_shell_command, echo, or any shell workaround as a substitute for push_to_channel",
+    );
   });
 
   it("always includes TASK_MANAGEMENT protocol with function-call vs shell distinction", () => {
@@ -219,6 +225,15 @@ describe("SystemPromptBuilder on-demand protocol injection", () => {
 
     const withPush = builder.buildFromFacts([], "发到微信");
     expect(withPush).toContain("PUSH_TO_CHANNEL");
+
+    const withWechatAlias = builder.buildFromFacts(
+      [],
+      "把上面的内容推给wechat",
+    );
+    expect(withWechatAlias).toContain("PUSH_TO_CHANNEL");
+
+    const withDifferentVerb = builder.buildFromFacts([], "把结论同步到微信");
+    expect(withDifferentVerb).toContain("PUSH_TO_CHANNEL");
 
     const withoutPush = builder.buildFromFacts([], "帮我分析代码");
     expect(withoutPush).not.toContain("PUSH_TO_CHANNEL");
