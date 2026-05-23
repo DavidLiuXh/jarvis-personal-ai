@@ -27,6 +27,8 @@ import type {
   MemoryRecallTarget,
   QuerySubject,
   RichIntent,
+  RichIntentAction,
+  RichIntentDomain,
   RichIntentPrimaryAction,
   RichIntentRiskLevel,
   RichIntentTargetType,
@@ -46,6 +48,8 @@ export type {
   MemoryRecallTarget,
   QuerySubject,
   RichIntent,
+  RichIntentAction,
+  RichIntentDomain,
   RichIntentPrimaryAction,
   RichIntentRiskLevel,
   RichIntentTargetType,
@@ -85,7 +89,15 @@ type RawIntentModelResult = {
   new_topic?: string;
   references_recent_history?: boolean;
   topic_shifted?: boolean;
-  rich_intent?: unknown;
+  rich_intent?: {
+    userGoal?: string;
+    domain?: string;
+    action?: string;
+    targets?: unknown;
+    contextDependency?: unknown;
+    ambiguity?: unknown;
+    riskLevel?: string;
+  };
   intent_steps?: unknown;
   topic_analysis?: unknown;
 };
@@ -547,7 +559,18 @@ Return semantic_evidence to explain the labels:
   - "none": no memory recall.
 - actionRequest.present=true only when the user asks Jarvis to do something operational. action is "read"|"write"|"run"|"schedule"|"delegate"|"none".
 - entityHints may be empty when uncertain. A focused entity extractor can refine tickers and technical terms later.
-- rich_intent expresses the user's concrete goal/action/targets/context. Keep subject/task_type for compatibility, but fill rich_intent whenever possible.
+- rich_intent expresses the user's concrete goal/action/targets/context.
+  - domain:
+    - "task_management": reminders, timers, calendar, recurring tasks, todo lists.
+    - "memory_management": saving/deleting facts, searching past conversations, updating preferences.
+    - "code_modification": editing files, refactoring, fixing bugs, writing tests.
+    - "system_control": running shell commands, managing system processes, hardware control.
+    - "general_chat": greetings, casual talk, philosophical questions.
+    - "external_knowledge": general facts, news, search engine queries.
+    - "investment_analysis": stock analysis, financial reports, market trends.
+    - "unknown": ambiguous or unclassifiable.
+  - action: "create"|"read"|"update"|"delete"|"execute"|"schedule"|"answer"|"analyze"|"delegate"|"recall".
+  - Keep subject/task_type for compatibility, but fill rich_intent domain/action whenever possible.
 
 DIMENSION 5C — Multi-Intent Steps
 Return intent_steps as a compact ordered plan of the meaningful sub-intents in the user request.
@@ -632,7 +655,8 @@ Required compact schema:
   },
   "rich_intent": {
     "userGoal": "",
-    "primaryAction": "answer|recall|analyze|modify|run|schedule|delegate",
+    "domain": "task_management|memory_management|code_modification|system_control|general_chat|external_knowledge|investment_analysis|unknown",
+    "action": "create|read|update|delete|execute|schedule|answer|analyze|delegate|recall",
     "targets": [{"type": "memory|file|code|external_entity|agent|calendar|current_context", "value": ""}],
     "contextDependency": {"recentConversation": true|false, "longTermMemory": true|false, "localWorkspace": true|false, "externalWorld": true|false},
     "ambiguity": [{"field": "", "reason": "", "severity": "low|medium|high"}],
@@ -768,7 +792,8 @@ Required confidence_by_dimension shape:
 Required rich_intent shape:
 {
   "userGoal": "",
-  "primaryAction": "answer"|"recall"|"analyze"|"modify"|"run"|"schedule"|"delegate",
+  "domain": "task_management"|"memory_management"|"code_modification"|"system_control"|"general_chat"|"external_knowledge"|"investment_analysis"|"unknown",
+  "action": "create"|"read"|"update"|"delete"|"execute"|"schedule"|"answer"|"analyze"|"delegate"|"recall",
   "targets": [{"type": "memory"|"file"|"code"|"external_entity"|"agent"|"calendar"|"current_context", "value": ""}],
   "contextDependency": {"recentConversation": true|false, "longTermMemory": true|false, "localWorkspace": true|false, "externalWorld": true|false},
   "ambiguity": [{"field": "", "reason": "", "severity": "low"|"medium"|"high"}],
@@ -1139,7 +1164,9 @@ function normalizeIntentSteps(value: unknown): IntentStep[] {
   if (!Array.isArray(value)) return [];
 
   const steps: IntentStep[] = [];
-  for (const [index, item] of value.entries()) {
+  const items = value as any[];
+  for (let index = 0; index < items.length; index++) {
+    const item = items[index];
     const record = asRecord(item);
     const type = normalizeIntentStepType(record.type);
     if (!type) continue;
@@ -1199,17 +1226,36 @@ function dedupeRichIntentTargets(
   });
 }
 
-function toRichIntentPrimaryAction(
-  taskType: IntentTaskType,
-  actionRequest: IntentEvidence["actionRequest"],
-): RichIntentPrimaryAction {
-  if (taskType === "recall") return "recall";
-  if (taskType === "analyze") return "analyze";
-  if (taskType === "schedule") return "schedule";
-  if (taskType === "delegate") return "delegate";
-  if (taskType === "execute") {
-    if (actionRequest.action === "run") return "run";
-    return "modify";
+function normalizeRichIntentDomain(value: unknown): RichIntentDomain {
+  if (
+    value === "task_management" ||
+    value === "memory_management" ||
+    value === "code_modification" ||
+    value === "system_control" ||
+    value === "general_chat" ||
+    value === "external_knowledge" ||
+    value === "investment_analysis" ||
+    value === "unknown"
+  ) {
+    return value;
+  }
+  return "unknown";
+}
+
+function normalizeRichIntentAction(value: unknown): RichIntentAction {
+  if (
+    value === "create" ||
+    value === "read" ||
+    value === "update" ||
+    value === "delete" ||
+    value === "execute" ||
+    value === "schedule" ||
+    value === "answer" ||
+    value === "analyze" ||
+    value === "delegate" ||
+    value === "recall"
+  ) {
+    return value;
   }
   return "answer";
 }
@@ -1273,7 +1319,7 @@ function deriveRichIntentTargets(args: {
 
 function buildRichIntent(args: {
   prompt: string;
-  parsedRichIntent: unknown;
+  parsedRichIntent: RawIntentModelResult["rich_intent"];
   taskType: IntentTaskType;
   subject: QuerySubject;
   needsMemory: boolean;
@@ -1286,10 +1332,59 @@ function buildRichIntent(args: {
 }): RichIntent {
   const parsed = asRecord(args.parsedRichIntent);
   const parsedContext = asRecord(parsed.contextDependency);
-  const primaryAction = toRichIntentPrimaryAction(
-    args.taskType,
-    args.semanticEvidence.actionRequest,
-  );
+
+  const fallbackDomain: RichIntentDomain =
+    args.taskType === "schedule"
+      ? "task_management"
+      : args.taskType === "recall"
+        ? "memory_management"
+        : args.taskType === "execute"
+          ? args.semanticEvidence.actionRequest.action === "run"
+            ? "system_control"
+            : "code_modification"
+          : INVESTMENT_ANALYSIS_CUE_RE.test(args.prompt)
+            ? "investment_analysis"
+            : "general_chat";
+
+  const fallbackAction: RichIntentAction =
+    args.taskType === "recall"
+      ? "recall"
+      : args.taskType === "analyze"
+        ? "analyze"
+        : args.taskType === "schedule"
+          ? /delete|remove|删除|撤销|取消/i.test(args.prompt)
+            ? "delete"
+            : "create"
+          : args.taskType === "delegate"
+            ? "delegate"
+            : args.taskType === "execute"
+              ? args.semanticEvidence.actionRequest.action === "run"
+                ? "execute"
+                : "update"
+              : "answer";
+
+  const domain = normalizeRichIntentDomain(parsed.domain ?? fallbackDomain);
+  const action = normalizeRichIntentAction(parsed.action ?? fallbackAction);
+
+  // Backward compatibility: map RichIntentAction back to RichIntentPrimaryAction
+  let primaryAction: RichIntentPrimaryAction = "answer";
+  if (action === "recall") primaryAction = "recall";
+  else if (action === "analyze") primaryAction = "analyze";
+  else if (action === "schedule") primaryAction = "schedule";
+  else if (action === "delegate") primaryAction = "delegate";
+  else if (
+    action === "execute" ||
+    action === "update" ||
+    action === "create" ||
+    action === "delete"
+  ) {
+    primaryAction =
+      args.semanticEvidence.actionRequest.action === "run" ||
+      action === "execute"
+        ? "run"
+        : "modify";
+  }
+
   const derivedTargets = deriveRichIntentTargets({
     semanticEvidence: args.semanticEvidence,
     candidateAgents: args.candidateAgents,
@@ -1311,6 +1406,8 @@ function buildRichIntent(args: {
 
   return {
     userGoal: normalizeOptionalString(parsed.userGoal) ?? args.prompt,
+    domain,
+    action,
     primaryAction,
     targets,
     contextDependency: {
@@ -1807,19 +1904,33 @@ function buildFallbackRawIntentResult(prompt: string): RawIntentModelResult {
     },
     rich_intent: {
       userGoal: prompt,
-      primaryAction:
+      domain:
+        taskType === "schedule"
+          ? "task_management"
+          : taskType === "recall"
+            ? "memory_management"
+            : taskType === "execute"
+              ? action === "run"
+                ? "system_control"
+                : "code_modification"
+              : INVESTMENT_ANALYSIS_CUE_RE.test(prompt)
+                ? "investment_analysis"
+                : "general_chat",
+      action:
         taskType === "recall"
           ? "recall"
           : taskType === "analyze"
             ? "analyze"
             : taskType === "schedule"
-              ? "schedule"
+              ? /delete|remove|删除|撤销|取消/i.test(prompt)
+                ? "delete"
+                : "create"
               : taskType === "delegate"
                 ? "delegate"
                 : taskType === "execute"
                   ? action === "run"
-                    ? "run"
-                    : "modify"
+                    ? "execute"
+                    : "update"
                   : "answer",
       targets: recallCue ? [{ type: "memory", value: "user_memory" }] : [],
       contextDependency: {

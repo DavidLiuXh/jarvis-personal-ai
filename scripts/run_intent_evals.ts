@@ -62,6 +62,10 @@ type IntentExpectation = {
     };
   };
   richIntent?: {
+    domain?: IntentFrame["richIntent"]["domain"];
+    domainOneOf?: Array<IntentFrame["richIntent"]["domain"]>;
+    action?: IntentFrame["richIntent"]["action"];
+    actionOneOf?: Array<IntentFrame["richIntent"]["action"]>;
     primaryAction?: IntentFrame["richIntent"]["primaryAction"];
     riskLevel?: IntentFrame["richIntent"]["riskLevel"];
     targetsContain?: Array<{
@@ -605,6 +609,46 @@ function compareIntent(intent: IntentFrame, expect: IntentExpectation) {
   }
 
   const richIntent = expect.richIntent;
+  if (richIntent?.domain !== undefined) {
+    addCheck(
+      checks,
+      "richIntent",
+      richIntent.domain,
+      intent.richIntent.domain,
+      intent.richIntent.domain === richIntent.domain,
+      "richIntent.domain matches",
+    );
+  }
+  if (richIntent?.domainOneOf !== undefined) {
+    addCheck(
+      checks,
+      "richIntent",
+      richIntent.domainOneOf,
+      intent.richIntent.domain,
+      richIntent.domainOneOf.includes(intent.richIntent.domain),
+      "richIntent.domain is one of expected values",
+    );
+  }
+  if (richIntent?.action !== undefined) {
+    addCheck(
+      checks,
+      "richIntent",
+      richIntent.action,
+      intent.richIntent.action,
+      intent.richIntent.action === richIntent.action,
+      "richIntent.action matches",
+    );
+  }
+  if (richIntent?.actionOneOf !== undefined) {
+    addCheck(
+      checks,
+      "richIntent",
+      richIntent.actionOneOf,
+      intent.richIntent.action,
+      richIntent.actionOneOf.includes(intent.richIntent.action),
+      "richIntent.action is one of expected values",
+    );
+  }
   if (richIntent?.primaryAction !== undefined) {
     addCheck(
       checks,
@@ -1184,7 +1228,7 @@ function buildConsistencyReport(results: CaseResult[]): ConsistencyReport {
   const caseReports: CaseConsistency[] = [];
   for (const [id, caseResults] of byCase) {
     const signatures = caseResults.map(buildConsistencySignature);
-    const uniqueSignatures = Array.from(new Set(signatures));
+    const uniqueSignatures = Array.from(new Set(signatures)) as string[];
     caseReports.push({
       id,
       runs: caseResults.length,
