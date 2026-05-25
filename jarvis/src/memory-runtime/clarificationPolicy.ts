@@ -9,6 +9,7 @@ import type {
   IntentFrame,
   QuerySubject,
 } from "./types.js";
+import { getCrudPolicyDecision, getStepOperation } from "./crudPolicy.js";
 
 export type { IntentFrame, QuerySubject } from "./types.js";
 
@@ -103,6 +104,7 @@ function hasScheduleTimeCue(text: string): boolean {
 function hasConcreteScheduleTime(
   intent: IntentFrame,
   userPrompt: string,
+  stepText = "",
 ): boolean {
   return (
     intent.resolvedDateRange !== null ||
@@ -110,7 +112,22 @@ function hasConcreteScheduleTime(
     intent.dateFrom !== null ||
     intent.dateTo !== null ||
     hasScheduleTimeCue(userPrompt) ||
-    hasScheduleTimeCue(intent.semanticEvidence.actionRequest.object ?? "")
+    hasScheduleTimeCue(intent.semanticEvidence.actionRequest.object ?? "") ||
+    hasScheduleTimeCue(stepText)
+  );
+}
+
+function hasConcreteTarget(value: string): boolean {
+  const trimmed = value.trim();
+  return (
+    trimmed.length > 0 &&
+    !/^(这条|这个|那个|它|this|that)$/i.test(trimmed) &&
+    !/^(把)?(这条|这个|那个|它)(记忆|提醒|任务|文件)?(删掉|删除|取消|更新)?$/i.test(
+      trimmed,
+    ) &&
+    !["reminder", "task", "file", "code", "memory", "agent"].includes(
+      trimmed.toLowerCase(),
+    )
   );
 }
 
@@ -194,11 +211,17 @@ export function buildClarificationDecision(
     intent.richIntent.targets.length === 0;
 
   for (const step of intent.intentSteps) {
+    const operation = getStepOperation(step);
+    const policy = getCrudPolicyDecision(operation);
+    const operationTarget = operation.selector || operation.target;
     if (
       !isProactiveTask &&
-      step.type === "schedule" &&
-      !["delete", "read"].includes(intent.richIntent.action) &&
-      !hasConcreteScheduleTime(intent, input.userPrompt)
+      policy.needsTime &&
+      !hasConcreteScheduleTime(
+        intent,
+        input.userPrompt,
+        `${step.action} ${step.target} ${operationTarget}`,
+      )
     ) {
       addStepRequirement(stepRequirements, {
         stepId: step.id,
@@ -215,15 +238,38 @@ export function buildClarificationDecision(
       });
     }
 
+    if (policy.needsTarget && !hasConcreteTarget(operationTarget)) {
+      const reason =
+        operation.action === "delete" ||
+        operation.action === "forget" ||
+        operation.action === "cancel"
+          ? "crud_target_required_for_destructive_action"
+          : "crud_target_required";
+      addStepRequirement(stepRequirements, {
+        stepId: step.id,
+        stepType: step.type,
+        reason,
+        blocking: true,
+      });
+      reasons.push(reason);
+      addQuestion(questions, {
+        header: `Target ${step.id}`,
+        question: "这个步骤要作用在哪个具体对象上？",
+        type: "text",
+        placeholder: "例如：提醒名称、文件路径、记忆内容、目标 channel",
+      });
+    }
+
     if (
-      (step.type === "execute" || step.type === "delegate") &&
-      step.requiresConfirmation &&
+      (step.requiresConfirmation || policy.needsConfirmation) &&
       (actionAmbiguous || targetAmbiguous)
     ) {
       const reason =
         step.type === "delegate"
           ? "delegate_step_target_ambiguous"
-          : "execute_step_action_ambiguous";
+          : policy.needsConfirmation
+            ? "crud_step_confirmation_required"
+            : "execute_step_action_ambiguous";
       addStepRequirement(stepRequirements, {
         stepId: step.id,
         stepType: step.type,
@@ -280,8 +326,13 @@ export function buildClarificationDecision(
 
   if (
     !isProactiveTask &&
-    intent.taskType === "schedule" &&
-    !["delete", "read"].includes(intent.richIntent.action) &&
+    (intent.intentSteps.some(
+      (step) => getCrudPolicyDecision(getStepOperation(step)).needsTime,
+    ) ||
+      (intent.taskType === "schedule" &&
+        !["delete", "read", "list", "cancel"].includes(
+          intent.richIntent.action,
+        ))) &&
     !hasConcreteScheduleTime(intent, input.userPrompt)
   ) {
     reasons.push("schedule_time_ambiguous");

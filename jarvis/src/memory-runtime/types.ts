@@ -90,6 +90,18 @@ export type RichIntentAction =
   | "read"
   | "update"
   | "delete"
+  | "list"
+  | "append"
+  | "rename"
+  | "pause"
+  | "resume"
+  | "cancel"
+  | "send"
+  | "resend"
+  | "forward"
+  | "retry"
+  | "forget"
+  | "consolidate"
   | "execute"
   | "schedule"
   | "answer"
@@ -103,6 +115,8 @@ export type RichIntentTargetType =
   | "code"
   | "external_entity"
   | "agent"
+  | "task"
+  | "channel"
   | "calendar"
   | "current_context";
 
@@ -145,6 +159,22 @@ export type IntentStep = {
   type: IntentTaskType;
   action: string;
   target: string;
+  operation: {
+    domain: RichIntentDomain;
+    action: RichIntentAction;
+    targetType: RichIntentTargetType;
+    target: string;
+    targetId?: string;
+    selector?: string;
+    scope?:
+      | "current_session"
+      | "long_term"
+      | "workspace"
+      | "external"
+      | "scheduled_tasks"
+      | "channel";
+    riskLevel: RichIntentRiskLevel;
+  };
   dependsOn: string[];
   requiresConfirmation: boolean;
   riskLevel: RichIntentRiskLevel;

@@ -598,6 +598,38 @@ semanticEvidence: {
 ```ts
 richIntent: {
   userGoal: string;
+  domain:
+    | "task_management"
+    | "memory_management"
+    | "code_modification"
+    | "system_control"
+    | "general_chat"
+    | "external_knowledge"
+    | "investment_analysis"
+    | "unknown";
+  action:
+    | "create"
+    | "read"
+    | "update"
+    | "delete"
+    | "list"
+    | "append"
+    | "rename"
+    | "pause"
+    | "resume"
+    | "cancel"
+    | "send"
+    | "resend"
+    | "forward"
+    | "retry"
+    | "forget"
+    | "consolidate"
+    | "execute"
+    | "schedule"
+    | "answer"
+    | "analyze"
+    | "delegate"
+    | "recall";
   primaryAction:
     | "answer"
     | "recall"
@@ -613,6 +645,8 @@ richIntent: {
       | "code"
       | "external_entity"
       | "agent"
+      | "task"
+      | "channel"
       | "calendar"
       | "current_context";
     value: string;
@@ -638,6 +672,20 @@ richIntent: {
 
 - clarification policy；
 - memory injection policy；
+
+`domain/action` 是 CRUD-aware intent 的第一层。它解决的是“同样是 schedule，创建提醒和删除提醒不是同一种风险”的问题。
+例如：
+
+- `task_management.create`：通常需要时间；
+- `task_management.delete`：不需要时间，但需要明确目标，且风险更高；
+- `memory_management.recall`：可以直接召回；
+- `memory_management.forget/delete`：需要明确目标和确认；
+- `code_modification.update`：需要 workspace/tool 能力；
+- `task_management.send` + `channel` target：应走 `push_to_channel`。
+
+这样设计的原因是：`taskType` 是兼容旧路由的粗分类，不能表达对象生命周期。`domain/action`
+把“做什么”和“对什么做”显式化，clarification、execution plan、eval 才能按同一套语义工作。
+
 - prewarm query 构造；
 - 判断是否依赖长期记忆、当前上下文、本地 workspace、外部世界。
 
@@ -800,7 +848,28 @@ Multi-Intent 现在不再只是“识别出多个 step 并注入 prompt”。当
 
 - 本地模型可以直接输出 `intent_steps`；
 - resolver 会 normalize 每个 step 的 `id`、`type`、`action`、`target`、`dependsOn`、
-  `requiresConfirmation`、`riskLevel`；
+  `requiresConfirmation`、`riskLevel`，并补齐 `operation`；
+- `operation` 是每个 step 自己的 CRUD/lifecycle contract：
+
+```ts
+operation: {
+  domain: RichIntentDomain;
+  action: RichIntentAction;
+  targetType: RichIntentTargetType;
+  target: string;
+  targetId?: string;
+  selector?: string;
+  scope?:
+    | "current_session"
+    | "long_term"
+    | "workspace"
+    | "external"
+    | "scheduled_tasks"
+    | "channel";
+  riskLevel: "low" | "medium" | "high";
+};
+```
+
 - 如果模型漏掉 steps，resolver 会根据 memory recall、personal context、external entity、
   action cue、delegate cue、schedule cue 做确定性补全；
 - 对模型明确给出的 multi-step plan，Jarvis 保留原始顺序，只在 dependency 要求时做拓扑修正；
@@ -809,6 +878,16 @@ Multi-Intent 现在不再只是“识别出多个 step 并注入 prompt”。当
 这样设计的原因是：用户表达的顺序本身可能有语义，例如“先提醒我，再分析”与“先分析，再提醒”
 不是同一个执行计划。过去如果无条件按 step type 排序，会把模型或用户给出的执行顺序抹掉。
 现在只有在模型没有给出可用 plan 时，才使用系统默认顺序。
+
+`operation` 下沉到 `IntentStep` 的原因是：multi-intent 里不同 step 可以有不同动作。
+例如“先总结历史，更新文档，再提醒我复盘”同时包含：
+
+- `memory_management.recall.memory`;
+- `code_modification.update.file`;
+- `task_management.create.task`。
+
+如果只保留全局 `richIntent.action`，后续只能知道“主动作”是什么，无法对每一步分别判断是否需要工具、
+时间、目标、确认和风险控制。
 
 第二层是 execution contract：
 
@@ -832,8 +911,28 @@ type IntentExecutionPlan = {
 - `recall` step 通常是 `context` mode，优先使用已注入 memory/current context；
 - `analyze` step 通常是 `llm` mode；
 - `execute` step 在涉及 workspace/write/run 时是 `tool` mode；
-- `schedule` step 在时间明确时要求 `task_add`，时间缺失时进入 `confirm` mode；
+- `schedule` step 通过 CRUD policy matrix 判断是 `task_add`、`task_update`、`task_delete` 还是 `task_list`；
+- 创建类 schedule 缺时间时进入 `confirm` mode，删除类 schedule 不要求时间但要求目标；
 - `delegate` step 在 agent target 明确时进入 `agent` mode，否则进入 `confirm` mode。
+
+CRUD policy matrix 位于 `jarvis/src/memory-runtime/crudPolicy.ts`。它把每个 `operation`
+映射成统一决策：
+
+```ts
+type CrudPolicyDecision = {
+  ruleId: string;
+  reasonCode: string;
+  needsConfirmation: boolean;
+  needsTime: boolean;
+  needsTarget: boolean;
+  defaultRiskLevel: "low" | "medium" | "high";
+  requiredTool: string | null;
+};
+```
+
+这样设计的原因是：如果 clarification、execution plan、tool routing 各自写一套判断，
+规则会很快分叉。例如“删除提醒不应追问时间”这类问题，会在某个入口修好、另一个入口继续出错。
+统一 matrix 后，规则优先级、reason code、测试矩阵和运行时行为可以对齐。
 
 这样设计的原因是：只把 `<intent_plan>` 放进 system prompt，主模型仍可能漏掉某个工具步骤。
 execution contract 明确告诉主模型“哪些 step 必须用工具完成、怎样才算完成、缺什么时应该阻塞”，

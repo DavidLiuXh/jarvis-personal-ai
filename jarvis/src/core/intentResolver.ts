@@ -6,6 +6,7 @@
 
 import { extractDateRange, type DateRange } from "./dateRange.js";
 import type { IntentModelClient } from "../memory-runtime/adapters.js";
+import { defaultOperationForStep } from "../memory-runtime/crudPolicy.js";
 import { JarvisOllamaIntentModelClient } from "./jarvisOllamaIntentModelClient.js";
 import {
   createIntentPolicyRegistry,
@@ -102,6 +103,17 @@ type RawIntentModelResult = {
   topic_analysis?: unknown;
 };
 
+type RawIntentStepOperation = {
+  domain?: unknown;
+  action?: unknown;
+  target_type?: unknown;
+  target?: unknown;
+  target_id?: unknown;
+  selector?: unknown;
+  scope?: unknown;
+  risk_level?: unknown;
+};
+
 type RawMemoryTargetResult = {
   present?: boolean;
   target?: unknown;
@@ -182,7 +194,7 @@ const SCHEDULE_CUE_RE =
   /提醒我|定时|每天|每周|每月|明天.*提醒|remind me|schedule|every day|every week|weekly|daily/i;
 
 const ACTION_CUE_RE =
-  /帮我(改|写|创建|运行|提交|部署|修|实现|生成|增加)|增加.*(测试|用例|单元测试)|创建|运行|提交|部署|修复|实现|生成文件|edit|modify|update|create|run|commit|deploy|fix|implement|generate.*file/i;
+  /帮我(改|写|创建|运行|提交|部署|修|实现|生成|增加|更新|整理|发送|推送)|增加.*(测试|用例|单元测试)|创建|运行|提交|部署|修复|实现|生成文件|更新到|整理到|发到|发给|推送到|发送到|edit|modify|update|create|run|commit|deploy|fix|implement|generate.*file|send to|push to|forward to/i;
 
 const OUTPUT_ARTIFACT_CUE_RE =
   /整理成|写成|输出为|保存为|生成.*(报告|文档|markdown|md)|markdown|\.md\b|report|document/i;
@@ -569,7 +581,7 @@ Return semantic_evidence to explain the labels:
     - "external_knowledge": general facts, news, search engine queries.
     - "investment_analysis": stock analysis, financial reports, market trends.
     - "unknown": ambiguous or unclassifiable.
-  - action: "create"|"read"|"update"|"delete"|"execute"|"schedule"|"answer"|"analyze"|"delegate"|"recall".
+  - action: "create"|"read"|"update"|"delete"|"list"|"append"|"rename"|"pause"|"resume"|"cancel"|"send"|"resend"|"forward"|"retry"|"forget"|"consolidate"|"execute"|"schedule"|"answer"|"analyze"|"delegate"|"recall".
   - Keep subject/task_type for compatibility, but fill rich_intent domain/action whenever possible.
 
 DIMENSION 5C — Multi-Intent Steps
@@ -580,6 +592,12 @@ Return intent_steps as a compact ordered plan of the meaningful sub-intents in t
 - Use ids "step-1", "step-2", etc. depends_on references earlier ids when one step requires another.
 - type must be one of "chat"|"recall"|"analyze"|"execute"|"delegate"|"schedule".
 - requires_confirmation=true only for high-risk operations or ambiguous schedule/delegate/write actions.
+- operation is the structured per-step CRUD/lifecycle contract. Fill it per step:
+  - domain: "task_management"|"memory_management"|"code_modification"|"system_control"|"general_chat"|"external_knowledge"|"investment_analysis"|"unknown".
+  - action: "create"|"read"|"update"|"delete"|"list"|"append"|"rename"|"pause"|"resume"|"cancel"|"send"|"resend"|"forward"|"retry"|"forget"|"consolidate"|"execute"|"schedule"|"answer"|"analyze"|"delegate"|"recall".
+  - target_type: "memory"|"file"|"code"|"external_entity"|"agent"|"task"|"channel"|"calendar"|"current_context".
+  - target is the concrete object or selector; selector can repeat target when no id exists.
+  - scope: "current_session"|"long_term"|"workspace"|"external"|"scheduled_tasks"|"channel" when obvious.
 
 DIMENSION 6 — Time Window
 ${timeNote}
@@ -656,14 +674,14 @@ Required compact schema:
   "rich_intent": {
     "userGoal": "",
     "domain": "task_management|memory_management|code_modification|system_control|general_chat|external_knowledge|investment_analysis|unknown",
-    "action": "create|read|update|delete|execute|schedule|answer|analyze|delegate|recall",
-    "targets": [{"type": "memory|file|code|external_entity|agent|calendar|current_context", "value": ""}],
+    "action": "create|read|update|delete|list|append|rename|pause|resume|cancel|send|resend|forward|retry|forget|consolidate|execute|schedule|answer|analyze|delegate|recall",
+    "targets": [{"type": "memory|file|code|external_entity|agent|task|channel|calendar|current_context", "value": ""}],
     "contextDependency": {"recentConversation": true|false, "longTermMemory": true|false, "localWorkspace": true|false, "externalWorld": true|false},
     "ambiguity": [{"field": "", "reason": "", "severity": "low|medium|high"}],
     "riskLevel": "low|medium|high"
   },
   "intent_steps": [
-    {"id": "step-1", "type": "chat|recall|analyze|execute|delegate|schedule", "action": "", "target": "", "depends_on": [], "requires_confirmation": false, "risk_level": "low|medium|high"}
+    {"id": "step-1", "type": "chat|recall|analyze|execute|delegate|schedule", "action": "", "target": "", "operation": {"domain": "task_management|memory_management|code_modification|system_control|general_chat|external_knowledge|investment_analysis|unknown", "action": "create|read|update|delete|list|append|rename|pause|resume|cancel|send|resend|forward|retry|forget|consolidate|execute|schedule|answer|analyze|delegate|recall", "target_type": "memory|file|code|external_entity|agent|task|channel|calendar|current_context", "target": "", "target_id": "", "selector": "", "scope": "current_session|long_term|workspace|external|scheduled_tasks|channel", "risk_level": "low|medium|high"}, "depends_on": [], "requires_confirmation": false, "risk_level": "low|medium|high"}
   ],
   "time_window_days": null,
   "date_from": null,
@@ -793,8 +811,8 @@ Required rich_intent shape:
 {
   "userGoal": "",
   "domain": "task_management"|"memory_management"|"code_modification"|"system_control"|"general_chat"|"external_knowledge"|"investment_analysis"|"unknown",
-  "action": "create"|"read"|"update"|"delete"|"execute"|"schedule"|"answer"|"analyze"|"delegate"|"recall",
-  "targets": [{"type": "memory"|"file"|"code"|"external_entity"|"agent"|"calendar"|"current_context", "value": ""}],
+  "action": "create"|"read"|"update"|"delete"|"list"|"append"|"rename"|"pause"|"resume"|"cancel"|"send"|"resend"|"forward"|"retry"|"forget"|"consolidate"|"execute"|"schedule"|"answer"|"analyze"|"delegate"|"recall",
+  "targets": [{"type": "memory"|"file"|"code"|"external_entity"|"agent"|"task"|"channel"|"calendar"|"current_context", "value": ""}],
   "contextDependency": {"recentConversation": true|false, "longTermMemory": true|false, "localWorkspace": true|false, "externalWorld": true|false},
   "ambiguity": [{"field": "", "reason": "", "severity": "low"|"medium"|"high"}],
   "riskLevel": "low"|"medium"|"high"
@@ -802,7 +820,7 @@ Required rich_intent shape:
 
 Required intent_steps shape:
 [
-  {"id": "step-1", "type": "chat"|"recall"|"analyze"|"execute"|"delegate"|"schedule", "action": "", "target": "", "depends_on": [], "requires_confirmation": false, "risk_level": "low"|"medium"|"high"}
+  {"id": "step-1", "type": "chat"|"recall"|"analyze"|"execute"|"delegate"|"schedule", "action": "", "target": "", "operation": {"domain": "task_management"|"memory_management"|"code_modification"|"system_control"|"general_chat"|"external_knowledge"|"investment_analysis"|"unknown", "action": "create"|"read"|"update"|"delete"|"list"|"append"|"rename"|"pause"|"resume"|"cancel"|"send"|"resend"|"forward"|"retry"|"forget"|"consolidate"|"execute"|"schedule"|"answer"|"analyze"|"delegate"|"recall", "target_type": "memory"|"file"|"code"|"external_entity"|"agent"|"task"|"channel"|"calendar"|"current_context", "target": "", "target_id": "", "selector": "", "scope": "current_session"|"long_term"|"workspace"|"external"|"scheduled_tasks"|"channel", "risk_level": "low"|"medium"|"high"}, "depends_on": [], "requires_confirmation": false, "risk_level": "low"|"medium"|"high"}
 ]
 
 Required topic_analysis shape:
@@ -1141,6 +1159,8 @@ function normalizeRichIntentTargetType(
     value === "code" ||
     value === "external_entity" ||
     value === "agent" ||
+    value === "task" ||
+    value === "channel" ||
     value === "calendar" ||
     value === "current_context"
   ) {
@@ -1160,6 +1180,96 @@ function normalizeIntentStepType(value: unknown): IntentTaskType | null {
     : null;
 }
 
+function fallbackOperationForStep(args: {
+  type: IntentTaskType;
+  actionText: string;
+  targetText: string;
+  riskLevel: RichIntentRiskLevel;
+}): IntentStep["operation"] {
+  const domain: RichIntentDomain =
+    args.type === "schedule"
+      ? "task_management"
+      : args.type === "recall"
+        ? "memory_management"
+        : args.type === "execute"
+          ? "code_modification"
+          : args.type === "delegate"
+            ? "general_chat"
+            : args.type === "analyze"
+              ? "external_knowledge"
+              : "general_chat";
+  const action: RichIntentAction =
+    args.type === "schedule"
+      ? /delete|remove|cancel|取消|删除|撤销/i.test(
+          `${args.actionText} ${args.targetText}`,
+        )
+        ? "delete"
+        : "create"
+      : args.type === "recall"
+        ? "recall"
+        : args.type === "analyze"
+          ? "analyze"
+          : args.type === "delegate"
+            ? "delegate"
+            : args.type === "execute"
+              ? /create|新增|创建|生成/.test(args.actionText)
+                ? "create"
+                : /delete|remove|删除/.test(args.actionText)
+                  ? "delete"
+                  : "update"
+              : "answer";
+  const targetType: RichIntentTargetType =
+    args.type === "schedule"
+      ? "task"
+      : args.type === "recall"
+        ? "memory"
+        : args.type === "delegate"
+          ? "agent"
+          : args.type === "execute"
+            ? "file"
+            : args.type === "analyze"
+              ? "external_entity"
+              : "current_context";
+  return defaultOperationForStep({
+    type: args.type,
+    targetText: args.targetText,
+    domain,
+    action,
+    targetType,
+    riskLevel: args.riskLevel,
+  });
+}
+
+function normalizeIntentStepOperation(
+  value: unknown,
+  fallback: {
+    type: IntentTaskType;
+    actionText: string;
+    targetText: string;
+    riskLevel: RichIntentRiskLevel;
+  },
+): IntentStep["operation"] {
+  const record = asRecord(value) as RawIntentStepOperation;
+  const fallbackOperation = fallbackOperationForStep(fallback);
+  const domain = normalizeRichIntentDomain(record.domain);
+  const action = normalizeRichIntentAction(record.action);
+  const targetType = normalizeRichIntentTargetType(record.target_type);
+  return {
+    domain: domain === "unknown" ? fallbackOperation.domain : domain,
+    action: action === "answer" ? fallbackOperation.action : action,
+    targetType: targetType ?? fallbackOperation.targetType,
+    target:
+      normalizeOptionalString(record.target) ??
+      fallback.targetText ??
+      fallbackOperation.target,
+    targetId: normalizeOptionalString(record.target_id),
+    selector: normalizeOptionalString(record.selector) ?? fallback.targetText,
+    scope:
+      normalizeIntentOperationScope(record.scope) ?? fallbackOperation.scope,
+    riskLevel: normalizeRichIntentRiskLevel(record.risk_level),
+  };
+}
+
 function normalizeIntentSteps(value: unknown): IntentStep[] {
   if (!Array.isArray(value)) return [];
 
@@ -1171,14 +1281,23 @@ function normalizeIntentSteps(value: unknown): IntentStep[] {
     const type = normalizeIntentStepType(record.type);
     if (!type) continue;
 
+    const action = normalizeOptionalString(record.action) ?? type;
+    const target = normalizeOptionalString(record.target) ?? "";
+    const riskLevel = normalizeRichIntentRiskLevel(record.risk_level);
     steps.push({
       id: normalizeOptionalString(record.id) ?? `step-${index + 1}`,
       type,
-      action: normalizeOptionalString(record.action) ?? type,
-      target: normalizeOptionalString(record.target) ?? "",
+      action,
+      target,
+      operation: normalizeIntentStepOperation(record.operation, {
+        type,
+        actionText: action,
+        targetText: target,
+        riskLevel,
+      }),
       dependsOn: normalizeStringArray(record.depends_on),
       requiresConfirmation: record.requires_confirmation === true,
-      riskLevel: normalizeRichIntentRiskLevel(record.risk_level),
+      riskLevel,
     });
   }
 
@@ -1248,6 +1367,18 @@ function normalizeRichIntentAction(value: unknown): RichIntentAction {
     value === "read" ||
     value === "update" ||
     value === "delete" ||
+    value === "list" ||
+    value === "append" ||
+    value === "rename" ||
+    value === "pause" ||
+    value === "resume" ||
+    value === "cancel" ||
+    value === "send" ||
+    value === "resend" ||
+    value === "forward" ||
+    value === "retry" ||
+    value === "forget" ||
+    value === "consolidate" ||
     value === "execute" ||
     value === "schedule" ||
     value === "answer" ||
@@ -1260,7 +1391,24 @@ function normalizeRichIntentAction(value: unknown): RichIntentAction {
   return "answer";
 }
 
+function normalizeIntentOperationScope(
+  value: unknown,
+): IntentStep["operation"]["scope"] {
+  if (
+    value === "current_session" ||
+    value === "long_term" ||
+    value === "workspace" ||
+    value === "external" ||
+    value === "scheduled_tasks" ||
+    value === "channel"
+  ) {
+    return value;
+  }
+  return undefined;
+}
+
 function deriveRichIntentTargets(args: {
+  prompt: string;
   semanticEvidence: IntentEvidence;
   candidateAgents: string[];
   taskType: IntentTaskType;
@@ -1268,6 +1416,7 @@ function deriveRichIntentTargets(args: {
 }): RichIntent["targets"] {
   const targets: RichIntent["targets"] = [];
   const {
+    prompt,
     semanticEvidence,
     candidateAgents,
     taskType,
@@ -1299,16 +1448,29 @@ function deriveRichIntentTargets(args: {
     targets.push({ type: "code", value: term });
   }
   if (semanticEvidence.actionRequest.object) {
-    const type =
-      /test|测试|用例|code|router|resolver|\.ts|\.js|file|文件/i.test(
-        semanticEvidence.actionRequest.object,
-      )
-        ? "code"
-        : "file";
+    const type = /微信|飞书|wechat|weixin|feishu|lark|channel/i.test(
+      semanticEvidence.actionRequest.object,
+    )
+      ? "channel"
+      : /提醒|任务|reminder|task|schedule|定时/i.test(
+            semanticEvidence.actionRequest.object,
+          )
+        ? "task"
+        : /test|测试|用例|code|router|resolver|\.ts|\.js|file|文件/i.test(
+              semanticEvidence.actionRequest.object,
+            )
+          ? "code"
+          : "file";
     targets.push({ type, value: semanticEvidence.actionRequest.object });
   }
   if (taskType === "schedule") {
-    targets.push({ type: "calendar", value: "reminder" });
+    targets.push({ type: "task", value: "reminder" });
+  }
+  if (/微信|wechat|weixin/i.test(prompt)) {
+    targets.push({ type: "channel", value: "wechat" });
+  }
+  if (/飞书|feishu|lark/i.test(prompt)) {
+    targets.push({ type: "channel", value: "feishu" });
   }
   for (const agent of candidateAgents) {
     targets.push({ type: "agent", value: agent });
@@ -1339,9 +1501,15 @@ function buildRichIntent(args: {
       : args.taskType === "recall"
         ? "memory_management"
         : args.taskType === "execute"
-          ? args.semanticEvidence.actionRequest.action === "run"
-            ? "system_control"
-            : "code_modification"
+          ? /forget|记忆|memory|保存的信息|偏好/i.test(args.prompt)
+            ? "memory_management"
+            : /发到|推送到|发给|send to|push to|forward to|微信|飞书|wechat|feishu/i.test(
+                  args.prompt,
+                )
+              ? "task_management"
+              : args.semanticEvidence.actionRequest.action === "run"
+                ? "system_control"
+                : "code_modification"
           : INVESTMENT_ANALYSIS_CUE_RE.test(args.prompt)
             ? "investment_analysis"
             : "general_chat";
@@ -1358,9 +1526,19 @@ function buildRichIntent(args: {
           : args.taskType === "delegate"
             ? "delegate"
             : args.taskType === "execute"
-              ? args.semanticEvidence.actionRequest.action === "run"
-                ? "execute"
-                : "update"
+              ? /forget|删除.*记忆|删掉.*记忆|忘记/i.test(args.prompt)
+                ? "forget"
+                : /发到|推送到|发给|send to|push to|forward to/i.test(
+                      args.prompt,
+                    )
+                  ? "send"
+                  : args.semanticEvidence.actionRequest.action === "run"
+                    ? "execute"
+                    : /create|新增|创建|生成/i.test(args.prompt)
+                      ? "create"
+                      : /delete|remove|删除/i.test(args.prompt)
+                        ? "delete"
+                        : "update"
               : "answer";
 
   const domain = normalizeRichIntentDomain(parsed.domain ?? fallbackDomain);
@@ -1386,6 +1564,7 @@ function buildRichIntent(args: {
   }
 
   const derivedTargets = deriveRichIntentTargets({
+    prompt: args.prompt,
     semanticEvidence: args.semanticEvidence,
     candidateAgents: args.candidateAgents,
     taskType: args.taskType,
@@ -1463,7 +1642,7 @@ const INTENT_STEP_TYPE_ORDER: IntentTaskType[] = [
 function dedupeIntentSteps(steps: IntentStep[]): IntentStep[] {
   const seen = new Set<string>();
   return steps.filter((step) => {
-    const key = `${step.type}:${step.action.toLowerCase()}:${step.target.toLowerCase()}`;
+    const key = `${step.type}:${step.operation.domain}:${step.operation.action}:${step.operation.targetType}:${step.target.toLowerCase()}`;
     if (seen.has(key)) return false;
     seen.add(key);
     return true;
@@ -1539,19 +1718,58 @@ function enforceRecallPrerequisite(
   });
 }
 
+function enforceArtifactBeforeSchedule(steps: IntentStep[]): IntentStep[] {
+  const executeIndex = steps.findIndex(
+    (step) =>
+      step.type === "execute" &&
+      (step.operation.domain === "code_modification" ||
+        step.operation.targetType === "file" ||
+        step.operation.targetType === "code"),
+  );
+  const scheduleIndex = steps.findIndex((step) => step.type === "schedule");
+  if (
+    executeIndex === -1 ||
+    scheduleIndex === -1 ||
+    executeIndex < scheduleIndex
+  ) {
+    return steps;
+  }
+
+  const reordered = [...steps];
+  const [executeStep] = reordered.splice(executeIndex, 1);
+  const nextScheduleIndex = reordered.findIndex(
+    (step) => step.type === "schedule",
+  );
+  reordered.splice(nextScheduleIndex, 0, executeStep);
+  return reordered.map((step, index) => {
+    if (index === 0) return { ...step, dependsOn: [] };
+    const previous = reordered[index - 1];
+    return {
+      ...step,
+      dependsOn: [previous.id],
+    };
+  });
+}
+
 function hasEquivalentIntentStep(
   steps: IntentStep[],
   type: IntentTaskType,
   action: string,
   target: string,
+  operation?: IntentStep["operation"],
 ): boolean {
   const normalizedAction = action.toLowerCase();
   const normalizedTarget = target.toLowerCase();
   return steps.some(
     (step) =>
       step.type === type &&
-      step.action.toLowerCase() === normalizedAction &&
-      step.target.toLowerCase() === normalizedTarget,
+      (operation
+        ? step.operation.domain === operation.domain &&
+          step.operation.action === operation.action &&
+          step.operation.targetType === operation.targetType &&
+          step.operation.target.toLowerCase() === operation.target.toLowerCase()
+        : step.action.toLowerCase() === normalizedAction &&
+          step.target.toLowerCase() === normalizedTarget),
   );
 }
 
@@ -1560,18 +1778,28 @@ function buildIntentStep(args: {
   type: IntentTaskType;
   action: string;
   target: string;
+  operation?: IntentStep["operation"];
   dependsOn?: string[];
   requiresConfirmation?: boolean;
   riskLevel?: RichIntentRiskLevel;
 }): IntentStep {
+  const riskLevel = args.riskLevel ?? args.operation?.riskLevel ?? "low";
   return {
     id: `step-${args.index}`,
     type: args.type,
     action: args.action,
     target: args.target,
+    operation:
+      args.operation ??
+      fallbackOperationForStep({
+        type: args.type,
+        actionText: args.action,
+        targetText: args.target,
+        riskLevel,
+      }),
     dependsOn: args.dependsOn ?? [],
     requiresConfirmation: args.requiresConfirmation ?? false,
-    riskLevel: args.riskLevel ?? "low",
+    riskLevel,
   };
 }
 
@@ -1584,6 +1812,115 @@ function sortIntentSteps(steps: IntentStep[]): IntentStep[] {
     const normalizedRightRank =
       rightRank === -1 ? INTENT_STEP_TYPE_ORDER.length : rightRank;
     return normalizedLeftRank - normalizedRightRank;
+  });
+}
+
+function inferStepOperation(args: {
+  type: IntentTaskType;
+  action: string;
+  target: string;
+  richIntent: RichIntent;
+  semanticEvidence: IntentEvidence;
+}): IntentStep["operation"] {
+  let domain = args.richIntent.domain;
+  let action = args.richIntent.action;
+  let targetType: RichIntentTargetType =
+    args.richIntent.targets[0]?.type ?? "current_context";
+
+  if (args.type === "recall") {
+    domain = "memory_management";
+    action = "recall";
+    targetType = "memory";
+  } else if (args.type === "schedule") {
+    domain = "task_management";
+    action =
+      args.richIntent.action === "delete" ||
+      args.richIntent.action === "cancel" ||
+      args.richIntent.action === "read" ||
+      args.richIntent.action === "list" ||
+      args.richIntent.action === "update"
+        ? args.richIntent.action
+        : "create";
+    targetType = "task";
+  } else if (args.type === "delegate") {
+    domain = args.richIntent.domain;
+    action = "delegate";
+    targetType = "agent";
+  } else if (args.type === "execute") {
+    action =
+      args.richIntent.action === "create" ||
+      args.richIntent.action === "delete" ||
+      args.richIntent.action === "append" ||
+      args.richIntent.action === "rename" ||
+      args.richIntent.action === "send" ||
+      args.richIntent.action === "forward" ||
+      args.richIntent.action === "update"
+        ? args.richIntent.action
+        : args.semanticEvidence.actionRequest.action === "run"
+          ? "execute"
+          : "update";
+    targetType =
+      args.richIntent.targets.some(
+        (target) => target.type === "file" || target.type === "code",
+      ) &&
+      action !== "send" &&
+      action !== "resend" &&
+      action !== "forward" &&
+      (action === "update" ||
+        action === "append" ||
+        action === "create" ||
+        args.action.includes("artifact") ||
+        args.action.includes("change"))
+        ? (args.richIntent.targets.find(
+            (target) => target.type === "file" || target.type === "code",
+          )?.type ?? "file")
+        : args.richIntent.domain === "memory_management"
+          ? "memory"
+          : action === "send" ||
+              action === "resend" ||
+              action === "forward" ||
+              args.richIntent.targets.some(
+                (target) => target.type === "channel",
+              )
+            ? "channel"
+            : (args.richIntent.targets.find((target) =>
+                ["memory", "file", "code", "channel", "task"].includes(
+                  target.type,
+                ),
+              )?.type ?? "file");
+    domain =
+      targetType === "memory"
+        ? "memory_management"
+        : targetType === "channel"
+          ? "task_management"
+          : targetType === "task"
+            ? "task_management"
+            : action === "execute"
+              ? "system_control"
+              : "code_modification";
+  } else if (args.type === "analyze") {
+    action = "analyze";
+    targetType =
+      args.richIntent.targets.find(
+        (target) => target.type === "external_entity",
+      )?.type ?? "external_entity";
+    domain =
+      args.richIntent.domain === "investment_analysis"
+        ? "investment_analysis"
+        : "external_knowledge";
+  } else if (args.type === "chat") {
+    action = "answer";
+    targetType = "current_context";
+    domain = "general_chat";
+  }
+
+  return defaultOperationForStep({
+    type: args.type,
+    targetText: args.target,
+    domain,
+    action,
+    targetType,
+    riskLevel: args.richIntent.riskLevel,
   });
 }
 
@@ -1610,25 +1947,46 @@ function deriveIntentSteps(args: {
       Omit<IntentStep, "id" | "type" | "action" | "target">
     > = {},
   ) => {
+    const operation =
+      options.operation ??
+      inferStepOperation({
+        type,
+        action,
+        target,
+        richIntent: args.richIntent,
+        semanticEvidence: args.semanticEvidence,
+      });
     if (hasUsableParsedPlan && steps.some((step) => step.type === type)) {
       return;
     }
-    if (hasEquivalentIntentStep(steps, type, action, target)) return;
+    if (hasEquivalentIntentStep(steps, type, action, target, operation)) return;
     steps.push(
       buildIntentStep({
         index: steps.length + 1,
         type,
         action,
         target,
+        operation,
         dependsOn: options.dependsOn,
         requiresConfirmation: options.requiresConfirmation,
-        riskLevel: options.riskLevel,
+        riskLevel: options.riskLevel ?? operation.riskLevel,
       }),
     );
   };
 
   if (hasUsableParsedPlan) {
-    steps.push(...parsedSteps);
+    steps.push(
+      ...parsedSteps.map((step) => ({
+        ...step,
+        operation: inferStepOperation({
+          type: step.type,
+          action: step.action,
+          target: step.target,
+          richIntent: args.richIntent,
+          semanticEvidence: args.semanticEvidence,
+        }),
+      })),
+    );
   }
 
   const memoryRecallTarget = args.semanticEvidence.memoryRecall.target;
@@ -1664,11 +2022,17 @@ function deriveIntentSteps(args: {
   }
 
   if (
-    args.taskType === "execute" ||
-    args.semanticEvidence.actionRequest.action === "write" ||
-    args.semanticEvidence.actionRequest.action === "run" ||
-    hasActionCue(args.prompt) ||
-    hasOutputArtifactCue(args.prompt)
+    (args.taskType === "execute" ||
+      args.semanticEvidence.actionRequest.action === "write" ||
+      args.semanticEvidence.actionRequest.action === "run" ||
+      hasActionCue(args.prompt) ||
+      hasOutputArtifactCue(args.prompt)) &&
+    (args.richIntent.domain !== "task_management" ||
+      hasOutputArtifactCue(args.prompt) ||
+      args.semanticEvidence.actionRequest.action === "write" ||
+      args.richIntent.action === "send" ||
+      args.richIntent.action === "forward" ||
+      args.richIntent.action === "resend")
   ) {
     append(
       "execute",
@@ -1702,11 +2066,26 @@ function deriveIntentSteps(args: {
   }
 
   if (args.needsScheduling || args.taskType === "schedule") {
-    append("schedule", "schedule future follow-up", "reminder", {
-      dependsOn: steps.length > 0 ? [steps[steps.length - 1].id] : [],
-      requiresConfirmation: true,
-      riskLevel: "medium",
-    });
+    const scheduleAction =
+      args.richIntent.action === "delete" || args.richIntent.action === "cancel"
+        ? "delete scheduled task"
+        : args.richIntent.action === "read" || args.richIntent.action === "list"
+          ? "list scheduled tasks"
+          : args.richIntent.action === "update"
+            ? "update scheduled task"
+            : "schedule future follow-up";
+    append(
+      "schedule",
+      scheduleAction,
+      args.semanticEvidence.actionRequest.object ||
+        buildStepTarget(args.richIntent, args.prompt, "task") ||
+        args.prompt,
+      {
+        dependsOn: steps.length > 0 ? [steps[steps.length - 1].id] : [],
+        requiresConfirmation: true,
+        riskLevel: "medium",
+      },
+    );
   }
 
   if (steps.length === 0) {
@@ -1723,7 +2102,7 @@ function deriveIntentSteps(args: {
     explicitMemoryStep || personalContextAnalysisStep,
   );
   const ordered = hasUsableParsedPlan
-    ? topologicalIntentStepOrder(deduped)
+    ? enforceArtifactBeforeSchedule(topologicalIntentStepOrder(deduped))
     : sortIntentSteps(deduped);
   return normalizeIntentStepOrder(ordered);
 }

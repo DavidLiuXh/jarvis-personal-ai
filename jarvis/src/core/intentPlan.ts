@@ -9,6 +9,7 @@ import {
   type IntentExecutionStep,
 } from "./intentExecutionPlan.js";
 import type { IntentFrame, IntentStep } from "./intentResolver.js";
+import { getStepOperation } from "../memory-runtime/crudPolicy.js";
 
 function formatIntentStep(step: IntentStep): string {
   const dependsOn =
@@ -16,7 +17,9 @@ function formatIntentStep(step: IntentStep): string {
   const confirmation = step.requiresConfirmation
     ? " requires_confirmation=true"
     : "";
-  return `- [${step.id}] ${step.type}: ${step.action} -> ${step.target || "unspecified"} risk=${step.riskLevel}${dependsOn}${confirmation}`;
+  const stepOperation = getStepOperation(step);
+  const operation = ` op=${stepOperation.domain}.${stepOperation.action}.${stepOperation.targetType}`;
+  return `- [${step.id}] ${step.type}: ${step.action} -> ${step.target || "unspecified"}${operation} risk=${step.riskLevel}${dependsOn}${confirmation}`;
 }
 
 function formatExecutionStep(step: IntentExecutionStep): string {

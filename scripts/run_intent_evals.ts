@@ -82,6 +82,13 @@ type IntentExpectation = {
       actionIncludes?: string;
       targetIncludes?: string;
       requiresConfirmation?: boolean;
+      operation?: {
+        domain?: IntentFrame["intentSteps"][number]["operation"]["domain"];
+        action?: IntentFrame["intentSteps"][number]["operation"]["action"];
+        targetType?: IntentFrame["intentSteps"][number]["operation"]["targetType"];
+        targetIncludes?: string;
+        scope?: IntentFrame["intentSteps"][number]["operation"]["scope"];
+      };
     }>;
   };
   executionPlan?: {
@@ -745,7 +752,22 @@ function compareIntent(intent: IntentFrame, expect: IntentExpectation) {
                 .includes(expectedStep.targetIncludes.toLowerCase())) &&
             (expectedStep.requiresConfirmation === undefined ||
               actual.requiresConfirmation ===
-                expectedStep.requiresConfirmation),
+                expectedStep.requiresConfirmation) &&
+            (expectedStep.operation?.domain === undefined ||
+              actual.operation.domain === expectedStep.operation.domain) &&
+            (expectedStep.operation?.action === undefined ||
+              actual.operation.action === expectedStep.operation.action) &&
+            (expectedStep.operation?.targetType === undefined ||
+              actual.operation.targetType ===
+                expectedStep.operation.targetType) &&
+            (expectedStep.operation?.targetIncludes === undefined ||
+              actual.operation.target
+                .toLowerCase()
+                .includes(
+                  expectedStep.operation.targetIncludes.toLowerCase(),
+                )) &&
+            (expectedStep.operation?.scope === undefined ||
+              actual.operation.scope === expectedStep.operation.scope),
         ),
         "intentSteps contains expected step",
       );
@@ -1203,6 +1225,7 @@ function buildConsistencySignature(result: CaseResult): string {
       type: step.type,
       action: step.action,
       target: step.target,
+      operation: step.operation,
       requiresConfirmation: step.requiresConfirmation,
     })),
     topicRelation: intent.topicAnalysis.relation,

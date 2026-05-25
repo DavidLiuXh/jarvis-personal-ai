@@ -5,6 +5,10 @@
  */
 
 import type { IntentFrame, IntentStep } from "./intentResolver.js";
+import {
+  getCrudPolicyDecision,
+  getStepOperation,
+} from "../memory-runtime/crudPolicy.js";
 
 export type IntentExecutionMode =
   | "context"
@@ -43,6 +47,17 @@ function hasConcreteScheduleTime(
   );
 }
 
+function hasConcreteStepTarget(step: IntentStep): boolean {
+  const operation = getStepOperation(step);
+  const target = (operation.selector || operation.target || step.target)
+    .trim()
+    .toLowerCase();
+  return (
+    target.length > 0 &&
+    !["reminder", "task", "file", "code", "memory", "agent"].includes(target)
+  );
+}
+
 function executionForStep(
   intent: IntentFrame,
   step: IntentStep,
@@ -60,16 +75,26 @@ function executionForStep(
   }
 
   if (step.type === "schedule") {
+    const operation = getStepOperation(step);
+    const policy = getCrudPolicyDecision(operation);
     const hasTime = hasConcreteScheduleTime(intent, step);
+    const hasTarget = hasConcreteStepTarget(step);
+    const missingRequiredTarget = policy.needsTarget && !hasTarget;
+    const missingRequiredTime = policy.needsTime && !hasTime;
+    const mode =
+      missingRequiredTarget || missingRequiredTime || policy.needsConfirmation
+        ? "confirm"
+        : "tool";
     return {
       step,
-      mode: hasTime ? "tool" : "confirm",
-      requiredTool: "task_add",
-      instruction: hasTime
-        ? "Create the reminder with task_add. Do not merely say it has been scheduled."
-        : "Confirm the schedule details before creating the task.",
+      mode,
+      requiredTool: policy.requiredTool,
+      instruction:
+        mode === "tool"
+          ? `Execute the scheduled-task ${operation.action} operation with ${policy.requiredTool}. Do not merely say it has been completed.`
+          : "Confirm missing target/time/confirmation details before changing scheduled tasks.",
       completionCriteria:
-        "A task_add result is observed, or the step is blocked because schedule time is missing.",
+        "The required task tool result is observed, or the step is blocked because required CRUD details are missing.",
     };
   }
 
@@ -88,20 +113,21 @@ function executionForStep(
   }
 
   if (step.type === "execute") {
+    const policy = getCrudPolicyDecision(getStepOperation(step));
     const requiresTool =
+      policy.requiredTool !== null ||
       intent.richIntent.contextDependency.localWorkspace ||
       intent.semanticEvidence.actionRequest.action === "run" ||
       intent.semanticEvidence.actionRequest.action === "write";
     const shouldConfirm =
-      step.requiresConfirmation &&
-      step.riskLevel === "high" &&
-      step.target.trim().length === 0;
+      (step.requiresConfirmation || policy.needsConfirmation) &&
+      (step.riskLevel === "high" || !hasConcreteStepTarget(step));
     return {
       step,
       mode: shouldConfirm ? "confirm" : requiresTool ? "tool" : "llm",
       requiredTool:
         !shouldConfirm && requiresTool
-          ? "appropriate_workspace_or_task_tool"
+          ? (policy.requiredTool ?? "appropriate_workspace_or_task_tool")
           : null,
       instruction: shouldConfirm
         ? "Confirm the high-risk operation target before executing it."
