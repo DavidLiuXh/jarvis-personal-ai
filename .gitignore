@@ -68,3 +68,31 @@ market_report*.html
 .gemini-clipboard/
 .eslintcache
 evals/logs/
+
+# Python cache and compiled files
+__pycache__/
+*.pyc
+
+# Local database files
+*.db
+*.db-wal
+*.db-shm
+memory/
+memory_/
+
+# Local sessions and runtime configs containing potential secrets
+wechat_session.json
+wechat_session.json_
+wechat_session.json.bak
+config.json
+tasks.json
+tasks.json_
+test_wechat.py
+wechat_login.py
+
+# Temp files and outputs
+*_output.txt
+massive-client-python-temp/
+storage/
+runtime/
+
