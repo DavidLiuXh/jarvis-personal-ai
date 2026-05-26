@@ -16,6 +16,11 @@ import {
   buildIntentAwareMemoryPolicy,
   type IntentAwareMemoryPolicy,
 } from "../jarvis/src/memory-runtime/intentAwareMemoryPolicy.js";
+import {
+  applyClarificationChannelState,
+  buildClarificationDecision,
+  type ClarificationDecision,
+} from "../jarvis/src/core/clarificationPolicy.js";
 
 type MatrixDimension =
   | "memoryTarget"
@@ -45,6 +50,7 @@ type MatrixExpectation = {
   needsMemory?: boolean;
   needsExternalKnowledge?: boolean;
   needsTool?: boolean;
+  needsScheduling?: boolean;
   referencesRecentHistory?: boolean;
   topicShifted?: boolean;
   memoryTarget?: IntentFrame["semanticEvidence"]["memoryRecall"]["target"];
@@ -59,6 +65,21 @@ type MatrixExpectation = {
   intentStepOrder?: Array<IntentFrame["intentSteps"][number]["type"]>;
   policyReasonCodesContain?: string[];
   policyReasonCodesNotContain?: string[];
+  clarification?: {
+    executionContext?: "interactive" | "proactive_task";
+    interactiveChannel?: boolean;
+    state?: ClarificationDecision["state"];
+    scope?: ClarificationDecision["scope"];
+    shouldAsk?: boolean;
+    blocking?: boolean;
+    reasonsContain?: string[];
+    reasonsNotContain?: string[];
+    stepRequirementsContain?: Array<{
+      stepType?: IntentFrame["intentSteps"][number]["type"];
+      reason?: string;
+      blocking?: boolean;
+    }>;
+  };
   memoryPolicy?: {
     allowFacts?: boolean;
     allowSummary?: boolean;
@@ -87,6 +108,7 @@ type CaseResult = {
   durationMs: number;
   checks: CheckResult[];
   intent?: IntentFrame;
+  clarification?: ClarificationDecision;
   memoryPolicy?: IntentAwareMemoryPolicy;
   error?: string;
 };
@@ -352,6 +374,7 @@ function compareCase(
     "needsMemory",
     "needsExternalKnowledge",
     "needsTool",
+    "needsScheduling",
     "referencesRecentHistory",
     "topicShifted",
     "dateFrom",
@@ -516,6 +539,65 @@ function compareCase(
   return checks;
 }
 
+function compareClarification(
+  decision: ClarificationDecision,
+  expect: MatrixExpectation["clarification"],
+): CheckResult[] {
+  const checks: CheckResult[] = [];
+  if (!expect) return checks;
+
+  for (const key of ["state", "scope", "shouldAsk", "blocking"] as const) {
+    if (expect[key] !== undefined) {
+      addCheck(
+        checks,
+        `clarification.${key}`,
+        expect[key],
+        decision[key],
+        decision[key] === expect[key],
+      );
+    }
+  }
+  if (expect.reasonsContain !== undefined) {
+    addCheck(
+      checks,
+      "clarification.reasonsContain",
+      expect.reasonsContain,
+      decision.reasons,
+      includesAll(decision.reasons, expect.reasonsContain),
+    );
+  }
+  if (expect.reasonsNotContain !== undefined) {
+    addCheck(
+      checks,
+      "clarification.reasonsNotContain",
+      expect.reasonsNotContain,
+      decision.reasons,
+      includesNone(decision.reasons, expect.reasonsNotContain),
+    );
+  }
+  if (expect.stepRequirementsContain !== undefined) {
+    for (const requirement of expect.stepRequirementsContain) {
+      addCheck(
+        checks,
+        "clarification.stepRequirementsContain",
+        requirement,
+        decision.stepRequirements,
+        decision.stepRequirements.some(
+          (actual) =>
+            (requirement.stepType === undefined ||
+              actual.stepType === requirement.stepType) &&
+            (requirement.reason === undefined ||
+              actual.reason === requirement.reason) &&
+            (requirement.blocking === undefined ||
+              actual.blocking === requirement.blocking),
+        ),
+      );
+    }
+  }
+
+  return checks;
+}
+
 async function runCase(evalCase: MatrixCase): Promise<CaseResult> {
   const startedAt = Date.now();
   try {
@@ -545,7 +627,22 @@ async function runCase(evalCase: MatrixCase): Promise<CaseResult> {
         prewarmMaxDistanceMixed: 0.95,
       },
     });
-    const checks = compareCase(evalCase, intent, memoryPolicy);
+    const clarification = applyClarificationChannelState(
+      buildClarificationDecision({
+        userPrompt: evalCase.prompt,
+        intent,
+        querySubject: intent.subject,
+        candidateAgents: intent.candidateAgents,
+        recentHistoryLength: evalCase.history?.length ?? 0,
+        executionContext:
+          evalCase.expect.clarification?.executionContext ?? "interactive",
+      }),
+      evalCase.expect.clarification?.interactiveChannel ?? true,
+    );
+    const checks = [
+      ...compareCase(evalCase, intent, memoryPolicy),
+      ...compareClarification(clarification, evalCase.expect.clarification),
+    ];
     return {
       id: evalCase.id,
       dimension: evalCase.dimension,
@@ -555,6 +652,7 @@ async function runCase(evalCase: MatrixCase): Promise<CaseResult> {
       durationMs: Date.now() - startedAt,
       checks,
       intent,
+      clarification,
       memoryPolicy,
     };
   } catch (error: any) {

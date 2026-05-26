@@ -18,6 +18,7 @@
   "scripts": {
     "start": "npx tsx jarvis/src/index.ts",
     "intent:matrix": "npx tsx scripts/run_intent_matrix.ts",
+    "intent:report": "npx tsx scripts/summarize_intent_evals.ts",
     "test": "npm run test --workspaces --if-present",
     "prepare": "husky",
     "pre-commit": "lint-staged"
