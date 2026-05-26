@@ -17,6 +17,7 @@
   },
   "scripts": {
     "start": "npx tsx jarvis/src/index.ts",
+    "intent:matrix": "npx tsx scripts/run_intent_matrix.ts",
     "test": "npm run test --workspaces --if-present",
     "prepare": "husky",
     "pre-commit": "lint-staged"
