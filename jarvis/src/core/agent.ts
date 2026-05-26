@@ -48,7 +48,7 @@ import {
 import { buildHistoryFromMessages } from "./resumeFromDisk.js";
 import { LocalModelRouter } from "./localModelRouter.js";
 import type { IntentFrame } from "./intentResolver.js";
-import { buildIntentExecutionPlan } from "./intentExecutionPlan.js";
+import { IntentStepRuntime } from "./intentExecutionPlan.js";
 import { buildIntentPlanSection } from "./intentPlan.js";
 import { buildRecentConversationRecallCandidates } from "./conversationRecall.js";
 import { buildIntentAwareMemoryPolicy } from "./intentAwareMemoryPolicy.js";
@@ -176,34 +176,6 @@ function prewarmCandidatesFromRetrieval(args: {
       tier: "uncertain" as const,
     })),
   ];
-}
-
-const ENFORCEABLE_INTENT_TOOLS = new Set(["recall_memory", "task_add"]);
-
-function buildMissingIntentToolPrompt(
-  intent: IntentFrame | null,
-  calledTools: Set<string>,
-): string | null {
-  const executionPlan = buildIntentExecutionPlan(intent);
-  if (!executionPlan) return null;
-  const missingTools = executionPlan.requiredTools.filter(
-    (tool) => ENFORCEABLE_INTENT_TOOLS.has(tool) && !calledTools.has(tool),
-  );
-  if (missingTools.length === 0) return null;
-  const affectedSteps = executionPlan.steps.filter(
-    (step) => step.requiredTool && missingTools.includes(step.requiredTool),
-  );
-  return [
-    "SYSTEM: The multi-intent execution contract is not complete.",
-    `Missing required tool call(s): ${missingTools.join(", ")}.`,
-    "You must continue the same user request and execute the missing tool-backed step(s) before giving the final answer.",
-    "Do not claim completion until the required tool result is observed.",
-    "Affected steps:",
-    ...affectedSteps.map(
-      (step) =>
-        `- ${step.step.id} ${step.step.type}: ${step.step.action} -> ${step.step.target}; required_tool=${step.requiredTool}; done_when=${step.completionCriteria}`,
-    ),
-  ].join("\n");
 }
 
 /**
@@ -1425,6 +1397,15 @@ export class JarvisAgent extends EventEmitter {
 
         let finalAssistantText = "";
         const allToolsCalled = new Set<string>();
+        const stepRuntime = new IntentStepRuntime(intentFrame);
+        if (stepRuntime.active) {
+          console.error(
+            `🧭 [Jarvis] Multi-intent runtime initialized: ${stepRuntime
+              .snapshot()
+              .map((entry) => `${entry.step.id}:${entry.status}`)
+              .join(", ")}`,
+          );
+        }
 
         const networkConfig = this.jarvisConfig.network;
         const maxRetries = networkConfig?.maxRetries ?? 3;
@@ -1492,13 +1473,49 @@ export class JarvisAgent extends EventEmitter {
                   break;
                 }
 
-                for (const req of toolCallRequests)
+                const duplicateDecision =
+                  stepRuntime.filterDuplicateToolCalls(toolCallRequests);
+                if (duplicateDecision.suppressed.length > 0) {
+                  console.error(
+                    `🧭 [Jarvis] Suppressed duplicate multi-intent tool call(s): ${duplicateDecision.suppressed
+                      .map(
+                        ({ request, stepId }) =>
+                          `${request.name}${stepId ? `@${stepId}` : ""}`,
+                      )
+                      .join(", ")}`,
+                  );
+                }
+
+                for (const req of duplicateDecision.executableRequests)
                   allToolsCalled.add(req.name);
-                const responseParts = await this.toolRouter.route(
-                  toolCallRequests,
-                  abortController.signal,
-                  (resp) => this.emit(JarvisEventType.TOOL_CALL_RESPONSE, resp),
+                const routedParts =
+                  duplicateDecision.executableRequests.length > 0
+                    ? await this.toolRouter.route(
+                        duplicateDecision.executableRequests,
+                        abortController.signal,
+                        (resp) =>
+                          this.emit(JarvisEventType.TOOL_CALL_RESPONSE, resp),
+                      )
+                    : [];
+                const responseParts = [
+                  ...duplicateDecision.duplicateResponses,
+                  ...routedParts,
+                ];
+                stepRuntime.observeToolResults(
+                  duplicateDecision.executableRequests,
+                  routedParts,
                 );
+                if (stepRuntime.active) {
+                  console.error(
+                    `🧭 [Jarvis] Multi-intent runtime state: ${stepRuntime
+                      .snapshot()
+                      .map(
+                        (entry) =>
+                          `${entry.step.id}:${entry.status}/${entry.attempts}`,
+                      )
+                      .join(", ")}`,
+                  );
+                }
 
                 // Guard: consecutive tool failures
                 const failCount = responseParts.filter((p: any) => {
@@ -1550,16 +1567,49 @@ export class JarvisAgent extends EventEmitter {
                   continue;
                 }
 
+                const deterministicRequests =
+                  stepRuntime.buildDeterministicToolRequests();
+                if (deterministicRequests.length > 0) {
+                  console.error(
+                    `🧭 [Jarvis] Executing deterministic multi-intent step(s): ${deterministicRequests
+                      .map((request) => request.name)
+                      .join(", ")}`,
+                  );
+                  for (const request of deterministicRequests) {
+                    allToolsCalled.add(request.name);
+                  }
+                  const deterministicParts = await this.toolRouter.route(
+                    deterministicRequests,
+                    abortController.signal,
+                    (resp) =>
+                      this.emit(JarvisEventType.TOOL_CALL_RESPONSE, resp),
+                  );
+                  stepRuntime.observeToolResults(
+                    deterministicRequests,
+                    deterministicParts,
+                  );
+                  currentQueryParts = [
+                    ...deterministicParts,
+                    { text: stepRuntime.buildStatePrompt() },
+                  ];
+                  success = false;
+                  continue;
+                }
+
                 const missingToolPrompt =
                   intentToolEnforcements < MAX_INTENT_TOOL_ENFORCEMENTS
-                    ? buildMissingIntentToolPrompt(intentFrame, allToolsCalled)
+                    ? stepRuntime.buildMissingStepPrompt()
                     : null;
                 if (missingToolPrompt) {
                   intentToolEnforcements++;
                   console.error(
                     `🧭 [Jarvis] Multi-intent execution incomplete — forcing missing tool step(s), attempt ${intentToolEnforcements}/${MAX_INTENT_TOOL_ENFORCEMENTS}.`,
                   );
-                  currentQueryParts = [{ text: missingToolPrompt }];
+                  currentQueryParts = [
+                    {
+                      text: `${stepRuntime.buildStatePrompt()}\n\n${missingToolPrompt}`,
+                    },
+                  ];
                   success = false;
                 } else {
                   success = true;

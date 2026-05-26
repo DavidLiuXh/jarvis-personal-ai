@@ -32,6 +32,40 @@ export type IntentExecutionPlan = {
   completionCriteria: string[];
 };
 
+export type IntentStepRuntimeStatus =
+  | "pending"
+  | "succeeded"
+  | "failed"
+  | "blocked"
+  | "skipped";
+
+export type ToolCallLike = {
+  name: string;
+  callId?: string;
+  args?: Record<string, unknown>;
+};
+
+export type FunctionResponseLike = {
+  functionResponse?: {
+    name?: string;
+    response?: unknown;
+  };
+};
+
+export type IntentStepRuntimeEntry = IntentExecutionStep & {
+  status: IntentStepRuntimeStatus;
+  attempts: number;
+  lastToolName: string | null;
+  lastError: string | null;
+  seenSignatures: Set<string>;
+};
+
+export type DuplicateToolDecision = {
+  executableRequests: ToolCallLike[];
+  duplicateResponses: FunctionResponseLike[];
+  suppressed: Array<{ request: ToolCallLike; stepId: string | null }>;
+};
+
 function hasConcreteScheduleTime(
   intent: IntentFrame,
   step: IntentStep,
@@ -188,4 +222,242 @@ export function buildIntentExecutionPlan(
     requiredTools,
     completionCriteria: executionSteps.map((step) => step.completionCriteria),
   };
+}
+
+const ENFORCEABLE_STEP_TOOLS = new Set(["recall_memory", "task_add"]);
+
+function stableJson(value: unknown): string {
+  if (value === null || typeof value !== "object") {
+    return JSON.stringify(value);
+  }
+  if (Array.isArray(value)) {
+    return `[${value.map((item) => stableJson(item)).join(",")}]`;
+  }
+  const record = value as Record<string, unknown>;
+  return `{${Object.keys(record)
+    .sort()
+    .map((key) => `${JSON.stringify(key)}:${stableJson(record[key])}`)
+    .join(",")}}`;
+}
+
+function toolSignature(request: ToolCallLike): string {
+  return `${request.name}:${stableJson(request.args ?? {})}`;
+}
+
+function responseHasError(response: unknown): boolean {
+  if (typeof response === "string") {
+    return /(^|[^\w])(error|failed|denied|not available|requires|❌)([^\w]|$)/i.test(
+      response,
+    );
+  }
+  if (response && typeof response === "object") {
+    const record = response as Record<string, unknown>;
+    if ("error" in record || record.status === "error") return true;
+    if (typeof record.result === "string")
+      return responseHasError(record.result);
+  }
+  return false;
+}
+
+function responseErrorText(response: unknown): string | null {
+  if (!responseHasError(response)) return null;
+  if (typeof response === "string") return response.slice(0, 240);
+  if (response && typeof response === "object") {
+    const record = response as Record<string, unknown>;
+    if (typeof record.error === "string") return record.error.slice(0, 240);
+    if (typeof record.result === "string") return record.result.slice(0, 240);
+  }
+  return "tool response reported an error";
+}
+
+export class IntentStepRuntime {
+  readonly plan: IntentExecutionPlan | null;
+  private entries: IntentStepRuntimeEntry[];
+  private signatureToStepId = new Map<string, string>();
+  private maxAttemptsPerStep: number;
+
+  constructor(
+    intent: IntentFrame | null,
+    options?: { maxAttemptsPerStep?: number },
+  ) {
+    this.plan = buildIntentExecutionPlan(intent);
+    this.entries =
+      this.plan?.steps.map((step) => ({
+        ...step,
+        status:
+          step.mode === "context" || step.mode === "llm"
+            ? "succeeded"
+            : step.mode === "confirm"
+              ? "blocked"
+              : "pending",
+        attempts: 0,
+        lastToolName: null,
+        lastError: step.mode === "confirm" ? "confirmation required" : null,
+        seenSignatures: new Set<string>(),
+      })) ?? [];
+    this.maxAttemptsPerStep = options?.maxAttemptsPerStep ?? 2;
+  }
+
+  get active(): boolean {
+    return this.entries.length > 1;
+  }
+
+  snapshot(): Array<
+    Pick<
+      IntentStepRuntimeEntry,
+      "step" | "mode" | "requiredTool" | "status" | "attempts" | "lastError"
+    >
+  > {
+    return this.entries.map((entry) => ({
+      step: entry.step,
+      mode: entry.mode,
+      requiredTool: entry.requiredTool,
+      status: entry.status,
+      attempts: entry.attempts,
+      lastError: entry.lastError,
+    }));
+  }
+
+  actionableEnforceableSteps(): IntentStepRuntimeEntry[] {
+    return this.entries.filter(
+      (entry) =>
+        (entry.status === "pending" || entry.status === "failed") &&
+        entry.requiredTool !== null &&
+        ENFORCEABLE_STEP_TOOLS.has(entry.requiredTool),
+    );
+  }
+
+  private matchRequestToStep(
+    request: ToolCallLike,
+  ): IntentStepRuntimeEntry | null {
+    const exact = this.entries.find(
+      (entry) =>
+        entry.status === "pending" && entry.requiredTool === request.name,
+    );
+    if (exact) return exact;
+    return (
+      this.entries.find(
+        (entry) =>
+          entry.requiredTool === request.name &&
+          entry.status !== "blocked" &&
+          entry.status !== "skipped",
+      ) ?? null
+    );
+  }
+
+  filterDuplicateToolCalls(requests: ToolCallLike[]): DuplicateToolDecision {
+    const executableRequests: ToolCallLike[] = [];
+    const duplicateResponses: FunctionResponseLike[] = [];
+    const suppressed: Array<{ request: ToolCallLike; stepId: string | null }> =
+      [];
+
+    for (const request of requests) {
+      const signature = toolSignature(request);
+      const step = this.matchRequestToStep(request);
+      const stepAlreadySucceeded =
+        step !== null &&
+        step.status === "succeeded" &&
+        step.seenSignatures.has(signature);
+      const globallySucceededStepId = this.signatureToStepId.get(signature);
+      if (stepAlreadySucceeded || globallySucceededStepId) {
+        const stepId = step?.step.id ?? globallySucceededStepId ?? null;
+        duplicateResponses.push({
+          functionResponse: {
+            name: request.name,
+            response: {
+              result:
+                `Duplicate tool call suppressed for ${stepId ?? "completed step"}. ` +
+                `The matching step already has a successful result; continue with the next incomplete step or final answer.`,
+            },
+          },
+        });
+        suppressed.push({ request, stepId });
+        continue;
+      }
+      executableRequests.push(request);
+    }
+
+    return { executableRequests, duplicateResponses, suppressed };
+  }
+
+  observeToolResults(
+    requests: ToolCallLike[],
+    responseParts: FunctionResponseLike[],
+  ): void {
+    for (const request of requests) {
+      const step = this.matchRequestToStep(request);
+      if (!step) continue;
+      const signature = toolSignature(request);
+      const responsePart = responseParts.find(
+        (part) => part.functionResponse?.name === request.name,
+      );
+      const response = responsePart?.functionResponse?.response;
+      const errorText = responseErrorText(response);
+      step.attempts += 1;
+      step.lastToolName = request.name;
+      step.seenSignatures.add(signature);
+
+      if (errorText) {
+        step.lastError = errorText;
+        step.status =
+          step.attempts >= this.maxAttemptsPerStep ? "blocked" : "failed";
+      } else {
+        step.status = "succeeded";
+        step.lastError = null;
+        this.signatureToStepId.set(signature, step.step.id);
+      }
+    }
+  }
+
+  buildMissingStepPrompt(): string | null {
+    const missingSteps = this.actionableEnforceableSteps();
+    if (missingSteps.length === 0) return null;
+    return [
+      "SYSTEM: The multi-intent execution contract is not complete.",
+      "Continue the same user request, but execute only the incomplete tool-backed step(s) below.",
+      "Do not repeat steps marked succeeded or blocked. Do not call the same tool with the same arguments again.",
+      "Incomplete steps:",
+      ...missingSteps.map(
+        (entry) =>
+          `- ${entry.step.id} ${entry.step.type}: ${entry.step.action} -> ${entry.step.target}; required_tool=${entry.requiredTool}; attempts=${entry.attempts}; done_when=${entry.completionCriteria}`,
+      ),
+    ].join("\n");
+  }
+
+  buildDeterministicToolRequests(): ToolCallLike[] {
+    const requests: ToolCallLike[] = [];
+    for (const entry of this.actionableEnforceableSteps()) {
+      if (entry.requiredTool !== "task_add") continue;
+      const operation = getStepOperation(entry.step);
+      const target = (operation.target || entry.step.target).trim();
+      if (
+        !target ||
+        ["reminder", "task", "schedule", "follow-up"].includes(
+          target.toLowerCase(),
+        )
+      ) {
+        continue;
+      }
+      requests.push({
+        name: "task_add",
+        callId: `intent-${entry.step.id}-task_add`,
+        args: {
+          cron: target,
+          prompt: target,
+        },
+      });
+    }
+    return requests;
+  }
+
+  buildStatePrompt(): string {
+    return [
+      "SYSTEM: Multi-intent step runtime state.",
+      ...this.entries.map((entry) => {
+        const error = entry.lastError ? ` last_error="${entry.lastError}"` : "";
+        return `- ${entry.step.id}: status=${entry.status} mode=${entry.mode} required_tool=${entry.requiredTool ?? "none"} attempts=${entry.attempts}${error}`;
+      }),
+      "Use this state to avoid repeating completed steps.",
+    ].join("\n");
+  }
 }

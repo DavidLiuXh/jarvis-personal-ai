@@ -5,11 +5,17 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { buildIntentExecutionPlan } from "./intentExecutionPlan.js";
+import {
+  buildIntentExecutionPlan,
+  IntentStepRuntime,
+} from "./intentExecutionPlan.js";
 import type { IntentFrame } from "./intentResolver.js";
 import { buildIntentPlanSection } from "./intentPlan.js";
 
-function intent(steps: IntentFrame["intentSteps"]): IntentFrame {
+type TestIntentStep = Omit<IntentFrame["intentSteps"][number], "operation"> &
+  Partial<Pick<IntentFrame["intentSteps"][number], "operation">>;
+
+function intent(steps: TestIntentStep[]): IntentFrame {
   return {
     subject: "mixed",
     taskType: "schedule",
@@ -56,6 +62,8 @@ function intent(steps: IntentFrame["intentSteps"]): IntentFrame {
     },
     richIntent: {
       userGoal: "analyze NVDA and schedule review",
+      domain: "task_management",
+      action: "schedule",
       primaryAction: "schedule",
       targets: [{ type: "external_entity", value: "NVDA" }],
       contextDependency: {
@@ -67,7 +75,20 @@ function intent(steps: IntentFrame["intentSteps"]): IntentFrame {
       ambiguity: [],
       riskLevel: "medium",
     },
-    intentSteps: steps,
+    intentSteps: steps.map((step) => ({
+      ...step,
+      operation: step.operation ?? {
+        domain:
+          step.type === "schedule" ? "task_management" : "external_knowledge",
+        action: step.type === "schedule" ? "create" : "analyze",
+        targetType: step.type === "schedule" ? "task" : "external_entity",
+        target: step.target,
+        targetId: "",
+        selector: "",
+        scope: step.type === "schedule" ? "scheduled_tasks" : "external",
+        riskLevel: step.riskLevel,
+      },
+    })),
     topicAnalysis: {
       history: { label: "", evidence: [], sourceTurns: [], confidence: 0.8 },
       current: {
@@ -175,5 +196,139 @@ describe("buildIntentPlanSection", () => {
     expect(plan?.mode).toBe("orchestrated");
     expect(plan?.requiredTools).toEqual(expect.arrayContaining(["task_add"]));
     expect(plan?.steps.map((step) => step.mode)).toEqual(["context", "tool"]);
+  });
+
+  it("tracks tool-backed step state by step instead of only by tool name", () => {
+    const runtime = new IntentStepRuntime(
+      intent([
+        {
+          id: "step-1",
+          type: "schedule",
+          action: "schedule first follow-up",
+          target: "明天早上9点提醒我复盘",
+          dependsOn: [],
+          requiresConfirmation: false,
+          riskLevel: "medium",
+        },
+        {
+          id: "step-2",
+          type: "schedule",
+          action: "schedule second follow-up",
+          target: "后天早上9点提醒我检查",
+          dependsOn: ["step-1"],
+          requiresConfirmation: false,
+          riskLevel: "medium",
+        },
+      ]),
+    );
+
+    runtime.observeToolResults(
+      [
+        {
+          name: "task_add",
+          args: { cron: "明天早上9点", prompt: "提醒我复盘" },
+        },
+      ],
+      [
+        {
+          functionResponse: {
+            name: "task_add",
+            response: { result: "✅ Task added" },
+          },
+        },
+      ],
+    );
+
+    expect(runtime.snapshot().map((entry) => entry.status)).toEqual([
+      "succeeded",
+      "pending",
+    ]);
+    expect(runtime.buildMissingStepPrompt()).toContain("step-2");
+    expect(runtime.buildMissingStepPrompt()).not.toContain("step-1");
+  });
+
+  it("suppresses duplicate tool calls for a completed step", () => {
+    const runtime = new IntentStepRuntime(
+      intent([
+        {
+          id: "step-1",
+          type: "schedule",
+          action: "schedule future follow-up",
+          target: "明天早上9点提醒我复盘",
+          dependsOn: [],
+          requiresConfirmation: false,
+          riskLevel: "medium",
+        },
+        {
+          id: "step-2",
+          type: "analyze",
+          action: "analyze external/domain context",
+          target: "NVDA",
+          dependsOn: ["step-1"],
+          requiresConfirmation: false,
+          riskLevel: "low",
+        },
+      ]),
+    );
+    const request = {
+      name: "task_add",
+      args: { cron: "明天早上9点", prompt: "提醒我复盘" },
+    };
+
+    runtime.observeToolResults(
+      [request],
+      [
+        {
+          functionResponse: {
+            name: "task_add",
+            response: { result: "✅ Task added" },
+          },
+        },
+      ],
+    );
+
+    const decision = runtime.filterDuplicateToolCalls([request]);
+
+    expect(decision.executableRequests).toHaveLength(0);
+    expect(decision.duplicateResponses).toHaveLength(1);
+    expect(JSON.stringify(decision.duplicateResponses[0])).toContain(
+      "Duplicate tool call suppressed",
+    );
+  });
+
+  it("builds deterministic task_add requests for concrete schedule steps", () => {
+    const runtime = new IntentStepRuntime(
+      intent([
+        {
+          id: "step-1",
+          type: "schedule",
+          action: "schedule future follow-up",
+          target: "明天早上9点提醒我复盘",
+          dependsOn: [],
+          requiresConfirmation: false,
+          riskLevel: "medium",
+        },
+        {
+          id: "step-2",
+          type: "analyze",
+          action: "analyze external/domain context",
+          target: "NVDA",
+          dependsOn: ["step-1"],
+          requiresConfirmation: false,
+          riskLevel: "low",
+        },
+      ]),
+    );
+
+    expect(runtime.buildDeterministicToolRequests()).toEqual([
+      {
+        name: "task_add",
+        callId: "intent-step-1-task_add",
+        args: {
+          cron: "明天早上9点提醒我复盘",
+          prompt: "明天早上9点提醒我复盘",
+        },
+      },
+    ]);
   });
 });
