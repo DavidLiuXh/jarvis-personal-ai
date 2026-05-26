@@ -2033,6 +2033,88 @@ ${modelResponse({
     expect(policyReasonCodes(intent)).toContain("MEMORY_TARGET_TOPIC_SHIFT");
   });
 
+  it("forces topic shift for explicit conversation-history artifact recall", async () => {
+    const resolver = makeResolver();
+    mockGenerate.mockResolvedValueOnce(
+      modelResponse({
+        query_subject: "personal",
+        task_type: "recall",
+        needs_external_knowledge: false,
+        needs_tool: true,
+        semantic_evidence: {
+          personalContext: {
+            present: true,
+            reason: "asks for a prior artifact",
+            span: "之前梳理的中二年级下学期数学重难点提要",
+          },
+          memoryRecall: {
+            present: true,
+            target: "conversation_history",
+            reason: "asks to reopen prior conversation artifact",
+            span: "之前梳理的中二年级下学期数学重难点提要",
+          },
+          actionRequest: {
+            present: true,
+            action: "read",
+            object: "数学重难点提要",
+          },
+          entityHints: {
+            tickers: [],
+            technicalTerms: ["数学重难点提要"],
+            peopleOrCompanies: [],
+          },
+        },
+        topic_analysis: {
+          history: {
+            label: "File opening",
+            evidence: ["打开 physics_summary.md"],
+            source_turns: [-2],
+            confidence: 0.8,
+          },
+          current: {
+            label: "Open prior math outline",
+            evidence: ["帮我再打开之前梳理的中二年级下学期数学重难点提要"],
+            source_turns: [0],
+            confidence: 0.9,
+          },
+          relation: "subtopic",
+          relation_reason: "both are file recall/open requests",
+          confidence: 0.8,
+        },
+        references_recent_history: false,
+        topic_shifted: false,
+      }),
+    );
+
+    const intent = await resolver.resolve({
+      userPrompt: "帮我再打开之前梳理的中二年级下学期数学重难点提要",
+      history: [
+        {
+          role: "user",
+          content: "帮我打开之前保存的 physics_summary.md",
+        },
+        {
+          role: "assistant",
+          content: "已打开 physics_summary.md。",
+        },
+      ],
+    });
+
+    expect(intent.referencesRecentHistory).toBe(false);
+    expect(intent.semanticEvidence.memoryRecall.target).toBe(
+      "conversation_history",
+    );
+    expect(intent.topicShifted).toBe(true);
+    expect(intent.topicAnalysis).toMatchObject({
+      relation: "new_topic",
+      relationReason:
+        "conversation-history recall targets an explicit prior artifact or topic rather than the current recent context",
+    });
+    expect(policyReasonCodes(intent)).toContain(
+      "CONVERSATION_HISTORY_ARTIFACT_TOPIC_SHIFT",
+    );
+  });
+
   it("treats short personal identity assertions as standalone facts, not history recall", async () => {
     const resolver = makeResolver();
     mockGenerate.mockResolvedValueOnce(

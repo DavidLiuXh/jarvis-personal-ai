@@ -225,6 +225,10 @@ const POLICY_REASON_METADATA: Record<
     category: "topic_boundary",
     severity: "warning",
   },
+  CONVERSATION_HISTORY_ARTIFACT_TOPIC_SHIFT: {
+    category: "topic_boundary",
+    severity: "warning",
+  },
   SELF_CONTAINED_ENTITY_NOT_CURRENT_CONTEXT: {
     category: "topic_boundary",
     severity: "warning",

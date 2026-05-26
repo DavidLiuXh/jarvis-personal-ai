@@ -577,6 +577,25 @@ function hasBroadTopicalHistory(
   );
 }
 
+function hasExplicitConversationHistoryArtifactOrTopic(
+  prompt: string,
+  semanticEvidence: IntentEvidence,
+  parsedTopicAnalysis: Record<string, unknown>,
+): boolean {
+  if (collectSpecificEntityTerms(prompt, semanticEvidence).length > 0) {
+    return true;
+  }
+
+  const topicCurrent = asRecord(parsedTopicAnalysis.current);
+  const currentLabel = normalizeOptionalString(topicCurrent.label) ?? "";
+  const currentEvidence = normalizeStringArray(topicCurrent.evidence).join(" ");
+  const text = [prompt, currentLabel, currentEvidence].join(" ");
+
+  return /(之前|以前|上次|曾经|再|重新).*(打开|保存|生成|写|整理|梳理|汇总|总结|文件|文档|markdown|md|报告|提要|方案|记录|笔记|内容)|\b[\w.-]+\.md\b|markdown|本地.*文件|数学.*(重难点|提要)|物理.*(总结|提要)|语文.*(总结|提要)|英语.*(总结|提要)/i.test(
+    text,
+  );
+}
+
 function hasEntityStatusDrilldown(
   prompt: string,
   semanticEvidence: IntentEvidence,
@@ -2993,6 +3012,44 @@ export class IntentResolver {
         `🧭 [IntentResolver] Memory target changed ${previousRecallTarget} → ${memoryRecallTarget}; topic_shifted forced true`,
       );
     }
+    const conversationHistoryArtifactTopicShift =
+      !topicShifted &&
+      !referencesRecentHistory &&
+      memoryRecallTarget === "conversation_history" &&
+      hasExplicitConversationHistoryArtifactOrTopic(
+        prompt,
+        semanticEvidence,
+        parsedTopicAnalysis,
+      );
+    if (conversationHistoryArtifactTopicShift) {
+      const beforeTopicShifted = topicShifted;
+      topicShifted = true;
+      policyTrace.push({
+        ruleId: "topic.conversation_history_artifact_topic_shift",
+        stage: "guardrail",
+        priority: 415,
+        reasonCode: "CONVERSATION_HISTORY_ARTIFACT_TOPIC_SHIFT",
+        reason: normalizeIntentPolicyReason(
+          "CONVERSATION_HISTORY_ARTIFACT_TOPIC_SHIFT",
+        ),
+        applied: true,
+        before: {
+          topicShifted: beforeTopicShifted,
+          relation: topicRelation,
+          memoryTarget: memoryRecallTarget,
+          referencesRecentHistory,
+        },
+        after: {
+          topicShifted,
+          relation: "new_topic",
+          memoryTarget: memoryRecallTarget,
+          referencesRecentHistory,
+        },
+      });
+      console.error(
+        `🧭 [IntentResolver] Explicit conversation-history artifact/topic recall; topic_shifted forced true`,
+      );
+    }
     let topicAnalysis = normalizeTopicAnalysis({
       value: parsed.topic_analysis,
       legacyHistoryTopic: parsed.history_topic,
@@ -3044,6 +3101,15 @@ export class IntentResolver {
         ...topicAnalysis,
         relation: "new_topic",
         relationReason: `memory recall target changed from ${previousRecallTarget} to ${memoryRecallTarget}`,
+        confidence: Math.max(topicAnalysis.confidence, 0.9),
+        lowGrounding: false,
+      };
+    } else if (conversationHistoryArtifactTopicShift) {
+      topicAnalysis = {
+        ...topicAnalysis,
+        relation: "new_topic",
+        relationReason:
+          "conversation-history recall targets an explicit prior artifact or topic rather than the current recent context",
         confidence: Math.max(topicAnalysis.confidence, 0.9),
         lowGrounding: false,
       };
