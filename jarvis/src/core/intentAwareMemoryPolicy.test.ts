@@ -305,4 +305,31 @@ describe("buildIntentAwareMemoryPolicy", () => {
     expect(policy.allowPrewarm).toBe(true);
     expect(policy.reasons).not.toContain("tool_task_without_memory_dependency");
   });
+
+  it("uses only entry history for time-scoped conversation-history recall", () => {
+    const policy = buildIntentAwareMemoryPolicy({
+      userPrompt: "汇总下昨天我们都讨论了哪些内容",
+      querySubject: "personal",
+      config: CONFIG,
+      intent: intent({
+        resolvedDateRange: {
+          from: Date.parse("2026-05-25T00:00:00+08:00"),
+          to: Date.parse("2026-05-26T00:00:00+08:00"),
+        },
+        dateFrom: "2026-05-25",
+        dateTo: "2026-05-26",
+      }),
+    });
+
+    expect(policy.allowFacts).toBe(false);
+    expect(policy.allowSummary).toBe(false);
+    expect(policy.allowPrewarm).toBe(true);
+    expect(policy.contract.targetScopes).toEqual(["entry"]);
+    expect(policy.contract.constraints).toMatchObject({
+      allowPersonalFacts: false,
+      allowSessionHistory: false,
+      allowEntries: true,
+    });
+    expect(policy.reasons).toContain("time_scoped_conversation_history");
+  });
 });

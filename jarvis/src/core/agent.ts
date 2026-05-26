@@ -705,8 +705,8 @@ export class JarvisAgent extends EventEmitter {
           query: {
             ...memoryPolicy.contract.query,
             timeRange:
-              memoryPolicy.contract.query.timeRange ??
               resolvedDateRange ??
+              memoryPolicy.contract.query.timeRange ??
               undefined,
           },
         };

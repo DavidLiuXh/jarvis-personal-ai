@@ -62,6 +62,16 @@ function buildMemoryTargetScopes(args: {
   return scopes;
 }
 
+function hasExplicitTimeRange(intent: IntentFrame | null): boolean {
+  if (!intent) return false;
+  return Boolean(
+    intent.resolvedDateRange ||
+      intent.dateFrom ||
+      intent.dateTo ||
+      typeof intent.timeWindowDays === "number",
+  );
+}
+
 export function buildIntentAwareMemoryPolicy(args: {
   userPrompt: string;
   querySubject: QuerySubject;
@@ -122,6 +132,15 @@ export function buildIntentAwareMemoryPolicy(args: {
       allowSummary = false;
       allowPrewarm = false;
       reasons.push("current_context_reference");
+    }
+    if (
+      memoryTarget === "conversation_history" &&
+      hasExplicitTimeRange(intent)
+    ) {
+      allowFacts = false;
+      allowSummary = false;
+      allowPrewarm = true;
+      reasons.push("time_scoped_conversation_history");
     }
     if (
       (intent.taskType === "execute" ||
