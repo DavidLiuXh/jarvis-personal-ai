@@ -9,11 +9,13 @@ type Stats = Record<string, { passed: number; total: number }>;
 type MatrixReport = {
   generatedAt: string;
   casesPath: string;
+  casesPaths?: string[];
   total: number;
   passed: number;
   failed: number;
   dimensionStats: Stats;
   invariantStats: Stats;
+  axisStats?: Stats;
   results: Array<{
     id: string;
     dimension: string;
@@ -170,6 +172,20 @@ function formatStats(stats: Stats, limit = 12): string {
   ].join("\n");
 }
 
+function formatCasePaths(report: MatrixReport): string {
+  const paths =
+    report.casesPaths ??
+    report.casesPath
+      .split(",")
+      .map((item) => item.trim())
+      .filter(Boolean);
+  return paths
+    .map((item) =>
+      path.isAbsolute(item) ? path.relative(repoRoot, item) : item,
+    )
+    .join(", ");
+}
+
 function matrixFailures(report: MatrixReport) {
   return report.results
     .filter((result) => !result.passed)
@@ -245,7 +261,7 @@ function buildMarkdown(args: {
       "## Matrix Regression",
       "",
       `- Source: ${args.matrixPath ? path.relative(repoRoot, args.matrixPath) : "unknown"}`,
-      `- Cases file: ${path.relative(repoRoot, args.matrix.casesPath)}`,
+      `- Cases files: ${formatCasePaths(args.matrix)}`,
       "",
       "### Matrix Dimensions",
       "",
@@ -255,6 +271,14 @@ function buildMarkdown(args: {
       "",
       formatStats(args.matrix.invariantStats, 30),
     );
+    if (args.matrix.axisStats) {
+      lines.push(
+        "",
+        "### Semantic Axis Coverage",
+        "",
+        formatStats(args.matrix.axisStats, 40),
+      );
+    }
     const failures = matrixFailures(args.matrix);
     if (failures.length > 0) {
       lines.push("", "### Matrix Failures", "");

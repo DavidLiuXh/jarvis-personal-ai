@@ -35,6 +35,8 @@ type MatrixCase = {
   id: string;
   dimension: MatrixDimension;
   invariant: string;
+  principles?: string[];
+  axes?: Record<string, string>;
   prompt: string;
   history?: ConversationTurn[];
   now?: string;
@@ -103,6 +105,8 @@ type CaseResult = {
   id: string;
   dimension: MatrixDimension;
   invariant: string;
+  principles: string[];
+  axes: Record<string, string>;
   tags: string[];
   passed: boolean;
   durationMs: number;
@@ -117,13 +121,16 @@ const repoRoot = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
   "..",
 );
-const defaultCasesPath = path.join(repoRoot, "evals/intent/matrix-cases.jsonl");
+const defaultCasePaths = [
+  path.join(repoRoot, "evals/intent/matrix-cases.jsonl"),
+  path.join(repoRoot, "evals/intent/semantic-space-cases.jsonl"),
+];
 const defaultOutputDir = path.join(repoRoot, "evals/logs");
 const defaultNow = "2026-05-26T04:00:00.000Z";
 
 function parseArgs(argv: string[]) {
   const args = {
-    casesPath: defaultCasesPath,
+    casesPaths: [...defaultCasePaths],
     outputDir: defaultOutputDir,
     tag: "",
     invariant: "",
@@ -136,7 +143,11 @@ function parseArgs(argv: string[]) {
     const arg = argv[i];
     const next = argv[i + 1];
     if (arg === "--cases" && next) {
-      args.casesPath = path.resolve(next);
+      args.casesPaths = next
+        .split(",")
+        .map((item) => item.trim())
+        .filter(Boolean)
+        .map((item) => path.resolve(item));
       i += 1;
     } else if (arg === "--output-dir" && next) {
       args.outputDir = path.resolve(next);
@@ -173,7 +184,7 @@ Usage:
   npx tsx scripts/run_intent_matrix.ts [options]
 
 Options:
-  --cases <path>       JSONL matrix case file. Default: evals/intent/matrix-cases.jsonl
+  --cases <paths>      Comma-separated JSONL case files. Default: matrix + semantic-space
   --output-dir <path>  Report directory. Default: evals/logs
   --dimension <name>   Run one taxonomy dimension
   --invariant <id>     Run one invariant id
@@ -183,7 +194,8 @@ Options:
 `);
 }
 
-function readCases(casesPath: string): MatrixCase[] {
+function readCasesFile(casesPath: string): MatrixCase[] {
+  if (!fs.existsSync(casesPath)) return [];
   const text = fs.readFileSync(casesPath, "utf8");
   return text
     .split(/\r?\n/)
@@ -198,6 +210,22 @@ function readCases(casesPath: string): MatrixCase[] {
         );
       }
     });
+}
+
+function readCases(casesPaths: string[]): MatrixCase[] {
+  const cases = casesPaths.flatMap((casesPath) => readCasesFile(casesPath));
+  const seen = new Set<string>();
+  const duplicates = new Set<string>();
+  for (const evalCase of cases) {
+    if (seen.has(evalCase.id)) duplicates.add(evalCase.id);
+    seen.add(evalCase.id);
+  }
+  if (duplicates.size > 0) {
+    throw new Error(
+      `Duplicate matrix case id(s): ${Array.from(duplicates).join(", ")}`,
+    );
+  }
+  return cases;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -647,6 +675,8 @@ async function runCase(evalCase: MatrixCase): Promise<CaseResult> {
       id: evalCase.id,
       dimension: evalCase.dimension,
       invariant: evalCase.invariant,
+      principles: evalCase.principles ?? [],
+      axes: evalCase.axes ?? {},
       tags: evalCase.tags ?? [],
       passed: checks.every((check) => check.pass),
       durationMs: Date.now() - startedAt,
@@ -660,6 +690,8 @@ async function runCase(evalCase: MatrixCase): Promise<CaseResult> {
       id: evalCase.id,
       dimension: evalCase.dimension,
       invariant: evalCase.invariant,
+      principles: evalCase.principles ?? [],
+      axes: evalCase.axes ?? {},
       tags: evalCase.tags ?? [],
       passed: false,
       durationMs: Date.now() - startedAt,
@@ -683,6 +715,19 @@ function summarizeBy<T extends string>(
   return stats;
 }
 
+function summarizeAxes(results: CaseResult[]) {
+  const stats: Record<string, { passed: number; total: number }> = {};
+  for (const result of results) {
+    for (const [axis, value] of Object.entries(result.axes)) {
+      const key = `${axis}:${value}`;
+      stats[key] ??= { passed: 0, total: 0 };
+      stats[key].total += 1;
+      if (result.passed) stats[key].passed += 1;
+    }
+  }
+  return stats;
+}
+
 function formatStats(stats: Record<string, { passed: number; total: number }>) {
   return Object.entries(stats)
     .sort(([left], [right]) => left.localeCompare(right))
@@ -693,18 +738,19 @@ function formatStats(stats: Record<string, { passed: number; total: number }>) {
     .join("\n");
 }
 
-function buildMarkdownReport(results: CaseResult[], casesPath: string) {
+function buildMarkdownReport(results: CaseResult[], casesPaths: string[]) {
   const passed = results.filter((result) => result.passed).length;
   const total = results.length;
   const dimensionStats = summarizeBy(results, (result) => result.dimension);
   const invariantStats = summarizeBy(results, (result) => result.invariant);
+  const axisStats = summarizeAxes(results);
   const failed = results.filter((result) => !result.passed);
   const lines: string[] = [
     "# Intent Matrix Eval Report",
     "",
     `- Cases: ${passed}/${total}`,
     `- Pass rate: ${total === 0 ? "0.0" : ((passed / total) * 100).toFixed(1)}%`,
-    `- Cases file: ${path.relative(repoRoot, casesPath)}`,
+    `- Cases files: ${casesPaths.map((casesPath) => path.relative(repoRoot, casesPath)).join(", ")}`,
     `- Generated: ${new Date().toISOString()}`,
     "",
     "## By Dimension",
@@ -718,6 +764,12 @@ function buildMarkdownReport(results: CaseResult[], casesPath: string) {
     "| Invariant | Pass | Rate |",
     "| --- | ---: | ---: |",
     formatStats(invariantStats),
+    "",
+    "## By Semantic Axis",
+    "",
+    "| Axis | Pass | Rate |",
+    "| --- | ---: | ---: |",
+    formatStats(axisStats),
   ];
 
   if (failed.length > 0) {
@@ -743,7 +795,7 @@ function buildMarkdownReport(results: CaseResult[], casesPath: string) {
 
 async function main() {
   const args = parseArgs(process.argv.slice(2));
-  let cases = readCases(args.casesPath);
+  let cases = readCases(args.casesPaths);
   if (args.dimension) {
     cases = cases.filter((evalCase) => evalCase.dimension === args.dimension);
   }
@@ -774,15 +826,17 @@ async function main() {
   const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
   const payload = {
     generatedAt: new Date().toISOString(),
-    casesPath: args.casesPath,
+    casesPath: args.casesPaths.join(","),
+    casesPaths: args.casesPaths,
     total: results.length,
     passed: results.filter((result) => result.passed).length,
     failed: results.filter((result) => !result.passed).length,
     dimensionStats: summarizeBy(results, (result) => result.dimension),
     invariantStats: summarizeBy(results, (result) => result.invariant),
+    axisStats: summarizeAxes(results),
     results,
   };
-  const markdown = buildMarkdownReport(results, args.casesPath);
+  const markdown = buildMarkdownReport(results, args.casesPaths);
   const jsonPath = path.join(args.outputDir, `intent-matrix-${timestamp}.json`);
   const mdPath = path.join(args.outputDir, `intent-matrix-${timestamp}.md`);
   fs.writeFileSync(jsonPath, JSON.stringify(payload, null, 2) + "\n");

@@ -2145,8 +2145,13 @@ function deriveIntentSteps(args: {
     args.semanticEvidence.entityHints.tickers.length > 0 ||
     args.semanticEvidence.entityHints.peopleOrCompanies.length > 0 ||
     args.richIntent.targets.some((target) => target.type === "external_entity");
+  const hasDelegateStep =
+    args.taskType === "delegate" ||
+    args.semanticEvidence.actionRequest.action === "delegate" ||
+    steps.some((step) => step.type === "delegate");
   if (
     !currentContextOnlyExecute &&
+    !hasDelegateStep &&
     (args.needsExternalKnowledge ||
       args.taskType === "analyze" ||
       hasExternalEntity)
@@ -2738,6 +2743,7 @@ export class IntentResolver {
       recallCue &&
       semanticEvidence.memoryRecall.target !== "conversation_history" &&
       (semanticEvidence.entityHints.tickers.length > 0 ||
+        semanticEvidence.entityHints.technicalTerms.length > 0 ||
         semanticEvidence.entityHints.peopleOrCompanies.length > 0);
     const cues: IntentCueState = {
       semanticRecallCue,

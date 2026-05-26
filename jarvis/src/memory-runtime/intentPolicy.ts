@@ -620,6 +620,7 @@ function subjectPolicyRules(
         !state.cues.personalFactAssertionCue &&
         (!state.cues.recallCue || state.cues.recallWithExternalWork) &&
         (state.semanticEvidence.entityHints.tickers.length > 0 ||
+          state.semanticEvidence.entityHints.technicalTerms.length > 0 ||
           state.semanticEvidence.entityHints.peopleOrCompanies.length > 0 ||
           state.hasModelExternalKnowledge),
       apply: (state) => ({
@@ -746,6 +747,7 @@ function taskPolicyRules(
       snapshot: taskPolicySnapshot,
       applies: (state) =>
         state.cues.recallCue &&
+        !state.cues.recallWithExternalWork &&
         state.taskType !== "recall" &&
         state.taskType !== "schedule",
       apply: (state) => ({

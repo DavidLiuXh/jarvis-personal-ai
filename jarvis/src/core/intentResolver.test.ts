@@ -1241,6 +1241,45 @@ ${modelResponse({
     expect(intent.needsMemory).toBe(true);
   });
 
+  it("keeps mixed personal technical analysis as analysis, not recall", async () => {
+    const resolver = makeResolver();
+    mockGenerate.mockResolvedValueOnce(
+      modelResponse({
+        query_subject: "mixed",
+        task_type: "analyze",
+        needs_external_knowledge: true,
+        semantic_evidence: {
+          personalContext: {
+            present: true,
+            reason: "uses user's technical preference",
+            span: "我的技术偏好",
+          },
+          memoryRecall: {
+            present: true,
+            target: "user_memory",
+            reason: "technical preferences are relevant context",
+            span: "我的技术偏好",
+          },
+          actionRequest: { present: false, action: "none", object: "" },
+          entityHints: {
+            tickers: [],
+            technicalTerms: ["React", "Vue"],
+            peopleOrCompanies: [],
+          },
+        },
+      }),
+    );
+
+    const intent = await resolver.resolve({
+      userPrompt: "结合我的技术偏好，比较一下 React 和 Vue 哪个更适合我",
+    });
+
+    expect(intent.subject).toBe("mixed");
+    expect(intent.taskType).toBe("analyze");
+    expect(intent.semanticEvidence.memoryRecall.target).toBe("user_memory");
+    expect(policyReasonCodes(intent)).not.toContain("RECALL_CUE_TASK_OVERRIDE");
+  });
+
   it("trusts semantic technical terms over ticker fallback", async () => {
     const resolver = makeResolver();
     mockGenerate.mockResolvedValueOnce(
@@ -1351,6 +1390,7 @@ ${modelResponse({
       type: "agent",
       value: "investment-analysis",
     });
+    expect(intent.intentSteps.map((step) => step.type)).toEqual(["delegate"]);
   });
 
   it("uses semantic delegate action evidence to preserve delegation", async () => {
@@ -1688,6 +1728,9 @@ ${modelResponse({
     expect(policyReasonCodes(intent)).toContain("SCHEDULE_CUE_TASK_OVERRIDE");
     expect(policyReasonCodes(intent)).not.toContain(
       "DELEGATE_CUE_TASK_OVERRIDE",
+    );
+    expect(intent.intentSteps.map((step) => step.type)).not.toContain(
+      "analyze",
     );
   });
 
