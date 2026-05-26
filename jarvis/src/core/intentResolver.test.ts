@@ -451,6 +451,193 @@ ${modelResponse({
     );
   });
 
+  it("downgrades self-contained entity questions from current-context references", async () => {
+    const resolver = makeResolver();
+    mockGenerate.mockResolvedValueOnce(
+      modelResponse({
+        query_subject: "external",
+        task_type: "analyze",
+        references_recent_history: true,
+        topic_shifted: false,
+        topic_analysis: {
+          relation: "current_context_reference",
+          history: {
+            label: "AI前沿信息汇总",
+            evidence: ["过去一周的 AI 前沿信息", "Google I/O 2026 大会"],
+            source_turns: [-1],
+            confidence: 0.9,
+          },
+          current: {
+            label: "Gemini Spark发布状态",
+            evidence: ["Gemini Spark当前已经发布了？是否已经可用了？"],
+            source_turns: [0],
+            confidence: 0.9,
+          },
+          confidence: 0.9,
+        },
+        semantic_evidence: {
+          personalContext: { present: false, reason: "", span: "" },
+          memoryRecall: {
+            present: true,
+            target: "current_context_reference",
+            reason: "same AI frontier topic",
+            span: "Gemini Spark",
+          },
+          actionRequest: { present: false, action: "none", object: "" },
+          entityHints: {
+            tickers: [],
+            technicalTerms: ["Gemini Spark"],
+            peopleOrCompanies: ["Gemini Spark"],
+          },
+        },
+      }),
+    );
+
+    const intent = await resolver.resolve({
+      userPrompt: "Gemini Spark当前已经发布了？是否已经可用了？",
+      history: [
+        {
+          role: "user",
+          content: "汇总一周内的ai前沿信息",
+        },
+        {
+          role: "assistant",
+          content:
+            "本周焦点包括 Google I/O 2026、代理化转型和 AI 安全伦理讨论。",
+        },
+      ],
+    });
+
+    expect(intent.topicShifted).toBe(false);
+    expect(intent.referencesRecentHistory).toBe(false);
+    expect(intent.semanticEvidence.memoryRecall.target).toBe("none");
+    expect(intent.topicAnalysis.relation).toBe("subtopic");
+    expect(policyReasonCodes(intent)).toContain(
+      "SELF_CONTAINED_ENTITY_NOT_CURRENT_CONTEXT",
+    );
+  });
+
+  it("keeps entity questions as current context when the entity appears in recent history", async () => {
+    const resolver = makeResolver();
+    mockGenerate.mockResolvedValueOnce(
+      modelResponse({
+        query_subject: "external",
+        task_type: "analyze",
+        references_recent_history: true,
+        topic_analysis: {
+          relation: "current_context_reference",
+          history: {
+            label: "Gemini Spark发布状态",
+            evidence: ["Gemini Spark 尚未确认开放时间"],
+            source_turns: [-1],
+            confidence: 0.9,
+          },
+          current: {
+            label: "Gemini Spark可用性",
+            evidence: ["Gemini Spark当前已经可用了？"],
+            source_turns: [0],
+            confidence: 0.9,
+          },
+          confidence: 0.9,
+        },
+        semantic_evidence: {
+          personalContext: { present: false, reason: "", span: "" },
+          memoryRecall: {
+            present: true,
+            target: "current_context_reference",
+            reason: "asks about recently discussed entity",
+            span: "Gemini Spark",
+          },
+          actionRequest: { present: false, action: "none", object: "" },
+          entityHints: {
+            tickers: [],
+            technicalTerms: ["Gemini Spark"],
+            peopleOrCompanies: ["Gemini Spark"],
+          },
+        },
+      }),
+    );
+
+    const intent = await resolver.resolve({
+      userPrompt: "Gemini Spark当前已经可用了？",
+      history: [
+        {
+          role: "user",
+          content: "Gemini Spark 的发布状态是什么？",
+        },
+        {
+          role: "assistant",
+          content: "Gemini Spark 尚未确认全面可用时间。",
+        },
+      ],
+    });
+
+    expect(intent.referencesRecentHistory).toBe(true);
+    expect(intent.semanticEvidence.memoryRecall.target).toBe(
+      "current_context_reference",
+    );
+    expect(intent.topicAnalysis.relation).toBe("current_context_reference");
+  });
+
+  it("keeps entity status drilldowns adjacent after a broad topical roundup", async () => {
+    const resolver = makeResolver();
+    mockGenerate.mockResolvedValueOnce(
+      modelResponse({
+        query_subject: "external",
+        task_type: "analyze",
+        references_recent_history: false,
+        topic_shifted: true,
+        topic_analysis: {
+          relation: "new_topic",
+          history: {
+            label: "AI前沿信息汇总",
+            evidence: ["过去一周 AI 前沿动态"],
+            source_turns: [-1],
+            confidence: 0.9,
+          },
+          current: {
+            label: "Gemini Spark发布状态",
+            evidence: ["Gemini Spark当前已经发布了？是否已经可用了？"],
+            source_turns: [0],
+            confidence: 0.9,
+          },
+          confidence: 0.9,
+        },
+        semantic_evidence: {
+          personalContext: { present: false, reason: "", span: "" },
+          memoryRecall: {
+            present: false,
+            target: "none",
+            reason: "",
+            span: "",
+          },
+          actionRequest: { present: false, action: "none", object: "" },
+          entityHints: {
+            tickers: [],
+            technicalTerms: ["Gemini Spark"],
+            peopleOrCompanies: ["Gemini Spark"],
+          },
+        },
+      }),
+    );
+
+    const intent = await resolver.resolve({
+      userPrompt: "Gemini Spark当前已经发布了？是否已经可用了？",
+      history: [
+        { role: "user", content: "汇总一周内的ai前沿信息" },
+        {
+          role: "assistant",
+          content: "本周 AI 前沿动态包括 Google I/O 和代理化转型。",
+        },
+      ],
+    });
+
+    expect(intent.topicShifted).toBe(false);
+    expect(intent.referencesRecentHistory).toBe(false);
+    expect(intent.topicAnalysis.relation).toBe("adjacent_topic");
+    expect(policyReasonCodes(intent)).toContain("BROAD_TOPIC_ENTITY_DRILLDOWN");
+  });
+
   it("upgrades external to mixed for personal-context cues", async () => {
     const resolver = makeResolver();
     mockGenerate.mockResolvedValueOnce(

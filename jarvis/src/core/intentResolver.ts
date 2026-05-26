@@ -493,6 +493,102 @@ function hasCurrentContextReferenceCue(prompt: string): boolean {
   );
 }
 
+const GENERIC_CONTEXT_ENTITY_TERMS = new Set([
+  "ai",
+  "api",
+  "html",
+  "http",
+  "https",
+  "json",
+  "llm",
+  "rag",
+  "ui",
+  "web",
+]);
+
+function normalizeEntityTerm(term: string): string {
+  return term.trim().replace(/\s+/g, " ");
+}
+
+function collectSpecificEntityTerms(
+  prompt: string,
+  semanticEvidence: IntentEvidence,
+): string[] {
+  const terms = new Set<string>();
+  const addTerm = (term: string) => {
+    const normalized = normalizeEntityTerm(term);
+    if (!normalized) return;
+    const key = normalized.toLowerCase();
+    if (GENERIC_CONTEXT_ENTITY_TERMS.has(key)) return;
+    if (normalized.length < 3) return;
+    terms.add(normalized);
+  };
+
+  semanticEvidence.entityHints.tickers.forEach(addTerm);
+  semanticEvidence.entityHints.technicalTerms.forEach(addTerm);
+  semanticEvidence.entityHints.peopleOrCompanies.forEach(addTerm);
+
+  const englishEntityPhrases =
+    prompt.match(
+      /\b[A-Z][A-Za-z0-9+.-]{2,}(?:\s+[A-Z][A-Za-z0-9+.-]{1,}){0,3}\b/g,
+    ) ?? [];
+  englishEntityPhrases.forEach(addTerm);
+
+  return [...terms];
+}
+
+function hasSelfContainedEntityQuery(
+  prompt: string,
+  semanticEvidence: IntentEvidence,
+): boolean {
+  const entityTerms = collectSpecificEntityTerms(prompt, semanticEvidence);
+  if (entityTerms.length === 0) return false;
+  if (hasCurrentContextReferenceCue(prompt)) return false;
+  return /[？?]|是否|是不是|有没有|已经|当前|现在|发布|可用|状态|价格|基本面|怎么样|如何|when\b|available\b|released\b|status\b/i.test(
+    prompt,
+  );
+}
+
+function recentHistoryContainsEntityTerms(
+  recentTurns: ConversationTurn[],
+  entityTerms: string[],
+): boolean {
+  if (recentTurns.length === 0 || entityTerms.length === 0) return false;
+  const historyText = recentTurns
+    .map((turn) => turn.content)
+    .join("\n")
+    .toLowerCase();
+  return entityTerms.some((term) => historyText.includes(term.toLowerCase()));
+}
+
+function hasBroadTopicalHistory(
+  recentTurns: ConversationTurn[],
+  parsedTopicAnalysis: Record<string, unknown>,
+): boolean {
+  const topicHistory = asRecord(parsedTopicAnalysis.history);
+  const evidence = normalizeStringArray(topicHistory.evidence).join("\n");
+  const text = [
+    normalizeOptionalString(topicHistory.label) ?? "",
+    evidence,
+    ...recentTurns.map((turn) => turn.content),
+  ].join("\n");
+  return /汇总|前沿|动态|周报|日报|资讯|报告|过去一周|一周内|roundup|report|news|updates|weekly|frontier/i.test(
+    text,
+  );
+}
+
+function hasEntityStatusDrilldown(
+  prompt: string,
+  semanticEvidence: IntentEvidence,
+): boolean {
+  return (
+    hasSelfContainedEntityQuery(prompt, semanticEvidence) &&
+    /是否|是不是|有没有|已经|当前|现在|发布|可用|状态|进展|available|released|status/i.test(
+      prompt,
+    )
+  );
+}
+
 /**
  * Build the classifier prompt. Date/time resolution is handled by
  * extractDateRange() in code; the local model only needs to score and classify.
@@ -2562,13 +2658,13 @@ export class IntentResolver {
       policyRegistry.semantic,
       policyTrace,
     ).semanticEvidence;
-    const memoryRecallTarget = semanticEvidence.memoryRecall.target;
+    let memoryRecallTarget = semanticEvidence.memoryRecall.target;
     const semanticRecallCue =
       semanticEvidence.memoryRecall.present &&
       (memoryRecallTarget === "conversation_history" ||
         memoryRecallTarget === "user_memory");
     const externalPastEventCue = memoryRecallTarget === "external_past_event";
-    const currentContextReferenceCue =
+    let currentContextReferenceCue =
       memoryRecallTarget === "current_context_reference";
     const semanticActionPresent = semanticEvidence.actionRequest.present;
     const personalCue =
@@ -2715,11 +2811,68 @@ export class IntentResolver {
     const delegateDowngraded = agentState.delegateDowngraded;
     evidence.splice(0, evidence.length, ...agentState.evidence);
 
+    const parsedTopicAnalysis = asRecord(parsed.topic_analysis);
+    const rawTopicRelation = normalizeTopicRelation(
+      parsedTopicAnalysis.relation,
+    );
     const modelCurrentContextReference =
       parsed.references_recent_history === true ||
-      normalizeTopicRelation(asRecord(parsed.topic_analysis).relation) ===
-        "current_context_reference";
+      rawTopicRelation === "current_context_reference";
     const lexicalCurrentContextCue = hasCurrentContextReferenceCue(prompt);
+    const specificEntityTerms = collectSpecificEntityTerms(
+      prompt,
+      semanticEvidence,
+    );
+    const selfContainedEntityQuery = hasSelfContainedEntityQuery(
+      prompt,
+      semanticEvidence,
+    );
+    const shouldDowngradeCurrentContext =
+      currentContextReferenceCue &&
+      !anaphoric &&
+      !lexicalCurrentContextCue &&
+      selfContainedEntityQuery &&
+      !recentHistoryContainsEntityTerms(recentTurns, specificEntityTerms);
+    if (shouldDowngradeCurrentContext) {
+      const beforeMemoryRecall = { ...semanticEvidence.memoryRecall };
+      semanticEvidence = {
+        ...semanticEvidence,
+        memoryRecall: {
+          present: false,
+          target: "none",
+          reason:
+            "self-contained entity query does not require recent conversation context",
+          span: prompt.slice(0, 160),
+        },
+      };
+      memoryRecallTarget = "none";
+      currentContextReferenceCue = false;
+      policyTrace.push({
+        ruleId: "topic.self_contained_entity_not_current_context",
+        stage: "guardrail",
+        priority: 430,
+        reasonCode: "SELF_CONTAINED_ENTITY_NOT_CURRENT_CONTEXT",
+        reason: normalizeIntentPolicyReason(
+          "SELF_CONTAINED_ENTITY_NOT_CURRENT_CONTEXT",
+        ),
+        applied: true,
+        before: {
+          memoryRecall: beforeMemoryRecall,
+          referencesRecentHistory: parsed.references_recent_history === true,
+          relation: rawTopicRelation,
+          entityTerms: specificEntityTerms,
+        },
+        after: {
+          memoryRecall: semanticEvidence.memoryRecall,
+          referencesRecentHistory: false,
+          relation: "subtopic",
+          entityTerms: specificEntityTerms,
+        },
+      });
+      console.error(
+        `🧭 [IntentResolver] Self-contained entity query; current-context reference downgraded to topic continuity`,
+      );
+    }
     const referencesRecentHistory =
       !personalFactAssertionCue &&
       recentTurns.length > 0 &&
@@ -2731,9 +2884,11 @@ export class IntentResolver {
         `🔗 [IntentResolver] Semantic current-context reference detected — topic_shifted forced false`,
       );
     }
-    const topicRelation = personalFactAssertionCue
-      ? "new_topic"
-      : normalizeTopicRelation(asRecord(parsed.topic_analysis).relation);
+    const topicRelation = shouldDowngradeCurrentContext
+      ? "subtopic"
+      : personalFactAssertionCue
+        ? "new_topic"
+        : rawTopicRelation;
     // No history → topic shift is meaningless; force false to avoid spurious clears.
     let topicShifted =
       recentTurns.length === 0
@@ -2749,6 +2904,37 @@ export class IntentResolver {
                 : topicRelation === "new_topic"
                   ? true
                   : parsed.topic_shifted === true;
+    const broadTopicEntityDrilldown =
+      !referencesRecentHistory &&
+      topicShifted &&
+      topicRelation === "new_topic" &&
+      hasEntityStatusDrilldown(prompt, semanticEvidence) &&
+      hasBroadTopicalHistory(recentTurns, parsedTopicAnalysis);
+    if (broadTopicEntityDrilldown) {
+      const beforeTopicShifted = topicShifted;
+      topicShifted = false;
+      policyTrace.push({
+        ruleId: "topic.broad_topic_entity_drilldown",
+        stage: "guardrail",
+        priority: 410,
+        reasonCode: "BROAD_TOPIC_ENTITY_DRILLDOWN",
+        reason: normalizeIntentPolicyReason("BROAD_TOPIC_ENTITY_DRILLDOWN"),
+        applied: true,
+        before: {
+          topicShifted: beforeTopicShifted,
+          relation: topicRelation,
+          entityTerms: specificEntityTerms,
+        },
+        after: {
+          topicShifted,
+          relation: "adjacent_topic",
+          entityTerms: specificEntityTerms,
+        },
+      });
+      console.error(
+        `🧭 [IntentResolver] Broad-topic entity drilldown; topic_shifted forced false`,
+      );
+    }
     const previousRecallTarget = inferRecentRecallTarget(recentTurns);
     const memoryTargetChanged =
       !referencesRecentHistory &&
@@ -2808,6 +2994,27 @@ export class IntentResolver {
         relationReason:
           "current request is a standalone personal fact assertion, not a follow-up to recent history",
         confidence: Math.max(topicAnalysis.confidence, 0.9),
+        lowGrounding: false,
+      };
+    } else if (shouldDowngradeCurrentContext) {
+      topicAnalysis = {
+        ...topicAnalysis,
+        relation:
+          topicAnalysis.relation === "new_topic"
+            ? "adjacent_topic"
+            : "subtopic",
+        relationReason:
+          "current request is a self-contained entity query; recent history only provides topic continuity",
+        confidence: Math.max(topicAnalysis.confidence, 0.85),
+        lowGrounding: false,
+      };
+    } else if (broadTopicEntityDrilldown) {
+      topicAnalysis = {
+        ...topicAnalysis,
+        relation: "adjacent_topic",
+        relationReason:
+          "current request drills into a specific entity after a broad topical roundup",
+        confidence: Math.max(topicAnalysis.confidence, 0.85),
         lowGrounding: false,
       };
     } else if (memoryTargetChanged) {
