@@ -83,6 +83,95 @@ function classifyResponse(
   });
 }
 
+function conversationRecallResponse(score: number) {
+  return JSON.stringify({
+    knowledge_score: 95,
+    operation_score: 95,
+    complexity_score: score,
+    complexity_reasoning:
+      "The request requires recalling specific past conversation content.",
+    query_subject: "personal",
+    task_type: "recall",
+    needs_external_knowledge: false,
+    needs_tool: false,
+    needs_scheduling: false,
+    candidate_agents: [],
+    time_window_days: null,
+    date_from: null,
+    date_to: null,
+    confidence: 1,
+    evidence: ["recall", "昨天", "讨论"],
+    semantic_evidence: {
+      personalContext: { present: true, reason: "past conversation", span: "" },
+      memoryRecall: {
+        present: true,
+        target: "conversation_history",
+        reason: "asks what was discussed before",
+        span: "昨天我们都讨论了哪些内容",
+      },
+      actionRequest: { present: false, action: "read", object: "" },
+      entityHints: {
+        tickers: [],
+        technicalTerms: [],
+        peopleOrCompanies: [],
+      },
+    },
+    rich_intent: {
+      userGoal: "summarize yesterday's discussion",
+      domain: "memory_management",
+      action: "recall",
+      primaryAction: "recall",
+      targets: [{ type: "memory", value: "conversation_history" }],
+      contextDependency: {
+        recentConversation: false,
+        longTermMemory: true,
+        localWorkspace: false,
+        externalWorld: false,
+      },
+      ambiguity: [],
+      riskLevel: "low",
+    },
+    intent_steps: [
+      {
+        id: "step-1",
+        type: "recall",
+        action: "summarize past conversation",
+        target: "conversation_history",
+        depends_on: [],
+        requires_confirmation: false,
+        risk_level: "low",
+        operation: {
+          domain: "memory_management",
+          action: "recall",
+          target_type: "memory",
+          target: "conversation_history",
+          target_id: "",
+          selector: "yesterday",
+          scope: "long_term",
+          risk_level: "low",
+        },
+      },
+    ],
+    history_topic: "",
+    new_topic: "Recall Past Conversation",
+    references_recent_history: false,
+    topic_shifted: false,
+    topic_analysis: {
+      history: { label: "", evidence: [], sourceTurns: [], confidence: 0 },
+      current: {
+        label: "Recall Past Conversation",
+        evidence: ["汇总下昨天我们都讨论了哪些内容"],
+        sourceTurns: [0],
+        confidence: 1,
+      },
+      relation: "unknown",
+      relationReason: "no history",
+      confidence: 1,
+      lowGrounding: false,
+    },
+  });
+}
+
 describe("LocalModelRouter — detectTopicShift", () => {
   beforeEach(() => mockGenerate.mockReset());
 
@@ -303,5 +392,61 @@ describe("LocalModelRouter — query subject personal-context guard", () => {
     const result = await router.route("英伟达最新财报怎么样");
 
     expect(result.querySubject).toBe("external");
+  });
+});
+
+describe("LocalModelRouter — routing score calibration", () => {
+  beforeEach(() => mockGenerate.mockReset());
+
+  it("routes simple time-scoped conversation recall to flash even when raw complexity is high", async () => {
+    const router = makeRouter();
+    mockGenerate.mockResolvedValueOnce(conversationRecallResponse(97));
+
+    const result = await router.route("汇总下昨天我们都讨论了哪些内容");
+
+    expect(result.querySubject).toBe("personal");
+    expect(result.intent?.complexityScore).toBe(97);
+    expect(result.score).toBeLessThan(70);
+    expect(result.model).toBe("gemini-2.5-flash");
+    expect(result.classifierReason).toContain(
+      "calibration=time_scoped_conversation_recall",
+    );
+  });
+
+  it("does not downscore recall requests that also require external analysis", async () => {
+    const router = makeRouter();
+    const parsed = JSON.parse(conversationRecallResponse(88));
+    parsed.needs_external_knowledge = true;
+    parsed.task_type = "analyze";
+    parsed.intent_steps.push({
+      id: "step-2",
+      type: "analyze",
+      action: "analyze implications",
+      target: "external context",
+      depends_on: ["step-1"],
+      requires_confirmation: false,
+      risk_level: "low",
+      operation: {
+        domain: "external_knowledge",
+        action: "analyze",
+        target_type: "external_entity",
+        target: "external context",
+        target_id: "",
+        selector: "",
+        scope: "external",
+        risk_level: "low",
+      },
+    });
+    mockGenerate.mockResolvedValueOnce(JSON.stringify(parsed));
+
+    const result = await router.route(
+      "汇总昨天讨论的内容，并结合最新行业动态分析一下",
+    );
+
+    expect(result.score).toBe(88);
+    expect(result.model).toBe("gemini-2.5-pro");
+    expect(result.classifierReason).not.toContain(
+      "calibration=time_scoped_conversation_recall",
+    );
   });
 });

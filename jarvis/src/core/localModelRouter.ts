@@ -52,6 +52,60 @@ type ClassifyResult = {
   intent: IntentFrame;
 };
 
+const TIME_SCOPED_CONVERSATION_RECALL_ROUTING_CAP = 58;
+
+function hasExplicitTimeScope(intent: IntentFrame): boolean {
+  return Boolean(
+    intent.resolvedDateRange ||
+      intent.dateFrom ||
+      intent.dateTo ||
+      typeof intent.timeWindowDays === "number",
+  );
+}
+
+function isSimpleTimeScopedConversationRecall(intent: IntentFrame): boolean {
+  if (intent.taskType !== "recall") return false;
+  if (intent.semanticEvidence.memoryRecall.target !== "conversation_history") {
+    return false;
+  }
+  if (!hasExplicitTimeScope(intent)) return false;
+  if (
+    intent.needsExternalKnowledge ||
+    intent.needsTool ||
+    intent.needsScheduling
+  ) {
+    return false;
+  }
+  if ((intent.candidateAgents ?? []).length > 0) return false;
+
+  return intent.intentSteps.every((step) =>
+    ["recall", "chat"].includes(step.type),
+  );
+}
+
+function calibrateRoutingScore(intent: IntentFrame): {
+  score: number;
+  reasonSuffix: string;
+} {
+  const originalScore = intent.complexityScore;
+  if (isSimpleTimeScopedConversationRecall(intent)) {
+    const score = Math.min(
+      originalScore,
+      TIME_SCOPED_CONVERSATION_RECALL_ROUTING_CAP,
+    );
+    if (score !== originalScore) {
+      return {
+        score,
+        reasonSuffix: ` [routing_score=${score}, raw_complexity=${originalScore}, calibration=time_scoped_conversation_recall]`,
+      };
+    }
+  }
+  return {
+    score: originalScore,
+    reasonSuffix: "",
+  };
+}
+
 export class LocalModelRouter {
   constructor(
     private baseUrl: string = "http://localhost:11434",
@@ -123,14 +177,15 @@ export class LocalModelRouter {
     const intent = await this.resolveIntent(prompt, history);
     const knowledgeScore = intent.knowledgeScore;
     const operationScore = intent.operationScore;
+    const routingScore = calibrateRoutingScore(intent);
     const breakdown =
       knowledgeScore !== null && operationScore !== null
         ? ` [knowledge=${knowledgeScore}, operation=${operationScore}]`
         : "";
 
     return {
-      score: intent.complexityScore,
-      reason: `${intent.reason}${breakdown}`,
+      score: routingScore.score,
+      reason: `${intent.reason}${breakdown}${routingScore.reasonSuffix}`,
       querySubject: intent.subject,
       topicShifted: intent.topicShifted,
       timeWindowDays: intent.timeWindowDays,
