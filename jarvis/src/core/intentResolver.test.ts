@@ -1737,6 +1737,103 @@ ${modelResponse({
     );
   });
 
+  it("does not expand current-context save requests into multi-intent recall plans", async () => {
+    const resolver = makeResolver();
+    mockGenerate.mockResolvedValueOnce(
+      modelResponse({
+        query_subject: "mixed",
+        task_type: "execute",
+        needs_external_knowledge: false,
+        needs_tool: true,
+        references_recent_history: true,
+        topic_shifted: false,
+        topic_analysis: {
+          relation: "current_context_reference",
+          history: {
+            label: "初中二年级下学期数学重难点提要",
+            evidence: ["初中二年级下学期数学重难点提要"],
+            source_turns: [-1],
+            confidence: 1,
+          },
+          current: {
+            label: "Save context to file",
+            evidence: ["保存到本地markdown文件"],
+            source_turns: [0],
+            confidence: 1,
+          },
+          relation_reason: "save previous answer",
+          confidence: 1,
+        },
+        semantic_evidence: {
+          personalContext: {
+            present: true,
+            reason: "uses previous assistant answer",
+            span: "保存到本地markdown文件",
+          },
+          memoryRecall: {
+            present: true,
+            target: "current_context_reference",
+            reason: "refers to the immediately preceding answer",
+            span: "保存",
+          },
+          actionRequest: {
+            present: true,
+            action: "write",
+            object: "本地markdown文件",
+          },
+          entityHints: {
+            tickers: [],
+            technicalTerms: [],
+            peopleOrCompanies: [],
+          },
+        },
+        intent_steps: [
+          {
+            id: "a",
+            type: "recall",
+            action: "retrieve current context",
+            target: "current_context_reference",
+          },
+          {
+            id: "b",
+            type: "analyze",
+            action: "format current context as markdown",
+            target: "初中二年级下学期数学重难点提要",
+          },
+          {
+            id: "c",
+            type: "execute",
+            action: "save markdown file",
+            target: "本地markdown文件",
+          },
+        ],
+      }),
+    );
+
+    const intent = await resolver.resolve({
+      userPrompt: "保存到本地markdown文件",
+      history: [
+        {
+          role: "user",
+          content: "初中二年级下学期数学重，难点提要",
+        },
+        {
+          role: "assistant",
+          content: "初二下学期数学重难点提要包括方程、几何、函数和统计。",
+        },
+      ],
+    });
+
+    expect(intent.semanticEvidence.memoryRecall.target).toBe(
+      "current_context_reference",
+    );
+    expect(intent.intentSteps).toHaveLength(1);
+    expect(intent.intentSteps[0]).toMatchObject({
+      type: "execute",
+      dependsOn: [],
+    });
+  });
+
   it("normalizes grounded topic analysis and uses relation for topic shift", async () => {
     const resolver = makeResolver();
     mockGenerate.mockResolvedValueOnce(

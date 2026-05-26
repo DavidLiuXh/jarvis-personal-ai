@@ -2031,7 +2031,29 @@ function deriveIntentSteps(args: {
   semanticEvidence: IntentEvidence;
   richIntent: RichIntent;
 }): IntentStep[] {
-  const parsedSteps = normalizeIntentSteps(args.parsedIntentSteps);
+  const memoryRecallTarget = args.semanticEvidence.memoryRecall.target;
+  const currentContextOnlyExecute =
+    memoryRecallTarget === "current_context_reference" &&
+    !args.needsScheduling &&
+    args.semanticEvidence.actionRequest.action !== "delegate" &&
+    (args.semanticEvidence.actionRequest.action === "write" ||
+      args.semanticEvidence.actionRequest.action === "run" ||
+      hasOutputArtifactCue(args.prompt) ||
+      hasActionCue(args.prompt));
+  const parsedSteps = normalizeIntentSteps(args.parsedIntentSteps).filter(
+    (step) => {
+      if (
+        memoryRecallTarget === "current_context_reference" &&
+        step.type === "recall"
+      ) {
+        return false;
+      }
+      if (currentContextOnlyExecute) {
+        return step.type === "execute";
+      }
+      return true;
+    },
+  );
   const steps: IntentStep[] = [];
   const hasUsableParsedPlan = parsedSteps.length > 1;
 
@@ -2085,12 +2107,11 @@ function deriveIntentSteps(args: {
     );
   }
 
-  const memoryRecallTarget = args.semanticEvidence.memoryRecall.target;
   const explicitMemoryStep =
     memoryRecallTarget === "conversation_history" ||
-    memoryRecallTarget === "user_memory" ||
-    memoryRecallTarget === "current_context_reference";
+    memoryRecallTarget === "user_memory";
   const personalContextAnalysisStep =
+    !currentContextOnlyExecute &&
     args.semanticEvidence.personalContext.present &&
     (args.needsExternalKnowledge || args.taskType === "analyze");
   if (explicitMemoryStep || personalContextAnalysisStep) {
@@ -2106,9 +2127,10 @@ function deriveIntentSteps(args: {
     args.semanticEvidence.entityHints.peopleOrCompanies.length > 0 ||
     args.richIntent.targets.some((target) => target.type === "external_entity");
   if (
-    args.needsExternalKnowledge ||
-    args.taskType === "analyze" ||
-    hasExternalEntity
+    !currentContextOnlyExecute &&
+    (args.needsExternalKnowledge ||
+      args.taskType === "analyze" ||
+      hasExternalEntity)
   ) {
     append(
       "analyze",
