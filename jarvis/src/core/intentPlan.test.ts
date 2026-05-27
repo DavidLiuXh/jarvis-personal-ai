@@ -15,7 +15,45 @@ import { buildIntentPlanSection } from "./intentPlan.js";
 type TestIntentStep = Omit<IntentFrame["intentSteps"][number], "operation"> &
   Partial<Pick<IntentFrame["intentSteps"][number], "operation">>;
 
-function intent(steps: TestIntentStep[]): IntentFrame {
+function intent(
+  steps: TestIntentStep[],
+  overrides: Partial<
+    Pick<IntentFrame, "evidence" | "reason" | "richIntent" | "semanticEvidence">
+  > = {},
+): IntentFrame {
+  const semanticEvidence: IntentFrame["semanticEvidence"] = {
+    personalContext: { present: true, reason: "", span: "" },
+    memoryRecall: {
+      present: true,
+      target: "user_memory",
+      reason: "",
+      span: "",
+    },
+    actionRequest: { present: true, action: "schedule", object: "" },
+    entityHints: {
+      tickers: ["NVDA"],
+      technicalTerms: [],
+      peopleOrCompanies: [],
+    },
+    ...overrides.semanticEvidence,
+  };
+  const richIntent: IntentFrame["richIntent"] = {
+    userGoal: "analyze NVDA and schedule review",
+    domain: "task_management",
+    action: "schedule",
+    primaryAction: "schedule",
+    targets: [{ type: "external_entity", value: "NVDA" }],
+    contextDependency: {
+      recentConversation: false,
+      longTermMemory: true,
+      localWorkspace: false,
+      externalWorld: true,
+    },
+    ambiguity: [],
+    riskLevel: "medium",
+    ...overrides.richIntent,
+  };
+
   return {
     subject: "mixed",
     taskType: "schedule",
@@ -33,7 +71,7 @@ function intent(steps: TestIntentStep[]): IntentFrame {
     complexityScore: 60,
     knowledgeScore: 60,
     operationScore: 60,
-    reason: "test",
+    reason: overrides.reason ?? "test",
     confidence: 0.8,
     confidenceByDimension: {
       subject: 0.8,
@@ -44,37 +82,9 @@ function intent(steps: TestIntentStep[]): IntentFrame {
       topicShift: 0.8,
       richIntent: 0.8,
     },
-    evidence: [],
-    semanticEvidence: {
-      personalContext: { present: true, reason: "", span: "" },
-      memoryRecall: {
-        present: true,
-        target: "user_memory",
-        reason: "",
-        span: "",
-      },
-      actionRequest: { present: true, action: "schedule", object: "" },
-      entityHints: {
-        tickers: ["NVDA"],
-        technicalTerms: [],
-        peopleOrCompanies: [],
-      },
-    },
-    richIntent: {
-      userGoal: "analyze NVDA and schedule review",
-      domain: "task_management",
-      action: "schedule",
-      primaryAction: "schedule",
-      targets: [{ type: "external_entity", value: "NVDA" }],
-      contextDependency: {
-        recentConversation: false,
-        longTermMemory: true,
-        localWorkspace: false,
-        externalWorld: true,
-      },
-      ambiguity: [],
-      riskLevel: "medium",
-    },
+    evidence: overrides.evidence ?? [],
+    semanticEvidence,
+    richIntent,
     intentSteps: steps.map((step) => ({
       ...step,
       operation: step.operation ?? {
@@ -325,10 +335,124 @@ describe("buildIntentPlanSection", () => {
         name: "task_add",
         callId: "intent-step-1-task_add",
         args: {
-          cron: "明天早上9点提醒我复盘",
-          prompt: "明天早上9点提醒我复盘",
+          cron: "明天早上9点",
+          prompt: "提醒我复盘",
         },
       },
     ]);
+  });
+
+  it("builds task_add cron and prompt from full intent evidence for scheduled workflows", () => {
+    const userRequest =
+      "添加一个定时任务：北京时间每周五下午2点，使用dmii框架分析美国市场行情及趋势，保存成本地的markdown文件";
+    const runtime = new IntentStepRuntime(
+      intent(
+        [
+          {
+            id: "step-1",
+            type: "analyze",
+            action: "使用dmii框架分析",
+            target: "美国市场行情及趋势",
+            dependsOn: [],
+            requiresConfirmation: false,
+            riskLevel: "medium",
+          },
+          {
+            id: "step-2",
+            type: "execute",
+            action: "保存成本地markdown文件",
+            target: "美国市场行情及趋势分析报告",
+            dependsOn: ["step-1"],
+            requiresConfirmation: false,
+            riskLevel: "medium",
+          },
+          {
+            id: "step-3",
+            type: "schedule",
+            action: "添加定时任务",
+            target: "美国市场行情及趋势分析报告",
+            dependsOn: ["step-2"],
+            requiresConfirmation: false,
+            riskLevel: "medium",
+          },
+        ],
+        {
+          evidence: [userRequest],
+          richIntent: {
+            userGoal: userRequest,
+            domain: "task_management",
+            action: "schedule",
+            primaryAction: "schedule",
+            targets: [{ type: "external_entity", value: "美国市场" }],
+            contextDependency: {
+              recentConversation: false,
+              longTermMemory: true,
+              localWorkspace: true,
+              externalWorld: true,
+            },
+            ambiguity: [],
+            riskLevel: "medium",
+          },
+          semanticEvidence: {
+            personalContext: { present: true, reason: "", span: "" },
+            memoryRecall: {
+              present: false,
+              target: "none",
+              reason: "",
+              span: "",
+            },
+            actionRequest: {
+              present: true,
+              action: "schedule",
+              object: userRequest,
+            },
+            entityHints: {
+              tickers: [],
+              technicalTerms: ["DMII"],
+              peopleOrCompanies: [],
+            },
+          },
+        },
+      ),
+    );
+
+    expect(runtime.buildDeterministicToolRequests()).toEqual([
+      {
+        name: "task_add",
+        callId: "intent-step-3-task_add",
+        args: {
+          cron: "北京时间每周五下午2点",
+          prompt:
+            "使用dmii框架分析美国市场行情及趋势，保存成本地的markdown文件",
+        },
+      },
+    ]);
+  });
+
+  it("does not emit deterministic task_add calls without concrete schedule time", () => {
+    const runtime = new IntentStepRuntime(
+      intent([
+        {
+          id: "step-1",
+          type: "schedule",
+          action: "schedule future follow-up",
+          target: "提醒我复盘",
+          dependsOn: [],
+          requiresConfirmation: false,
+          riskLevel: "medium",
+        },
+        {
+          id: "step-2",
+          type: "analyze",
+          action: "analyze external/domain context",
+          target: "NVDA",
+          dependsOn: ["step-1"],
+          requiresConfirmation: false,
+          riskLevel: "low",
+        },
+      ]),
+    );
+
+    expect(runtime.buildDeterministicToolRequests()).toEqual([]);
   });
 });

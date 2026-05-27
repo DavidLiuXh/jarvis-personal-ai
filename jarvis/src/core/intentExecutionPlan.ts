@@ -66,6 +66,26 @@ export type DuplicateToolDecision = {
   suppressed: Array<{ request: ToolCallLike; stepId: string | null }>;
 };
 
+const GENERIC_TASK_TARGETS = new Set([
+  "reminder",
+  "task",
+  "schedule",
+  "follow-up",
+  "定时任务",
+  "任务",
+  "提醒",
+]);
+
+const SCHEDULE_TIME_PATTERNS = [
+  /(?:北京时间\s*)?(?:每\s*)?(?:周|星期)[一二三四五六日天](?:\s*(?:早上|上午|中午|下午|晚上|傍晚|夜间|凌晨))?\s*\d{1,2}(?::\d{2})?\s*[点时]?/i,
+  /(?:北京时间\s*)?(?:每天|每日|每\s*天|每\s*日)(?:\s*(?:早上|上午|中午|下午|晚上|傍晚|夜间|凌晨))?\s*\d{1,2}(?::\d{2})?\s*[点时]?/i,
+  /(?:今天|明天|后天|今晚|下周[一二三四五六日天]?|本周[一二三四五六日天]?)(?:\s*(?:早上|上午|中午|下午|晚上|傍晚|夜间|凌晨))?\s*\d{1,2}(?::\d{2})?\s*[点时]?/i,
+  /\b(?:every\s+)?(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday)\s+(?:at\s+)?\d{1,2}(?::\d{2})?\s*(?:am|pm)?\b/i,
+  /\b(?:daily|every day|weekdays)\s+(?:at\s+)?\d{1,2}(?::\d{2})?\s*(?:am|pm)?\b/i,
+  /\b\d{1,2}:\d{2}\b/,
+  /\b(?:\d+|\*)\s+(?:\d+|\*)\s+(?:\d+|\*)\s+(?:\d+|\*)\s+(?:[\d*,-]+)\b/,
+];
+
 function hasConcreteScheduleTime(
   intent: IntentFrame,
   step: IntentStep,
@@ -79,6 +99,126 @@ function hasConcreteScheduleTime(
       `${intent.reason} ${intent.evidence.join(" ")} ${intent.semanticEvidence.actionRequest.object ?? ""} ${step.action} ${step.target}`,
     )
   );
+}
+
+function normalizeText(text: string): string {
+  return text
+    .replace(/\s+/g, " ")
+    .replace(/^[\s,，:：;；。]+|[\s,，:：;；。]+$/g, "")
+    .trim();
+}
+
+function uniqueNonEmpty(values: string[]): string[] {
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const value of values.map(normalizeText)) {
+    if (!value || seen.has(value)) continue;
+    seen.add(value);
+    result.push(value);
+  }
+  return result;
+}
+
+function collectScheduleTextSources(
+  intent: IntentFrame | null,
+  step: IntentStep,
+): string[] {
+  const operation = getStepOperation(step);
+  return uniqueNonEmpty([
+    operation.selector,
+    operation.target,
+    step.target,
+    step.action,
+    intent?.semanticEvidence.actionRequest.object ?? "",
+    intent?.richIntent.userGoal ?? "",
+    intent?.richIntent.action ?? "",
+    intent?.richIntent.primaryAction ?? "",
+    intent?.reason ?? "",
+    ...(intent?.evidence ?? []),
+  ]);
+}
+
+function extractScheduleTimeText(sources: string[]): string | null {
+  for (const source of sources) {
+    for (const pattern of SCHEDULE_TIME_PATTERNS) {
+      const match = source.match(pattern);
+      const text = normalizeText(match?.[0] ?? "");
+      if (text) return text;
+    }
+  }
+  return null;
+}
+
+function stripScheduleWrapper(text: string, cronText: string): string {
+  let result = normalizeText(text);
+  result = result
+    .replace(
+      /^(?:请|帮我|麻烦)?(?:添加|创建|新增|设置|建立)?(?:一个|一条)?(?:定时任务|定时|任务|提醒|schedule|scheduled task)\s*[:：,，-]*/i,
+      "",
+    )
+    .replace(/^(?:北京时间|当地时间)\s*[:：,，-]*/i, "")
+    .replace(/^(?:并且|然后|再|同时)\s*/i, "");
+  if (cronText) {
+    for (const variant of uniqueNonEmpty([
+      cronText,
+      cronText.replace(/^(?:北京时间|当地时间)\s*/i, ""),
+    ])) {
+      result = normalizeText(result.replace(variant, " "));
+    }
+  }
+  result = result.replace(/^(?:并且|然后|再|同时)\s*/i, "");
+  return normalizeText(result);
+}
+
+function isGenericTaskPrompt(text: string): boolean {
+  const normalized = normalizeText(text).toLowerCase();
+  return (
+    normalized.length === 0 ||
+    GENERIC_TASK_TARGETS.has(normalized) ||
+    /^(?:添加|创建|新增|设置)?(?:定时任务|任务|提醒)$/.test(normalized)
+  );
+}
+
+function buildPromptFromNonScheduleSteps(
+  intent: IntentFrame | null,
+): string | null {
+  const prompt = uniqueNonEmpty(
+    (intent?.intentSteps ?? [])
+      .filter((step) => step.type !== "schedule")
+      .map((step) => normalizeText(`${step.action} ${step.target}`)),
+  ).join("；");
+  return prompt && !isGenericTaskPrompt(prompt) ? prompt : null;
+}
+
+function buildTaskAddArgs(
+  intent: IntentFrame | null,
+  step: IntentStep,
+): Record<string, string> | null {
+  const sources = collectScheduleTextSources(intent, step);
+  const cronText = extractScheduleTimeText(sources);
+  if (!cronText) return null;
+
+  const directPromptCandidates = sources
+    .filter((source) => source.includes(cronText))
+    .map((source) => stripScheduleWrapper(source, cronText))
+    .filter((source) => !isGenericTaskPrompt(source))
+    .sort((a, b) => b.length - a.length);
+  const fallbackPromptCandidates = sources
+    .filter((source) => !source.includes(cronText))
+    .map((source) => stripScheduleWrapper(source, cronText))
+    .filter((source) => !isGenericTaskPrompt(source))
+    .sort((a, b) => b.length - a.length);
+  const prompt =
+    directPromptCandidates[0] ??
+    fallbackPromptCandidates[0] ??
+    buildPromptFromNonScheduleSteps(intent) ??
+    null;
+  if (!prompt) return null;
+
+  return {
+    cron: cronText,
+    prompt,
+  };
 }
 
 function hasConcreteStepTarget(step: IntentStep): boolean {
@@ -275,11 +415,13 @@ export class IntentStepRuntime {
   private entries: IntentStepRuntimeEntry[];
   private signatureToStepId = new Map<string, string>();
   private maxAttemptsPerStep: number;
+  private readonly intent: IntentFrame | null;
 
   constructor(
     intent: IntentFrame | null,
     options?: { maxAttemptsPerStep?: number },
   ) {
+    this.intent = intent;
     this.plan = buildIntentExecutionPlan(intent);
     this.entries =
       this.plan?.steps.map((step) => ({
@@ -428,23 +570,12 @@ export class IntentStepRuntime {
     const requests: ToolCallLike[] = [];
     for (const entry of this.actionableEnforceableSteps()) {
       if (entry.requiredTool !== "task_add") continue;
-      const operation = getStepOperation(entry.step);
-      const target = (operation.target || entry.step.target).trim();
-      if (
-        !target ||
-        ["reminder", "task", "schedule", "follow-up"].includes(
-          target.toLowerCase(),
-        )
-      ) {
-        continue;
-      }
+      const args = buildTaskAddArgs(this.intent, entry.step);
+      if (!args) continue;
       requests.push({
         name: "task_add",
         callId: `intent-${entry.step.id}-task_add`,
-        args: {
-          cron: target,
-          prompt: target,
-        },
+        args,
       });
     }
     return requests;
