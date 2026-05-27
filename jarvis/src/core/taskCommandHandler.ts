@@ -236,7 +236,7 @@ export class TaskCommandHandler {
 
     this.taskScheduler.addTask(newTask);
 
-    return `✅ Task added and scheduled:\n  id: ${newTask.id}\n  cron: ${cronExpr}\n  prompt: ${prompt}`;
+    return `✅ Jarvis internal task added and scheduled:\n  scheduler: Jarvis TaskScheduler (not system crontab)\n  id: ${newTask.id}\n  cron: ${cronExpr}\n  prompt: ${prompt}`;
   }
 
   private update(id: string, argsStr: string): string {

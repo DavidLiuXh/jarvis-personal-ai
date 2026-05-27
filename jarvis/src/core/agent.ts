@@ -1427,6 +1427,9 @@ export class JarvisAgent extends EventEmitter {
 
           while (retryCount < maxRetries && !success) {
             try {
+              const shouldBufferPreToolContent =
+                stepRuntime.active &&
+                stepRuntime.actionableEnforceableSteps().length > 0;
               const responseStream = this.client.sendMessageStream(
                 currentQueryParts,
                 abortController.signal,
@@ -1444,8 +1447,10 @@ export class JarvisAgent extends EventEmitter {
                   )
                     continue;
                   turnTextAccumulated += newText;
-                  finalAssistantText += newText;
-                  this.emit(JarvisEventType.CONTENT, event);
+                  if (!shouldBufferPreToolContent) {
+                    finalAssistantText += newText;
+                    this.emit(JarvisEventType.CONTENT, event);
+                  }
                 } else if (event.type === GeminiEventType.ToolCallRequest) {
                   toolCallRequests.push(event.value);
                   // Emit immediately so the web UI can show "Invoking..." before
@@ -1570,6 +1575,11 @@ export class JarvisAgent extends EventEmitter {
                 const deterministicRequests =
                   stepRuntime.buildDeterministicToolRequests();
                 if (deterministicRequests.length > 0) {
+                  if (shouldBufferPreToolContent && turnTextAccumulated) {
+                    console.error(
+                      "🧭 [Jarvis] Suppressed pre-tool assistant text because deterministic multi-intent tool execution is required.",
+                    );
+                  }
                   console.error(
                     `🧭 [Jarvis] Executing deterministic multi-intent step(s): ${deterministicRequests
                       .map((request) => request.name)
@@ -1601,6 +1611,11 @@ export class JarvisAgent extends EventEmitter {
                     ? stepRuntime.buildMissingStepPrompt()
                     : null;
                 if (missingToolPrompt) {
+                  if (shouldBufferPreToolContent && turnTextAccumulated) {
+                    console.error(
+                      "🧭 [Jarvis] Suppressed pre-tool assistant text because multi-intent execution is incomplete.",
+                    );
+                  }
                   intentToolEnforcements++;
                   console.error(
                     `🧭 [Jarvis] Multi-intent execution incomplete — forcing missing tool step(s), attempt ${intentToolEnforcements}/${MAX_INTENT_TOOL_ENFORCEMENTS}.`,
@@ -1612,6 +1627,13 @@ export class JarvisAgent extends EventEmitter {
                   ];
                   success = false;
                 } else {
+                  if (shouldBufferPreToolContent && turnTextAccumulated) {
+                    finalAssistantText += turnTextAccumulated;
+                    this.emit(JarvisEventType.CONTENT, {
+                      type: GeminiEventType.Content,
+                      value: turnTextAccumulated,
+                    });
+                  }
                   success = true;
                 }
               }
