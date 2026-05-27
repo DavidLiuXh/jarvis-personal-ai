@@ -23,8 +23,8 @@ export interface JarvisConfig {
   };
   /**
    * Global Ollama service configuration.
-   * All Ollama-based features (embedding, routing, reflection, entity extraction, summarizer)
-   * use these as defaults. Individual features can override timeoutMs only.
+   * All Ollama-based features (embedding, routing, reflection, entity extraction,
+   * summarizer, intent resolution) use these as defaults.
    */
   ollama: {
     /** Ollama service base URL. Default: "http://localhost:11434". */
@@ -32,9 +32,9 @@ export interface JarvisConfig {
     /** Default request timeout in milliseconds. Default: 30000. */
     defaultTimeoutMs: number;
     /**
-     * Max retry attempts on timeout or network errors for reflection/entity
-     * extraction calls. Each retry doubles the timeout up to 3x the base.
-     * Default: 2 (total 3 attempts).
+     * Max retry attempts on timeout or network errors. Each retry increases
+     * timeout up to 3x the base. Default and enforced minimum: 2
+     * (total 3 attempts).
      */
     maxRetries: number;
   };

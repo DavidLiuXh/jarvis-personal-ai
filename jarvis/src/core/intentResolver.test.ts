@@ -7,13 +7,13 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 
 vi.mock("./ollamaClient.js", () => ({
-  ollamaGenerate: vi.fn(),
+  ollamaGenerateWithRetry: vi.fn(),
 }));
 
 import { IntentResolver, type ConversationTurn } from "./intentResolver.js";
-import { ollamaGenerate } from "./ollamaClient.js";
+import { ollamaGenerateWithRetry } from "./ollamaClient.js";
 
-const mockGenerate = vi.mocked(ollamaGenerate);
+const mockGenerate = vi.mocked(ollamaGenerateWithRetry);
 
 const HISTORY_CODING: ConversationTurn[] = [
   { role: "user", content: "Help me implement the reranker timeout." },

@@ -25,7 +25,7 @@ import { loadSettings } from "../../../gemini-cli/packages/cli/src/config/settin
 // @ts-expect-error - Relative import
 import { MemoryService } from "./memory.js";
 import { ConfigManager } from "./configManager.js";
-import { ollamaGenerate } from "./ollamaClient.js";
+import { ollamaGenerateWithRetry } from "./ollamaClient.js";
 import {
   loadSummaryState,
   saveSummaryState,
@@ -471,7 +471,13 @@ export class AgentInitializer {
         this.jarvisConfig.ollama?.defaultTimeoutMs ??
         120_000;
       generateText = (prompt: string) =>
-        ollamaGenerate(model, prompt, { baseUrl, timeoutMs });
+        ollamaGenerateWithRetry(model, prompt, {
+          baseUrl,
+          timeoutMs,
+          maxRetries: this.jarvisConfig.ollama?.maxRetries,
+          maxTimeoutMs: timeoutMs * 3,
+          purpose: "session-summarizer",
+        });
       console.error(`📝 [Jarvis] Session summarizer: Ollama (${model})`);
     } else {
       generateText = cliGenerateText;

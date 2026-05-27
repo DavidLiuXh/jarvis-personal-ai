@@ -8,7 +8,7 @@ import type {
   IntentModelClient,
   IntentModelClientRequest,
 } from "../memory-runtime/adapters.js";
-import { ollamaGenerate } from "./ollamaClient.js";
+import { ollamaGenerateWithRetry } from "./ollamaClient.js";
 
 export type JarvisOllamaIntentModelClientOptions = {
   model: string;
@@ -23,13 +23,14 @@ export class JarvisOllamaIntentModelClient implements IntentModelClient {
     const prompt = input.system
       ? `${input.system.trim()}\n\n${input.prompt}`
       : input.prompt;
-    return ollamaGenerate(this.options.model, prompt, {
+    return ollamaGenerateWithRetry(this.options.model, prompt, {
       baseUrl: this.options.baseUrl ?? "http://localhost:11434",
       timeoutMs: input.timeoutMs ?? this.options.timeoutMs ?? 30_000,
       format: input.responseFormat === "json" ? "json" : undefined,
       numCtx: input.contextWindow,
       numPredict: input.maxOutputTokens,
       temperature: input.temperature,
+      purpose: "intent-resolver",
     });
   }
 }

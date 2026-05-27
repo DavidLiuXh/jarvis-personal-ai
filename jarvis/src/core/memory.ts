@@ -20,9 +20,8 @@ import {
   summarizeChunkPreview,
 } from "./sessionSummarizer.js";
 import {
-  ollamaGenerate,
   ollamaGenerateWithRetry,
-  ollamaEmbed,
+  ollamaEmbedWithRetry,
 } from "./ollamaClient.js";
 
 /** Format a timestamp as a local date string (YYYY-MM-DD) for logging. */
@@ -567,6 +566,7 @@ export class MemoryService {
           timeoutMs,
           maxRetries,
           maxTimeoutMs: timeoutMs * 3,
+          purpose: "memory-reflection",
         });
     }
     return fallbackFn;
@@ -670,7 +670,13 @@ export class MemoryService {
       );
     const baseUrl = this.jarvisConfig.ollama?.baseUrl;
     const timeoutMs = this.jarvisConfig.ollama?.defaultTimeoutMs;
-    return ollamaEmbed(model, text, { baseUrl, timeoutMs });
+    return ollamaEmbedWithRetry(model, text, {
+      baseUrl,
+      timeoutMs,
+      maxRetries: this.jarvisConfig.ollama?.maxRetries,
+      maxTimeoutMs: (timeoutMs ?? 30_000) * 3,
+      purpose: "memory-embedding",
+    });
   }
 
   public startWithApiKey(apiKey: string) {

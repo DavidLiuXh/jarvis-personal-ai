@@ -105,6 +105,7 @@ export class EntityExtractor {
           // JSON extraction with long facts. Use 8192 to ensure the prompt +
           // output JSON fit without truncation.
           numCtx: 8192,
+          purpose: "entity-extraction",
         });
       } else {
         if (!this.generateTextFn)

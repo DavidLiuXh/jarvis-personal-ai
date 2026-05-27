@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { ollamaGenerate } from "./ollamaClient.js";
+import { ollamaGenerateWithRetry } from "./ollamaClient.js";
 import {
   FALLBACK_QUERY_SUBJECT,
   IntentResolver,
@@ -253,10 +253,11 @@ Rules:
 Output ONLY a raw JSON object: {"shifted": true} or {"shifted": false}`.trim();
 
     try {
-      const raw = await ollamaGenerate(this.classifierModel, prompt, {
+      const raw = await ollamaGenerateWithRetry(this.classifierModel, prompt, {
         baseUrl: this.baseUrl,
         timeoutMs: Math.min(this.timeoutMs, 8_000),
         numPredict: 100,
+        purpose: "local-router-topic-shift",
       });
       const stripped = raw
         .replace(/^```(?:json)?\s*/i, "")
@@ -304,10 +305,11 @@ Latest user message: ${userPrompt}
 Output ONLY the search query string. No explanation, no quotes, no JSON.`.trim();
 
     try {
-      const raw = await ollamaGenerate(this.classifierModel, prompt, {
+      const raw = await ollamaGenerateWithRetry(this.classifierModel, prompt, {
         baseUrl: this.baseUrl,
         timeoutMs: Math.min(this.timeoutMs, 10_000),
         numPredict: 60,
+        purpose: "local-router-query-rewrite",
       });
       const rewritten = raw.trim().replace(/^["']|["']$/g, "");
       if (rewritten.length > 0 && rewritten.length < 300) {
@@ -352,9 +354,10 @@ Correct Example:
 `.trim();
 
     try {
-      const raw = await ollamaGenerate(this.classifierModel, prompt, {
+      const raw = await ollamaGenerateWithRetry(this.classifierModel, prompt, {
         baseUrl: this.baseUrl,
         timeoutMs: this.timeoutMs,
+        purpose: "local-router-agent-route",
       });
 
       // 1. More robust JSON extraction

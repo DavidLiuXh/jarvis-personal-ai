@@ -6,16 +6,16 @@
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-// Mock ollamaGenerate so tests don't hit a real Ollama server
+// Mock Ollama retry wrapper so tests don't hit a real Ollama server
 vi.mock("./ollamaClient.js", () => ({
-  ollamaGenerate: vi.fn(),
+  ollamaGenerateWithRetry: vi.fn(),
 }));
 
 // extractDateRange has no external dependencies — use real implementation
 import { LocalModelRouter, type ConversationTurn } from "./localModelRouter.js";
-import { ollamaGenerate } from "./ollamaClient.js";
+import { ollamaGenerateWithRetry } from "./ollamaClient.js";
 
-const mockGenerate = vi.mocked(ollamaGenerate);
+const mockGenerate = vi.mocked(ollamaGenerateWithRetry);
 
 const HISTORY_2_TURNS: ConversationTurn[] = [
   { role: "user", content: "What is the capital of France?" },
@@ -202,7 +202,7 @@ describe("LocalModelRouter — detectTopicShift", () => {
     expect(result).toBe(false);
   });
 
-  it("returns false when ollamaGenerate throws (conservative default)", async () => {
+  it("returns false when ollamaGenerateWithRetry throws (conservative default)", async () => {
     const router = makeRouter();
     mockGenerate.mockImplementationOnce(async () => {
       throw new Error("connection refused");
