@@ -310,6 +310,10 @@ class JarvisServer {
       this.taskScheduler,
       (task) => this.taskRunner.run(task, this.channelRegistry),
     );
+    this.manager.setChannelRegistry(this.channelRegistry);
+    this.manager.setTaskCommandHandler(taskCommandHandler);
+    this.backgroundTaskRunner.setChannelRegistry(this.channelRegistry);
+    this.backgroundTaskRunner.setTaskCommandHandler(taskCommandHandler);
     const globalSessionId =
       jarvisConfig.session?.globalSessionId ?? "jarvis-global";
     void this.manager.getAgent(globalSessionId).then((agent) => {

@@ -420,6 +420,33 @@ describe("ToolRouter", () => {
     });
   });
 
+  it("rewrites shell cron scheduling workarounds to Jarvis task_add", async () => {
+    const handleTool = vi.fn().mockResolvedValue("✅ Task added");
+    const schedule = vi.fn().mockResolvedValue([]);
+    const { router } = makeRouter({ handleTool, schedule });
+    router.setCurrentUserPrompt(
+      "添加一个定时任务：北京时间每周五下午2点，使用dmii框架分析美国市场行情及趋势，保存成本地的markdown文件",
+    );
+
+    await router.route(
+      [
+        makeReq("run_shell_command", {
+          command:
+            '(crontab -l; echo "0 14 * * 5 /usr/local/bin/market-report") | crontab -',
+          description: "Create a system cron job",
+        }),
+      ],
+      new AbortController().signal,
+      vi.fn(),
+    );
+
+    expect(schedule).not.toHaveBeenCalled();
+    expect(handleTool).toHaveBeenCalledWith("add", {
+      cron: "北京时间每周五下午2点",
+      prompt: "使用dmii框架分析美国市场行情及趋势，保存成本地的markdown文件",
+    });
+  });
+
   it("intercepts ask_user and returns auto-selected option with user-facing message", async () => {
     const { router, schedule } = makeRouter();
 

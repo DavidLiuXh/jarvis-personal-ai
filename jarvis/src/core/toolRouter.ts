@@ -234,6 +234,85 @@ function buildPushRequestFromShellWorkarounds(
   return null;
 }
 
+const SCHEDULE_TIME_PATTERNS = [
+  /(?:北京时间\s*)?(?:每\s*)?(?:周|星期)[一二三四五六日天](?:\s*(?:早上|上午|中午|下午|晚上|傍晚|夜间|凌晨))?\s*\d{1,2}(?::\d{2})?\s*[点时]?/i,
+  /(?:北京时间\s*)?(?:每天|每日|每\s*天|每\s*日)(?:\s*(?:早上|上午|中午|下午|晚上|傍晚|夜间|凌晨))?\s*\d{1,2}(?::\d{2})?\s*[点时]?/i,
+  /(?:今天|明天|后天|今晚|下周[一二三四五六日天]?|本周[一二三四五六日天]?)(?:\s*(?:早上|上午|中午|下午|晚上|傍晚|夜间|凌晨))?\s*\d{1,2}(?::\d{2})?\s*[点时]?/i,
+  /\b(?:every\s+)?(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday)\s+(?:at\s+)?\d{1,2}(?::\d{2})?\s*(?:am|pm)?\b/i,
+  /\b(?:daily|every day|weekdays)\s+(?:at\s+)?\d{1,2}(?::\d{2})?\s*(?:am|pm)?\b/i,
+  /\b\d{1,2}:\d{2}\b/,
+  /\b(?:\d+|\*)\s+(?:\d+|\*)\s+(?:\d+|\*)\s+(?:\d+|\*)\s+(?:[\d*,-]+)\b/,
+];
+
+function normalizeText(text: string): string {
+  return text
+    .replace(/\s+/g, " ")
+    .replace(/^[\s,，:：;；。]+|[\s,，:：;；。]+$/g, "")
+    .trim();
+}
+
+function extractScheduleTimeText(text: string): string {
+  for (const pattern of SCHEDULE_TIME_PATTERNS) {
+    const match = text.match(pattern);
+    const value = normalizeText(match?.[0] ?? "");
+    if (value) return value;
+  }
+  return "";
+}
+
+function stripScheduleWrapper(text: string, cronText: string): string {
+  let result = normalizeText(text);
+  result = result
+    .replace(
+      /^(?:请|帮我|麻烦)?(?:添加|创建|新增|设置|建立)?(?:一个|一条)?(?:定时任务|定时|任务|提醒|schedule|scheduled task)\s*[:：,，-]*/i,
+      "",
+    )
+    .replace(/^(?:北京时间|当地时间)\s*[:：,，-]*/i, "")
+    .replace(/^(?:并且|然后|再|同时)\s*/i, "");
+  for (const variant of [
+    cronText,
+    cronText.replace(/^(?:北京时间|当地时间)\s*/i, ""),
+  ]) {
+    const normalized = normalizeText(variant);
+    if (normalized) result = normalizeText(result.replace(normalized, " "));
+  }
+  return normalizeText(result.replace(/^(?:并且|然后|再|同时)\s*/i, ""));
+}
+
+function isShellScheduleWorkaround(req: ToolCallRequest): boolean {
+  if (req.name !== "run_shell_command") return false;
+  const command =
+    typeof req.args.command === "string" ? req.args.command.toLowerCase() : "";
+  const description =
+    typeof req.args.description === "string"
+      ? req.args.description.toLowerCase()
+      : "";
+  return /crontab|launchctl|\.plist|cron\s+job|scheduled?\s+task|定时任务|系统定时|计划任务/.test(
+    `${command} ${description}`,
+  );
+}
+
+function buildTaskAddRequestFromShellScheduleWorkarounds(
+  requests: ToolCallRequest[],
+  currentUserPrompt: string,
+): ToolCallRequest | null {
+  const shellRequest = requests.find(isShellScheduleWorkaround);
+  if (!shellRequest) return null;
+
+  const cronText = extractScheduleTimeText(currentUserPrompt);
+  const prompt = stripScheduleWrapper(currentUserPrompt, cronText);
+  if (!cronText || !prompt) return null;
+
+  return {
+    name: "task_add",
+    callId: `${shellRequest.callId}-task_add`,
+    args: {
+      cron: cronText,
+      prompt,
+    },
+  };
+}
+
 /** Returns 9 if the text contains an explicit "remember" intent, 6 otherwise. */
 function computeRememberIntentScore(text?: string): number {
   if (!text) return 6;
@@ -499,16 +578,35 @@ export class ToolRouter {
       requests,
       this.currentUserPrompt,
     );
-    const effectiveRequests = rewrittenPushRequest
+    const rewrittenTaskAddRequest =
+      buildTaskAddRequestFromShellScheduleWorkarounds(
+        rewrittenPushRequest
+          ? requests.filter((r) => !isShellPushWorkaround(r))
+          : requests,
+        this.currentUserPrompt,
+      );
+    const effectiveRequests = rewrittenTaskAddRequest
       ? [
-          ...requests.filter((r) => !isShellPushWorkaround(r)),
-          rewrittenPushRequest,
+          ...requests.filter(
+            (r) => !isShellPushWorkaround(r) && !isShellScheduleWorkaround(r),
+          ),
+          rewrittenTaskAddRequest,
         ]
-      : requests;
+      : rewrittenPushRequest
+        ? [
+            ...requests.filter((r) => !isShellPushWorkaround(r)),
+            rewrittenPushRequest,
+          ]
+        : requests;
 
     if (rewrittenPushRequest) {
       console.error(
         "📤 [Jarvis] Rewriting shell clipboard workaround to push_to_channel.",
+      );
+    }
+    if (rewrittenTaskAddRequest) {
+      console.error(
+        "📅 [Jarvis] Rewriting shell/system schedule workaround to Jarvis task_add.",
       );
     }
 

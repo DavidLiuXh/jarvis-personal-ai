@@ -10,6 +10,8 @@ import { debugLogger } from "../../../gemini-cli/packages/core/src/index.js";
 import { ConfigManager } from "./configManager.js";
 import { type AgentManager } from "./agentManager.js";
 import { type BackgroundTaskRunner } from "./backgroundTaskRunner.js";
+import { type ChannelRegistry } from "./channelRegistry.js";
+import { type TaskCommandHandler } from "./taskCommandHandler.js";
 
 export class JarvisManager {
   private static instance: JarvisManager;
@@ -18,6 +20,8 @@ export class JarvisManager {
   private memoryService: MemoryService;
   private agentManager: AgentManager | null = null;
   private backgroundTaskRunner: BackgroundTaskRunner | null = null;
+  private channelRegistry: ChannelRegistry | null = null;
+  private taskCommandHandler: TaskCommandHandler | null = null;
 
   private constructor(sourceRoot: string) {
     this.sourceRoot = sourceRoot;
@@ -43,6 +47,20 @@ export class JarvisManager {
     this.backgroundTaskRunner = runner;
     for (const agent of this.agents.values()) {
       agent.setBackgroundTaskRunner(runner);
+    }
+  }
+
+  public setChannelRegistry(registry: ChannelRegistry): void {
+    this.channelRegistry = registry;
+    for (const agent of this.agents.values()) {
+      agent.setChannelRegistry(registry);
+    }
+  }
+
+  public setTaskCommandHandler(handler: TaskCommandHandler): void {
+    this.taskCommandHandler = handler;
+    for (const agent of this.agents.values()) {
+      agent.setTaskCommandHandler(handler);
     }
   }
 
@@ -80,6 +98,9 @@ export class JarvisManager {
     if (this.agentManager) agent.setAgentManager(this.agentManager);
     if (this.backgroundTaskRunner)
       agent.setBackgroundTaskRunner(this.backgroundTaskRunner);
+    if (this.channelRegistry) agent.setChannelRegistry(this.channelRegistry);
+    if (this.taskCommandHandler)
+      agent.setTaskCommandHandler(this.taskCommandHandler);
 
     this.agents.set(effectiveId, agent);
     return agent;
