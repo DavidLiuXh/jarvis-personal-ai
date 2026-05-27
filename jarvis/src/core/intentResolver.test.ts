@@ -974,6 +974,87 @@ ${modelResponse({
     );
   });
 
+  it("treats personal content-performance questions as analysis, not conversation recall", async () => {
+    const resolver = makeResolver();
+    mockGenerate.mockResolvedValueOnce(
+      modelResponse({
+        query_subject: "personal",
+        task_type: "recall",
+        needs_external_knowledge: true,
+        candidate_agents: ["content_strategy_analyzer"],
+        confidence: 0.95,
+        semantic_evidence: {
+          personalContext: {
+            present: true,
+            reason: "asks about the user's published content performance",
+            span: "我在小红书上发布",
+          },
+          memoryRecall: {
+            present: true,
+            target: "conversation_history",
+            reason: "model confused referenced content object with recall",
+            span: "一元二次方程",
+          },
+          actionRequest: { present: false, action: "none", object: "" },
+          entityHints: {
+            tickers: [],
+            technicalTerms: [],
+            peopleOrCompanies: ["小红书"],
+          },
+        },
+        topic_analysis: {
+          history: {
+            label: "初中数学重难点梳理",
+            evidence: ["昨天我们讨论了哪些内容"],
+            source_turns: [-2, -1],
+            confidence: 0.9,
+          },
+          current: {
+            label: "小红书内容推广分析",
+            evidence: ["系统分析是材料问题还是其他问题"],
+            source_turns: [0],
+            confidence: 0.95,
+          },
+          relation: "new_topic",
+          relation_reason: "content strategy analysis differs from recall",
+          confidence: 0.95,
+        },
+      }),
+    );
+
+    const intent = await resolver.resolve({
+      userPrompt:
+        "我在小红书上发布类似”一元二次方程“这种初中重难点讲解的浏览和点赞数量远不如我发布”中等生如何提升“这种题材，帮我系统分析是我的重难点讲解材料本身问题还是其他问题？",
+      history: [
+        {
+          role: "user",
+          content: "昨天我们讨论了哪些内容",
+        },
+        {
+          role: "assistant",
+          content:
+            "昨天我们主要讨论了初中数学重难点梳理和一元二次方程判别式详解。",
+        },
+      ],
+    });
+
+    expect(intent.subject).toBe("mixed");
+    expect(intent.taskType).toBe("analyze");
+    expect(intent.needsMemory).toBe(true);
+    expect(intent.needsExternalKnowledge).toBe(true);
+    expect(intent.semanticEvidence.memoryRecall.target).toBe("none");
+    expect(intent.topicShifted).toBe(true);
+    expect(intent.candidateAgents).toContain("content_strategy_analyzer");
+    expect(intent.evidence).toContain("analysis_cue");
+    expect(policyReasonCodes(intent)).toEqual(
+      expect.arrayContaining([
+        "ANALYSIS_REQUEST_NOT_IMPLICIT_CONVERSATION_RECALL",
+        "ANALYSIS_CUE_TASK_OVERRIDE",
+        "PERSONAL_CONTEXT_WITH_EXTERNAL_ENTITY",
+      ]),
+    );
+  });
+
   it("upgrades low-confidence external subject to mixed", async () => {
     const resolver = makeResolver();
     mockGenerate.mockResolvedValueOnce(

@@ -64,6 +64,7 @@ export type IntentCueState = {
   actionCue: boolean;
   explicitDelegateCue: boolean;
   investmentAnalysisCue: boolean;
+  analysisCue: boolean;
   recallWithExternalWork: boolean;
 };
 
@@ -111,6 +112,7 @@ export type IntentPolicyDeps = {
   hasAnaphoricReference(prompt: string, history: ConversationTurn[]): boolean;
   hasMemoryRecallCue(prompt: string): boolean;
   hasConversationHistoryRecallCue(prompt: string): boolean;
+  hasAnalysisCue(prompt: string): boolean;
   hasCurrentContextReferenceCue(prompt: string): boolean;
   inferActionRequestFromCue(prompt: string): ActionRequestType | null;
   normalizeInvestmentEntityHints(
@@ -161,6 +163,10 @@ const POLICY_REASON_METADATA: Record<
     category: "semantic_evidence",
     severity: "warning",
   },
+  ANALYSIS_REQUEST_NOT_IMPLICIT_CONVERSATION_RECALL: {
+    category: "semantic_evidence",
+    severity: "warning",
+  },
   PERSONAL_FACT_ASSERTION_SUBJECT: {
     category: "subject_boundary",
     severity: "warning",
@@ -200,6 +206,10 @@ const POLICY_REASON_METADATA: Record<
   EXTERNAL_PAST_EVENT_NOT_RECALL: {
     category: "task_boundary",
     severity: "critical",
+  },
+  ANALYSIS_CUE_TASK_OVERRIDE: {
+    category: "task_boundary",
+    severity: "warning",
   },
   RECALL_CUE_TASK_OVERRIDE: {
     category: "task_boundary",
@@ -402,6 +412,30 @@ function semanticEvidencePolicyRules(
       }),
     },
     {
+      id: "semantic.analysis_request_not_implicit_conversation_recall",
+      stage: "guardrail",
+      priority: 460,
+      reasonCode: "ANALYSIS_REQUEST_NOT_IMPLICIT_CONVERSATION_RECALL",
+      snapshot: semanticEvidenceSnapshot,
+      applies: (state) =>
+        deps.hasAnalysisCue(state.prompt) &&
+        !deps.hasConversationHistoryRecallCue(state.prompt) &&
+        state.semanticEvidence.memoryRecall.target === "conversation_history",
+      apply: (state) => ({
+        ...state,
+        semanticEvidence: {
+          ...state.semanticEvidence,
+          memoryRecall: {
+            present: false,
+            target: "none",
+            reason:
+              "analysis request mentions a content object but does not ask to recall conversation history",
+            span: state.semanticEvidence.memoryRecall.span,
+          },
+        },
+      }),
+    },
+    {
       id: "semantic.anaphora_current_context",
       stage: "normalize",
       priority: 420,
@@ -581,6 +615,7 @@ function subjectPolicyRules(
       applies: (state) =>
         state.cues.recallCue &&
         state.subject !== "personal" &&
+        !state.cues.analysisCue &&
         !(state.subject === "mixed" && state.cues.recallWithExternalWork),
       apply: (state) => {
         const subject = state.cues.recallWithExternalWork
@@ -618,7 +653,9 @@ function subjectPolicyRules(
         state.subject === "personal" &&
         state.cues.personalCue &&
         !state.cues.personalFactAssertionCue &&
-        (!state.cues.recallCue || state.cues.recallWithExternalWork) &&
+        (!state.cues.recallCue ||
+          state.cues.recallWithExternalWork ||
+          state.cues.analysisCue) &&
         (state.semanticEvidence.entityHints.tickers.length > 0 ||
           state.semanticEvidence.entityHints.technicalTerms.length > 0 ||
           state.semanticEvidence.entityHints.peopleOrCompanies.length > 0 ||
@@ -737,6 +774,22 @@ function taskPolicyRules(
           state.evidence,
           "external_past_event_not_recall",
         ),
+      }),
+    },
+    {
+      id: "task.analysis_cue_overrides_recall",
+      stage: "guardrail",
+      priority: 430,
+      reasonCode: "ANALYSIS_CUE_TASK_OVERRIDE",
+      snapshot: taskPolicySnapshot,
+      applies: (state) =>
+        state.cues.analysisCue &&
+        state.taskType === "recall" &&
+        !state.cues.scheduleCue,
+      apply: (state) => ({
+        ...state,
+        taskType: "analyze",
+        evidence: appendPolicyEvidence(state.evidence, "analysis_cue"),
       }),
     },
     {

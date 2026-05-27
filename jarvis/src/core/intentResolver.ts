@@ -205,6 +205,9 @@ const EXPLICIT_DELEGATE_CUE_RE =
 const INVESTMENT_ANALYSIS_CUE_RE =
   /投资价值|基本面|财报|估值|股票|股价|买入|卖出|持有|分析.*(nvda|googl|aapl|msft|tsla)|investment|fundamental|valuation|earnings|stock/i;
 
+const ANALYSIS_TASK_CUE_RE =
+  /系统分析|帮我分析|分析.*(原因|问题|效果|表现|策略|差异|优劣|是否|为什么)|判断.*(原因|是否|问题)|诊断|复盘|对比|比较|评估|推荐|建议|为什么|原因|是.*问题还是|analy[sz]e|diagnose|evaluate|compare|recommend|why|root cause/i;
+
 const ASSISTANT_ADDRESS_RE = /^(?:jarvis|javis|贾维斯)[，,：:\s]+/i;
 
 const ENTITY_REFINEMENT_CUE_RE =
@@ -388,6 +391,10 @@ function hasInvestmentAnalysisCue(
 
   const symbols = prompt.match(new RegExp(TICKER_RE, "g")) ?? [];
   return symbols.some((symbol) => !NON_TICKER_ACRONYMS.has(symbol));
+}
+
+function hasAnalysisCue(prompt: string): boolean {
+  return ANALYSIS_TASK_CUE_RE.test(prompt);
 }
 
 function extractTickerCandidates(prompt: string): string[] {
@@ -2290,6 +2297,7 @@ function buildConfidenceByDimension(args: {
     evidence.has("schedule_cue") ||
     evidence.has("action_cue") ||
     evidence.has("delegate_action_cue") ||
+    evidence.has("analysis_cue") ||
     evidence.has("remember_to_action_not_recall")
   ) {
     result.taskType = maxConfidence(result.taskType, 0.9);
@@ -2684,6 +2692,7 @@ export class IntentResolver {
       hasAnaphoricReference,
       hasMemoryRecallCue,
       hasConversationHistoryRecallCue,
+      hasAnalysisCue,
       hasCurrentContextReferenceCue,
       inferActionRequestFromCue,
       normalizeInvestmentEntityHints,
@@ -2739,6 +2748,7 @@ export class IntentResolver {
       prompt,
       semanticEvidence,
     );
+    const analysisCue = hasAnalysisCue(prompt);
     const recallWithExternalWork =
       recallCue &&
       semanticEvidence.memoryRecall.target !== "conversation_history" &&
@@ -2756,6 +2766,7 @@ export class IntentResolver {
       actionCue,
       explicitDelegateCue,
       investmentAnalysisCue,
+      analysisCue,
       recallWithExternalWork,
     };
 
