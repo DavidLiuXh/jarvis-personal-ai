@@ -335,26 +335,247 @@ Status: completed for static eval/report hooks; live dashboard remains future wo
 - runtime feedback candidate 可通过 review workflow 晋升为 reviewed eval case；
 - 尚未实现独立 UI dashboard，当前阶段以 eval report + JSON artifact 作为 dashboard 数据源。
 
-## Suggested Order
+## P4: Resolver Adapter And Intent Runtime API
 
-1. P0.1 Define package boundaries explicitly
-2. P0.3 Treat tool-backed actions as runtime obligations
-3. P0.2 Move execution-plan primitives toward intent runtime
-4. P1.1 Build a step orchestrator for known required tools
-5. P1.2 Clarification state machine
-6. P1.3 Unify tool/subagent memory consumption
-7. P2.2 Add execution-contract evals
-8. P2.1 Promote runtime feedback candidates into reviewed eval cases
-9. P2.3 Model stability and calibration gates
-10. P3 package readiness work
+Status: completed for the Jarvis integration path in this phase.
 
-## Near-Term Definition Of Done
+目标：
 
-短期不要求 Jarvis 立即变成完整独立 package。下一阶段完成标准是：
+- 将 `IntentResolver` 从 Jarvis core 的具体实现，抽成 `intent-runtime` 可消费的标准 adapter。
+- 让 `intent-runtime` 拥有完整的 `understand -> policy -> clarify -> planExecution` 入口，而不仅是 execution plan primitives。
 
-- 通用层边界清晰，`memory-runtime` 不再继续吸收 execution 逻辑；
-- tool-backed user requests 由 execution contract 闭环，不能靠 LLM 自述完成；
-- `IntentExecutionPlan` 的纯逻辑进入可复用 runtime 边界；
-- 至少 `task_*`、`push_to_channel`、`recall_memory` 进入 step runtime enforcement；
-- execution-contract eval 能覆盖最近真实失败模式；
-- runtime feedback candidate 有人工 review 和晋升路径。
+交付物：
+
+- 在 `packages/intent-runtime/src` 定义 `IntentRuntime`、`IntentResolverAdapter`、`IntentRuntimeConfig`、`IntentRuntimeEvent`。
+- 将 model-client、JSON repair、deterministic fallback、policy trace、confidence calibration 的接口沉淀为通用 contract。
+- 新增 `JarvisIntentResolverAdapter` 留在 `jarvis/src/core/adapters` 或 `jarvis/src/core`，包装现有 `IntentResolver`。
+- `agent.ts` 不再直接依赖 `IntentResolver` 细节，而是依赖 `IntentRuntime` 或 adapter interface。
+- 增加 package-level eval / smoke test，验证外部项目可用自定义 resolver adapter 跑完整 intent lifecycle。
+
+完成后成熟度预期：
+
+- complete intent-driven runtime: 65%-70%
+
+验收标准：
+
+- `packages/intent-runtime/src` 不 import `jarvis/src/core/*`。
+- `JarvisIntentResolverAdapter` 是唯一接触现有 Jarvis resolver 的桥。
+- intent matrix 可选择通过 `IntentRuntime` 入口运行，而不是直接调用 Jarvis resolver。
+
+当前实现状态：
+
+- 新增 `packages/intent-runtime/src/runtime.ts`，定义 `IntentRuntime`、`DefaultIntentRuntime`、`IntentResolverAdapter`、`IntentClarificationAdapter`、`IntentExecutionPlanner`、runtime events 和 diagnostics；
+- `DefaultIntentRuntime.understand()` 已串联 `resolve intent -> evaluate policy -> evaluate confidence -> resolve clarification -> plan execution`，返回统一的 `IntentRuntimeResult`；
+- 已新增 `IntentPolicyAdapter` / `IntentPolicyEvaluation`，把 query subject 与 policy trace 作为 runtime lifecycle 的一等结果和 `policy_evaluated` 事件；
+- 已沉淀 resolver 周边通用 contract：`IntentModelJsonClient`、`IntentJsonRepairAdapter`、`IntentFallbackAdapter`，供 Jarvis 或外部 host 组合 model JSON、repair 和 fallback 流程；
+- 已新增 `IntentConfidenceGate` / `evaluateIntentConfidence()`，runtime 会输出 `confidence_evaluated` 事件，并把 confidence evaluation 写入 diagnostics；critical gate 可配置为直接 fail fast；
+- 新增 `StaticIntentResolverAdapter`，用于 package tests 和外部项目快速嵌入；
+- 新增 `jarvis/src/core/jarvisIntentResolverAdapter.ts`，作为 Jarvis core `IntentResolver` 的唯一 runtime adapter；
+- `LocalModelRouter` 已改为通过 `DefaultIntentRuntime + JarvisIntentResolverAdapter` 解析 intent；
+- `intent:matrix` runner 已改为通过 `DefaultIntentRuntime` 入口运行，不再直接 new `IntentResolver`；
+- package-level API smoke test 覆盖完整 intent runtime lifecycle 与 confidence gate 行为。
+
+## P5: Runtime Executor And Orchestrator
+
+Status: completed for the package runtime and Jarvis adapter boundary in this
+phase.
+
+目标：
+
+- 将当前分散在 `agent.ts` / `ToolRouter` / prompt retry 中的执行闭环，升级成 intent-runtime 的可执行 orchestrator。
+- runtime 不只告诉 LLM “应该调用工具”，还要跟踪、调度、验证和阻断工具动作。
+
+交付物：
+
+- 在 `packages/intent-runtime/src` 新增 `IntentExecutor`、`ToolExecutorAdapter`、`AgentExecutorAdapter`、`ExecutionObserver`。
+- `IntentStepRuntime` 从 state tracker 升级为 orchestrator state backend，支持：
+  - step queue；
+  - dependency scheduling；
+  - retry policy；
+  - blocked / failed / succeeded finalization；
+  - final response completion contract。
+- 将 known required tools 从硬编码集合提升为 registry-driven capability contract：
+  - `task_add` / `task_update` / `task_delete` / `task_list`
+  - `push_to_channel`
+  - `recall_memory`
+  - workspace file operations
+  - shell command operations
+  - subagent delegation
+- Jarvis `ToolRouter` 变成 `ToolExecutorAdapter`，而不是事实上的 orchestrator。
+- final answer 必须消费 execution state；工具失败时禁止“已完成”式成功声明。
+
+完成后成熟度预期：
+
+- complete intent-driven runtime: 75%-80%
+
+验收标准：
+
+- 微信推送、任务创建、文件写入、shell workaround、subagent delegation 都有 execution-contract eval。
+- 所有 tool-backed requests 都至少经历一次 runtime tool-result validation。
+- `agent.ts` 中 multi-intent retry / missing-step prompt 逻辑明显收敛到 `IntentExecutor`。
+
+当前实现状态：
+
+- 新增 `packages/intent-runtime/src/executor.ts`，定义 `IntentExecutor`、`ToolExecutorAdapter`、`AgentExecutorAdapter`、`ExecutionObserver`、`RuntimeCapabilityRegistry`；
+- `IntentExecutor.execute()` 已支持 step queue、dependency scheduling、retry/blocking、tool result validation、agent result validation、execution events、final-response contract；
+- 默认 capability registry 已覆盖 `task_*`、`push_to_channel`、`recall_memory`、workspace file tools、shell command、subagent delegation；
+- Jarvis `ToolRouter` 已实现 `ToolExecutorAdapter.executeTools()`，从 runtime 视角成为工具执行 adapter，而不再只是 core 内部路由器；
+- package-level executor tests 覆盖 deterministic task execution、push failure final-response guard、dependency blocking；
+- 当前 `agent.ts` 尚未整体迁移到 `IntentExecutor` 主循环；下一阶段 P6 会把主响应路径切到统一 `AgentRuntime` facade。
+
+## P6: Unified Agent Runtime
+
+目标：
+
+- 把 intent runtime 和 memory runtime 串成一个真正的 `AgentRuntime` lifecycle。
+- `agent.ts` 退化为 Jarvis application adapter，不再是 runtime 规则集中地。
+
+目标生命周期：
+
+```text
+AgentRuntime.handleTurn
+  -> intentRuntime.understand
+  -> clarificationPolicy.resolve
+  -> memoryRuntime.plan/retrieve/inject
+  -> skillRuntime.retrieve
+  -> intentRuntime.planExecution
+  -> intentExecutor.execute
+  -> responseComposer.compose
+  -> observers.record
+```
+
+交付物：
+
+- 新增 `packages/intent-runtime` 或新包 `packages/agent-runtime` 中的 `AgentRuntime` facade。
+- 将 skill retrieval 纳入统一 runtime context，避免 `agent.ts` 单独注入。
+- 将 memory decision、step memory decision、tool/subagent memory constraints 作为同一份 `RuntimeContext` 传递。
+- 引入 `ResponseComposer`，让最终回答基于 intent、memory、execution state、tool observations 统一生成。
+- Jarvis 主流程用 feature flag 切到 `AgentRuntime`，保留回滚开关。
+
+完成后成熟度预期：
+
+- complete intent-driven runtime: 85%-90%
+
+验收标准：
+
+- 主响应路径不再由 `agent.ts` 手动拼接 intent / memory / tools / retry 规则。
+- external-only、current-context、conversation-history、tool-backed action 在 main response、tool、subagent 三层共享同一 runtime context。
+- 现有 intent matrix、execution-contract eval、ToolRouter tests 全部通过。
+
+## P7: Quality Gates And Runtime Dashboard
+
+目标：
+
+- 从“有 eval report”升级为“runtime 质量门禁”。
+- 每次 runtime 改动都能看到 intent、memory、execution 的质量变化。
+
+交付物：
+
+- 增强 `intent:matrix`，输出稳定 trend JSON：
+  - subject / taskType / memoryTarget distribution；
+  - policy correction rate；
+  - JSON repair / fallback rate；
+  - clarification block rate；
+  - execution contract enforcement rate；
+  - tool failure / retry / blocked rate；
+  - memory injection empty / rejected rate；
+  - runtime feedback candidate volume。
+- 新增 `scripts/runtime_quality_dashboard.ts`，从 eval logs 聚合 Markdown/JSON dashboard。
+- 增加 quality gates：
+  - required invariant pass rate 必须 100%；
+  - high-risk action confidence floor；
+  - external personal-memory leakage 必须 0；
+  - tool-backed success-without-tool 必须 0。
+- 将 reviewed runtime feedback 自动纳入 nightly / local full eval。
+
+完成后成熟度预期：
+
+- complete intent-driven runtime: 90%-95%
+
+验收标准：
+
+- CI 或本地标准命令可以一键运行 runtime quality gate。
+- dashboard 能直接回答“这次改动有没有让 intent-driven runtime 变差”。
+- runtime feedback candidate 有从 capture 到 review 到 promoted regression 的闭环指标。
+
+## P8: External Package Readiness And Semver
+
+目标：
+
+- 让 runtime 不只是仓库内部 package-like，而是达到可被外部 agent 项目嵌入的发布标准。
+
+交付物：
+
+- 每个 package 增加 build 输出：
+  - `dist/index.js`
+  - `dist/index.d.ts`
+  - source map 可选。
+- package exports 从 `src/*.ts` 切到 `dist/*.js`。
+- 明确 `public` / `internal` API：
+  - public API 有 README、examples、API smoke tests；
+  - internal API 不进入 package exports。
+- 增加 examples：
+  - minimal memory runtime；
+  - custom intent model；
+  - custom vector store；
+  - custom tool executor；
+  - embedding in a non-Jarvis agent。
+- 制定 semver policy：
+  - schema breaking changes；
+  - policy behavior changes；
+  - adapter API changes；
+  - eval invariant changes。
+- 将 package `private: true` 改为可发布前的 explicit decision；不一定立即 publish，但发布路径必须清晰。
+
+完成后成熟度预期：
+
+- complete intent-driven runtime: 95%-100%
+
+验收标准：
+
+- 外部 demo 不 import `jarvis/src/*`。
+- `npm pack --dry-run` 能看到合理产物。
+- package API tests 和 examples 在 clean install 下可运行。
+
+## Execution Plan To 100%
+
+优先级顺序：
+
+1. P4.1 定义 `IntentRuntime` / `IntentResolverAdapter` API。
+2. P4.2 增加 `JarvisIntentResolverAdapter`，让 Jarvis 通过 adapter 使用现有 resolver。
+3. P4.3 改造 intent matrix，使其可通过 `IntentRuntime` 入口运行。
+4. P5.1 定义 `IntentExecutor` / `ToolExecutorAdapter` / `AgentExecutorAdapter`。
+5. P5.2 将 `push_to_channel`、`task_*`、`recall_memory` 从 known hardcode 转成 capability registry。
+6. P5.3 将 workspace file、shell、subagent delegation 纳入 execution contract。
+7. P5.4 把 `agent.ts` 中 missing-step retry 和 tool-result validation 迁入 executor。
+8. P6.1 定义 `RuntimeContext`，统一 intent、memory、skill、execution state。
+9. P6.2 建立 `AgentRuntime.handleTurn` facade，并用 feature flag 接入 Jarvis。
+10. P6.3 将 skill retrieval 和 subagent memory consumption 迁入统一 runtime context。
+11. P7.1 实现 runtime quality dashboard 和 quality gates。
+12. P7.2 将 reviewed feedback cases 纳入标准 full eval。
+13. P8.1 增加 build / d.ts / package exports 到 `dist`。
+14. P8.2 增加 external examples 和 semver policy。
+15. P8.3 清理 Jarvis compatibility shims 或明确长期兼容策略。
+
+推荐批次：
+
+- Batch 1：P4.1-P4.3。收益最大、风险较低，先把 resolver 入口标准化。
+- Batch 2：P5.1-P5.4。收益大、风险最高，需要密集 eval 覆盖，尤其是 tool result 和 final response。
+- Batch 3：P6.1-P6.3。把 Jarvis 主路径切到统一 runtime，建议 feature flag 灰度。
+- Batch 4：P7.1-P7.2。把质量评估从手工报告变成门禁。
+- Batch 5：P8.1-P8.3。发布工程化和外部可用性。
+
+## 100% Definition Of Done
+
+达到“完整 intent-driven runtime”的标准：
+
+- `IntentRuntime` 是理解、policy、clarification、execution planning 的标准入口。
+- `AgentRuntime` 是 Jarvis 主响应路径的标准入口，`agent.ts` 只做应用层 adapter。
+- 所有 tool-backed action 都由 runtime executor 调度和验证，不能靠 LLM 自述完成。
+- tool、subagent、main response 共享同一份 `RuntimeContext`、`MemoryContract` 和 step-level memory decision。
+- `IntentResolver`、ToolRouter、MemoryService、channels、scheduler 都通过 adapter 接入，不被 package runtime 直接依赖。
+- package runtime 没有 `jarvis/src/core/*` 反向 import，并由 boundary check 固化。
+- eval 覆盖 classification、memory policy、clarification、execution contract、tool failure、subagent delegation、runtime feedback promotion。
+- high-risk / tool-backed invariant 通过率必须 100%，external personal-memory leakage 必须 0。
+- runtime quality dashboard 能持续追踪 regression。
+- package public API、examples、build artifacts、semver policy 达到外部项目可嵌入标准。

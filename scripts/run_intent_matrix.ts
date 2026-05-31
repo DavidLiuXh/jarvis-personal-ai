@@ -3,11 +3,10 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import {
-  IntentResolver,
-  type ConversationTurn,
-  type IntentFrame,
-} from "../jarvis/src/core/intentResolver.js";
+import type {
+  ConversationTurn,
+  IntentFrame,
+} from "../jarvis/src/memory-runtime/types.js";
 import type {
   IntentModelClient,
   IntentModelClientRequest,
@@ -16,17 +15,15 @@ import {
   buildIntentAwareMemoryPolicy,
   type IntentAwareMemoryPolicy,
 } from "../jarvis/src/memory-runtime/intentAwareMemoryPolicy.js";
-import {
-  applyClarificationChannelState,
-  buildClarificationDecision,
-  type ClarificationDecision,
-} from "../jarvis/src/core/clarificationPolicy.js";
+import type { ClarificationDecision } from "../jarvis/src/memory-runtime/clarificationPolicy.js";
 import {
   buildIntentExecutionPlan,
   IntentStepRuntime,
   type FunctionResponseLike,
   type ToolCallLike,
 } from "../jarvis/src/intent-runtime/executionPlan.js";
+import { DefaultIntentRuntime } from "../jarvis/src/intent-runtime/index.js";
+import { JarvisIntentResolverAdapter } from "../jarvis/src/core/jarvisIntentResolverAdapter.js";
 
 type MatrixDimension =
   | "memoryTarget"
@@ -849,16 +846,23 @@ async function runCase(
       raw,
       evalCase.focusedResponses ?? [],
     );
-    const resolver = new IntentResolver({
-      modelClient: client,
-      modelSource: "intent-matrix/fake-model",
-      historyTurns: 8,
-    });
-    const intent = await resolver.resolve({
+    const runtime = new DefaultIntentRuntime(
+      new JarvisIntentResolverAdapter({
+        modelClient: client,
+        modelSource: "intent-matrix/fake-model",
+        historyTurns: 8,
+      }),
+    );
+    const runtimeResult = await runtime.understand({
       userPrompt: evalCase.prompt,
       history: evalCase.history ?? [],
       now: new Date(evalCase.now ?? defaultNow),
+      executionContext:
+        evalCase.expect.clarification?.executionContext ?? "interactive",
+      interactiveChannel:
+        evalCase.expect.clarification?.interactiveChannel ?? true,
     });
+    const intent = runtimeResult.intent;
     const memoryPolicy = buildIntentAwareMemoryPolicy({
       userPrompt: evalCase.prompt,
       querySubject: intent.subject,
@@ -870,18 +874,7 @@ async function runCase(
         prewarmMaxDistanceMixed: 0.95,
       },
     });
-    const clarification = applyClarificationChannelState(
-      buildClarificationDecision({
-        userPrompt: evalCase.prompt,
-        intent,
-        querySubject: intent.subject,
-        candidateAgents: intent.candidateAgents,
-        recentHistoryLength: evalCase.history?.length ?? 0,
-        executionContext:
-          evalCase.expect.clarification?.executionContext ?? "interactive",
-      }),
-      evalCase.expect.clarification?.interactiveChannel ?? true,
-    );
+    const clarification = runtimeResult.clarification;
     const checks = [
       ...compareCase(evalCase, intent, memoryPolicy),
       ...compareClarification(clarification, evalCase.expect.clarification),

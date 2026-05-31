@@ -11,10 +11,8 @@ vi.mock("../../../core/src/index.js", () => ({
 }));
 
 import { ToolRouter } from "./toolRouter.js";
-import type {
-  MemoryContract,
-  StepMemoryDecision,
-} from "../memory-runtime/index.js";
+import type { MemoryContract } from "../memory-runtime/index.js";
+import type { StepMemoryDecision } from "../memory-runtime/types.js";
 
 describe("ToolRouter", () => {
   const makeReq = (name: string, args: Record<string, unknown> = {}) => ({

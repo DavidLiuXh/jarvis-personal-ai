@@ -11,8 +11,13 @@ import {
 import type {
   ClarificationQuestion,
   MemoryContract,
-  StepMemoryDecision,
 } from "../memory-runtime/index.js";
+import type { StepMemoryDecision } from "../memory-runtime/types.js";
+import type {
+  RuntimeToolRequest,
+  RuntimeToolResult,
+  ToolExecutorAdapter,
+} from "../intent-runtime/index.js";
 import { getCategoryBaseScore, clampScore } from "./backgroundDistiller.js";
 
 export type ToolCallRequest = {
@@ -496,7 +501,7 @@ type TaskCommandHandlerHandle = {
  * Routes tool call requests to either Jarvis-native handlers or the Gemini
  * Scheduler, then assembles the response parts for the next LLM turn.
  */
-export class ToolRouter {
+export class ToolRouter implements ToolExecutorAdapter {
   // Fallbacks from the current turn's routing classification.
   // Used when LLM calls recall_memory without time parameters.
   private currentTimeWindowDays: number | null = null;
@@ -687,6 +692,30 @@ export class ToolRouter {
     }
 
     return [...directParts, ...standardParts];
+  }
+
+  async executeTools(
+    requests: RuntimeToolRequest[],
+    signal: AbortSignal,
+  ): Promise<RuntimeToolResult[]> {
+    const results: RuntimeToolResult[] = [];
+    await this.route(
+      requests.map((request) => ({
+        name: request.name,
+        callId: request.callId,
+        args: request.args,
+      })),
+      signal,
+      (response) => {
+        results.push({
+          name: response.name,
+          callId: response.callId,
+          status: response.status === "success" ? "success" : "failed",
+          output: response.output,
+        });
+      },
+    );
+    return results;
   }
 
   private async withSubagentMemoryContract(

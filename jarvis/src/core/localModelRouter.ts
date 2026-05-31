@@ -7,11 +7,15 @@
 import { ollamaGenerateWithRetry } from "./ollamaClient.js";
 import {
   FALLBACK_QUERY_SUBJECT,
-  IntentResolver,
   type ConversationTurn,
   type IntentFrame,
   type QuerySubject,
 } from "./intentResolver.js";
+import {
+  DefaultIntentRuntime,
+  type IntentRuntime,
+} from "../intent-runtime/index.js";
+import { JarvisIntentResolverAdapter } from "./jarvisIntentResolverAdapter.js";
 
 export type {
   ConversationTurn,
@@ -107,6 +111,8 @@ function calibrateRoutingScore(intent: IntentFrame): {
 }
 
 export class LocalModelRouter {
+  private readonly intentRuntime?: IntentRuntime;
+
   constructor(
     private baseUrl: string = "http://localhost:11434",
     private classifierModel: string,
@@ -116,7 +122,10 @@ export class LocalModelRouter {
     private timeoutMs: number = 30_000,
     private historyTurns: number = 5,
     private intentPolicyObservability: boolean = false,
-  ) {}
+    intentRuntime?: IntentRuntime,
+  ) {
+    this.intentRuntime = intentRuntime;
+  }
 
   async route(
     userPrompt: string,
@@ -200,14 +209,24 @@ export class LocalModelRouter {
     userPrompt: string,
     history: ConversationTurn[] = [],
   ): Promise<IntentFrame> {
-    const resolver = new IntentResolver({
-      baseUrl: this.baseUrl,
-      model: this.classifierModel,
-      timeoutMs: this.timeoutMs,
-      historyTurns: this.historyTurns,
-      intentPolicyObservability: this.intentPolicyObservability,
+    const runtime =
+      this.intentRuntime ??
+      new DefaultIntentRuntime(
+        new JarvisIntentResolverAdapter({
+          baseUrl: this.baseUrl,
+          model: this.classifierModel,
+          timeoutMs: this.timeoutMs,
+          historyTurns: this.historyTurns,
+          intentPolicyObservability: this.intentPolicyObservability,
+          modelSource: "local-model",
+        }),
+      );
+    const result = await runtime.understand({
+      userPrompt,
+      history,
+      executionContext: "interactive",
     });
-    return resolver.resolve({ userPrompt, history });
+    return result.intent;
   }
 
   /**
