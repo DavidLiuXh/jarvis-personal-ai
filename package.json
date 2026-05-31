@@ -21,6 +21,7 @@
     "intent:matrix": "npx tsx scripts/run_intent_matrix.ts",
     "intent:report": "npx tsx scripts/summarize_intent_evals.ts",
     "intent:attribute-failures": "npx tsx scripts/attribute_intent_failures.ts",
+    "runtime:check-boundaries": "npx tsx scripts/check_runtime_boundaries.ts",
     "test": "npm run test --workspaces --if-present",
     "prepare": "husky",
     "pre-commit": "lint-staged"

@@ -28,12 +28,20 @@ Jarvis 当前构建在 Gemini CLI 运行时上，但最近增强的 intent under
 ```text
 Application Agent Runtime
   uses
-Universal Memory Layer
+Intent Runtime
+  uses
+Memory Runtime
   uses
 Model / Embedding / Vector / Storage Adapters
 ```
 
-它不应该直接依赖 Gemini CLI、JarvisAgent、ToolRouter、具体 channel、具体 scheduler 或某个特定数据库实现。
+其中边界定义为：
+
+- `intent-runtime`：意图 schema、policy、clarification、execution plan、step runtime、feedback schema。
+- `memory-runtime`：memory contract、retrieval、injection、memory stores、memory runtime events。
+- `jarvis-core adapters`：JarvisIntentResolver、JarvisMemoryStores、ToolRouter integration、channels、scheduler。
+
+通用 runtime 不应该直接依赖 Gemini CLI、JarvisAgent、ToolRouter、具体 channel、具体 scheduler 或某个特定数据库实现。Jarvis 特有行为应通过 adapter 或 extension point 注入。
 
 ## 2. 为什么要把 Intent Understanding 放进 Memory Layer
 
@@ -337,19 +345,19 @@ export interface Reranker {
 
 ## 7. Jarvis 当前实现映射
 
-| 通用层能力           | Jarvis 当前实现                                            |
-| -------------------- | ---------------------------------------------------------- |
-| Intent Understanding | `jarvis/src/core/intentResolver.ts`                        |
-| Policy Layer         | `jarvis/src/core/intentPolicy.ts`                          |
-| Clarification        | `jarvis/src/core/clarificationPolicy.ts`                   |
-| Memory Policy        | `jarvis/src/core/intentAwareMemoryPolicy.ts`               |
-| Injection Planner    | `jarvis/src/core/memoryInjectionPlanner.ts`                |
-| Session Recall       | `jarvis/src/core/conversationRecall.ts`                    |
-| Intent Plan          | `jarvis/src/core/intentPlan.ts` / `intentExecutionPlan.ts` |
-| Runtime Feedback     | `jarvis/src/core/runtimeIntentFeedbackCollector.ts`        |
-| Runtime Integration  | `jarvis/src/core/agent.ts`                                 |
-| Model Routing        | `jarvis/src/core/localModelRouter.ts`                      |
-| Fact / Entry Storage | `MemoryService` 及其底层存储                               |
+| 通用层能力           | Jarvis 当前实现                                        |
+| -------------------- | ------------------------------------------------------ |
+| Intent Understanding | `jarvis/src/core/intentResolver.ts`                    |
+| Policy Layer         | `jarvis/src/memory-runtime/intentPolicy.ts`            |
+| Clarification        | `jarvis/src/memory-runtime/clarificationPolicy.ts`     |
+| Memory Policy        | `jarvis/src/memory-runtime/intentAwareMemoryPolicy.ts` |
+| Injection Planner    | `jarvis/src/memory-runtime/memoryInjectionPlanner.ts`  |
+| Session Recall       | `jarvis/src/core/conversationRecall.ts`                |
+| Intent Plan          | `jarvis/src/intent-runtime/executionPlan.ts`           |
+| Runtime Feedback     | `jarvis/src/core/runtimeIntentFeedbackCollector.ts`    |
+| Runtime Integration  | `jarvis/src/core/agent.ts`                             |
+| Model Routing        | `jarvis/src/core/localModelRouter.ts`                  |
+| Fact / Entry Storage | `MemoryService` 及其底层存储                           |
 
 当前已经抽到通用层的模块：
 
@@ -577,6 +585,7 @@ jarvis/src/memory-runtime/
 - `DefaultMemoryRuntime` 已实现；
 - `IntentFrame`、`IntentStep`、`IntentEvidence`、`TopicAnalysis`、`IntentPolicyTraceEntry` 等 schema 已迁入 `memory-runtime/types.ts`；
 - `intentPolicy`、`clarificationPolicy`、`intentAwareMemoryPolicy`、`memoryInjectionPlanner` 已不再 import `core/*`；
+- `IntentExecutionPlan` 和 `IntentStepRuntime` 已迁入 `jarvis/src/intent-runtime/executionPlan.ts`，`core/intentExecutionPlan.ts` 仅保留兼容 re-export；
 - 通用 `OllamaIntentModelClient` 已不再 import `core/ollamaClient.ts`；
 - Jarvis core 增加 `JarvisOllamaIntentModelClient`，用于保持现有默认 Ollama 行为和测试兼容；
 - `IntentResolver` 继续作为 Jarvis core 实现，但其公开类型从通用层 re-export。
@@ -665,6 +674,29 @@ jarvis/src/memory-runtime/
 - `DefaultMemoryRuntime` 尚未接管 skill retrieval；
 - `DefaultMemoryRuntime` 尚未接管 tool/subagent 执行，只负责主响应 memory lifecycle；
 - memory feedback 目前进入 candidate JSONL，但还没有自动进入稳定 eval case。
+
+### Phase 9：Intent Runtime 边界稳定化
+
+目标：
+
+- 防止 `memory-runtime` 继续吸收 execution / orchestration 职责；
+- 将 execution plan 和 step runtime 归入更准确的 `intent-runtime` 边界；
+- 用自动检查守住通用层不能反向依赖 Jarvis core。
+
+当前实现状态：
+
+- 新增 `jarvis/src/intent-runtime`，并将 `IntentExecutionPlan` / `IntentStepRuntime` 迁入该目录；
+- `jarvis/src/core/intentExecutionPlan.ts` 现在只做兼容 re-export；
+- `push_to_channel` 已纳入 `IntentStepRuntime` 的 enforceable tool contract；
+- 单步工具请求也会生成 execution contract，普通单步 LLM 请求仍不生成额外 plan；
+- 新增 `scripts/check_runtime_boundaries.ts`；
+- 新增 `npm run runtime:check-boundaries`，检查 `memory-runtime` 与 `intent-runtime` 不得 import `jarvis/src/core/*`。
+
+剩余限制：
+
+- `intent-runtime` 仍复用 `memory-runtime/types.ts` 与 `crudPolicy.ts`；
+- `IntentResolver` 仍在 Jarvis core；
+- tool/subagent execution 仍在 Jarvis core，尚未迁入 step orchestrator。
 
 ## 10. Eval 和反馈闭环
 

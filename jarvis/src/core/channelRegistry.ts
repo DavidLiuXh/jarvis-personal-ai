@@ -20,6 +20,8 @@ export type ChannelAdapter = {
    * For Feishu: the configured defaultChatId.
    */
   defaultChatId?: string;
+  /** Broadcast channels such as websocket do not need a chatId. */
+  requiresChatId?: boolean;
 };
 
 /**
@@ -88,7 +90,7 @@ export class ChannelRegistry {
         return false;
       }
       const resolvedChatId = chatId || adapter.defaultChatId || "";
-      if (!resolvedChatId) {
+      if (!resolvedChatId && adapter.requiresChatId !== false) {
         console.error(
           `⚠️ [ChannelRegistry] No chatId for channel "${channel}" — push skipped.`,
         );

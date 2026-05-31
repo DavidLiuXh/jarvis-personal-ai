@@ -208,6 +208,61 @@ describe("buildIntentPlanSection", () => {
     expect(plan?.steps.map((step) => step.mode)).toEqual(["context", "tool"]);
   });
 
+  it("builds an execution contract for single channel push steps", () => {
+    const frame = intent(
+      [
+        {
+          id: "step-1",
+          type: "execute",
+          action: "push summary",
+          target: "wechat",
+          dependsOn: [],
+          requiresConfirmation: false,
+          riskLevel: "medium",
+          operation: {
+            domain: "task_management",
+            action: "send",
+            targetType: "channel",
+            target: "wechat",
+            targetId: "",
+            selector: "wechat",
+            scope: "channel",
+            riskLevel: "medium",
+          },
+        },
+      ],
+      {
+        richIntent: {
+          userGoal: "将上述内容推送到微信",
+          domain: "task_management",
+          action: "send",
+          primaryAction: "send",
+          targets: [{ type: "channel", value: "wechat" }],
+          contextDependency: {
+            recentConversation: true,
+            longTermMemory: false,
+            localWorkspace: false,
+            externalWorld: false,
+          },
+          ambiguity: [],
+          riskLevel: "medium",
+        },
+      },
+    );
+
+    const plan = buildIntentExecutionPlan(frame);
+    const runtime = new IntentStepRuntime(frame);
+
+    expect(plan?.mode).toBe("orchestrated");
+    expect(plan?.requiredTools).toContain("push_to_channel");
+    expect(plan?.steps[0]).toMatchObject({
+      mode: "tool",
+      requiredTool: "push_to_channel",
+    });
+    expect(runtime.active).toBe(true);
+    expect(runtime.buildMissingStepPrompt()).toContain("push_to_channel");
+  });
+
   it("tracks tool-backed step state by step instead of only by tool name", () => {
     const runtime = new IntentStepRuntime(
       intent([

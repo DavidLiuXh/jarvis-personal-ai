@@ -1568,6 +1568,10 @@ export class JarvisAgent extends EventEmitter {
                     (resp) =>
                       this.emit(JarvisEventType.TOOL_CALL_RESPONSE, resp),
                   );
+                  stepRuntime.observeToolResults(
+                    [autoPushRequest],
+                    currentQueryParts,
+                  );
                   success = false;
                   continue;
                 }

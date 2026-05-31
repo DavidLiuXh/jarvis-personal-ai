@@ -198,6 +198,50 @@ describe("IntentResolver", () => {
     expect(mockGenerate).toHaveBeenCalledTimes(1);
   });
 
+  it("normalizes general_chat query_subject to external for greetings", async () => {
+    const resolver = makeResolver();
+    const warnSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    mockGenerate.mockResolvedValueOnce(
+      modelResponse({
+        query_subject: "general_chat",
+        task_type: "chat",
+        needs_external_knowledge: false,
+        semantic_evidence: {
+          personalContext: { present: false, reason: "", span: "" },
+          memoryRecall: {
+            present: false,
+            target: "none",
+            reason: "",
+            span: "",
+          },
+          actionRequest: { present: false, action: "none", object: "" },
+          entityHints: {
+            tickers: [],
+            technicalTerms: [],
+            peopleOrCompanies: [],
+          },
+        },
+      }),
+    );
+
+    const intent = await resolver.resolve({
+      userPrompt: "Hi Jarvis",
+      history: [],
+    });
+
+    expect(intent.subject).toBe("external");
+    expect(intent.taskType).toBe("chat");
+    expect(intent.evidence).toContain(
+      "normalized_subject:general_chat->external",
+    );
+    expect(
+      warnSpy.mock.calls.some((call) =>
+        String(call[0]).includes("Invalid query_subject"),
+      ),
+    ).toBe(false);
+    warnSpy.mockRestore();
+  });
+
   it("repairs malformed intent JSON once before parsing", async () => {
     const resolver = makeResolver();
     mockGenerate

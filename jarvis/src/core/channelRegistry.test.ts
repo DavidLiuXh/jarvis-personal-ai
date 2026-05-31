@@ -101,4 +101,15 @@ describe("ChannelRegistry", () => {
     expect(result).toBe(false);
     expect(push).not.toHaveBeenCalled();
   });
+
+  it("pushSafe allows broadcast channels without chatId", async () => {
+    const push = vi.fn().mockResolvedValue(undefined);
+    const registry = new ChannelRegistry();
+    registry.register("websocket", { push, requiresChatId: false });
+
+    const result = await registry.pushSafe("websocket", "", "Hello");
+
+    expect(result).toBe(true);
+    expect(push).toHaveBeenCalledWith("", "Hello", undefined, undefined);
+  });
 });

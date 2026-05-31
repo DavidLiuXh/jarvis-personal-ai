@@ -294,6 +294,7 @@ class JarvisServer {
           }
         });
       },
+      requiresChatId: false,
     });
 
     // Wire scheduler → runner → registry

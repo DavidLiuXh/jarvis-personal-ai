@@ -110,6 +110,39 @@ describe("WechatChannel", () => {
     expect(body.msg.context_token).toBe("ctx-123");
   });
 
+  it("sendProactive retries without context_token when WeChat returns ret=-2", async () => {
+    fetchMock
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: vi.fn().mockResolvedValue({ ret: -2 }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: vi.fn().mockResolvedValue({ ret: 0 }),
+      });
+
+    const channel = new WechatChannel({} as any);
+    (channel as any).session = {
+      botToken: "token",
+      baseUrl: "https://wechat.example.com",
+      syncBuf: "",
+      botId: "bot-1",
+      userId: "login-user",
+      lastInboundUserId: "recent-chat-user",
+      lastInboundContextToken: "ctx-expired",
+    };
+
+    await channel.sendProactive("recent-chat-user", "Hello");
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const firstBody = JSON.parse(fetchMock.mock.calls[0][1].body);
+    const secondBody = JSON.parse(fetchMock.mock.calls[1][1].body);
+    expect(firstBody.msg.context_token).toBe("ctx-expired");
+    expect(secondBody.msg.context_token).toBeUndefined();
+  });
+
   it("sendProactive reports raw payload when ret is non-zero without message", async () => {
     fetchMock.mockResolvedValue({
       ok: true,

@@ -163,6 +163,13 @@ export const FALLBACK_QUERY_SUBJECT: QuerySubject = "mixed";
 
 const VALID_SUBJECTS = new Set<QuerySubject>(["personal", "external", "mixed"]);
 
+const QUERY_SUBJECT_ALIASES = new Map<string, QuerySubject>([
+  ["general_chat", "external"],
+  ["chat", "external"],
+  ["casual_chat", "external"],
+  ["small_talk", "external"],
+]);
+
 const VALID_TASK_TYPES = new Set<IntentTaskType>([
   "chat",
   "recall",
@@ -2776,12 +2783,23 @@ export class IntentResolver {
     }
 
     const rawSubject = parsed.query_subject?.toLowerCase().trim();
-    let subject: QuerySubject = VALID_SUBJECTS.has(rawSubject as QuerySubject)
-      ? (rawSubject as QuerySubject)
+    const normalizedSubject = rawSubject
+      ? (QUERY_SUBJECT_ALIASES.get(rawSubject) ?? rawSubject)
+      : undefined;
+    let subject: QuerySubject = VALID_SUBJECTS.has(
+      normalizedSubject as QuerySubject,
+    )
+      ? (normalizedSubject as QuerySubject)
       : FALLBACK_QUERY_SUBJECT;
 
     const evidence = normalizeEvidenceStrings(parsed.evidence);
-    if (!VALID_SUBJECTS.has(rawSubject as QuerySubject)) {
+    if (
+      rawSubject &&
+      normalizedSubject !== rawSubject &&
+      VALID_SUBJECTS.has(normalizedSubject as QuerySubject)
+    ) {
+      evidence.push(`normalized_subject:${rawSubject}->${normalizedSubject}`);
+    } else if (!VALID_SUBJECTS.has(normalizedSubject as QuerySubject)) {
       evidence.push(`invalid_subject:${rawSubject ?? "missing"}`);
       console.error(
         `⚠️ [IntentResolver] Invalid query_subject "${rawSubject}", using fallback "${FALLBACK_QUERY_SUBJECT}"`,

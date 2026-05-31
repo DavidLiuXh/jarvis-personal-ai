@@ -50,6 +50,17 @@ type WechatApiResult = {
   [key: string]: unknown;
 };
 
+class WechatApiError extends Error {
+  constructor(
+    message: string,
+    readonly ret: number | undefined,
+    readonly payload: WechatApiResult,
+  ) {
+    super(message);
+    this.name = "WechatApiError";
+  }
+}
+
 /**
  * JARVIS WECHAT CHANNEL (Official Plugin Integration)
  */
@@ -130,8 +141,10 @@ export class WechatChannel {
         payload.errmsg ||
         payload.message ||
         JSON.stringify(payload);
-      throw new Error(
+      throw new WechatApiError(
         `[Wechat] ${action} failed: ret=${payload.ret}, detail=${detail}`,
+        payload.ret,
+        payload,
       );
     }
 
@@ -143,6 +156,29 @@ export class WechatChannel {
     if (!this.session) {
       throw new Error("[Wechat] Cannot send proactive message: not logged in");
     }
+    const contextToken =
+      this.session.lastInboundUserId === userId
+        ? this.session.lastInboundContextToken
+        : undefined;
+    try {
+      await this.sendProactiveRequest(userId, text, contextToken);
+    } catch (e: any) {
+      if (e instanceof WechatApiError && e.ret === -2 && contextToken) {
+        console.error(
+          "⚠️ [Wechat] sendProactive failed with context_token ret=-2; retrying without context_token.",
+        );
+        await this.sendProactiveRequest(userId, text);
+        return;
+      }
+      throw e;
+    }
+  }
+
+  private async sendProactiveRequest(
+    userId: string,
+    text: string,
+    contextToken?: string,
+  ): Promise<void> {
     const res = await wfetch(
       new URL("ilink/bot/sendmessage", this.getBaseUrl()).toString(),
       {
@@ -156,10 +192,7 @@ export class WechatChannel {
             message_type: 2,
             message_state: 2,
             item_list: [{ type: 1, text_item: { text } }],
-            ...(this.session?.lastInboundUserId === userId &&
-            this.session?.lastInboundContextToken
-              ? { context_token: this.session.lastInboundContextToken }
-              : {}),
+            ...(contextToken ? { context_token: contextToken } : {}),
           },
         }),
       },

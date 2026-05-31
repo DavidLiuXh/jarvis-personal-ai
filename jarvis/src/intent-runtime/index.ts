@@ -4,4 +4,4 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-export * from "../intent-runtime/executionPlan.js";
+export * from "./executionPlan.js";
