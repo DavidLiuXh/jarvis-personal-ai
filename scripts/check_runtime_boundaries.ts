@@ -18,18 +18,20 @@ type Boundary = {
 const boundaries: Boundary[] = [
   {
     name: "memory-runtime",
-    root: path.join(repoRoot, "jarvis/src/memory-runtime"),
+    root: path.join(repoRoot, "packages/memory-runtime/src"),
     forbidden: [
-      /from\s+["'](?:\.\.\/)+core\//,
-      /import\(["'](?:\.\.\/)+core\//,
+      /from\s+["'].*jarvis\/src\/core\//,
+      /import\(["'].*jarvis\/src\/core\//,
+      /from\s+["'].*intent-runtime\//,
+      /import\(["'].*intent-runtime\//,
     ],
   },
   {
     name: "intent-runtime",
-    root: path.join(repoRoot, "jarvis/src/intent-runtime"),
+    root: path.join(repoRoot, "packages/intent-runtime/src"),
     forbidden: [
-      /from\s+["'](?:\.\.\/)+core\//,
-      /import\(["'](?:\.\.\/)+core\//,
+      /from\s+["'].*jarvis\/src\/core\//,
+      /import\(["'].*jarvis\/src\/core\//,
     ],
   },
 ];

@@ -1,0 +1,23 @@
+{
+  "name": "@jarvis/memory-runtime",
+  "version": "0.1.0",
+  "type": "module",
+  "private": true,
+  "exports": {
+    ".": "./src/index.ts",
+    "./adapters": "./src/adapters.ts",
+    "./clarificationPolicy": "./src/clarificationPolicy.ts",
+    "./crudPolicy": "./src/crudPolicy.ts",
+    "./intentAwareMemoryPolicy": "./src/intentAwareMemoryPolicy.ts",
+    "./intentPolicy": "./src/intentPolicy.ts",
+    "./memoryInjectionPlanner": "./src/memoryInjectionPlanner.ts",
+    "./ollamaIntentModelClient": "./src/ollamaIntentModelClient.ts",
+    "./retrieval": "./src/retrieval.ts",
+    "./runtime": "./src/runtime.ts",
+    "./types": "./src/types.ts"
+  },
+  "files": [
+    "src"
+  ],
+  "sideEffects": false
+}

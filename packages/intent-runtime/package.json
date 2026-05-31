@@ -1,0 +1,14 @@
+{
+  "name": "@jarvis/intent-runtime",
+  "version": "0.1.0",
+  "type": "module",
+  "private": true,
+  "exports": {
+    ".": "./src/index.ts",
+    "./executionPlan": "./src/executionPlan.ts"
+  },
+  "files": [
+    "src"
+  ],
+  "sideEffects": false
+}

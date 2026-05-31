@@ -6,8 +6,10 @@
 
 当前实现已经具备一套可运行的通用层雏形：
 
-- `jarvis/src/memory-runtime` 已承载 `IntentFrame`、`MemoryContract`、`ClarificationQuestion`、memory policy、clarification policy、retrieval adapter、injection planner 和 `DefaultMemoryRuntime`。
-- `memory-runtime` 基本没有反向依赖 `jarvis/src/core/*`，具备继续独立化的基础。
+- `packages/memory-runtime/src` 已承载 `IntentFrame`、`MemoryContract`、`ClarificationQuestion`、memory policy、clarification policy、retrieval adapter、injection planner 和 `DefaultMemoryRuntime`。
+- `packages/intent-runtime/src` 已承载 `IntentExecutionPlan`、`IntentStepRuntime` 和 tool-backed execution contract 纯逻辑。
+- `jarvis/src/memory-runtime/*` 与 `jarvis/src/intent-runtime/*` 现在是兼容 re-export shim，便于现有 Jarvis import 平滑过渡。
+- runtime packages 基本没有反向依赖 `jarvis/src/core/*`，具备继续独立化的基础。
 - `agent.ts#refreshContext()` 已通过 `DefaultMemoryRuntime` 执行主响应路径的 `understand -> planMemory -> retrieve -> inject -> observe`。
 - `DefaultMemoryRetriever` 已支持 `session / fact / entry` 三层 store adapter，并通过 extension points 保留 Jarvis 的 query rewrite、recent conversation recall、summary fallback。
 - intent eval 已从单点回归 case 演进为 principle / invariant / semantic axis 矩阵。
@@ -15,14 +17,14 @@
 当前缺口也很明确：
 
 - `DefaultMemoryRuntime` 只接管主响应的 memory lifecycle，还不是完整 intent-driven agent runtime。
-- `IntentExecutionPlan`、multi-intent step runtime、tool execution 和 subagent orchestration 仍在 `jarvis/src/core`。
+- tool execution 和 subagent orchestration 仍在 `jarvis/src/core`。
 - `IntentResolver` 仍是 Jarvis core 实现，虽然公共 schema 已迁入通用层。
 - skill retrieval、tool/subagent memory consumption、runtime feedback 晋升 eval case 还没有完全纳入统一 runtime。
 
 因此当前成熟度判断：
 
-- memory-driven runtime: 65%-70%
-- complete intent-driven runtime: 40%-50%
+- memory-driven runtime: 75%-80%
+- complete intent-driven runtime: 55%-60%
 
 ## Target Architecture
 
@@ -264,6 +266,8 @@ Status: completed for deterministic matrix reporting hooks in this phase.
 
 ### P3.1 Public API hardening
 
+Status: completed for package-like local consumption in this phase.
+
 目标：
 
 - 让通用 runtime 可以被 Jarvis 之外的项目嵌入。
@@ -274,7 +278,16 @@ Status: completed for deterministic matrix reporting hooks in this phase.
 - API examples：minimal runtime、custom stores、custom intent model、custom observer。
 - 明确 semver policy。
 
+当前实现状态：
+
+- 新增 `packages/memory-runtime/package.json` 与 `packages/intent-runtime/package.json`，提供 package entrypoint 和子路径 exports；
+- 新增两个 package README，说明职责边界、最小用法和兼容 shim；
+- 新增 package-level API smoke tests，防止公共 exports 在后续重构中断裂；
+- 当前 package 仍标记为 `private: true`，先保证本仓库内可消费，再考虑独立发布和 semver。
+
 ### P3.2 Move runtime to package-like structure
+
+Status: completed with compatibility shims in this phase.
 
 目标：
 
@@ -290,9 +303,16 @@ jarvis/src/core/
   adapters/
 ```
 
-短期可先不移动目录，只通过 import boundary 和 docs 约束。
+当前实现状态：
+
+- 已采用候选结构，将 runtime 实现迁入 `packages/memory-runtime/src` 与 `packages/intent-runtime/src`；
+- `jarvis/src/memory-runtime/*` 与 `jarvis/src/intent-runtime/*` 保留为 thin re-export shim；
+- root workspace 已加入 `packages/*`；
+- `runtime:check-boundaries` 现在检查 package 源目录，不再只检查 Jarvis shim 目录。
 
 ### P3.3 Runtime quality dashboard
+
+Status: completed for static eval/report hooks; live dashboard remains future work.
 
 目标：
 
@@ -308,6 +328,12 @@ jarvis/src/core/
 - tool failure rate
 - memory injection empty / rejected rate
 - runtime feedback candidate volume
+
+当前实现状态：
+
+- `intent:matrix` JSON / Markdown report 已包含 dimension、invariant、axis、model source、repeat 维度统计；
+- runtime feedback candidate 可通过 review workflow 晋升为 reviewed eval case；
+- 尚未实现独立 UI dashboard，当前阶段以 eval report + JSON artifact 作为 dashboard 数据源。
 
 ## Suggested Order
 

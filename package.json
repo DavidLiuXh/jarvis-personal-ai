@@ -6,6 +6,7 @@
   },
   "type": "module",
   "workspaces": [
+    "packages/*",
     "jarvis",
     "gemini-cli/packages/core",
     "gemini-cli/packages/cli"
