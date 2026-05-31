@@ -696,7 +696,10 @@ jarvis/src/memory-runtime/
 
 - `intent-runtime` 仍复用 `memory-runtime/types.ts` 与 `crudPolicy.ts`；
 - `IntentResolver` 仍在 Jarvis core；
-- tool/subagent execution 仍在 Jarvis core，尚未迁入 step orchestrator。
+- tool/subagent execution 仍在 Jarvis core；
+- step orchestrator 已开始托管 known required tools，但完整 agent / subagent orchestration 仍未迁入；
+- clarification runtime 已记录 pending / answered requirements，但前端交互仍沿用现有 ask_user 通道；
+- step-level memory decision 已传入 ToolRouter / subagent prompt，但具体 subagent execution 仍由 Gemini CLI scheduler 执行。
 
 ## 10. Eval 和反馈闭环
 

@@ -363,6 +363,22 @@ export type MemoryContract = {
   policyTrace: MemoryPolicyTraceEntry[];
 };
 
+export type StepMemoryDecision = {
+  stepId: string;
+  stepType: IntentTaskType;
+  target: string;
+  needMemory: boolean;
+  targetScopes: MemoryScope[];
+  memoryTarget: MemoryTarget;
+  query: string;
+  constraints: {
+    allowPersonalFacts: boolean;
+    allowSessionHistory: boolean;
+    allowEntries: boolean;
+  };
+  reasons: string[];
+};
+
 export type MemoryRetrievalResult = {
   contract: MemoryContract;
   session: Array<{ item: SessionMemory; score: number; reason?: string }>;

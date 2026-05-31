@@ -11,7 +11,10 @@ vi.mock("../../../core/src/index.js", () => ({
 }));
 
 import { ToolRouter } from "./toolRouter.js";
-import type { MemoryContract } from "../memory-runtime/index.js";
+import type {
+  MemoryContract,
+  StepMemoryDecision,
+} from "../memory-runtime/index.js";
 
 describe("ToolRouter", () => {
   const makeReq = (name: string, args: Record<string, unknown> = {}) => ({
@@ -89,6 +92,25 @@ describe("ToolRouter", () => {
     },
     reasons: ["test"],
     policyTrace: [],
+    ...overrides,
+  });
+
+  const stepDecision = (
+    overrides: Partial<StepMemoryDecision> = {},
+  ): StepMemoryDecision => ({
+    stepId: "step-1",
+    stepType: "delegate",
+    target: "TypeScript direction",
+    needMemory: true,
+    targetScopes: ["fact"],
+    memoryTarget: "conversation_history",
+    query: "TypeScript direction",
+    constraints: {
+      allowPersonalFacts: true,
+      allowSessionHistory: false,
+      allowEntries: false,
+    },
+    reasons: ["test-step"],
     ...overrides,
   });
 
@@ -338,18 +360,23 @@ describe("ToolRouter", () => {
     const schedule = vi.fn().mockResolvedValue([]);
     const { router } = makeRouter({ searchFacts, search, schedule });
     router.setCurrentMemoryContract(memoryContract());
+    router.setCurrentStepMemoryDecisions([stepDecision()]);
 
     const req = makeReq("generalist", {
       request: "Summarize the TypeScript direction",
     });
     await router.route([req], new AbortController().signal, vi.fn());
 
-    expect(searchFacts).toHaveBeenCalledWith("TypeScript discussion");
-    expect(search).toHaveBeenCalledWith("TypeScript discussion", 3, null, null);
+    expect(searchFacts).toHaveBeenCalledWith("TypeScript direction");
+    expect(search).not.toHaveBeenCalled();
     const scheduled = schedule.mock.calls[0][0][0];
     expect(scheduled.args.request).toContain("<memory_decision>");
+    expect(scheduled.args.request).toContain("id: step-1");
+    expect(scheduled.args.request).toContain("scopes: fact");
     expect(scheduled.args.request).toContain("<jarvis_memory>");
-    expect(scheduled.args.request).toContain("<relevant_past_conversations>");
+    expect(scheduled.args.request).not.toContain(
+      "<relevant_past_conversations>",
+    );
   });
 
   it("does not inject personal memory into subagents for external contracts", async () => {

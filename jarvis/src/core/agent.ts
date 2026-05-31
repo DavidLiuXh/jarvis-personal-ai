@@ -51,14 +51,21 @@ import type { IntentFrame } from "./intentResolver.js";
 import { IntentStepRuntime } from "./intentExecutionPlan.js";
 import { buildIntentPlanSection } from "./intentPlan.js";
 import { buildRecentConversationRecallCandidates } from "./conversationRecall.js";
-import { buildIntentAwareMemoryPolicy } from "./intentAwareMemoryPolicy.js";
 import {
+  buildIntentAwareMemoryPolicy,
+  buildStepMemoryDecisions,
+} from "./intentAwareMemoryPolicy.js";
+import {
+  applyClarificationAnswers,
   applyClarificationChannelState,
   buildClarificationDecision,
+  buildClarificationRuntimeState,
   buildClarificationTrace,
   buildClarifiedPrompt,
+  filterClarificationDecisionByState,
   formatClarificationQuestions,
   type ClarificationDecision,
+  type ClarificationRuntimeState,
 } from "./clarificationPolicy.js";
 import { type AgentManager } from "./agentManager.js";
 import {
@@ -207,6 +214,7 @@ export class JarvisAgent extends EventEmitter {
   private runtimeIntentFeedbackCollector = new RuntimeIntentFeedbackCollector(
     this.jarvisConfig.intentFeedback,
   );
+  private clarificationRuntimeState: ClarificationRuntimeState | null = null;
   private conversationTurnCount = 0;
   private summarizerGenerateText: ((prompt: string) => Promise<string>) | null =
     null;
@@ -1291,8 +1299,15 @@ export class JarvisAgent extends EventEmitter {
             executionContext: options.executionContext ?? "interactive",
           };
           const clarification = applyClarificationChannelState(
-            buildClarificationDecision(clarificationInput),
+            filterClarificationDecisionByState(
+              buildClarificationDecision(clarificationInput),
+              this.clarificationRuntimeState,
+            ),
             this.pendingAskUserWs?.ws.readyState === 1,
+          );
+          this.clarificationRuntimeState = buildClarificationRuntimeState(
+            clarification,
+            this.clarificationRuntimeState,
           );
           this.runtimeIntentFeedbackCollector.record({
             sessionId: this.sessionId,
@@ -1326,6 +1341,11 @@ export class JarvisAgent extends EventEmitter {
               }
               return;
             }
+            this.clarificationRuntimeState = applyClarificationAnswers(
+              this.clarificationRuntimeState,
+              clarification,
+              answers,
+            );
             userPrompt = buildClarifiedPrompt(
               userPrompt,
               clarification,
@@ -1348,6 +1368,8 @@ export class JarvisAgent extends EventEmitter {
             console.error(
               `🔀 [Jarvis] Re-routed after clarification: ${result.decision} | subject=${result.querySubject} | topic_shifted=${result.topicShifted} | reason="${result.classifierReason}" (source=${result.source})`,
             );
+          } else if (!clarification.blocking) {
+            this.clarificationRuntimeState = null;
           }
 
           // Topic shift detected: clear history so LLM starts fresh on new topic.
@@ -1376,6 +1398,12 @@ export class JarvisAgent extends EventEmitter {
           intentFrame,
         );
         this.toolRouter.setCurrentMemoryContract(memoryContract);
+        this.toolRouter.setCurrentStepMemoryDecisions(
+          buildStepMemoryDecisions({
+            intent: intentFrame,
+            contract: memoryContract,
+          }),
+        );
 
         // Restore getModel() after refreshContext() — it reads config state
         // during skill/fact retrieval and must see the Jarvis-chosen model.

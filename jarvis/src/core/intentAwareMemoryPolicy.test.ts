@@ -6,7 +6,10 @@
 
 import { describe, expect, it } from "vitest";
 import type { IntentFrame } from "./intentResolver.js";
-import { buildIntentAwareMemoryPolicy } from "./intentAwareMemoryPolicy.js";
+import {
+  buildIntentAwareMemoryPolicy,
+  buildStepMemoryDecisions,
+} from "./intentAwareMemoryPolicy.js";
 
 const CONFIG = {
   prewarmLimit: 3,
@@ -331,5 +334,83 @@ describe("buildIntentAwareMemoryPolicy", () => {
       allowEntries: true,
     });
     expect(policy.reasons).toContain("time_scoped_conversation_history");
+  });
+
+  it("derives per-step memory decisions from the shared contract", () => {
+    const frame = intent({
+      taskType: "execute",
+      needsTool: true,
+      semanticEvidence: {
+        ...intent().semanticEvidence,
+        memoryRecall: {
+          present: true,
+          target: "conversation_history",
+          reason: "asks for previous discussion",
+          span: "之前讨论",
+        },
+      },
+      richIntent: {
+        ...intent().richIntent,
+        primaryAction: "modify",
+        contextDependency: {
+          recentConversation: false,
+          longTermMemory: true,
+          localWorkspace: true,
+          externalWorld: false,
+        },
+      },
+      intentSteps: [
+        {
+          id: "step-1",
+          type: "recall",
+          action: "recall previous discussion",
+          target: "Jarvis runtime",
+          dependsOn: [],
+          requiresConfirmation: false,
+          riskLevel: "low",
+        },
+        {
+          id: "step-2",
+          type: "execute",
+          action: "save markdown",
+          target: "runtime notes",
+          dependsOn: ["step-1"],
+          requiresConfirmation: false,
+          riskLevel: "medium",
+        },
+        {
+          id: "step-3",
+          type: "schedule",
+          action: "create reminder",
+          target: "tomorrow review",
+          dependsOn: ["step-2"],
+          requiresConfirmation: false,
+          riskLevel: "medium",
+        },
+      ],
+    });
+    const policy = buildIntentAwareMemoryPolicy({
+      userPrompt: "总结之前讨论并保存，明天提醒我复盘",
+      querySubject: "personal",
+      config: CONFIG,
+      intent: frame,
+    });
+
+    const decisions = buildStepMemoryDecisions({
+      intent: frame,
+      contract: policy.contract,
+    });
+
+    expect(decisions).toHaveLength(3);
+    expect(decisions[0]).toMatchObject({
+      stepId: "step-1",
+      needMemory: true,
+      targetScopes: expect.arrayContaining(["entry"]),
+    });
+    expect(decisions[2]).toMatchObject({
+      stepId: "step-3",
+      needMemory: false,
+      targetScopes: [],
+    });
   });
 });

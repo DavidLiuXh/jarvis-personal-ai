@@ -312,6 +312,66 @@ describe("buildIntentPlanSection", () => {
     expect(runtime.buildMissingStepPrompt()).not.toContain("step-1");
   });
 
+  it("suppresses dependent tool calls until prerequisite steps succeed", () => {
+    const runtime = new IntentStepRuntime(
+      intent([
+        {
+          id: "step-1",
+          type: "schedule",
+          action: "schedule first follow-up",
+          target: "明天早上9点提醒我复盘",
+          dependsOn: [],
+          requiresConfirmation: false,
+          riskLevel: "medium",
+        },
+        {
+          id: "step-2",
+          type: "schedule",
+          action: "schedule second follow-up",
+          target: "后天早上9点提醒我检查",
+          dependsOn: ["step-1"],
+          requiresConfirmation: false,
+          riskLevel: "medium",
+        },
+      ]),
+    );
+
+    const first = {
+      name: "task_add",
+      args: { cron: "明天早上9点", prompt: "提醒我复盘" },
+    };
+    const second = {
+      name: "task_add",
+      args: { cron: "后天早上9点", prompt: "提醒我检查" },
+    };
+
+    const blocked = runtime.filterDuplicateToolCalls([second]);
+    expect(blocked.executableRequests).toEqual([]);
+    expect(blocked.suppressed[0]).toMatchObject({
+      stepId: "step-2",
+      reason: "waiting for dependent step(s): step-1",
+    });
+
+    const allowed = runtime.filterDuplicateToolCalls([first]);
+    expect(allowed.executableRequests).toEqual([first]);
+    expect(runtime.snapshot()[0]?.status).toBe("running");
+
+    runtime.observeToolResults(
+      [first],
+      [
+        {
+          functionResponse: {
+            name: "task_add",
+            response: { result: "✅ Task added" },
+          },
+        },
+      ],
+    );
+
+    const unblocked = runtime.filterDuplicateToolCalls([second]);
+    expect(unblocked.executableRequests).toEqual([second]);
+  });
+
   it("suppresses duplicate tool calls for a completed step", () => {
     const runtime = new IntentStepRuntime(
       intent([

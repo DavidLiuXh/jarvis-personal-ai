@@ -19,6 +19,7 @@
     "start": "npx tsx jarvis/src/index.ts",
     "intent:matrix:generate": "npx tsx scripts/generate_intent_semantic_matrix.ts",
     "intent:matrix": "npx tsx scripts/run_intent_matrix.ts",
+    "intent:feedback:review": "npx tsx scripts/review_intent_feedback.ts",
     "intent:report": "npx tsx scripts/summarize_intent_evals.ts",
     "intent:attribute-failures": "npx tsx scripts/attribute_intent_failures.ts",
     "runtime:check-boundaries": "npx tsx scripts/check_runtime_boundaries.ts",

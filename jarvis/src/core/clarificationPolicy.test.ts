@@ -7,10 +7,13 @@
 import { describe, expect, it } from "vitest";
 import type { IntentFrame } from "./intentResolver.js";
 import {
+  applyClarificationAnswers,
   applyClarificationChannelState,
   buildClarificationDecision,
+  buildClarificationRuntimeState,
   buildClarificationTrace,
   buildClarifiedPrompt,
+  filterClarificationDecisionByState,
 } from "./clarificationPolicy.js";
 
 function intent(overrides: Partial<IntentFrame> = {}): IntentFrame {
@@ -471,6 +474,97 @@ describe("buildClarifiedPrompt", () => {
 
     expect(prompt).toContain("帮我处理一下这个文件");
     expect(prompt).toContain("Clarify action: 格式化并运行测试");
+  });
+});
+
+describe("ClarificationRuntimeState", () => {
+  it("tracks answered step requirements and filters repeated questions", () => {
+    const decision = buildClarificationDecision({
+      userPrompt: "提醒我复盘投资组合",
+      querySubject: "personal",
+      candidateAgents: [],
+      intent: intent({
+        subject: "personal",
+        taskType: "schedule",
+        needsScheduling: true,
+        needsTool: true,
+        richIntent: {
+          ...intent().richIntent,
+          primaryAction: "schedule",
+          targets: [{ type: "task", value: "复盘投资组合" }],
+          riskLevel: "medium",
+        },
+        intentSteps: [
+          {
+            id: "step-1",
+            type: "schedule",
+            action: "create reminder",
+            target: "复盘投资组合",
+            operation: {
+              domain: "task_management",
+              action: "create",
+              targetType: "task",
+              target: "复盘投资组合",
+              scope: "scheduled_tasks",
+              riskLevel: "medium",
+            },
+            dependsOn: [],
+            requiresConfirmation: true,
+            riskLevel: "medium",
+          },
+        ],
+      }),
+    });
+
+    const state = buildClarificationRuntimeState(decision);
+    expect(state.state).toBe("awaiting_user");
+    expect(state.pendingRequirements[0]).toMatchObject({
+      id: "step:step-1:schedule_step_missing_time",
+      answered: false,
+    });
+
+    const answered = applyClarificationAnswers(state, decision, {
+      "0_Schedule step-1": "明天早上 9 点",
+      "1_Schedule": "明天早上 9 点",
+    });
+    expect(answered.state).toBe("ready");
+    expect(answered.pendingRequirements).toHaveLength(0);
+    expect(answered.answeredRequirements[0]).toMatchObject({
+      id: "step:step-1:schedule_step_missing_time",
+      answer: "明天早上 9 点",
+    });
+
+    const filtered = filterClarificationDecisionByState(decision, answered);
+    expect(filtered.shouldAsk).toBe(false);
+    expect(filtered.questions).toHaveLength(0);
+    expect(filtered.stepRequirements).toHaveLength(0);
+  });
+
+  it("keeps unanswered requirements pending across clarification turns", () => {
+    const decision = buildClarificationDecision({
+      userPrompt: "帮我处理一下这个文件",
+      querySubject: "external",
+      candidateAgents: [],
+      intent: intent({
+        taskType: "execute",
+        confidenceByDimension: {
+          ...intent().confidenceByDimension,
+          action: 0.4,
+        },
+        richIntent: {
+          ...intent().richIntent,
+          targets: [],
+          riskLevel: "high",
+        },
+      }),
+    });
+
+    const state = buildClarificationRuntimeState(decision);
+    const unanswered = applyClarificationAnswers(state, decision, {});
+
+    expect(unanswered.state).toBe("awaiting_user");
+    expect(unanswered.pendingRequirements.length).toBeGreaterThan(0);
+    expect(unanswered.answeredRequirements).toHaveLength(0);
   });
 });
 

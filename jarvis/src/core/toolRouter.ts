@@ -11,6 +11,7 @@ import {
 import type {
   ClarificationQuestion,
   MemoryContract,
+  StepMemoryDecision,
 } from "../memory-runtime/index.js";
 import { getCategoryBaseScore, clampScore } from "./backgroundDistiller.js";
 
@@ -443,6 +444,7 @@ function buildAskUserResponse(questions: AskUserQuestion[]): string {
 
 function formatMemoryContractForSubagent(
   contract: MemoryContract | null,
+  stepDecision?: StepMemoryDecision | null,
 ): string {
   if (!contract) {
     return [
@@ -464,6 +466,18 @@ function formatMemoryContractForSubagent(
     `allow_session_history: ${contract.constraints.allowSessionHistory}`,
     `query: ${contract.query.rewritten || contract.query.raw}`,
     `reasons: ${contract.reasons.join(",") || "none"}`,
+    stepDecision
+      ? [
+          "step:",
+          `  id: ${stepDecision.stepId}`,
+          `  type: ${stepDecision.stepType}`,
+          `  target: ${stepDecision.target || "none"}`,
+          `  need_memory: ${stepDecision.needMemory}`,
+          `  scopes: ${stepDecision.targetScopes.join(",") || "none"}`,
+          `  query: ${stepDecision.query}`,
+          `  reasons: ${stepDecision.reasons.join(",") || "none"}`,
+        ].join("\n")
+      : "step: unavailable",
     contract.subjectBoundary === "external"
       ? "instruction: Treat this as an external request. Do not use or infer personal memory."
       : "instruction: Use only the memory snippets explicitly provided below. Do not infer additional personal history.",
@@ -489,6 +503,7 @@ export class ToolRouter {
   private currentDateRange: { from: number; to: number } | null = null;
   private currentUserPrompt: string = "";
   private currentMemoryContract: MemoryContract | null = null;
+  private currentStepMemoryDecisions: StepMemoryDecision[] = [];
   private askUserHandler:
     | ((questions: AskUserQuestion[]) => Promise<Record<string, string>>)
     | null = null;
@@ -525,6 +540,12 @@ export class ToolRouter {
   /** Called by agent.ts each turn after intent-aware memory planning. */
   public setCurrentMemoryContract(contract: MemoryContract | null): void {
     this.currentMemoryContract = contract;
+  }
+
+  public setCurrentStepMemoryDecisions(
+    decisions: StepMemoryDecision[] | null,
+  ): void {
+    this.currentStepMemoryDecisions = decisions ?? [];
   }
 
   public buildPushToChannelRequestFromContent(
@@ -673,7 +694,11 @@ export class ToolRouter {
   ): Promise<ToolCallRequest> {
     const query = request.args.request as string;
     const contract = this.currentMemoryContract;
-    const memoryDecision = formatMemoryContractForSubagent(contract);
+    const stepDecision = this.pickStepMemoryDecision(request);
+    const memoryDecision = formatMemoryContractForSubagent(
+      contract,
+      stepDecision,
+    );
     const contextParts = [memoryDecision];
 
     if (
@@ -681,12 +706,15 @@ export class ToolRouter {
       contract.subjectBoundary !== "external" &&
       contract.needMemory
     ) {
-      const lookupQuery = contract.query.rewritten || query;
+      const lookupQuery =
+        stepDecision?.query || contract.query.rewritten || query;
       const [facts, memories] = await Promise.all([
-        contract.constraints.allowPersonalFacts
+        (stepDecision?.constraints.allowPersonalFacts ??
+        contract.constraints.allowPersonalFacts)
           ? this.memoryService.searchFacts(lookupQuery)
           : Promise.resolve([]),
-        contract.constraints.allowEntries
+        (stepDecision?.constraints.allowEntries ??
+        contract.constraints.allowEntries)
           ? this.memoryService.search(
               lookupQuery,
               3,
@@ -723,6 +751,31 @@ export class ToolRouter {
         request: contextParts.join("\n") + "\n\nTask: " + query,
       },
     };
+  }
+
+  private pickStepMemoryDecision(
+    request: ToolCallRequest,
+  ): StepMemoryDecision | null {
+    if (this.currentStepMemoryDecisions.length === 0) return null;
+    const requestText = String(request.args.request ?? "").toLowerCase();
+    return (
+      this.currentStepMemoryDecisions
+        .map((decision) => ({
+          decision,
+          score: [
+            decision.target,
+            decision.query,
+            decision.stepType,
+            decision.stepId,
+          ].reduce((score, value) => {
+            const text = String(value ?? "").toLowerCase();
+            return text && requestText.includes(text)
+              ? score + Math.min(text.length, 40)
+              : score;
+          }, 0),
+        }))
+        .sort((a, b) => b.score - a.score)[0]?.decision ?? null
+    );
   }
 
   private async handleNative(

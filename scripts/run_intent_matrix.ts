@@ -21,6 +21,12 @@ import {
   buildClarificationDecision,
   type ClarificationDecision,
 } from "../jarvis/src/core/clarificationPolicy.js";
+import {
+  buildIntentExecutionPlan,
+  IntentStepRuntime,
+  type FunctionResponseLike,
+  type ToolCallLike,
+} from "../jarvis/src/intent-runtime/executionPlan.js";
 
 type MatrixDimension =
   | "memoryTarget"
@@ -29,7 +35,8 @@ type MatrixDimension =
   | "multiIntent"
   | "memoryPolicy"
   | "agentRouting"
-  | "clarification";
+  | "clarification"
+  | "executionContract";
 
 type MatrixCase = {
   id: string;
@@ -92,6 +99,31 @@ type MatrixExpectation = {
     reasonsContain?: string[];
     reasonsNotContain?: string[];
   };
+  executionContract?: {
+    mode?: "single_llm" | "orchestrated";
+    requiredToolsContain?: string[];
+    requiredToolsNotContain?: string[];
+    stepModes?: string[];
+    initialStatuses?: string[];
+    missingPromptContains?: string[];
+    deterministicToolRequestsContain?: string[];
+    suppressDependentToolCall?: {
+      request: ToolCallLike;
+      suppressedStepId: string;
+      reasonContains?: string;
+    };
+    failedToolBlocksAfterAttempts?: {
+      request: ToolCallLike;
+      response: FunctionResponseLike;
+      expectedStatus: string;
+    };
+  };
+  calibration?: {
+    minConfidence?: number;
+    confidenceFloors?: Partial<
+      Record<keyof IntentFrame["confidenceByDimension"], number>
+    >;
+  };
 };
 
 type CheckResult = {
@@ -104,6 +136,7 @@ type CheckResult = {
 type CaseResult = {
   id: string;
   dimension: MatrixDimension;
+  run: number;
   invariant: string;
   principles: string[];
   axes: Record<string, string>;
@@ -114,6 +147,7 @@ type CaseResult = {
   intent?: IntentFrame;
   clarification?: ClarificationDecision;
   memoryPolicy?: IntentAwareMemoryPolicy;
+  executionPlan?: ReturnType<typeof buildIntentExecutionPlan>;
   error?: string;
 };
 
@@ -124,6 +158,8 @@ const repoRoot = path.resolve(
 const defaultCasePaths = [
   path.join(repoRoot, "evals/intent/matrix-cases.jsonl"),
   path.join(repoRoot, "evals/intent/semantic-space-cases.jsonl"),
+  path.join(repoRoot, "evals/intent/execution-contract-cases.jsonl"),
+  path.join(repoRoot, "evals/intent/reviewed-runtime-cases.jsonl"),
 ];
 const defaultOutputDir = path.join(repoRoot, "evals/logs");
 const defaultNow = "2026-05-26T04:00:00.000Z";
@@ -136,6 +172,8 @@ function parseArgs(argv: string[]) {
     invariant: "",
     dimension: "" as "" | MatrixDimension,
     limit: 0,
+    repeat: 1,
+    confidenceFloor: 0,
     updateLatest: true,
   };
 
@@ -164,6 +202,12 @@ function parseArgs(argv: string[]) {
     } else if (arg === "--limit" && next) {
       args.limit = Number(next);
       i += 1;
+    } else if (arg === "--repeat" && next) {
+      args.repeat = Number(next);
+      i += 1;
+    } else if (arg === "--confidence-floor" && next) {
+      args.confidenceFloor = Number(next);
+      i += 1;
     } else if (arg === "--no-latest") {
       args.updateLatest = false;
     } else if (arg === "--help" || arg === "-h") {
@@ -174,6 +218,16 @@ function parseArgs(argv: string[]) {
 
   if (!Number.isFinite(args.limit) || args.limit < 0) {
     throw new Error(`Invalid --limit: ${args.limit}`);
+  }
+  if (!Number.isInteger(args.repeat) || args.repeat < 1) {
+    throw new Error(`Invalid --repeat: ${args.repeat}`);
+  }
+  if (
+    !Number.isFinite(args.confidenceFloor) ||
+    args.confidenceFloor < 0 ||
+    args.confidenceFloor > 1
+  ) {
+    throw new Error(`Invalid --confidence-floor: ${args.confidenceFloor}`);
   }
   return args;
 }
@@ -190,6 +244,9 @@ Options:
   --invariant <id>     Run one invariant id
   --tag <tag>          Run cases with a tag
   --limit <n>          Run the first n selected cases
+  --repeat <n>         Repeat selected cases to measure stability
+  --confidence-floor <n>
+                       Global confidence floor for every dimension, 0..1
   --no-latest          Do not update intent-matrix-latest.md/json
 `);
 }
@@ -626,7 +683,165 @@ function compareClarification(
   return checks;
 }
 
-async function runCase(evalCase: MatrixCase): Promise<CaseResult> {
+function compareExecutionContract(
+  intent: IntentFrame,
+  expect: MatrixExpectation["executionContract"],
+): {
+  checks: CheckResult[];
+  plan: ReturnType<typeof buildIntentExecutionPlan>;
+} {
+  const checks: CheckResult[] = [];
+  const plan = buildIntentExecutionPlan(intent);
+  if (!expect) return { checks, plan };
+
+  if (expect.mode !== undefined) {
+    addCheck(
+      checks,
+      "executionContract.mode",
+      expect.mode,
+      plan?.mode ?? null,
+      plan?.mode === expect.mode,
+    );
+  }
+  if (expect.requiredToolsContain !== undefined) {
+    addCheck(
+      checks,
+      "executionContract.requiredToolsContain",
+      expect.requiredToolsContain,
+      plan?.requiredTools ?? [],
+      includesAll(plan?.requiredTools ?? [], expect.requiredToolsContain),
+    );
+  }
+  if (expect.requiredToolsNotContain !== undefined) {
+    addCheck(
+      checks,
+      "executionContract.requiredToolsNotContain",
+      expect.requiredToolsNotContain,
+      plan?.requiredTools ?? [],
+      includesNone(plan?.requiredTools ?? [], expect.requiredToolsNotContain),
+    );
+  }
+  if (expect.stepModes !== undefined) {
+    const actual = plan?.steps.map((step) => step.mode) ?? [];
+    addCheck(
+      checks,
+      "executionContract.stepModes",
+      expect.stepModes,
+      actual,
+      arrayEquals(actual, expect.stepModes),
+    );
+  }
+
+  const runtime = new IntentStepRuntime(intent);
+  if (expect.initialStatuses !== undefined) {
+    const actual = runtime.snapshot().map((entry) => entry.status);
+    addCheck(
+      checks,
+      "executionContract.initialStatuses",
+      expect.initialStatuses,
+      actual,
+      arrayEquals(actual, expect.initialStatuses),
+    );
+  }
+  if (expect.missingPromptContains !== undefined) {
+    const prompt = runtime.buildMissingStepPrompt() ?? "";
+    addCheck(
+      checks,
+      "executionContract.missingPromptContains",
+      expect.missingPromptContains,
+      prompt,
+      expect.missingPromptContains.every((item) => prompt.includes(item)),
+    );
+  }
+  if (expect.deterministicToolRequestsContain !== undefined) {
+    const actual = runtime
+      .buildDeterministicToolRequests()
+      .map((request) => request.name);
+    addCheck(
+      checks,
+      "executionContract.deterministicToolRequestsContain",
+      expect.deterministicToolRequestsContain,
+      actual,
+      includesAll(actual, expect.deterministicToolRequestsContain),
+    );
+  }
+  if (expect.suppressDependentToolCall !== undefined) {
+    const result = runtime.filterDuplicateToolCalls([
+      expect.suppressDependentToolCall.request,
+    ]);
+    const suppressed = result.suppressed[0];
+    addCheck(
+      checks,
+      "executionContract.suppressDependentToolCall",
+      expect.suppressDependentToolCall,
+      suppressed ?? null,
+      result.executableRequests.length === 0 &&
+        suppressed?.stepId ===
+          expect.suppressDependentToolCall.suppressedStepId &&
+        (expect.suppressDependentToolCall.reasonContains === undefined ||
+          (suppressed.reason ?? "").includes(
+            expect.suppressDependentToolCall.reasonContains,
+          )),
+    );
+  }
+  if (expect.failedToolBlocksAfterAttempts !== undefined) {
+    const request = expect.failedToolBlocksAfterAttempts.request;
+    const response = expect.failedToolBlocksAfterAttempts.response;
+    runtime.filterDuplicateToolCalls([request]);
+    runtime.observeToolResults([request], [response]);
+    runtime.filterDuplicateToolCalls([request]);
+    runtime.observeToolResults([request], [response]);
+    const actual = runtime.snapshot()[0]?.status ?? "none";
+    addCheck(
+      checks,
+      "executionContract.failedToolBlocksAfterAttempts",
+      expect.failedToolBlocksAfterAttempts.expectedStatus,
+      actual,
+      actual === expect.failedToolBlocksAfterAttempts.expectedStatus,
+    );
+  }
+
+  return { checks, plan };
+}
+
+function compareCalibration(
+  intent: IntentFrame,
+  expect: MatrixExpectation["calibration"],
+  globalConfidenceFloor: number,
+): CheckResult[] {
+  const checks: CheckResult[] = [];
+  const minConfidence = expect?.minConfidence ?? globalConfidenceFloor;
+  if (minConfidence > 0) {
+    addCheck(
+      checks,
+      "calibration.minConfidence",
+      minConfidence,
+      intent.confidence,
+      intent.confidence >= minConfidence,
+    );
+  }
+  for (const [dimension, floor] of Object.entries(
+    expect?.confidenceFloors ?? {},
+  )) {
+    const actual =
+      intent.confidenceByDimension[
+        dimension as keyof IntentFrame["confidenceByDimension"]
+      ];
+    addCheck(
+      checks,
+      `calibration.${dimension}`,
+      floor,
+      actual,
+      typeof floor === "number" && actual >= floor,
+    );
+  }
+  return checks;
+}
+
+async function runCase(
+  evalCase: MatrixCase,
+  options: { run: number; confidenceFloor: number },
+): Promise<CaseResult> {
   const startedAt = Date.now();
   try {
     const raw = deepMerge(baseRawIntent(evalCase.prompt), evalCase.model);
@@ -670,10 +885,21 @@ async function runCase(evalCase: MatrixCase): Promise<CaseResult> {
     const checks = [
       ...compareCase(evalCase, intent, memoryPolicy),
       ...compareClarification(clarification, evalCase.expect.clarification),
+      ...compareCalibration(
+        intent,
+        evalCase.expect.calibration,
+        options.confidenceFloor,
+      ),
     ];
+    const execution = compareExecutionContract(
+      intent,
+      evalCase.expect.executionContract,
+    );
+    checks.push(...execution.checks);
     return {
       id: evalCase.id,
       dimension: evalCase.dimension,
+      run: options.run,
       invariant: evalCase.invariant,
       principles: evalCase.principles ?? [],
       axes: evalCase.axes ?? {},
@@ -684,11 +910,13 @@ async function runCase(evalCase: MatrixCase): Promise<CaseResult> {
       intent,
       clarification,
       memoryPolicy,
+      executionPlan: execution.plan,
     };
   } catch (error: any) {
     return {
       id: evalCase.id,
       dimension: evalCase.dimension,
+      run: options.run,
       invariant: evalCase.invariant,
       principles: evalCase.principles ?? [],
       axes: evalCase.axes ?? {},
@@ -744,6 +972,11 @@ function buildMarkdownReport(results: CaseResult[], casesPaths: string[]) {
   const dimensionStats = summarizeBy(results, (result) => result.dimension);
   const invariantStats = summarizeBy(results, (result) => result.invariant);
   const axisStats = summarizeAxes(results);
+  const modelStats = summarizeBy(
+    results,
+    (result) => result.intent?.source ?? "error",
+  );
+  const repeatStats = summarizeBy(results, (result) => `run-${result.run}`);
   const failed = results.filter((result) => !result.passed);
   const lines: string[] = [
     "# Intent Matrix Eval Report",
@@ -770,6 +1003,18 @@ function buildMarkdownReport(results: CaseResult[], casesPaths: string[]) {
     "| Axis | Pass | Rate |",
     "| --- | ---: | ---: |",
     formatStats(axisStats),
+    "",
+    "## By Model Source",
+    "",
+    "| Model Source | Pass | Rate |",
+    "| --- | ---: | ---: |",
+    formatStats(modelStats),
+    "",
+    "## By Repeat",
+    "",
+    "| Repeat | Pass | Rate |",
+    "| --- | ---: | ---: |",
+    formatStats(repeatStats),
   ];
 
   if (failed.length > 0) {
@@ -777,6 +1022,7 @@ function buildMarkdownReport(results: CaseResult[], casesPaths: string[]) {
     for (const result of failed) {
       lines.push(`### ${result.id}`, "");
       lines.push(`- Dimension: ${result.dimension}`);
+      lines.push(`- Run: ${result.run}`);
       lines.push(`- Invariant: ${result.invariant}`);
       if (result.error) {
         lines.push(`- Error: ${result.error}`);
@@ -813,13 +1059,18 @@ async function main() {
   }
 
   const results: CaseResult[] = [];
-  for (const evalCase of cases) {
-    const result = await runCase(evalCase);
-    results.push(result);
-    const status = result.passed ? "PASS" : "FAIL";
-    console.log(
-      `${status} ${evalCase.id} (${evalCase.dimension}/${evalCase.invariant})`,
-    );
+  for (let run = 1; run <= args.repeat; run += 1) {
+    for (const evalCase of cases) {
+      const result = await runCase(evalCase, {
+        run,
+        confidenceFloor: args.confidenceFloor,
+      });
+      results.push(result);
+      const status = result.passed ? "PASS" : "FAIL";
+      console.log(
+        `${status} ${evalCase.id} run=${run} (${evalCase.dimension}/${evalCase.invariant})`,
+      );
+    }
   }
 
   fs.mkdirSync(args.outputDir, { recursive: true });
@@ -834,6 +1085,11 @@ async function main() {
     dimensionStats: summarizeBy(results, (result) => result.dimension),
     invariantStats: summarizeBy(results, (result) => result.invariant),
     axisStats: summarizeAxes(results),
+    modelStats: summarizeBy(
+      results,
+      (result) => result.intent?.source ?? "error",
+    ),
+    repeatStats: summarizeBy(results, (result) => `run-${result.run}`),
     results,
   };
   const markdown = buildMarkdownReport(results, args.casesPaths);

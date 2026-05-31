@@ -34,6 +34,7 @@ export type IntentExecutionPlan = {
 
 export type IntentStepRuntimeStatus =
   | "pending"
+  | "running"
   | "succeeded"
   | "failed"
   | "blocked"
@@ -57,13 +58,20 @@ export type IntentStepRuntimeEntry = IntentExecutionStep & {
   attempts: number;
   lastToolName: string | null;
   lastError: string | null;
+  toolCalls: ToolCallLike[];
+  agentCalls: string[];
+  observedResults: string[];
   seenSignatures: Set<string>;
 };
 
 export type DuplicateToolDecision = {
   executableRequests: ToolCallLike[];
   duplicateResponses: FunctionResponseLike[];
-  suppressed: Array<{ request: ToolCallLike; stepId: string | null }>;
+  suppressed: Array<{
+    request: ToolCallLike;
+    stepId: string | null;
+    reason?: string;
+  }>;
 };
 
 const GENERIC_TASK_TARGETS = new Set([
@@ -415,6 +423,15 @@ function responseErrorText(response: unknown): string | null {
   return "tool response reported an error";
 }
 
+function formatObservedResult(response: unknown): string {
+  if (typeof response === "string") return response.slice(0, 240);
+  try {
+    return JSON.stringify(response).slice(0, 240);
+  } catch {
+    return String(response).slice(0, 240);
+  }
+}
+
 export class IntentStepRuntime {
   readonly plan: IntentExecutionPlan | null;
   private entries: IntentStepRuntimeEntry[];
@@ -432,7 +449,11 @@ export class IntentStepRuntime {
       this.plan?.steps.map((step) => ({
         ...step,
         status:
-          step.mode === "context" || step.mode === "llm"
+          step.mode === "context" ||
+          step.mode === "llm" ||
+          step.mode === "agent" ||
+          (step.requiredTool !== null &&
+            !ENFORCEABLE_STEP_TOOLS.has(step.requiredTool))
             ? "succeeded"
             : step.mode === "confirm"
               ? "blocked"
@@ -440,6 +461,9 @@ export class IntentStepRuntime {
         attempts: 0,
         lastToolName: null,
         lastError: step.mode === "confirm" ? "confirmation required" : null,
+        toolCalls: [],
+        agentCalls: [],
+        observedResults: [],
         seenSignatures: new Set<string>(),
       })) ?? [];
     this.maxAttemptsPerStep = options?.maxAttemptsPerStep ?? 2;
@@ -465,42 +489,132 @@ export class IntentStepRuntime {
     }));
   }
 
+  private entryById(stepId: string): IntentStepRuntimeEntry | null {
+    return this.entries.find((entry) => entry.step.id === stepId) ?? null;
+  }
+
+  private dependenciesSatisfied(entry: IntentStepRuntimeEntry): boolean {
+    return entry.step.dependsOn.every(
+      (stepId) => this.entryById(stepId)?.status === "succeeded",
+    );
+  }
+
+  private dependencyBlockReason(entry: IntentStepRuntimeEntry): string | null {
+    const waitingOn = entry.step.dependsOn.filter(
+      (stepId) => this.entryById(stepId)?.status !== "succeeded",
+    );
+    return waitingOn.length > 0
+      ? `waiting for dependent step(s): ${waitingOn.join(", ")}`
+      : null;
+  }
+
   actionableEnforceableSteps(): IntentStepRuntimeEntry[] {
     return this.entries.filter(
       (entry) =>
         (entry.status === "pending" || entry.status === "failed") &&
         entry.requiredTool !== null &&
-        ENFORCEABLE_STEP_TOOLS.has(entry.requiredTool),
+        ENFORCEABLE_STEP_TOOLS.has(entry.requiredTool) &&
+        this.dependenciesSatisfied(entry),
     );
   }
 
   private matchRequestToStep(
     request: ToolCallLike,
   ): IntentStepRuntimeEntry | null {
-    const exact = this.entries.find(
+    const candidates = this.entries.filter(
       (entry) =>
-        entry.status === "pending" && entry.requiredTool === request.name,
+        entry.requiredTool === request.name &&
+        entry.status !== "blocked" &&
+        entry.status !== "skipped",
     );
-    if (exact) return exact;
+    if (candidates.length === 0) return null;
+
     return (
-      this.entries.find(
-        (entry) =>
-          entry.requiredTool === request.name &&
-          entry.status !== "blocked" &&
-          entry.status !== "skipped",
-      ) ?? null
+      candidates
+        .map((entry) => ({
+          entry,
+          score: this.requestStepMatchScore(request, entry),
+        }))
+        .sort((a, b) => b.score - a.score)[0]?.entry ?? null
     );
+  }
+
+  private requestStepMatchScore(
+    request: ToolCallLike,
+    entry: IntentStepRuntimeEntry,
+  ): number {
+    if (request.name === "task_add") {
+      const expected = buildTaskAddArgs(this.intent, entry.step);
+      if (expected && stableJson(request.args ?? {}) === stableJson(expected)) {
+        return 100;
+      }
+      const requestCron = normalizeText(String(request.args?.cron ?? ""));
+      const requestPrompt = normalizeText(String(request.args?.prompt ?? ""));
+      const stepSources = collectScheduleTextSources(null, entry.step);
+      const stepCron = extractScheduleTimeText(stepSources);
+      if (requestCron && stepCron && requestCron === stepCron) {
+        const stepPromptMatched = stepSources
+          .map((source) => stripScheduleWrapper(source, stepCron))
+          .some(
+            (source) =>
+              source &&
+              (source === requestPrompt ||
+                source.includes(requestPrompt) ||
+                requestPrompt.includes(source)),
+          );
+        return stepPromptMatched ? 95 : 80;
+      }
+    }
+    if (request.name === "push_to_channel") {
+      const channel = normalizeText(String(request.args?.channel ?? ""));
+      const target = normalizeText(
+        entry.step.operation.selector ||
+          entry.step.operation.target ||
+          entry.step.target,
+      ).toLowerCase();
+      if (channel && target && channel.toLowerCase() === target) return 100;
+    }
+    const argsText = JSON.stringify(request.args ?? {}).toLowerCase();
+    const stepText = normalizeText(
+      `${entry.step.action} ${entry.step.target} ${entry.step.operation.target}`,
+    ).toLowerCase();
+    if (stepText && argsText.includes(stepText)) return 50;
+    return entry.status === "running" ? 10 : 0;
   }
 
   filterDuplicateToolCalls(requests: ToolCallLike[]): DuplicateToolDecision {
     const executableRequests: ToolCallLike[] = [];
     const duplicateResponses: FunctionResponseLike[] = [];
-    const suppressed: Array<{ request: ToolCallLike; stepId: string | null }> =
-      [];
+    const suppressed: Array<{
+      request: ToolCallLike;
+      stepId: string | null;
+      reason?: string;
+    }> = [];
 
     for (const request of requests) {
       const signature = toolSignature(request);
       const step = this.matchRequestToStep(request);
+      if (step) {
+        const dependencyReason = this.dependencyBlockReason(step);
+        if (dependencyReason) {
+          duplicateResponses.push({
+            functionResponse: {
+              name: request.name,
+              response: {
+                result:
+                  `Tool call suppressed for ${step.step.id}: ${dependencyReason}. ` +
+                  "Complete the dependency first, then retry this step.",
+              },
+            },
+          });
+          suppressed.push({
+            request,
+            stepId: step.step.id,
+            reason: dependencyReason,
+          });
+          continue;
+        }
+      }
       const stepAlreadySucceeded =
         step !== null &&
         step.status === "succeeded" &&
@@ -518,8 +632,12 @@ export class IntentStepRuntime {
             },
           },
         });
-        suppressed.push({ request, stepId });
+        suppressed.push({ request, stepId, reason: "duplicate" });
         continue;
+      }
+      if (step) {
+        step.status = "running";
+        step.lastToolName = request.name;
       }
       executableRequests.push(request);
     }
@@ -542,7 +660,11 @@ export class IntentStepRuntime {
       const errorText = responseErrorText(response);
       step.attempts += 1;
       step.lastToolName = request.name;
+      step.toolCalls.push(request);
       step.seenSignatures.add(signature);
+      if (response !== undefined) {
+        step.observedResults.push(formatObservedResult(response));
+      }
 
       if (errorText) {
         step.lastError = errorText;

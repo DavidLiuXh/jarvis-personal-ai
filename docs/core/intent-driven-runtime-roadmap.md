@@ -110,6 +110,8 @@ Status: completed for the current boundary phase; broader orchestration remains 
 
 ### P1.1 Build a step orchestrator
 
+Status: completed for known required tools in this phase.
+
 目标：
 
 - 将 multi-intent 从“执行提示 + 部分 required-tool enforcement”升级为可运行 step orchestrator。
@@ -126,7 +128,17 @@ Status: completed for the current boundary phase; broader orchestration remains 
 - 第一阶段只托管 known required tools：`task_*`、`push_to_channel`、`recall_memory`。
 - `analyze` / 普通 `execute` 仍交给主 LLM，但必须被 step runtime 记录。
 
+当前实现状态：
+
+- `IntentStepRuntime` 已支持 `running` 状态；
+- tool-backed step 会记录 attempts、last tool、tool calls 和 observed results；
+- dependent step 只有在依赖 step succeeded 后才允许执行；
+- 同一工具的多个 step 会按 request args / step target 匹配，避免仅按工具名误归因；
+- 当前实际 enforce 范围仍限于 `task_add`、`push_to_channel`、`recall_memory`。
+
 ### P1.2 Clarification state machine
+
+Status: completed for runtime state tracking in this phase.
 
 目标：
 
@@ -143,7 +155,17 @@ Status: completed for the current boundary phase; broader orchestration remains 
 
 - P1.1 step runtime state。
 
+当前实现状态：
+
+- 新增 `ClarificationRuntimeState`，记录 pending / answered requirements、已问问题、已回答问题和 answers；
+- 新增 clarification answers 合并逻辑，可把用户回答映射回 step-level 或 intent-level requirement；
+- clarification policy 可根据 runtime state 过滤已回答的问题，避免重复追问同一字段；
+- Jarvis 主流程已保存 clarification runtime state，并在用户补充回答后更新 state；
+- 当前仍复用现有 WebSocket ask_user 交互，尚未引入更复杂的多轮 UI。
+
 ### P1.3 Unify tool/subagent memory consumption
+
+Status: completed for step-level memory contract propagation in this phase.
 
 目标：
 
@@ -161,9 +183,20 @@ Status: completed for the current boundary phase; broader orchestration remains 
 - `ToolRouter` 已开始消费 `MemoryContract`。
 - 需要继续把 per-step policy 和 subagent request 绑定起来。
 
+当前实现状态：
+
+- 新增 `StepMemoryDecision`，从 `IntentFrame + MemoryContract` 派生每个 step 的 memory scope、query、constraints 和 reasons；
+- Jarvis 主流程会把 step-level memory decisions 注入 `ToolRouter`；
+- subagent prompt 中现在同时包含整体 `MemoryContract` 和匹配到的 step-level memory decision；
+- subagent 检索会按 step constraints 收紧 facts / entries 注入范围；
+- external-only contract 仍会阻止 personal memory 注入；
+- `recall_memory` 仍继承 router 的 time range、date range、rewritten query 和 current user prompt fallback。
+
 ## P2: Evaluation And Feedback Loop
 
 ### P2.1 Promote runtime feedback candidates into reviewed eval cases
+
+Status: completed for a local human-review loop in this phase.
 
 目标：
 
@@ -175,7 +208,16 @@ Status: completed for the current boundary phase; broader orchestration remains 
 - 将 accepted candidates 写入 `matrix-cases.jsonl` 或单独 reviewed case file。
 - 为每个 promoted case 标注 principle、dimension、invariant、root cause。
 
+当前实现状态：
+
+- 新增 `scripts/review_intent_feedback.ts`，可从 runtime feedback candidate JSONL 生成人工 review template；
+- review decision 支持 `accept / reject / merge / pending`，accepted candidate 会晋升到 `evals/intent/reviewed-runtime-cases.jsonl`；
+- promoted case 会保留 source、root cause、generatedAt、tags 和人工填写的 model / expect；
+- `intent:matrix` 默认读取 reviewed runtime case file，因此晋升后的 case 会进入常规矩阵。
+
 ### P2.2 Add execution-contract evals
+
+Status: completed for known tool-backed obligations in this phase.
 
 目标：
 
@@ -191,7 +233,15 @@ Status: completed for the current boundary phase; broader orchestration remains 
   - schedule create/delete/update should route to task tools
   - channel push should route to `push_to_channel`
 
+当前实现状态：
+
+- `run_intent_matrix.ts` 新增 `executionContract` dimension，并检查 execution plan mode、required tools、step modes、initial statuses、missing-step prompt、deterministic tool request、dependency gate 和失败工具结果；
+- 新增 `evals/intent/execution-contract-cases.jsonl`，覆盖微信推送必须使用 `push_to_channel`、schedule create 必须生成 `task_add`、dependent step 必须等待依赖、工具失败不能宣称成功；
+- execution-contract eval 与现有 clarification / memory policy eval 共用同一 runner。
+
 ### P2.3 Model stability and calibration gates
+
+Status: completed for deterministic matrix reporting hooks in this phase.
 
 目标：
 
@@ -203,6 +253,12 @@ Status: completed for the current boundary phase; broader orchestration remains 
 - repeated eval 进入 nightly trend。
 - confidence floor 可按 model / dimension / risk level 配置。
 - 高风险 action 使用更高 confidence floor。
+
+当前实现状态：
+
+- `run_intent_matrix.ts` 支持 `--repeat <n>`，report / JSON 中新增 repeat 维度统计；
+- runner 支持 `--confidence-floor <0..1>` 以及 per-case `expect.calibration`；
+- report / JSON 中新增 model source 维度统计，为后续跨模型 nightly trend 留出稳定字段。
 
 ## P3: Package Readiness
 

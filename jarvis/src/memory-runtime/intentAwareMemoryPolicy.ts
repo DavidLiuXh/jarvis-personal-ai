@@ -7,8 +7,10 @@
 import type {
   IntentFrame,
   MemoryContract,
+  MemoryRecallTarget,
   MemoryScope,
   QuerySubject,
+  StepMemoryDecision,
 } from "./types.js";
 
 export type { IntentFrame, QuerySubject } from "./types.js";
@@ -70,6 +72,95 @@ function hasExplicitTimeRange(intent: IntentFrame | null): boolean {
       intent.dateTo ||
       typeof intent.timeWindowDays === "number",
   );
+}
+
+function uniqueScopes(scopes: MemoryScope[]): MemoryScope[] {
+  return Array.from(new Set(scopes));
+}
+
+function stepMemoryTarget(
+  intent: IntentFrame,
+  step: IntentFrame["intentSteps"][number],
+): MemoryRecallTarget {
+  if (step.type === "recall") {
+    return intent.semanticEvidence.memoryRecall.target;
+  }
+  if (step.type === "execute" && intent.referencesRecentHistory) {
+    return "current_context_reference";
+  }
+  return intent.semanticEvidence.memoryRecall.target;
+}
+
+export function buildStepMemoryDecisions(args: {
+  intent: IntentFrame | null;
+  contract: MemoryContract | null;
+}): StepMemoryDecision[] {
+  const { intent, contract } = args;
+  if (!intent || !contract) return [];
+
+  return intent.intentSteps.map((step) => {
+    const memoryTarget = stepMemoryTarget(intent, step);
+    let targetScopes = uniqueScopes(contract.targetScopes);
+    const reasons = [...contract.reasons];
+
+    if (
+      step.type === "analyze" ||
+      step.type === "delegate" ||
+      step.type === "execute"
+    ) {
+      if (!intent.richIntent.contextDependency.longTermMemory) {
+        targetScopes = targetScopes.filter((scope) => scope === "session");
+        reasons.push("step_no_long_term_memory_dependency");
+      }
+    }
+    if (memoryTarget === "current_context_reference") {
+      targetScopes = targetScopes.filter((scope) => scope === "session");
+      reasons.push("step_current_context_only");
+    }
+    if (memoryTarget === "external_past_event" || step.type === "schedule") {
+      targetScopes = [];
+      reasons.push(
+        memoryTarget === "external_past_event"
+          ? "step_external_past_event"
+          : "step_schedule_no_memory",
+      );
+    }
+    if (contract.subjectBoundary === "external" || !contract.needMemory) {
+      targetScopes = [];
+    }
+
+    const queryParts = [
+      step.action,
+      step.target,
+      step.operation?.target,
+      step.operation?.selector,
+      contract.query.rewritten || contract.query.raw,
+    ].filter(Boolean);
+    const query = Array.from(new Set(queryParts.join(" ").split(/\s+/))).join(
+      " ",
+    );
+
+    return {
+      stepId: step.id,
+      stepType: step.type,
+      target: step.target || step.operation?.target || "",
+      needMemory: targetScopes.length > 0,
+      targetScopes,
+      memoryTarget,
+      query,
+      constraints: {
+        allowPersonalFacts:
+          contract.constraints.allowPersonalFacts &&
+          targetScopes.includes("fact"),
+        allowSessionHistory:
+          contract.constraints.allowSessionHistory &&
+          targetScopes.includes("session"),
+        allowEntries:
+          contract.constraints.allowEntries && targetScopes.includes("entry"),
+      },
+      reasons: Array.from(new Set(reasons)),
+    };
+  });
 }
 
 export function buildIntentAwareMemoryPolicy(args: {
