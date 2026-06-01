@@ -591,6 +591,97 @@ function hasBroadTopicalHistory(
   );
 }
 
+const GENERIC_TOPIC_TOKENS = new Set([
+  "about",
+  "analysis",
+  "current",
+  "daily",
+  "for",
+  "give",
+  "list",
+  "news",
+  "report",
+  "status",
+  "summary",
+  "today",
+  "trend",
+  "trends",
+  "user",
+  "with",
+  "今天",
+  "当前",
+  "趋势",
+  "汇总",
+  "分析",
+  "总结",
+  "评价",
+  "用户",
+  "哪些",
+  "一份",
+]);
+
+function topicTokensFromText(text: string): Set<string> {
+  const tokens = new Set<string>();
+  const normalized = text.toLowerCase();
+  const matches =
+    normalized.match(
+      /[a-z][a-z0-9+.-]{2,}|[\u4e00-\u9fff]{2,}|model\s*[a-z0-9]+/gi,
+    ) ?? [];
+  for (const raw of matches) {
+    const token = raw.trim().replace(/\s+/g, " ");
+    if (!token || GENERIC_TOPIC_TOKENS.has(token)) continue;
+    if (GENERIC_CONTEXT_ENTITY_TERMS.has(token)) continue;
+    tokens.add(token);
+  }
+  return tokens;
+}
+
+function topicTokensFromAnalysis(
+  prompt: string,
+  recentTurns: ConversationTurn[],
+  parsedTopicAnalysis: Record<string, unknown>,
+): { current: Set<string>; history: Set<string> } {
+  const topicHistory = asRecord(parsedTopicAnalysis.history);
+  const topicCurrent = asRecord(parsedTopicAnalysis.current);
+  const historyText = [
+    normalizeOptionalString(topicHistory.label) ?? "",
+    ...normalizeStringArray(topicHistory.evidence),
+    ...recentTurns.map((turn) => turn.content.slice(0, 240)),
+  ].join("\n");
+  const currentText = [
+    prompt,
+    normalizeOptionalString(topicCurrent.label) ?? "",
+    ...normalizeStringArray(topicCurrent.evidence),
+  ].join("\n");
+  return {
+    current: topicTokensFromText(currentText),
+    history: topicTokensFromText(historyText),
+  };
+}
+
+function hasDisjointGroundedTopicTokens(args: {
+  prompt: string;
+  recentTurns: ConversationTurn[];
+  parsedTopicAnalysis: Record<string, unknown>;
+  semanticEvidence: IntentEvidence;
+}): boolean {
+  const topicTokens = topicTokensFromAnalysis(
+    args.prompt,
+    args.recentTurns,
+    args.parsedTopicAnalysis,
+  );
+  const current = new Set(topicTokens.current);
+  const history = new Set(topicTokens.history);
+  collectSpecificEntityTerms(args.prompt, args.semanticEvidence).forEach(
+    (term) => current.add(term.toLowerCase()),
+  );
+  if (current.size === 0 || history.size === 0) return false;
+  for (const token of current) {
+    if (history.has(token)) return false;
+  }
+  return true;
+}
+
 function hasExplicitConversationHistoryArtifactOrTopic(
   prompt: string,
   semanticEvidence: IntentEvidence,
@@ -2980,12 +3071,16 @@ export class IntentResolver {
                 : topicRelation === "new_topic"
                   ? true
                   : parsed.topic_shifted === true;
+    const broadTopicalHistory = hasBroadTopicalHistory(
+      recentTurns,
+      parsedTopicAnalysis,
+    );
     const broadTopicEntityDrilldown =
       !referencesRecentHistory &&
       topicShifted &&
       topicRelation === "new_topic" &&
       hasEntityStatusDrilldown(prompt, semanticEvidence) &&
-      hasBroadTopicalHistory(recentTurns, parsedTopicAnalysis);
+      broadTopicalHistory;
     if (broadTopicEntityDrilldown) {
       const beforeTopicShifted = topicShifted;
       topicShifted = false;
@@ -3009,6 +3104,49 @@ export class IntentResolver {
       });
       console.error(
         `🧭 [IntentResolver] Broad-topic entity drilldown; topic_shifted forced false`,
+      );
+    }
+    const externalStandaloneUnrelatedTopicShift =
+      !topicShifted &&
+      recentTurns.length > 0 &&
+      subject === "external" &&
+      !referencesRecentHistory &&
+      !currentContextReferenceCue &&
+      memoryRecallTarget !== "current_context_reference" &&
+      !broadTopicalHistory &&
+      hasDisjointGroundedTopicTokens({
+        prompt,
+        recentTurns,
+        parsedTopicAnalysis,
+        semanticEvidence,
+      });
+    if (externalStandaloneUnrelatedTopicShift) {
+      const beforeTopicShifted = topicShifted;
+      topicShifted = true;
+      policyTrace.push({
+        ruleId: "topic.external_standalone_unrelated",
+        stage: "guardrail",
+        priority: 405,
+        reasonCode: "EXTERNAL_STANDALONE_UNRELATED_TOPIC_SHIFT",
+        reason: normalizeIntentPolicyReason(
+          "EXTERNAL_STANDALONE_UNRELATED_TOPIC_SHIFT",
+        ),
+        applied: true,
+        before: {
+          topicShifted: beforeTopicShifted,
+          relation: topicRelation,
+          referencesRecentHistory,
+          subject,
+        },
+        after: {
+          topicShifted,
+          relation: "new_topic",
+          referencesRecentHistory,
+          subject,
+        },
+      });
+      console.error(
+        `🧭 [IntentResolver] External standalone request is unrelated to recent history; topic_shifted forced true`,
       );
     }
     const previousRecallTarget = inferRecentRecallTarget(recentTurns);
@@ -3129,6 +3267,15 @@ export class IntentResolver {
         relationReason:
           "current request drills into a specific entity after a broad topical roundup",
         confidence: Math.max(topicAnalysis.confidence, 0.85),
+        lowGrounding: false,
+      };
+    } else if (externalStandaloneUnrelatedTopicShift) {
+      topicAnalysis = {
+        ...topicAnalysis,
+        relation: "new_topic",
+        relationReason:
+          "external standalone request has grounded topic tokens disjoint from recent history",
+        confidence: Math.max(topicAnalysis.confidence, 0.9),
         lowGrounding: false,
       };
     } else if (memoryTargetChanged) {
