@@ -218,18 +218,25 @@ Implemented in the P6 completion pass:
   - Gemini `ToolCallRequest` -> `RuntimeToolRequest`;
   - runtime tool results -> Gemini `functionResponse` blocks;
   - Gemini `Part[]` -> runtime `LlmMessage[]`.
-- `agent.ts` no longer directly runs the Gemini stream/tool loop. It now acts
-  as an application adapter that wires:
-  - a backend selected by `jarvis/src/core/llmBackendFactory.ts`;
-  - provider-specific `PromptCompiler`;
-  - `ToolRouter` as a `ToolExecutorAdapter`;
-  - Jarvis-specific `IntentStepRuntime` behavior through `ToolLoopPlanner`.
+- `agent.ts` no longer directly runs the Gemini stream/tool loop. The Jarvis
+  application adapter is now explicit:
+  - `jarvis/src/core/llmBackendFactory.ts` selects the backend;
+  - `jarvis/src/core/jarvisRuntimeAdapter.ts` wires `ToolRouter` as a
+    `ToolExecutorAdapter`;
+  - `jarvisRuntimeAdapter.ts` converts Jarvis `IntentStepRuntime` behavior into
+    runtime `ToolLoopPlanner` hooks;
+  - `AgentRuntime.handleTurn()` owns the final LLM/tool loop for the main
+    response path.
 - `jarvis/src/core/llmBackendFactory.ts` selects `gemini` or `openai` from
   `llmBackend.provider`, extracts Gemini CLI tool declarations into runtime
   `LlmToolSchema[]`, and passes those schemas to non-Gemini backends.
 - `AgentRuntime.handleTurn()` can now optionally orchestrate the LLM backend
   loop directly through `llmLoop`, so the package-level facade can own both
   pre-response runtime state and backend-driven tool execution.
+- `jarvis/src/core/agent.ts#runUnifiedRuntimeTurn()` is the Jarvis entry point
+  into that facade. It builds turn-specific inputs and records Jarvis
+  side-effects, but runtime sequencing lives in `AgentRuntime` and
+  `ToolLoopRuntime`.
 - `npm run llm:backend:eval` runs offline backend-aware smoke evals for the
   neutral loop and OpenAI-compatible adapter.
 

@@ -10,7 +10,7 @@
 - `packages/intent-runtime/src` 已承载 `IntentExecutionPlan`、`IntentStepRuntime` 和 tool-backed execution contract 纯逻辑。
 - `jarvis/src/memory-runtime/*` 与 `jarvis/src/intent-runtime/*` 现在是兼容 re-export shim，便于现有 Jarvis import 平滑过渡。
 - runtime packages 基本没有反向依赖 `jarvis/src/core/*`，具备继续独立化的基础。
-- `agent.ts#refreshContext()` 已通过 `DefaultMemoryRuntime` 执行主响应路径的 `understand -> planMemory -> retrieve -> inject -> observe`。
+- `agent.ts#runUnifiedRuntimeTurn()` 已通过 `AgentRuntime.handleTurn()` 执行主响应路径的 `intent -> memory -> skill -> response compose -> LLM/tool loop`。
 - `DefaultMemoryRetriever` 已支持 `session / fact / entry` 三层 store adapter，并通过 extension points 保留 Jarvis 的 query rewrite、recent conversation recall、summary fallback。
 - intent eval 已从单点回归 case 演进为 principle / invariant / semantic axis 矩阵。
 
@@ -425,8 +425,8 @@ phase.
 
 ## P6: Unified Agent Runtime
 
-Status: completed for package-level runtime, Jarvis main-path feature-flag
-integration, and backend-neutral LLM/tool loop extraction.
+Status: completed for package-level runtime, Jarvis main-path integration,
+backend-neutral LLM/tool loop extraction, and Jarvis unified runtime adapter.
 
 目标：
 
@@ -444,6 +444,7 @@ AgentRuntime.handleTurn
   -> intentRuntime.planExecution
   -> intentExecutor.execute
   -> responseComposer.compose
+  -> llmBackend/toolLoop.run
   -> observers.record
 ```
 
@@ -488,15 +489,20 @@ AgentRuntime.handleTurn
   - `enabled` 默认 `true`；
   - `executionMode` 默认 `skip`，当前主内容生成仍使用 Gemini compatibility backend，但 loop orchestration 已迁入 runtime；
   - `observability` 可开启 runtime 事件日志；
-- `agent.ts` 的 `refreshContext()` 已在存在 resolved intent 时通过 `AgentRuntime.handleTurn()` 生成 memory contract、step memory decisions、skill retrieval 和 runtime response context；
-- `agent.ts` 的主响应阶段已从直接操作 Gemini stream/tool loop，改为装配 `llmBackendFactory`、provider-specific `PromptCompiler`、`ToolRouter` 和 Jarvis-specific `ToolLoopPlanner`；
+- 新增 `jarvis/src/core/jarvisRuntimeAdapter.ts`，集中封装 Jarvis application adapter：
+  - `ToolRouter` -> runtime `ToolExecutorAdapter`；
+  - `IntentStepRuntime` -> runtime `ToolLoopPlanner`；
+  - retry、tool-loop guard、post-content push、deterministic multi-intent enforcement 的 Jarvis 配置装配；
+- `agent.ts#runUnifiedRuntimeTurn()` 已通过一次 `AgentRuntime.handleTurn()` 完成 memory contract、step memory decisions、skill retrieval、runtime response context 和 backend LLM/tool loop；
+- `agent.ts` 的主响应阶段不再直接 new `ToolLoopRuntime`，只负责构造本 turn 的输入、图片消息、Jarvis config、ToolRouter、事件转发和持久化副作用；
 - 无 resolved intent 或关闭 `agentRuntime.enabled` 时保留旧路径，作为回滚开关；
+- Jarvis runtime adapter tests 覆盖 ToolRouter bridge、deterministic multi-intent planner、ToolLoopRuntimeOptions 装配；
 - package-level tests 覆盖完整 intent-memory-skill-execution-response lifecycle、external memory boundary 传递、execution incomplete 时禁止成功声明；
 - backend-level tests 覆盖 neutral LLM loop、Gemini compatibility adapter、OpenAI-compatible streaming tool call、tool result round-trip、backend factory、retry exhaustion hook；
 - `npm run llm:backend:eval` 提供 offline backend-aware smoke eval；
 - 现有 `ToolRouter` / `IntentExecutor` / `IntentPlan` 相关回归已通过。
 
-剩余边界说明：
+最终边界说明：
 
 - Gemini CLI 仍是默认 main-chat backend，但 OpenAI-compatible backend 已可通过配置切换；
 - `agentRuntime.executionMode=execute` 已由 package runtime 支持，Jarvis 默认仍使用 `skip`，避免在同一 turn 中同时由 `IntentExecutor` 和 backend-native tool calling 双重执行工具；

@@ -8,7 +8,6 @@ import { EventEmitter } from "node:events";
 import {
   GeminiClient,
   debugLogger,
-  GeminiEventType,
   Scheduler,
   promptIdContext,
   LlmRole,
@@ -84,24 +83,117 @@ import {
 } from "../memory-runtime/index.js";
 import {
   AgentRuntime,
-  ToolLoopRuntime,
+  type ToolLoopRuntimeOptions,
+  type ToolLoopRunResult,
   type RuntimeSkill,
 } from "../agent-runtime/index.js";
 import {
   DefaultIntentRuntime,
   IntentExecutor,
   StaticIntentResolverAdapter,
-  type RuntimeToolRequest,
-  type RuntimeToolResult,
-  type ToolExecutorAdapter,
 } from "../intent-runtime/index.js";
 import { createJarvisMemoryStores } from "./jarvisMemoryStores.js";
-import {
-  geminiPartToRuntimeToolResult,
-  geminiPartsToLlmMessages,
-  runtimeToolResultToGeminiPart,
-} from "./geminiBackendAdapter.js";
-import { createJarvisLlmBackend } from "./llmBackendFactory.js";
+import { geminiPartsToLlmMessages } from "./geminiBackendAdapter.js";
+import { createJarvisToolLoopOptions } from "./jarvisRuntimeAdapter.js";
+
+type RuntimeTurnResult = {
+  memoryContract: MemoryContract;
+  llmLoop: ToolLoopRunResult | null;
+};
+
+function buildFallbackRuntimeIntent(args: {
+  userPrompt: string;
+  querySubject: "personal" | "external" | "mixed";
+  timeWindowDays: number | null;
+  resolvedDateRange: { from: number; to: number } | null;
+}): IntentFrame {
+  return {
+    subject: args.querySubject,
+    taskType: "chat",
+    needsMemory: args.querySubject !== "external",
+    needsExternalKnowledge: args.querySubject !== "personal",
+    needsTool: false,
+    needsScheduling: false,
+    candidateAgents: [],
+    timeWindowDays: args.timeWindowDays,
+    dateFrom: null,
+    dateTo: null,
+    resolvedDateRange: args.resolvedDateRange,
+    topicShifted: false,
+    referencesRecentHistory: false,
+    complexityScore: 50,
+    knowledgeScore: args.querySubject === "personal" ? 20 : 60,
+    operationScore: 0,
+    reason: "Fallback intent used when local intent routing is unavailable.",
+    confidence: 0.5,
+    confidenceByDimension: {
+      subject: 0.5,
+      taskType: 0.5,
+      memoryTarget: 0.2,
+      action: 0.2,
+      entityHints: 0,
+      topicShift: 0,
+      richIntent: 0.3,
+    },
+    evidence: [args.userPrompt],
+    semanticEvidence: {
+      personalContext: {
+        present: args.querySubject !== "external",
+        reason: "fallback_subject_boundary",
+        span: "",
+      },
+      memoryRecall: { present: false, target: "none", reason: "", span: "" },
+      actionRequest: { present: false, action: "none", object: "" },
+      entityHints: { tickers: [], technicalTerms: [], peopleOrCompanies: [] },
+    },
+    richIntent: {
+      userGoal: args.userPrompt,
+      domain: "general_chat",
+      action: "answer",
+      primaryAction: "answer",
+      targets: [],
+      contextDependency: {
+        recentConversation: false,
+        longTermMemory: args.querySubject !== "external",
+        externalWorld: args.querySubject !== "personal",
+        localWorkspace: false,
+      },
+      ambiguity: [],
+      riskLevel: "low",
+    },
+    intentSteps: [],
+    topicAnalysis: {
+      relation: "unknown",
+      history: { label: "", evidence: [], sourceTurns: [], confidence: 0 },
+      current: {
+        label: "Fallback Chat",
+        evidence: [args.userPrompt],
+        sourceTurns: [0],
+        confidence: 0.5,
+      },
+      relationReason: "fallback_intent",
+      confidence: 0.5,
+      lowGrounding: true,
+    },
+    policyTrace: [
+      {
+        ruleId: "fallback.runtime_intent",
+        stage: "finalize",
+        priority: 0,
+        reasonCode: "FALLBACK_RUNTIME_INTENT",
+        reason: {
+          code: "FALLBACK_RUNTIME_INTENT",
+          category: "task_boundary",
+          severity: "warning",
+        },
+        applied: true,
+        before: { intent: null },
+        after: { subject: args.querySubject, taskType: "chat" },
+      },
+    ],
+    source: "jarvis-runtime-fallback",
+  };
+}
 
 function extractSummaryCandidatesFromSection(
   section: string,
@@ -619,7 +711,7 @@ export class JarvisAgent extends EventEmitter {
     }
   }
 
-  private async refreshContext(
+  private async runUnifiedRuntimeTurn(
     userPrompt: string,
     querySubject: "personal" | "external" | "mixed" = "mixed",
     timeWindowDays: number | null = null,
@@ -629,7 +721,12 @@ export class JarvisAgent extends EventEmitter {
       content: string;
     }> = [],
     intent: IntentFrame | null = null,
-  ): Promise<MemoryContract> {
+    llmRuntime?: {
+      options: ToolLoopRuntimeOptions;
+      initialMessages: ReturnType<typeof geminiPartsToLlmMessages>;
+      signal: AbortSignal;
+    },
+  ): Promise<RuntimeTurnResult> {
     // Strip thoughtSignature from historical turns to reduce token usage.
     // The active loop (turns after the last user text message) must keep
     // thoughtSignature for API validation; older turns have no such requirement.
@@ -643,7 +740,14 @@ export class JarvisAgent extends EventEmitter {
       null;
     let runtimeSystemContext = "";
     let retrievalCandidateCounts = { facts: 0, summary: 0, prewarm: 0 };
-    const runtimeIntent = intent;
+    const runtimeIntent =
+      intent ??
+      buildFallbackRuntimeIntent({
+        userPrompt,
+        querySubject,
+        timeWindowDays,
+        resolvedDateRange,
+      });
 
     // Skill retrieval: search for relevant skills instead of injecting all.
     // Falls back to full list when index is unavailable or building (cold start,
@@ -898,7 +1002,8 @@ export class JarvisAgent extends EventEmitter {
       },
     });
     let memoryContract: MemoryContract;
-    if (runtimeIntent && this.jarvisConfig.agentRuntime?.enabled !== false) {
+    let llmLoop: ToolLoopRunResult | null = null;
+    if (this.jarvisConfig.agentRuntime?.enabled !== false || llmRuntime) {
       const agentRuntime = new AgentRuntime(
         new DefaultIntentRuntime(
           new StaticIntentResolverAdapter(async () => runtimeIntent, "jarvis"),
@@ -943,6 +1048,11 @@ export class JarvisAgent extends EventEmitter {
           responseComposer: {
             compose: async ({ context }) => {
               const contract = context.memoryContract;
+              if (!memoryPolicy || !injectionPlan) {
+                throw new Error(
+                  "Memory runtime did not produce an injection plan before response composition",
+                );
+              }
               const executionInstruction =
                 context.execution?.finalResponseContract.instruction ?? "";
               const memoryDecision = contract
@@ -973,9 +1083,24 @@ export class JarvisAgent extends EventEmitter {
               const executionContract = executionInstruction
                 ? `<runtime_execution_contract>\n${executionInstruction}\n</runtime_execution_contract>`
                 : "";
+              const protocol = this.promptBuilder.buildFromFacts(
+                injectionPlan.facts,
+                userPrompt,
+                relevantSkills,
+              );
+              const intentPlanSection = buildIntentPlanSection(intent);
               return {
                 text: "",
-                systemContext: [memoryDecision, stepMemory, executionContract]
+                systemContext: [
+                  defaultInstruction,
+                  protocol,
+                  intentPlanSection,
+                  memoryDecision,
+                  stepMemory,
+                  executionContract,
+                  injectionPlan.relevantSummarySection,
+                  injectionPlan.prewarmSection,
+                ]
                   .filter(Boolean)
                   .join("\n\n"),
                 instructions: [executionInstruction].filter(Boolean),
@@ -991,6 +1116,11 @@ export class JarvisAgent extends EventEmitter {
               console.error(`[AgentRuntime] ${event.type}`);
             }
           },
+          ...(llmRuntime
+            ? {
+                llmLoop: llmRuntime.options,
+              }
+            : {}),
         },
       );
       const runtimeResult = await agentRuntime.handleTurn({
@@ -999,8 +1129,12 @@ export class JarvisAgent extends EventEmitter {
         history: conversationHistory,
         executionContext: "interactive",
         interactiveChannel: this.pendingAskUserWs?.ws.readyState === 1,
+        llmInitialMessages: llmRuntime?.initialMessages,
+        llmSystemContext: undefined,
+        signal: llmRuntime?.signal,
       });
       memoryContract = runtimeResult.context.memoryContract!;
+      llmLoop = runtimeResult.context.llmLoop;
       runtimeSystemContext = runtimeResult.response.systemContext;
       this.toolRouter.setCurrentStepMemoryDecisions(
         runtimeResult.context.stepMemoryDecisions,
@@ -1061,20 +1195,20 @@ export class JarvisAgent extends EventEmitter {
     this.client
       .getChat()
       .setSystemInstruction(
-        defaultInstruction +
-          "\n" +
-          protocol +
-          intentPlanSection +
-          (runtimeSystemContext ? `\n${runtimeSystemContext}` : "") +
-          injectionPlan.relevantSummarySection +
-          injectionPlan.prewarmSection,
+        runtimeSystemContext ||
+          defaultInstruction +
+            "\n" +
+            protocol +
+            intentPlanSection +
+            injectionPlan.relevantSummarySection +
+            injectionPlan.prewarmSection,
       );
 
     console.error(
       `🔄 [Jarvis] System Prompt Refreshed (subject=${querySubject}, memoryPolicy=${memoryPolicy.reasons.join(",") || "enabled"}). Facts injected: ${injectionPlan.factsInjected}/${retrievalCandidateCounts.facts}. Summary bullets: ${injectionPlan.summaryInjected}. Prewarmed memories: ${memoryPolicy.allowPrewarm ? injectionPlan.prewarmInjected : "disabled"}. Memory chars: ${injectionPlan.usedChars}. Rejected: ${injectionPlan.rejected.length}.`,
     );
 
-    return memoryContract;
+    return { memoryContract, llmLoop };
   }
 
   private buildMemoryInjectionPlanner(): MemoryInjectionPlanner {
@@ -1521,29 +1655,6 @@ export class JarvisAgent extends EventEmitter {
           }
         }
 
-        const memoryContract = await this.refreshContext(
-          userPrompt,
-          querySubject,
-          timeWindowDays,
-          resolvedDateRange,
-          conversationHistory,
-          intentFrame,
-        );
-        this.toolRouter.setCurrentMemoryContract(memoryContract);
-        this.toolRouter.setCurrentStepMemoryDecisions(
-          buildStepMemoryDecisions({
-            intent: intentFrame,
-            contract: memoryContract,
-          }),
-        );
-
-        // Restore getModel() after refreshContext() — it reads config state
-        // during skill/fact retrieval and must see the Jarvis-chosen model.
-        // Restored before the main LLM turn so subsequent calls see real model.
-        if (originalGetModel) {
-          this.client.config.getModel = originalGetModel;
-        }
-
         const abortController = new AbortController();
         let currentQueryParts: Part[] = [{ text: userPrompt }];
         if (imageAttachment) {
@@ -1569,134 +1680,64 @@ export class JarvisAgent extends EventEmitter {
         const maxRetries = networkConfig?.maxRetries ?? 3;
         const cleanOnFailure =
           networkConfig?.cleanOrphanedTurnOnFailure ?? true;
-
-        const toolExecutor: ToolExecutorAdapter = {
-          executeTools: async (
-            requests: RuntimeToolRequest[],
-            signal: AbortSignal,
-          ): Promise<RuntimeToolResult[]> => {
-            const parts =
-              requests.length > 0
-                ? await this.toolRouter.route(requests, signal, (resp) =>
-                    this.emit(JarvisEventType.TOOL_CALL_RESPONSE, resp),
-                  )
-                : [];
-            return parts
-              .map((part) => geminiPartToRuntimeToolResult(part))
-              .filter((result): result is RuntimeToolResult => Boolean(result));
-          },
-        };
-        const toolLoop = new ToolLoopRuntime({
-          ...createJarvisLlmBackend({
-            config: this.jarvisConfig,
-            client: this.client,
-            promptId: pId,
-          }),
-          toolExecutor,
-          maxRetries,
-          maxToolIterations: networkConfig?.maxToolIterations ?? 30,
-          maxConsecutiveToolFailures:
-            networkConfig?.maxConsecutiveToolFailures ?? 3,
-          maxIntentToolEnforcements: 2,
-          isRetryableError: isFetchError,
-          onContent: (text) =>
-            this.emit(JarvisEventType.CONTENT, {
-              type: GeminiEventType.Content,
-              value: text,
-            }),
-          onToolCall: (request) =>
-            this.emit(JarvisEventType.CONTENT, {
-              type: GeminiEventType.ToolCallRequest,
-              value: request,
-            }),
-          onLog: (message) => console.error(message),
-          onRetryExhausted: async () => {
-            if (!cleanOnFailure) return;
-            try {
-              const chat = this.client.getChat();
-              const cleaned = cleanOrphanedUserTurn(chat.getHistory());
-              if (cleaned.length < chat.getHistory().length) {
-                chat.setHistory(cleaned);
-                console.error(
-                  `🧹 [JarvisAgent] Cleaned orphaned user turn from history.`,
-                );
-              }
-            } catch (_cleanErr) {}
-          },
-          planner: {
-            shouldBufferPreToolContent: () =>
-              stepRuntime.active &&
-              stepRuntime.actionableEnforceableSteps().length > 0,
-            filterDuplicateToolCalls: (requests) => {
-              const duplicateDecision =
-                stepRuntime.filterDuplicateToolCalls(requests);
-              if (duplicateDecision.suppressed.length > 0) {
-                console.error(
-                  `🧭 [Jarvis] Suppressed duplicate multi-intent tool call(s): ${duplicateDecision.suppressed
-                    .map(
-                      ({ request, stepId }) =>
-                        `${request.name}${stepId ? `@${stepId}` : ""}`,
-                    )
-                    .join(", ")}`,
-                );
-              }
-              return {
-                executableRequests: duplicateDecision.executableRequests,
-                syntheticResults: duplicateDecision.duplicateResponses
-                  .map((part) => geminiPartToRuntimeToolResult(part))
-                  .filter((result): result is RuntimeToolResult =>
-                    Boolean(result),
-                  ),
-              };
-            },
-            observeToolResults: (requests, results) => {
-              stepRuntime.observeToolResults(
-                requests,
-                results.map(runtimeToolResultToGeminiPart),
-              );
-              if (stepRuntime.active) {
-                console.error(
-                  `🧭 [Jarvis] Multi-intent runtime state: ${stepRuntime
-                    .snapshot()
-                    .map(
-                      (entry) =>
-                        `${entry.step.id}:${entry.status}/${entry.attempts}`,
-                    )
-                    .join(", ")}`,
-                );
-              }
-            },
-            buildPostContentToolRequest: (text, toolsCalled) => {
-              if (toolsCalled.has("push_to_channel")) return null;
-              const request =
-                this.toolRouter.buildPushToChannelRequestFromContent(text);
-              if (request) {
-                console.error(
-                  "📤 [Jarvis] Explicit channel push request completed by generated content — invoking push_to_channel.",
-                );
-              }
-              return request;
-            },
-            buildDeterministicToolRequests: () => {
-              const requests = stepRuntime.buildDeterministicToolRequests();
-              if (requests.length > 0) {
-                console.error(
-                  `🧭 [Jarvis] Executing deterministic multi-intent step(s): ${requests
-                    .map((request) => request.name)
-                    .join(", ")}`,
-                );
-              }
-              return requests;
-            },
-            buildMissingStepPrompt: () => stepRuntime.buildMissingStepPrompt(),
-            buildStatePrompt: () => stepRuntime.buildStatePrompt(),
-          },
-        });
-        const loopResult = await toolLoop.run({
+        const runtimeTurn = await this.runUnifiedRuntimeTurn(
           userPrompt,
-          initialMessages: geminiPartsToLlmMessages(currentQueryParts),
-          signal: abortController.signal,
-        });
+          querySubject,
+          timeWindowDays,
+          resolvedDateRange,
+          conversationHistory,
+          intentFrame,
+          {
+            options: createJarvisToolLoopOptions({
+              config: this.jarvisConfig,
+              client: this.client,
+              promptId: pId,
+              toolRouter: this.toolRouter,
+              stepRuntime,
+              maxRetries,
+              cleanOnFailure,
+              isRetryableError: isFetchError,
+              cleanOrphanedTurn: () => {
+                try {
+                  const chat = this.client.getChat();
+                  const history = [...chat.getHistory()];
+                  const cleaned = cleanOrphanedUserTurn(history);
+                  if (cleaned.length < history.length) {
+                    chat.setHistory(cleaned);
+                    console.error(
+                      `🧹 [JarvisAgent] Cleaned orphaned user turn from history.`,
+                    );
+                  }
+                } catch (_cleanErr) {}
+              },
+              emitToolCallResponse: (resp) =>
+                this.emit(JarvisEventType.TOOL_CALL_RESPONSE, resp),
+              emitContent: (event) => this.emit(JarvisEventType.CONTENT, event),
+            }),
+            initialMessages: geminiPartsToLlmMessages(currentQueryParts),
+            signal: abortController.signal,
+          },
+        );
+        const memoryContract = runtimeTurn.memoryContract;
+        this.toolRouter.setCurrentMemoryContract(memoryContract);
+        this.toolRouter.setCurrentStepMemoryDecisions(
+          buildStepMemoryDecisions({
+            intent: intentFrame,
+            contract: memoryContract,
+          }),
+        );
+
+        // Restore getModel() after the unified runtime turn — it reads config
+        // state during retrieval and the backend loop must see the selected
+        // Jarvis model for this turn.
+        if (originalGetModel) {
+          this.client.config.getModel = originalGetModel;
+        }
+
+        const loopResult = runtimeTurn.llmLoop;
+        if (!loopResult) {
+          throw new Error("Unified AgentRuntime did not execute the LLM loop");
+        }
         const finalAssistantText = loopResult.finalText;
         const allToolsCalled = loopResult.toolsCalled;
 
