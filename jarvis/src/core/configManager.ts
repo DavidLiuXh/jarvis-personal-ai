@@ -111,6 +111,17 @@ export interface JarvisConfig {
     maxHistoryChars?: number;
   };
   /**
+   * Unified AgentRuntime facade.
+   * When enabled, Jarvis uses the package-level runtime context for
+   * intent/memory/skill/execution contracts while preserving the Gemini CLI
+   * backend loop as an application adapter.
+   */
+  agentRuntime?: {
+    enabled?: boolean;
+    executionMode?: "execute" | "plan_only" | "skip";
+    observability?: boolean;
+  };
+  /**
    * Session summarizer configuration.
    * Used by resumeFromDisk() to compress conversation history on startup.
    */
@@ -534,6 +545,11 @@ export class ConfigManager {
         maxHistoryTurns: 6,
         maxHistoryChars: 240,
       },
+      agentRuntime: {
+        enabled: true,
+        executionMode: "skip",
+        observability: false,
+      },
     };
 
     if (fs.existsSync(CONFIG_PATH)) {
@@ -572,6 +588,10 @@ export class ConfigManager {
           intentFeedback: {
             ...defaults.intentFeedback,
             ...saved.intentFeedback,
+          },
+          agentRuntime: {
+            ...defaults.agentRuntime,
+            ...saved.agentRuntime,
           },
         };
       } catch (e) {

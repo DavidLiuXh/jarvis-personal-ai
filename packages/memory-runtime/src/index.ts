@@ -57,6 +57,7 @@ export type {
   MemoryTarget,
   MemoryRuntimeEvent,
   SessionMemory,
+  StepMemoryDecision,
   SubjectBoundary,
   QuerySubject,
   TokenBudget,

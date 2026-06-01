@@ -82,6 +82,12 @@ import {
   type MemoryRetrievalResult,
   type SkillRetrievalExtension,
 } from "../memory-runtime/index.js";
+import { AgentRuntime, type RuntimeSkill } from "../agent-runtime/index.js";
+import {
+  DefaultIntentRuntime,
+  IntentExecutor,
+  StaticIntentResolverAdapter,
+} from "../intent-runtime/index.js";
 import { createJarvisMemoryStores } from "./jarvisMemoryStores.js";
 
 function extractSummaryCandidatesFromSection(
@@ -622,6 +628,7 @@ export class JarvisAgent extends EventEmitter {
       null;
     let injectionPlan: ReturnType<MemoryInjectionPlanner["buildPlan"]> | null =
       null;
+    let runtimeSystemContext = "";
     let retrievalCandidateCounts = { facts: 0, summary: 0, prewarm: 0 };
     const runtimeIntent = intent;
 
@@ -660,12 +667,7 @@ export class JarvisAgent extends EventEmitter {
         return [];
       },
     };
-    const relevantSkills = await skillRetrievalExtension.retrieveSkills({
-      prompt: userPrompt,
-      limit: skillSearchLimit,
-      maxDistance: skillMaxDistance,
-      context: { prompt: userPrompt, history: conversationHistory, intent },
-    });
+    let relevantSkills: SkillInfo[] = [];
 
     // Use Jarvis slim preamble — GEMINI.md (userMemory) intentionally excluded
     // as it is Gemini CLI global config irrelevant to personal assistant use
@@ -882,24 +884,140 @@ export class JarvisAgent extends EventEmitter {
         });
       },
     });
-    const resolvedIntent = await memoryRuntime.understand({
-      sessionId: this.sessionId,
-      prompt: userPrompt,
-      history: conversationHistory,
-    });
-    const memoryContract = await memoryRuntime.planMemory({
-      prompt: userPrompt,
-      history: conversationHistory,
-      intent: resolvedIntent,
-    });
-    const retrieval = await memoryRuntime.retrieve(memoryContract);
-    await memoryRuntime.inject({
-      prompt: userPrompt,
-      intent: resolvedIntent,
-      contract: memoryContract,
-      retrieval,
-      budget: { maxChars: memoryContract.constraints.maxChars },
-    });
+    let memoryContract: MemoryContract;
+    if (runtimeIntent && this.jarvisConfig.agentRuntime?.enabled !== false) {
+      const agentRuntime = new AgentRuntime(
+        new DefaultIntentRuntime(
+          new StaticIntentResolverAdapter(async () => runtimeIntent, "jarvis"),
+        ),
+        memoryRuntime as unknown as DefaultMemoryRuntime<IntentFrame>,
+        this.jarvisConfig.agentRuntime?.executionMode === "execute"
+          ? new IntentExecutor(this.toolRouter)
+          : undefined,
+        {
+          executionMode:
+            this.jarvisConfig.agentRuntime?.executionMode ?? "skip",
+          skillLimit: skillSearchLimit,
+          skillMaxDistance: skillMaxDistance,
+          skillRuntime: {
+            retrieve: async ({ context, limit, maxDistance }) => {
+              relevantSkills = await skillRetrievalExtension.retrieveSkills({
+                prompt: context.userPrompt,
+                limit: limit ?? skillSearchLimit,
+                maxDistance: maxDistance ?? skillMaxDistance,
+                context: {
+                  prompt: context.userPrompt,
+                  history: conversationHistory,
+                  intent: context.intent,
+                },
+              });
+              return relevantSkills.map(
+                (skill): RuntimeSkill => ({
+                  name: skill.name,
+                  description: skill.description,
+                  content: skill.content,
+                  metadata: { source: "jarvis_skill_index" },
+                }),
+              );
+            },
+          },
+          stepMemoryPlanner: ({ contract, intent }) => {
+            const decisions = buildStepMemoryDecisions({ intent, contract });
+            this.toolRouter.setCurrentMemoryContract(contract);
+            this.toolRouter.setCurrentStepMemoryDecisions(decisions);
+            return decisions;
+          },
+          responseComposer: {
+            compose: async ({ context }) => {
+              const contract = context.memoryContract;
+              const executionInstruction =
+                context.execution?.finalResponseContract.instruction ?? "";
+              const memoryDecision = contract
+                ? [
+                    "<runtime_memory_context>",
+                    `subject: ${contract.subjectBoundary}`,
+                    `need_memory: ${contract.needMemory}`,
+                    `target: ${contract.memoryTarget}`,
+                    `scopes: ${contract.targetScopes.join(",") || "none"}`,
+                    `allow_personal_facts: ${contract.constraints.allowPersonalFacts}`,
+                    `allow_session_history: ${contract.constraints.allowSessionHistory}`,
+                    `allow_entries: ${contract.constraints.allowEntries}`,
+                    `query: ${contract.query.rewritten || contract.query.raw}`,
+                    "</runtime_memory_context>",
+                  ].join("\n")
+                : "";
+              const stepMemory =
+                context.stepMemoryDecisions.length > 0
+                  ? [
+                      "<runtime_step_memory>",
+                      ...context.stepMemoryDecisions.map(
+                        (decision) =>
+                          `${decision.stepId}: need_memory=${decision.needMemory}; target=${decision.memoryTarget}; scopes=${decision.targetScopes.join(",") || "none"}; query=${decision.query}; allow_personal_facts=${decision.constraints.allowPersonalFacts}; allow_entries=${decision.constraints.allowEntries}`,
+                      ),
+                      "</runtime_step_memory>",
+                    ].join("\n")
+                  : "";
+              const executionContract = executionInstruction
+                ? `<runtime_execution_contract>\n${executionInstruction}\n</runtime_execution_contract>`
+                : "";
+              return {
+                text: "",
+                systemContext: [memoryDecision, stepMemory, executionContract]
+                  .filter(Boolean)
+                  .join("\n\n"),
+                instructions: [executionInstruction].filter(Boolean),
+                canClaimSuccess:
+                  context.execution?.finalResponseContract.canClaimSuccess ??
+                  true,
+                metadata: { source: "jarvis_agent_runtime" },
+              };
+            },
+          },
+          observer: (event) => {
+            if (this.jarvisConfig.agentRuntime?.observability === true) {
+              console.error(`[AgentRuntime] ${event.type}`);
+            }
+          },
+        },
+      );
+      const runtimeResult = await agentRuntime.handleTurn({
+        sessionId: this.sessionId,
+        userPrompt,
+        history: conversationHistory,
+        executionContext: "interactive",
+        interactiveChannel: this.pendingAskUserWs?.ws.readyState === 1,
+      });
+      memoryContract = runtimeResult.context.memoryContract!;
+      runtimeSystemContext = runtimeResult.response.systemContext;
+      this.toolRouter.setCurrentStepMemoryDecisions(
+        runtimeResult.context.stepMemoryDecisions,
+      );
+    } else {
+      relevantSkills = await skillRetrievalExtension.retrieveSkills({
+        prompt: userPrompt,
+        limit: skillSearchLimit,
+        maxDistance: skillMaxDistance,
+        context: { prompt: userPrompt, history: conversationHistory, intent },
+      });
+      const resolvedIntent = await memoryRuntime.understand({
+        sessionId: this.sessionId,
+        prompt: userPrompt,
+        history: conversationHistory,
+      });
+      memoryContract = await memoryRuntime.planMemory({
+        prompt: userPrompt,
+        history: conversationHistory,
+        intent: resolvedIntent,
+      });
+      const retrieval = await memoryRuntime.retrieve(memoryContract);
+      await memoryRuntime.inject({
+        prompt: userPrompt,
+        intent: resolvedIntent,
+        contract: memoryContract,
+        retrieval,
+        budget: { maxChars: memoryContract.constraints.maxChars },
+      });
+    }
     if (!memoryPolicy || !injectionPlan) {
       throw new Error("Memory runtime did not produce an injection plan");
     }
@@ -934,6 +1052,7 @@ export class JarvisAgent extends EventEmitter {
           "\n" +
           protocol +
           intentPlanSection +
+          (runtimeSystemContext ? `\n${runtimeSystemContext}` : "") +
           injectionPlan.relevantSummarySection +
           injectionPlan.prewarmSection,
       );

@@ -1,0 +1,428 @@
+/**
+ * @license
+ * Copyright 2025 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+import type {
+  IntentRuntime,
+  IntentRuntimeEvent,
+  IntentRuntimeInput,
+  IntentRuntimeResult,
+} from "../../intent-runtime/src/runtime.js";
+import type {
+  IntentExecutionResult,
+  IntentExecutor,
+  IntentExecutorContext,
+  IntentExecutorEvent,
+} from "../../intent-runtime/src/executor.js";
+import type {
+  ConversationTurn,
+  IntentFrame,
+  MemoryContract,
+  MemoryInjectionResult,
+  MemoryRetrievalResult,
+  MemoryRuntime,
+  MemoryRuntimeEvent,
+  StepMemoryDecision,
+  TokenBudget,
+} from "../../memory-runtime/src/index.js";
+
+export type RuntimeContext = {
+  sessionId: string;
+  userPrompt: string;
+  history: ConversationTurn[];
+  now: Date;
+  executionContext: IntentRuntimeInput["executionContext"];
+  interactiveChannel: boolean;
+  metadata: Record<string, unknown>;
+  intentResult: IntentRuntimeResult | null;
+  intent: IntentFrame | null;
+  memoryContract: MemoryContract | null;
+  stepMemoryDecisions: StepMemoryDecision[];
+  memoryRetrieval: MemoryRetrievalResult | null;
+  memoryInjection: MemoryInjectionResult | null;
+  skills: RuntimeSkill[];
+  execution: IntentExecutionResult | null;
+  response: RuntimeResponse | null;
+};
+
+export type RuntimeSkill = {
+  name: string;
+  content?: string;
+  description?: string;
+  metadata?: Record<string, unknown>;
+};
+
+export type SkillRuntimeInput = {
+  context: RuntimeContext;
+  limit?: number;
+  maxDistance?: number;
+};
+
+export type SkillRuntime = {
+  retrieve(input: SkillRuntimeInput): Promise<RuntimeSkill[]>;
+};
+
+export type StepMemoryPlannerInput = {
+  context: RuntimeContext;
+  contract: MemoryContract;
+  intent: IntentFrame;
+};
+
+export type StepMemoryPlanner = (
+  input: StepMemoryPlannerInput,
+) => Promise<StepMemoryDecision[]> | StepMemoryDecision[];
+
+export type RuntimeResponse = {
+  text: string;
+  systemContext: string;
+  instructions: string[];
+  canClaimSuccess: boolean;
+  metadata: Record<string, unknown>;
+};
+
+export type ResponseComposerInput = {
+  context: RuntimeContext;
+};
+
+export type ResponseComposer = {
+  compose(input: ResponseComposerInput): Promise<RuntimeResponse>;
+};
+
+export type AgentRuntimeExecutionMode = "execute" | "plan_only" | "skip";
+
+export type AgentRuntimeEvent =
+  | {
+      type: "turn_started";
+      sessionId: string;
+      promptLength: number;
+      historyTurns: number;
+    }
+  | { type: "intent_event"; event: IntentRuntimeEvent }
+  | { type: "intent_completed"; result: IntentRuntimeResult }
+  | { type: "memory_event"; event: MemoryRuntimeEvent }
+  | { type: "memory_completed"; contract: MemoryContract }
+  | { type: "skills_completed"; skills: RuntimeSkill[] }
+  | { type: "execution_event"; event: IntentExecutorEvent }
+  | { type: "execution_completed"; result: IntentExecutionResult | null }
+  | { type: "response_composed"; response: RuntimeResponse }
+  | { type: "turn_completed"; context: RuntimeContext }
+  | { type: "turn_failed"; error: string; context: RuntimeContext };
+
+export type AgentRuntimeObserver = (
+  event: AgentRuntimeEvent,
+) => void | Promise<void>;
+
+export type AgentRuntimeOptions = {
+  memoryBudget?: TokenBudget;
+  executionMode?: AgentRuntimeExecutionMode;
+  skillLimit?: number;
+  skillMaxDistance?: number;
+  observer?: AgentRuntimeObserver;
+};
+
+export type AgentRuntimeInput = {
+  sessionId: string;
+  userPrompt: string;
+  history?: ConversationTurn[];
+  now?: Date;
+  executionContext?: IntentRuntimeInput["executionContext"];
+  interactiveChannel?: boolean;
+  metadata?: Record<string, unknown>;
+  currentContent?: string;
+  artifacts?: Record<string, string>;
+  signal?: AbortSignal;
+};
+
+export type AgentRuntimeResult = {
+  context: RuntimeContext;
+  response: RuntimeResponse;
+};
+
+function emptyRetrieval(contract: MemoryContract): MemoryRetrievalResult {
+  return { contract, session: [], facts: [], entries: [] };
+}
+
+function defaultMemoryBudget(contract: MemoryContract): TokenBudget {
+  return {
+    maxChars: contract.constraints.maxChars,
+    maxFacts: contract.constraints.allowPersonalFacts ? undefined : 0,
+    maxEntries: contract.constraints.allowEntries ? undefined : 0,
+    maxSessionItems: contract.constraints.allowSessionHistory ? undefined : 0,
+  };
+}
+
+function formatMemoryDecision(contract: MemoryContract | null): string {
+  if (!contract) return "";
+  return [
+    "<memory_decision>",
+    `subject: ${contract.subjectBoundary}`,
+    `need_memory: ${contract.needMemory}`,
+    `target: ${contract.memoryTarget}`,
+    `scopes: ${contract.targetScopes.join(",") || "none"}`,
+    `allow_personal_facts: ${contract.constraints.allowPersonalFacts}`,
+    `allow_session_history: ${contract.constraints.allowSessionHistory}`,
+    `allow_entries: ${contract.constraints.allowEntries}`,
+    `query: ${contract.query.rewritten || contract.query.raw}`,
+    `reasons: ${contract.reasons.join(",") || "none"}`,
+    "</memory_decision>",
+  ].join("\n");
+}
+
+function formatStepMemoryDecisions(decisions: StepMemoryDecision[]): string {
+  if (decisions.length === 0) return "";
+  return [
+    "<step_memory_decisions>",
+    ...decisions.map((decision) =>
+      [
+        `step: ${decision.stepId}`,
+        `type: ${decision.stepType}`,
+        `need_memory: ${decision.needMemory}`,
+        `target: ${decision.memoryTarget}`,
+        `scopes: ${decision.targetScopes.join(",") || "none"}`,
+        `query: ${decision.query}`,
+        `allow_personal_facts: ${decision.constraints.allowPersonalFacts}`,
+        `allow_session_history: ${decision.constraints.allowSessionHistory}`,
+        `allow_entries: ${decision.constraints.allowEntries}`,
+        `reasons: ${decision.reasons.join(",") || "none"}`,
+      ].join("; "),
+    ),
+    "</step_memory_decisions>",
+  ].join("\n");
+}
+
+function formatSkills(skills: RuntimeSkill[]): string {
+  if (skills.length === 0) return "";
+  return [
+    "<runtime_skills>",
+    ...skills.map((skill) =>
+      [
+        `name: ${skill.name}`,
+        skill.description ? `description: ${skill.description}` : "",
+      ]
+        .filter(Boolean)
+        .join("; "),
+    ),
+    "</runtime_skills>",
+  ].join("\n");
+}
+
+export class DefaultResponseComposer implements ResponseComposer {
+  async compose({ context }: ResponseComposerInput): Promise<RuntimeResponse> {
+    const memoryDecision = formatMemoryDecision(context.memoryContract);
+    const stepMemory = formatStepMemoryDecisions(context.stepMemoryDecisions);
+    const skills = formatSkills(context.skills);
+    const memoryText = context.memoryInjection?.text ?? "";
+    const executionInstruction =
+      context.execution?.finalResponseContract.instruction ?? "";
+    const canClaimSuccess =
+      context.execution?.finalResponseContract.canClaimSuccess ?? true;
+    const instructions = [
+      context.memoryContract?.subjectBoundary === "external"
+        ? "Treat this as an external request. Do not use or infer personal memory unless explicitly provided by runtime context."
+        : "",
+      executionInstruction,
+    ].filter(Boolean);
+    const systemContext = [
+      memoryDecision,
+      stepMemory,
+      skills,
+      memoryText,
+      executionInstruction
+        ? `<execution_contract>\n${executionInstruction}\n</execution_contract>`
+        : "",
+    ]
+      .filter((part) => part.trim())
+      .join("\n\n");
+
+    return {
+      text: "",
+      systemContext,
+      instructions,
+      canClaimSuccess,
+      metadata: {
+        memoryChars: memoryText.length,
+        skills: context.skills.map((skill) => skill.name),
+        executionStatus: context.execution?.status ?? "not_required",
+      },
+    };
+  }
+}
+
+export class NoopSkillRuntime implements SkillRuntime {
+  async retrieve(): Promise<RuntimeSkill[]> {
+    return [];
+  }
+}
+
+export class AgentRuntime {
+  private readonly responseComposer: ResponseComposer;
+  private readonly skillRuntime: SkillRuntime;
+  private readonly executionMode: AgentRuntimeExecutionMode;
+
+  constructor(
+    private readonly intentRuntime: IntentRuntime,
+    private readonly memoryRuntime: MemoryRuntime<IntentFrame>,
+    private readonly executor?: IntentExecutor,
+    options: AgentRuntimeOptions & {
+      skillRuntime?: SkillRuntime;
+      responseComposer?: ResponseComposer;
+      stepMemoryPlanner?: StepMemoryPlanner;
+    } = {},
+  ) {
+    this.skillRuntime = options.skillRuntime ?? new NoopSkillRuntime();
+    this.responseComposer =
+      options.responseComposer ?? new DefaultResponseComposer();
+    this.executionMode =
+      options.executionMode ?? (this.executor ? "execute" : "skip");
+    this.options = options;
+  }
+
+  private readonly options: AgentRuntimeOptions & {
+    stepMemoryPlanner?: StepMemoryPlanner;
+  };
+
+  async handleTurn(input: AgentRuntimeInput): Promise<AgentRuntimeResult> {
+    const context: RuntimeContext = {
+      sessionId: input.sessionId,
+      userPrompt: input.userPrompt,
+      history: input.history ?? [],
+      now: input.now ?? new Date(),
+      executionContext: input.executionContext ?? "interactive",
+      interactiveChannel: input.interactiveChannel ?? true,
+      metadata: input.metadata ?? {},
+      intentResult: null,
+      intent: null,
+      memoryContract: null,
+      stepMemoryDecisions: [],
+      memoryRetrieval: null,
+      memoryInjection: null,
+      skills: [],
+      execution: null,
+      response: null,
+    };
+
+    await this.emit({
+      type: "turn_started",
+      sessionId: context.sessionId,
+      promptLength: context.userPrompt.length,
+      historyTurns: context.history.length,
+    });
+
+    try {
+      const intentResult = await this.intentRuntime.understand({
+        userPrompt: context.userPrompt,
+        history: context.history,
+        now: context.now,
+        executionContext: context.executionContext,
+        interactiveChannel: context.interactiveChannel,
+        metadata: context.metadata,
+      });
+      context.intentResult = intentResult;
+      context.intent = intentResult.intent;
+      await this.emit({ type: "intent_completed", result: intentResult });
+
+      const memoryContract = await this.memoryRuntime.planMemory({
+        prompt: context.userPrompt,
+        history: context.history,
+        intent: intentResult.intent,
+      });
+      context.memoryContract = memoryContract;
+      context.stepMemoryDecisions = await this.planStepMemory(
+        context,
+        memoryContract,
+        intentResult.intent,
+      );
+      const retrieval = memoryContract.needMemory
+        ? await this.memoryRuntime.retrieve(memoryContract)
+        : emptyRetrieval(memoryContract);
+      context.memoryRetrieval = retrieval;
+      context.memoryInjection = await this.memoryRuntime.inject({
+        prompt: context.userPrompt,
+        intent: intentResult.intent,
+        contract: memoryContract,
+        retrieval,
+        budget:
+          this.options.memoryBudget ?? defaultMemoryBudget(memoryContract),
+      });
+      await this.emit({ type: "memory_completed", contract: memoryContract });
+
+      context.skills = await this.skillRuntime.retrieve({
+        context,
+        limit: this.options.skillLimit,
+        maxDistance: this.options.skillMaxDistance,
+      });
+      await this.emit({ type: "skills_completed", skills: context.skills });
+
+      if (this.executionMode === "execute" && this.executor) {
+        const executorContext: IntentExecutorContext = {
+          userPrompt: context.userPrompt,
+          currentContent: input.currentContent,
+          artifacts: input.artifacts,
+          metadata: {
+            ...context.metadata,
+            memoryContract,
+            stepMemoryDecisions: context.stepMemoryDecisions,
+            memoryInjection: context.memoryInjection,
+            skills: context.skills,
+          },
+        };
+        context.execution = await this.executor.execute({
+          intent: intentResult.intent,
+          plan: intentResult.executionPlan,
+          context: executorContext,
+          signal: input.signal,
+        });
+      }
+      await this.emit({
+        type: "execution_completed",
+        result: context.execution,
+      });
+
+      context.response = await this.responseComposer.compose({ context });
+      await this.emit({
+        type: "response_composed",
+        response: context.response,
+      });
+      await this.emit({ type: "turn_completed", context });
+      return { context, response: context.response };
+    } catch (error: any) {
+      await this.emit({
+        type: "turn_failed",
+        error: error?.message ?? String(error),
+        context,
+      });
+      throw error;
+    }
+  }
+
+  private async planStepMemory(
+    context: RuntimeContext,
+    contract: MemoryContract,
+    intent: IntentFrame,
+  ): Promise<StepMemoryDecision[]> {
+    if (this.options.stepMemoryPlanner) {
+      return this.options.stepMemoryPlanner({ context, contract, intent });
+    }
+    return intent.intentSteps.map((step) => ({
+      stepId: step.id,
+      stepType: step.type,
+      target: step.target,
+      needMemory: contract.needMemory && step.type !== "analyze",
+      targetScopes: contract.targetScopes,
+      memoryTarget: contract.memoryTarget,
+      query: contract.query.rewritten || contract.query.raw,
+      constraints: {
+        allowPersonalFacts: contract.constraints.allowPersonalFacts,
+        allowSessionHistory: contract.constraints.allowSessionHistory,
+        allowEntries: contract.constraints.allowEntries,
+      },
+      reasons: ["inherited_from_memory_contract"],
+    }));
+  }
+
+  private async emit(event: AgentRuntimeEvent): Promise<void> {
+    await this.options.observer?.(event);
+  }
+}

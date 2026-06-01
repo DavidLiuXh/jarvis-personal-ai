@@ -425,6 +425,9 @@ phase.
 
 ## P6: Unified Agent Runtime
 
+Status: completed for package-level runtime and Jarvis main-path feature-flag
+integration in this phase.
+
 目标：
 
 - 把 intent runtime 和 memory runtime 串成一个真正的 `AgentRuntime` lifecycle。
@@ -461,6 +464,28 @@ AgentRuntime.handleTurn
 - 主响应路径不再由 `agent.ts` 手动拼接 intent / memory / tools / retry 规则。
 - external-only、current-context、conversation-history、tool-backed action 在 main response、tool、subagent 三层共享同一 runtime context。
 - 现有 intent matrix、execution-contract eval、ToolRouter tests 全部通过。
+
+当前实现状态：
+
+- 新增 `packages/agent-runtime/src/runtime.ts`，定义 `AgentRuntime`、`RuntimeContext`、`SkillRuntime`、`ResponseComposer`、`AgentRuntimeEvent`；
+- `AgentRuntime.handleTurn()` 已串联 `intentRuntime.understand -> memoryRuntime.plan/retrieve/inject -> skillRuntime.retrieve -> intentExecutor.execute/skip -> responseComposer.compose`；
+- `RuntimeContext` 统一承载 `IntentRuntimeResult`、`MemoryContract`、`StepMemoryDecision[]`、memory retrieval/injection、skills、execution result 和 composed response；
+- 默认 `ResponseComposer` 会把 memory decision、step-level memory decisions、runtime skills、memory injection 和 execution final-response contract 组成统一 system context；
+- `packages/agent-runtime` 不 import `jarvis/src/core/*`，并已纳入 `runtime:check-boundaries`；
+- Jarvis 增加 `agentRuntime` 配置：
+  - `enabled` 默认 `true`；
+  - `executionMode` 默认 `skip`，当前主 Gemini loop 仍负责实际内容生成和 legacy tool loop；
+  - `observability` 可开启 runtime 事件日志；
+- `agent.ts` 的 `refreshContext()` 已在存在 resolved intent 时通过 `AgentRuntime.handleTurn()` 生成 memory contract、step memory decisions、skill retrieval 和 runtime response context；
+- 无 resolved intent 或关闭 `agentRuntime.enabled` 时保留旧路径，作为回滚开关；
+- package-level tests 覆盖完整 intent-memory-skill-execution-response lifecycle、external memory boundary 传递、execution incomplete 时禁止成功声明；
+- 现有 `ToolRouter` / `IntentExecutor` / `IntentPlan` 相关回归已通过。
+
+剩余边界说明：
+
+- 当前 Jarvis 主 Gemini stream/tool loop 仍保留为 application/backend adapter；P6 的完成点是 runtime context 与 pre-response lifecycle 已统一，后续 P7/P8 前可继续把 Gemini stream loop 抽为 `LlmBackend` / `AgentRuntime` backend adapter；
+- `agentRuntime.executionMode=execute` 已由 package runtime 支持，但 Jarvis 默认仍使用 `skip`，避免在同一 turn 中同时由 `IntentExecutor` 和 legacy Gemini loop 双重执行工具；
+- 下一步若要完全删除 legacy missing-step loop，需要先完成 `LlmBackend` 和 response streaming adapter，否则会把 Gemini CLI provider 协议泄漏进 package runtime。
 
 ## P7: Quality Gates And Runtime Dashboard
 

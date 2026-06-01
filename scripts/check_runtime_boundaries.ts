@@ -34,6 +34,14 @@ const boundaries: Boundary[] = [
       /import\(["'].*jarvis\/src\/core\//,
     ],
   },
+  {
+    name: "agent-runtime",
+    root: path.join(repoRoot, "packages/agent-runtime/src"),
+    forbidden: [
+      /from\s+["'].*jarvis\/src\/core\//,
+      /import\(["'].*jarvis\/src\/core\//,
+    ],
+  },
 ];
 
 function walk(dir: string): string[] {
