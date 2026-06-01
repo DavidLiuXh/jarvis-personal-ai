@@ -14,17 +14,17 @@
 - `DefaultMemoryRetriever` 已支持 `session / fact / entry` 三层 store adapter，并通过 extension points 保留 Jarvis 的 query rewrite、recent conversation recall、summary fallback。
 - intent eval 已从单点回归 case 演进为 principle / invariant / semantic axis 矩阵。
 
-当前缺口也很明确：
+当前剩余缺口也很明确：
 
-- `DefaultMemoryRuntime` 只接管主响应的 memory lifecycle，还不是完整 intent-driven agent runtime。
-- tool execution 和 subagent orchestration 仍在 `jarvis/src/core`。
 - `IntentResolver` 仍是 Jarvis core 实现，虽然公共 schema 已迁入通用层。
-- skill retrieval、tool/subagent memory consumption、runtime feedback 晋升 eval case 还没有完全纳入统一 runtime。
+- Jarvis 默认 `agentRuntime.executionMode=skip`，避免与 backend-native tool calling 双重执行；package runtime 已支持 `execute`，但 Jarvis 主路径尚未默认启用 deterministic executor。
+- subagent orchestration 仍主要在 `jarvis/src/core`，但已消费统一 `MemoryContract`。
+- runtime feedback 已可收集和进入质量门禁，仍需要更多真实线上样本持续补充。
 
 因此当前成熟度判断：
 
-- memory-driven runtime: 75%-80%
-- complete intent-driven runtime: 55%-60%
+- memory-driven runtime: 90%-92%
+- complete intent-driven runtime: 88%-92%
 
 ## Target Architecture
 
@@ -461,6 +461,13 @@ AgentRuntime.handleTurn
 
 - complete intent-driven runtime: 85%-90%
 
+当前成熟度：
+
+- complete intent-driven runtime: 88%-92%
+- 判断依据：P6 验收标准已闭环；Jarvis 主响应路径已通过 `AgentRuntime.handleTurn()` 统一执行 intent、memory、skill、response compose 和 LLM/tool loop；`agent.ts` 当前主要承担 application adapter、事件转发、clarification UI、topic shift、历史压缩和持久化副作用。
+- 本轮推进后，`agent.ts` 不再承载 memory retrieval / injection / skill retrieval / response composition / AgentRuntime construction 的详细规则；这些规则已收敛到 `jarvis/src/core/jarvisUnifiedRuntime.ts`，`agent.ts#runUnifiedRuntimeTurn()` 只负责 strip old history、调用 unified runtime、应用 system instruction。
+- 尚未稳定进入 92%+ 的原因：`IntentResolver` 仍未完全抽离为通用 runtime adapter，Jarvis 默认未启用 `agentRuntime.executionMode=execute`，subagent orchestration 仍在 Jarvis core，真实线上样本反馈还需要继续积累。
+
 验收标准：
 
 - 主响应路径不再由 `agent.ts` 手动拼接 intent / memory / tools / retry 规则。
@@ -493,10 +500,19 @@ AgentRuntime.handleTurn
   - `ToolRouter` -> runtime `ToolExecutorAdapter`；
   - `IntentStepRuntime` -> runtime `ToolLoopPlanner`；
   - retry、tool-loop guard、post-content push、deterministic multi-intent enforcement 的 Jarvis 配置装配；
+- 新增 `jarvis/src/core/jarvisUnifiedRuntime.ts`，集中封装 Jarvis 主 turn runtime assembly：
+  - fallback runtime intent；
+  - `DefaultMemoryRuntime` / `DefaultMemoryRetriever`；
+  - Jarvis query rewrite、recent conversation recall、summary fallback；
+  - `SkillRuntime` retrieval；
+  - step memory planning；
+  - response composer system context；
+  - `AgentRuntime.handleTurn()` 调用；
 - `agent.ts#runUnifiedRuntimeTurn()` 已通过一次 `AgentRuntime.handleTurn()` 完成 memory contract、step memory decisions、skill retrieval、runtime response context 和 backend LLM/tool loop；
-- `agent.ts` 的主响应阶段不再直接 new `ToolLoopRuntime`，只负责构造本 turn 的输入、图片消息、Jarvis config、ToolRouter、事件转发和持久化副作用；
+- `agent.ts` 的主响应阶段不再直接 new `ToolLoopRuntime`，也不再内联构造 `DefaultMemoryRuntime` / `DefaultMemoryRetriever` / `AgentRuntime`，只负责构造本 turn 的输入、图片消息、Jarvis config、ToolRouter、事件转发和持久化副作用；
 - 无 resolved intent 或关闭 `agentRuntime.enabled` 时保留旧路径，作为回滚开关；
 - Jarvis runtime adapter tests 覆盖 ToolRouter bridge、deterministic multi-intent planner、ToolLoopRuntimeOptions 装配；
+- Jarvis unified runtime tests 覆盖 external memory contract 共享和从 unified runtime entry 执行 backend LLM loop；
 - package-level tests 覆盖完整 intent-memory-skill-execution-response lifecycle、external memory boundary 传递、execution incomplete 时禁止成功声明；
 - backend-level tests 覆盖 neutral LLM loop、Gemini compatibility adapter、OpenAI-compatible streaming tool call、tool result round-trip、backend factory、retry exhaustion hook；
 - `npm run llm:backend:eval` 提供 offline backend-aware smoke eval；
