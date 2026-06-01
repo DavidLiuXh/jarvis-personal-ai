@@ -97,12 +97,11 @@ import {
 } from "../intent-runtime/index.js";
 import { createJarvisMemoryStores } from "./jarvisMemoryStores.js";
 import {
-  GeminiCliBackendAdapter,
-  GeminiPromptCompiler,
   geminiPartToRuntimeToolResult,
   geminiPartsToLlmMessages,
   runtimeToolResultToGeminiPart,
 } from "./geminiBackendAdapter.js";
+import { createJarvisLlmBackend } from "./llmBackendFactory.js";
 
 function extractSummaryCandidatesFromSection(
   section: string,
@@ -1588,8 +1587,11 @@ export class JarvisAgent extends EventEmitter {
           },
         };
         const toolLoop = new ToolLoopRuntime({
-          backend: new GeminiCliBackendAdapter(this.client, pId),
-          promptCompiler: new GeminiPromptCompiler(),
+          ...createJarvisLlmBackend({
+            config: this.jarvisConfig,
+            client: this.client,
+            promptId: pId,
+          }),
           toolExecutor,
           maxRetries,
           maxToolIterations: networkConfig?.maxToolIterations ?? 30,

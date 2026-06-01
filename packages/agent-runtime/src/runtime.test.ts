@@ -299,4 +299,83 @@ describe("AgentRuntime", () => {
     expect(result.response.canClaimSuccess).toBe(false);
     expect(result.response.systemContext).toContain("Do not claim completion");
   });
+
+  it("can orchestrate the backend LLM tool loop from handleTurn", async () => {
+    const frame = intent({
+      subject: "personal",
+      taskType: "execute",
+      needsMemory: false,
+    });
+    const intentRuntime = new DefaultIntentRuntime(
+      new StaticIntentResolverAdapter(async () => frame),
+    );
+    const memory = memoryRuntime(
+      memoryContract({
+        needMemory: false,
+        targetScopes: [],
+        memoryTarget: "none",
+        constraints: {
+          allowPersonalFacts: false,
+          allowSessionHistory: false,
+          allowEntries: false,
+          maxChars: 0,
+        },
+      }),
+    );
+    const toolAdapter = toolExecutor((request) => ({
+      name: request.name,
+      callId: request.callId,
+      status: "success",
+      output: { ok: true },
+    }));
+    let backendTurns = 0;
+    const runtime = new AgentRuntime(intentRuntime, memory.runtime, undefined, {
+      llmLoop: {
+        backend: {
+          getModel: () => "mock",
+          getCapabilities: () => ({
+            streaming: true,
+            nativeToolCalling: true,
+            jsonMode: false,
+            multimodalInput: false,
+            maxContextTokens: 4096,
+            modes: ["native_tool_calling"],
+          }),
+          async *sendTurn() {
+            backendTurns++;
+            if (backendTurns === 1) {
+              yield {
+                type: "tool_call",
+                request: {
+                  name: "task_add",
+                  callId: "call-1",
+                  args: { title: "review" },
+                },
+              };
+            } else {
+              yield { type: "content", text: "done" };
+            }
+          },
+        },
+        promptCompiler: {
+          compileInitialTurn: ({ initialMessages }) => initialMessages,
+          compileToolResults: () => [],
+          compileRetryPrompt: () => [],
+        },
+        toolExecutor: toolAdapter,
+      },
+    });
+
+    const result = await runtime.handleTurn({
+      sessionId: "s1",
+      userPrompt: "schedule review",
+      llmInitialMessages: [
+        { role: "user", blocks: [{ type: "text", text: "schedule review" }] },
+      ],
+      signal: new AbortController().signal,
+    });
+
+    expect(result.context.llmLoop?.toolsCalled.has("task_add")).toBe(true);
+    expect(toolAdapter.executeTools).toHaveBeenCalledOnce();
+  });
 });

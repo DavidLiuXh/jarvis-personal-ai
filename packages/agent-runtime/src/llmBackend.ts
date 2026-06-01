@@ -26,6 +26,12 @@ export type LlmBackendCapabilities = {
   modes: LlmBackendMode[];
 };
 
+export type LlmToolSchema = {
+  name: string;
+  description?: string;
+  parameters?: Record<string, unknown>;
+};
+
 export type LlmTextBlock = {
   type: "text";
   text: string;
@@ -44,10 +50,18 @@ export type LlmToolResultBlock = {
   result: unknown;
 };
 
+export type LlmToolCallBlock = {
+  type: "tool_call";
+  name: string;
+  callId: string;
+  args: Record<string, unknown>;
+};
+
 export type LlmContentBlock =
   | LlmTextBlock
   | LlmInlineDataBlock
-  | LlmToolResultBlock;
+  | LlmToolResultBlock
+  | LlmToolCallBlock;
 
 export type LlmMessage = {
   role: "system" | "user" | "assistant" | "tool";
@@ -57,6 +71,8 @@ export type LlmMessage = {
 
 export type LlmTurnInput = {
   messages: LlmMessage[];
+  tools?: LlmToolSchema[];
+  toolChoice?: "auto" | "none" | "required";
   metadata?: Record<string, unknown>;
 };
 
@@ -88,7 +104,10 @@ export type RuntimeRetryContext = {
 
 export type PromptCompiler = {
   compileInitialTurn(input: RuntimeTurnContext): LlmMessage[];
-  compileToolResults(results: RuntimeToolResult[]): LlmMessage[];
+  compileToolResults(
+    results: RuntimeToolResult[],
+    requests?: RuntimeToolRequest[],
+  ): LlmMessage[];
   compileRetryPrompt(input: RuntimeRetryContext): LlmMessage[];
 };
 
@@ -120,6 +139,8 @@ export type ToolLoopRuntimeOptions = {
   backend: LlmBackend;
   promptCompiler: PromptCompiler;
   toolExecutor: ToolExecutorAdapter;
+  tools?: LlmToolSchema[];
+  toolChoice?: "auto" | "none" | "required";
   planner?: ToolLoopPlanner;
   maxRetries?: number;
   maxToolIterations?: number;
@@ -214,7 +235,12 @@ export class ToolLoopRuntime {
           let turnTextAccumulated = "";
 
           for await (const event of this.options.backend.sendTurn(
-            { messages, metadata: input.metadata },
+            {
+              messages,
+              tools: this.options.tools,
+              toolChoice: this.options.toolChoice,
+              metadata: input.metadata,
+            },
             input.signal,
           )) {
             if (event.type === "content") {
@@ -292,7 +318,10 @@ export class ToolLoopRuntime {
               consecutiveToolFailures = 0;
             }
 
-            messages = this.options.promptCompiler.compileToolResults(results);
+            messages = this.options.promptCompiler.compileToolResults(
+              results,
+              duplicateDecision.executableRequests,
+            );
           } else {
             const postContentRequest =
               this.options.planner?.buildPostContentToolRequest?.(
@@ -316,10 +345,10 @@ export class ToolLoopRuntime {
                 [postContentRequest],
                 postContentResults,
               );
-              messages =
-                this.options.promptCompiler.compileToolResults(
-                  postContentResults,
-                );
+              messages = this.options.promptCompiler.compileToolResults(
+                postContentResults,
+                [postContentRequest],
+              );
               success = false;
               continue;
             }
@@ -352,6 +381,7 @@ export class ToolLoopRuntime {
               messages = [
                 ...this.options.promptCompiler.compileToolResults(
                   deterministicResults,
+                  deterministicRequests,
                 ),
                 ...(statePrompt
                   ? [

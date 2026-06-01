@@ -57,6 +57,15 @@ function blockToPart(block: LlmContentBlock): Part {
       inlineData: { mimeType: block.mimeType, data: block.data },
     } as Part;
   }
+  if (block.type === "tool_call") {
+    return {
+      functionCall: {
+        id: block.callId,
+        name: block.name,
+        args: block.args,
+      },
+    } as Part;
+  }
   return {
     functionResponse: {
       id: block.callId,

@@ -193,6 +193,13 @@ Implemented in the P6 completion pass:
   - `PromptCompiler`
   - `ToolLoopRuntime`
   - `ToolLoopPlanner`
+- `packages/agent-runtime/src/openAiBackend.ts` implements an
+  OpenAI-compatible Chat Completions main-chat backend:
+  - streaming content deltas -> `LlmEvent`;
+  - streaming `tool_calls` accumulation -> `RuntimeToolRequest`;
+  - OpenAI tool schemas from runtime `LlmToolSchema`;
+  - `OpenAiPromptCompiler` emits the required assistant `tool_calls` message
+    before tool result messages.
 - `ToolLoopRuntime` now owns the main response loop semantics that were
   previously hard-coded in `agent.ts`:
   - content streaming and buffering before required tool execution;
@@ -213,16 +220,43 @@ Implemented in the P6 completion pass:
   - Gemini `Part[]` -> runtime `LlmMessage[]`.
 - `agent.ts` no longer directly runs the Gemini stream/tool loop. It now acts
   as an application adapter that wires:
-  - `GeminiCliBackendAdapter`;
-  - `GeminiPromptCompiler`;
+  - a backend selected by `jarvis/src/core/llmBackendFactory.ts`;
+  - provider-specific `PromptCompiler`;
   - `ToolRouter` as a `ToolExecutorAdapter`;
   - Jarvis-specific `IntentStepRuntime` behavior through `ToolLoopPlanner`.
+- `jarvis/src/core/llmBackendFactory.ts` selects `gemini` or `openai` from
+  `llmBackend.provider`, extracts Gemini CLI tool declarations into runtime
+  `LlmToolSchema[]`, and passes those schemas to non-Gemini backends.
+- `AgentRuntime.handleTurn()` can now optionally orchestrate the LLM backend
+  loop directly through `llmLoop`, so the package-level facade can own both
+  pre-response runtime state and backend-driven tool execution.
+- `npm run llm:backend:eval` runs offline backend-aware smoke evals for the
+  neutral loop and OpenAI-compatible adapter.
 
 The key design decision is that provider-specific protocol translation belongs
 at the backend adapter boundary, while loop safety, tool execution sequencing,
 and final completion obligations belong to runtime. This prevents a future
 OpenAI, Anthropic, Ollama, or local backend from inheriting Gemini `Part[]` and
 Gemini event semantics as implicit Jarvis architecture.
+
+Current main-chat backend configuration:
+
+```json
+{
+  "llmBackend": {
+    "provider": "gemini",
+    "openai": {
+      "apiKeyEnv": "OPENAI_API_KEY",
+      "model": "gpt-4.1",
+      "baseUrl": "https://api.openai.com/v1",
+      "timeoutMs": 120000
+    }
+  }
+}
+```
+
+Use `provider: "openai"` for OpenAI or OpenAI-compatible gateways. Ollama/local
+planner-only backend is intentionally not implemented in this phase.
 
 Current test coverage:
 
@@ -235,6 +269,15 @@ Current test coverage:
   - emits neutral content/tool events;
   - round-trips Gemini `functionResponse` through `RuntimeToolResult`;
   - verifies prompt compilation does not expose Gemini `Part[]` to runtime.
+- `packages/agent-runtime/src/openAiBackend.test.ts`
+  - reconstructs streaming OpenAI tool calls;
+  - verifies API key validation;
+  - verifies assistant tool-call + tool-result prompt compilation.
+- `jarvis/src/core/llmBackendFactory.test.ts`
+  - verifies backend selection and tool schema extraction.
+- `scripts/run_llm_backend_evals.ts`
+  - validates Gemini-compatible and OpenAI-compatible backend/tool-loop
+    behavior offline.
 
 ## Backend Candidates
 

@@ -470,28 +470,37 @@ AgentRuntime.handleTurn
 
 - 新增 `packages/agent-runtime/src/runtime.ts`，定义 `AgentRuntime`、`RuntimeContext`、`SkillRuntime`、`ResponseComposer`、`AgentRuntimeEvent`；
 - 新增 `packages/agent-runtime/src/llmBackend.ts`，定义 `LlmBackend`、`LlmEvent`、`LlmBackendCapabilities`、`LlmMessage`、`PromptCompiler`、`ToolLoopRuntime` 和 `ToolLoopPlanner`；
+- 新增 `packages/agent-runtime/src/openAiBackend.ts`，实现 OpenAI-compatible Chat Completions streaming backend 和 `OpenAiPromptCompiler`；
 - `AgentRuntime.handleTurn()` 已串联 `intentRuntime.understand -> memoryRuntime.plan/retrieve/inject -> skillRuntime.retrieve -> intentExecutor.execute/skip -> responseComposer.compose`；
+- `AgentRuntime.handleTurn()` 可选接收 `llmLoop`，从同一 facade 内编排 backend-driven tool loop；
 - `ToolLoopRuntime` 已接管原 `agent.ts` 中的主 Gemini stream/tool loop 语义，包括 streaming、native tool calls、tool result resume、retry、max tool iteration guard、consecutive tool failure guard、deterministic multi-intent enforcement、missing-step prompt 和 post-content tool completion；
 - `RuntimeContext` 统一承载 `IntentRuntimeResult`、`MemoryContract`、`StepMemoryDecision[]`、memory retrieval/injection、skills、execution result 和 composed response；
 - 默认 `ResponseComposer` 会把 memory decision、step-level memory decisions、runtime skills、memory injection 和 execution final-response contract 组成统一 system context；
 - `packages/agent-runtime` 不 import `jarvis/src/core/*`，并已纳入 `runtime:check-boundaries`；
 - 新增 `jarvis/src/core/geminiBackendAdapter.ts`，把 Gemini CLI `sendMessageStream()`、`GeminiEventType`、`Part[]`、`functionResponse` 翻译为 runtime-owned backend protocol；
+- 新增 `jarvis/src/core/llmBackendFactory.ts`，按 `llmBackend.provider` 选择 `gemini` 或 `openai`，并把 Gemini CLI tool declarations 转换为 runtime `LlmToolSchema[]`；
+- Jarvis 增加 `llmBackend` 配置：
+  - `provider` 默认 `gemini`；
+  - `openai.apiKeyEnv` 默认 `OPENAI_API_KEY`；
+  - `openai.model` 默认 `gpt-4.1`；
+  - `openai.baseUrl` 默认 `https://api.openai.com/v1`；
 - Jarvis 增加 `agentRuntime` 配置：
   - `enabled` 默认 `true`；
   - `executionMode` 默认 `skip`，当前主内容生成仍使用 Gemini compatibility backend，但 loop orchestration 已迁入 runtime；
   - `observability` 可开启 runtime 事件日志；
 - `agent.ts` 的 `refreshContext()` 已在存在 resolved intent 时通过 `AgentRuntime.handleTurn()` 生成 memory contract、step memory decisions、skill retrieval 和 runtime response context；
-- `agent.ts` 的主响应阶段已从直接操作 Gemini stream/tool loop，改为装配 `GeminiCliBackendAdapter`、`GeminiPromptCompiler`、`ToolRouter` 和 Jarvis-specific `ToolLoopPlanner`；
+- `agent.ts` 的主响应阶段已从直接操作 Gemini stream/tool loop，改为装配 `llmBackendFactory`、provider-specific `PromptCompiler`、`ToolRouter` 和 Jarvis-specific `ToolLoopPlanner`；
 - 无 resolved intent 或关闭 `agentRuntime.enabled` 时保留旧路径，作为回滚开关；
 - package-level tests 覆盖完整 intent-memory-skill-execution-response lifecycle、external memory boundary 传递、execution incomplete 时禁止成功声明；
-- backend-level tests 覆盖 neutral LLM loop、Gemini compatibility adapter、tool result round-trip、retry exhaustion hook；
+- backend-level tests 覆盖 neutral LLM loop、Gemini compatibility adapter、OpenAI-compatible streaming tool call、tool result round-trip、backend factory、retry exhaustion hook；
+- `npm run llm:backend:eval` 提供 offline backend-aware smoke eval；
 - 现有 `ToolRouter` / `IntentExecutor` / `IntentPlan` 相关回归已通过。
 
 剩余边界说明：
 
-- Gemini CLI 仍是当前唯一 main-chat backend，但它已经是 compatibility adapter，而不是 Jarvis runtime 的隐式协议；
+- Gemini CLI 仍是默认 main-chat backend，但 OpenAI-compatible backend 已可通过配置切换；
 - `agentRuntime.executionMode=execute` 已由 package runtime 支持，Jarvis 默认仍使用 `skip`，避免在同一 turn 中同时由 `IntentExecutor` 和 backend-native tool calling 双重执行工具；
-- 下一步如果要加入 OpenAI / Anthropic / Ollama main-chat backend，应实现新的 `LlmBackend` 和 `PromptCompiler`，并复用同一个 `ToolLoopRuntime`。
+- Ollama/local planner-only backend 按当前阶段决策暂不实现；如需 Anthropic，可继续实现新的 `LlmBackend` 和 `PromptCompiler`，复用同一个 `ToolLoopRuntime`。
 
 ## P7: Quality Gates And Runtime Dashboard
 

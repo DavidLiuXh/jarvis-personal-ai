@@ -122,6 +122,22 @@ export interface JarvisConfig {
     observability?: boolean;
   };
   /**
+   * Main chat LLM backend. Gemini remains the default compatibility backend;
+   * OpenAI-compatible backends can be enabled without changing runtime logic.
+   */
+  llmBackend?: {
+    provider?: "gemini" | "openai";
+    openai?: {
+      apiKey?: string;
+      apiKeyEnv?: string;
+      baseUrl?: string;
+      model?: string;
+      organization?: string;
+      project?: string;
+      timeoutMs?: number;
+    };
+  };
+  /**
    * Session summarizer configuration.
    * Used by resumeFromDisk() to compress conversation history on startup.
    */
@@ -550,6 +566,15 @@ export class ConfigManager {
         executionMode: "skip",
         observability: false,
       },
+      llmBackend: {
+        provider: "gemini",
+        openai: {
+          apiKeyEnv: "OPENAI_API_KEY",
+          model: "gpt-4.1",
+          baseUrl: "https://api.openai.com/v1",
+          timeoutMs: 120_000,
+        },
+      },
     };
 
     if (fs.existsSync(CONFIG_PATH)) {
@@ -592,6 +617,14 @@ export class ConfigManager {
           agentRuntime: {
             ...defaults.agentRuntime,
             ...saved.agentRuntime,
+          },
+          llmBackend: {
+            ...defaults.llmBackend,
+            ...saved.llmBackend,
+            openai: {
+              ...defaults.llmBackend?.openai,
+              ...saved.llmBackend?.openai,
+            },
           },
         };
       } catch (e) {

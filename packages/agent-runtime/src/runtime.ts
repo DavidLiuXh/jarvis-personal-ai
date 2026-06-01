@@ -27,6 +27,12 @@ import type {
   StepMemoryDecision,
   TokenBudget,
 } from "../../memory-runtime/src/index.js";
+import {
+  ToolLoopRuntime,
+  type LlmMessage,
+  type ToolLoopRuntimeOptions,
+  type ToolLoopRunResult,
+} from "./llmBackend.js";
 
 export type RuntimeContext = {
   sessionId: string;
@@ -44,6 +50,7 @@ export type RuntimeContext = {
   memoryInjection: MemoryInjectionResult | null;
   skills: RuntimeSkill[];
   execution: IntentExecutionResult | null;
+  llmLoop: ToolLoopRunResult | null;
   response: RuntimeResponse | null;
 };
 
@@ -120,6 +127,7 @@ export type AgentRuntimeOptions = {
   skillLimit?: number;
   skillMaxDistance?: number;
   observer?: AgentRuntimeObserver;
+  llmLoop?: ToolLoopRuntimeOptions;
 };
 
 export type AgentRuntimeInput = {
@@ -133,6 +141,8 @@ export type AgentRuntimeInput = {
   currentContent?: string;
   artifacts?: Record<string, string>;
   signal?: AbortSignal;
+  llmInitialMessages?: LlmMessage[];
+  llmSystemContext?: string;
 };
 
 export type AgentRuntimeResult = {
@@ -300,6 +310,7 @@ export class AgentRuntime {
       memoryInjection: null,
       skills: [],
       execution: null,
+      llmLoop: null,
       response: null,
     };
 
@@ -381,6 +392,16 @@ export class AgentRuntime {
       });
 
       context.response = await this.responseComposer.compose({ context });
+      if (this.options.llmLoop && input.llmInitialMessages) {
+        context.llmLoop = await new ToolLoopRuntime(this.options.llmLoop).run({
+          userPrompt: context.userPrompt,
+          systemContext:
+            input.llmSystemContext ?? context.response.systemContext,
+          initialMessages: input.llmInitialMessages,
+          metadata: context.metadata,
+          signal: input.signal ?? new AbortController().signal,
+        });
+      }
       await this.emit({
         type: "response_composed",
         response: context.response,
