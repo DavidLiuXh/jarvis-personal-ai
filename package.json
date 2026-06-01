@@ -25,6 +25,8 @@
     "intent:attribute-failures": "npx tsx scripts/attribute_intent_failures.ts",
     "runtime:check-boundaries": "npx tsx scripts/check_runtime_boundaries.ts",
     "llm:backend:eval": "npx tsx scripts/run_llm_backend_evals.ts",
+    "runtime:dashboard": "npx tsx scripts/runtime_quality_dashboard.ts",
+    "runtime:quality": "npm run intent:matrix && npm run llm:backend:eval && npm run runtime:check-boundaries && npx tsx scripts/runtime_quality_dashboard.ts --gate",
     "test": "npm run test --workspaces --if-present",
     "prepare": "husky",
     "pre-commit": "lint-staged"

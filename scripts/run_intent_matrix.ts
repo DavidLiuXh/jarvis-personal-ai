@@ -148,6 +148,47 @@ type CaseResult = {
   error?: string;
 };
 
+type CountMap = Record<string, number>;
+
+type IntentMatrixTrend = {
+  distributions: {
+    subject: CountMap;
+    taskType: CountMap;
+    memoryTarget: CountMap;
+    riskLevel: CountMap;
+    clarificationState: CountMap;
+  };
+  rates: {
+    policyCorrection: number;
+    jsonRepair: number;
+    fallback: number;
+    clarificationBlock: number;
+    executionContractEnforcement: number;
+    toolFailure: number;
+    toolRetry: number;
+    toolBlocked: number;
+    memoryInjectionEmpty: number;
+    memoryRejected: number;
+  };
+  counts: {
+    total: number;
+    passed: number;
+    failed: number;
+    policyCorrections: number;
+    jsonRepairs: number;
+    fallbacks: number;
+    clarificationBlocks: number;
+    executionContractEnforcements: number;
+    toolFailures: number;
+    toolRetries: number;
+    toolBlocked: number;
+    memoryInjectionEmpty: number;
+    memoryRejected: number;
+    runtimeFeedbackCandidates: number;
+  };
+  policyReasonCodes: CountMap;
+};
+
 const repoRoot = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
   "..",
@@ -949,6 +990,132 @@ function summarizeAxes(results: CaseResult[]) {
   return stats;
 }
 
+function increment(map: CountMap, key: string | null | undefined) {
+  const normalized = key || "unknown";
+  map[normalized] = (map[normalized] ?? 0) + 1;
+}
+
+function rate(count: number, total: number): number {
+  return total === 0 ? 0 : Number((count / total).toFixed(4));
+}
+
+function runtimeFeedbackCandidateCount(): number {
+  const candidatePath = path.join(
+    repoRoot,
+    "evals/intent/candidates/intent-eval-candidates-latest.jsonl",
+  );
+  if (!fs.existsSync(candidatePath)) return 0;
+  return fs
+    .readFileSync(candidatePath, "utf8")
+    .split(/\r?\n/)
+    .filter((line) => line.trim()).length;
+}
+
+function buildTrend(results: CaseResult[]): IntentMatrixTrend {
+  const distributions: IntentMatrixTrend["distributions"] = {
+    subject: {},
+    taskType: {},
+    memoryTarget: {},
+    riskLevel: {},
+    clarificationState: {},
+  };
+  const policyReasonCodes: CountMap = {};
+  let policyCorrections = 0;
+  let jsonRepairs = 0;
+  let fallbacks = 0;
+  let clarificationBlocks = 0;
+  let executionContractEnforcements = 0;
+  let toolFailures = 0;
+  let toolRetries = 0;
+  let toolBlocked = 0;
+  let memoryInjectionEmpty = 0;
+  let memoryRejected = 0;
+
+  for (const result of results) {
+    const intent = result.intent;
+    increment(distributions.subject, intent?.subject);
+    increment(distributions.taskType, intent?.taskType);
+    increment(
+      distributions.memoryTarget,
+      intent?.semanticEvidence?.memoryRecall?.target,
+    );
+    increment(distributions.riskLevel, intent?.richIntent?.riskLevel);
+    increment(distributions.clarificationState, result.clarification?.state);
+
+    const appliedPolicy = intent?.policyTrace?.filter((entry) => entry.applied);
+    if (appliedPolicy && appliedPolicy.length > 0) {
+      policyCorrections += 1;
+      for (const entry of appliedPolicy) {
+        increment(policyReasonCodes, entry.reasonCode);
+      }
+    }
+    if (String(intent?.source ?? "").includes("repair")) jsonRepairs += 1;
+    if (String(intent?.source ?? "").includes("fallback")) fallbacks += 1;
+    if (result.error?.toLowerCase().includes("repair")) jsonRepairs += 1;
+    if (result.error?.toLowerCase().includes("fallback")) fallbacks += 1;
+
+    if (result.clarification?.blocking) clarificationBlocks += 1;
+    if ((result.executionPlan?.requiredTools?.length ?? 0) > 0) {
+      executionContractEnforcements += 1;
+    }
+    const failedChecks = result.checks.filter((check) => !check.pass);
+    if (
+      failedChecks.some((check) =>
+        check.key.toLowerCase().includes("failedtool"),
+      )
+    ) {
+      toolFailures += 1;
+    }
+    if (
+      failedChecks.some((check) => check.key.toLowerCase().includes("blocked"))
+    ) {
+      toolBlocked += 1;
+    }
+    if (result.memoryPolicy && !result.memoryPolicy.contract.needMemory) {
+      memoryInjectionEmpty += 1;
+    }
+    if (
+      result.memoryPolicy?.reasons.some((reason) => reason.includes("reject"))
+    ) {
+      memoryRejected += 1;
+    }
+  }
+
+  const total = results.length;
+  return {
+    distributions,
+    rates: {
+      policyCorrection: rate(policyCorrections, total),
+      jsonRepair: rate(jsonRepairs, total),
+      fallback: rate(fallbacks, total),
+      clarificationBlock: rate(clarificationBlocks, total),
+      executionContractEnforcement: rate(executionContractEnforcements, total),
+      toolFailure: rate(toolFailures, total),
+      toolRetry: rate(toolRetries, total),
+      toolBlocked: rate(toolBlocked, total),
+      memoryInjectionEmpty: rate(memoryInjectionEmpty, total),
+      memoryRejected: rate(memoryRejected, total),
+    },
+    counts: {
+      total,
+      passed: results.filter((result) => result.passed).length,
+      failed: results.filter((result) => !result.passed).length,
+      policyCorrections,
+      jsonRepairs,
+      fallbacks,
+      clarificationBlocks,
+      executionContractEnforcements,
+      toolFailures,
+      toolRetries,
+      toolBlocked,
+      memoryInjectionEmpty,
+      memoryRejected,
+      runtimeFeedbackCandidates: runtimeFeedbackCandidateCount(),
+    },
+    policyReasonCodes,
+  };
+}
+
 function formatStats(stats: Record<string, { passed: number; total: number }>) {
   return Object.entries(stats)
     .sort(([left], [right]) => left.localeCompare(right))
@@ -1083,6 +1250,7 @@ async function main() {
       (result) => result.intent?.source ?? "error",
     ),
     repeatStats: summarizeBy(results, (result) => `run-${result.run}`),
+    trend: buildTrend(results),
     results,
   };
   const markdown = buildMarkdownReport(results, args.casesPaths);
@@ -1094,6 +1262,10 @@ async function main() {
     fs.writeFileSync(
       path.join(args.outputDir, "intent-matrix-latest.json"),
       JSON.stringify(payload, null, 2) + "\n",
+    );
+    fs.writeFileSync(
+      path.join(args.outputDir, "intent-matrix-trend-latest.json"),
+      JSON.stringify(payload.trend, null, 2) + "\n",
     );
     fs.writeFileSync(
       path.join(args.outputDir, "intent-matrix-latest.md"),

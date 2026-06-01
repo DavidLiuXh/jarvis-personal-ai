@@ -504,6 +504,9 @@ AgentRuntime.handleTurn
 
 ## P7: Quality Gates And Runtime Dashboard
 
+Status: completed for local/CI quality gate, trend JSON, backend-aware eval
+aggregation, dashboard output, and feedback-loop metrics.
+
 目标：
 
 - 从“有 eval report”升级为“runtime 质量门禁”。
@@ -527,6 +530,41 @@ AgentRuntime.handleTurn
   - external personal-memory leakage 必须 0；
   - tool-backed success-without-tool 必须 0。
 - 将 reviewed runtime feedback 自动纳入 nightly / local full eval。
+
+当前实现状态：
+
+- `scripts/run_intent_matrix.ts` 已在 `intent-matrix-latest.json` 中输出 `trend`，并额外写出 `intent-matrix-trend-latest.json`：
+  - subject / taskType / memoryTarget / riskLevel / clarificationState distribution；
+  - policy correction rate 和 reason code distribution；
+  - JSON repair / fallback rate；
+  - clarification block rate；
+  - execution contract enforcement rate；
+  - tool failure / retry / blocked rate；
+  - memory empty / rejected rate；
+  - runtime feedback candidate volume。
+- `scripts/run_llm_backend_evals.ts` 已输出 `llm-backend-*.json/md` 和 `llm-backend-latest.json/md`，供 dashboard 机器读取。
+- 新增 `scripts/runtime_quality_dashboard.ts`：
+  - 聚合 intent matrix、LLM backend eval、runtime feedback candidate/review/promote 数据；
+  - 输出 `runtime-quality-*.json/md` 和 `runtime-quality-latest.json/md`；
+  - `--gate` 模式下 gate 失败会返回非 0 exit code。
+- 新增 package scripts：
+  - `npm run runtime:dashboard`：只生成 dashboard；
+  - `npm run runtime:quality`：一键执行 `intent:matrix`、`llm:backend:eval`、`runtime:check-boundaries` 和 dashboard gate。
+- 当前 quality gates：
+  - `required_invariant_pass_rate`：matrix required invariant pass rate 必须 100%；
+  - `high_risk_action_confidence_floor`：high-risk action confidence 不低于默认 0.8；
+  - `external_personal_memory_leakage_zero`：external-only request 不允许 personal facts/session/entries；
+  - `tool_backed_success_without_tool_zero`：tool-backed 成功路径必须存在 required tool contract；
+  - `llm_backend_eval_pass`：backend adapter smoke eval 必须 100% 通过。
+- reviewed runtime feedback 已纳入 local full eval：`run_intent_matrix.ts` 默认 case paths 包含 `evals/intent/reviewed-runtime-cases.jsonl`。
+- `scripts/review_intent_feedback.ts` 保持 capture -> review template -> promote regression 的路径；dashboard 会统计 captured candidates、review template rows、promoted regressions 和 closure rate。
+
+当前验证结果：
+
+- `npm run runtime:quality`：通过，生成 `evals/logs/runtime-quality-latest.md/json`；
+- matrix：27/27；
+- LLM backend eval：2/2；
+- runtime boundary check：通过。
 
 完成后成熟度预期：
 

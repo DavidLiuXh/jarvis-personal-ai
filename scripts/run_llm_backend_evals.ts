@@ -6,6 +6,9 @@
  */
 
 import { ToolLoopRuntime } from "../packages/agent-runtime/src/llmBackend.js";
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import {
   OpenAiChatCompletionsBackend,
   OpenAiPromptCompiler,
@@ -24,6 +27,29 @@ type EvalCase = {
   name: string;
   run: () => Promise<void>;
 };
+
+const repoRoot = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  "..",
+);
+
+function parseArgs(argv: string[]) {
+  const args = {
+    outputDir: path.join(repoRoot, "evals/logs"),
+    updateLatest: true,
+  };
+  for (let i = 0; i < argv.length; i += 1) {
+    const arg = argv[i];
+    const next = argv[i + 1];
+    if (arg === "--output-dir" && next) {
+      args.outputDir = path.resolve(next);
+      i += 1;
+    } else if (arg === "--no-latest") {
+      args.updateLatest = false;
+    }
+  }
+  return args;
+}
 
 function assert(condition: unknown, message: string): void {
   if (!condition) throw new Error(message);
@@ -170,18 +196,75 @@ const cases: EvalCase[] = [
   },
 ];
 
-let failed = 0;
+const args = parseArgs(process.argv.slice(2));
+const results: Array<{
+  name: string;
+  passed: boolean;
+  durationMs: number;
+  error?: string;
+}> = [];
 for (const testCase of cases) {
+  const startedAt = Date.now();
   try {
     await testCase.run();
+    results.push({
+      name: testCase.name,
+      passed: true,
+      durationMs: Date.now() - startedAt,
+    });
     console.log(`PASS ${testCase.name}`);
   } catch (error) {
-    failed++;
+    results.push({
+      name: testCase.name,
+      passed: false,
+      durationMs: Date.now() - startedAt,
+      error: error instanceof Error ? error.message : String(error),
+    });
     console.error(
       `FAIL ${testCase.name}: ${error instanceof Error ? error.message : String(error)}`,
     );
   }
 }
 
+const passed = results.filter((result) => result.passed).length;
+const failed = results.length - passed;
+const payload = {
+  generatedAt: new Date().toISOString(),
+  total: results.length,
+  passed,
+  failed,
+  passRate: results.length === 0 ? 0 : passed / results.length,
+  results,
+};
+const lines = [
+  "# LLM Backend Eval Report",
+  "",
+  `- Result: ${passed}/${results.length}`,
+  `- Pass rate: ${(payload.passRate * 100).toFixed(1)}%`,
+  `- Generated: ${payload.generatedAt}`,
+  "",
+  "| Case | Result | Duration |",
+  "| --- | --- | ---: |",
+  ...results.map(
+    (result) =>
+      `| ${result.name} | ${result.passed ? "PASS" : "FAIL"} | ${result.durationMs}ms |`,
+  ),
+];
+fs.mkdirSync(args.outputDir, { recursive: true });
+const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+const jsonPath = path.join(args.outputDir, `llm-backend-${timestamp}.json`);
+const mdPath = path.join(args.outputDir, `llm-backend-${timestamp}.md`);
+fs.writeFileSync(jsonPath, JSON.stringify(payload, null, 2) + "\n");
+fs.writeFileSync(mdPath, lines.join("\n") + "\n");
+if (args.updateLatest) {
+  fs.writeFileSync(
+    path.join(args.outputDir, "llm-backend-latest.json"),
+    JSON.stringify(payload, null, 2) + "\n",
+  );
+  fs.writeFileSync(
+    path.join(args.outputDir, "llm-backend-latest.md"),
+    lines.join("\n") + "\n",
+  );
+}
 if (failed > 0) process.exit(1);
-console.log(`Result: ${cases.length}/${cases.length} passed`);
+console.log(`Result: ${passed}/${results.length} passed`);
