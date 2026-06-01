@@ -211,6 +211,10 @@ const POLICY_REASON_METADATA: Record<
     category: "task_boundary",
     severity: "warning",
   },
+  ANALYSIS_CUE_CHAT_PROMOTED: {
+    category: "task_boundary",
+    severity: "info",
+  },
   RECALL_CUE_TASK_OVERRIDE: {
     category: "task_boundary",
     severity: "warning",
@@ -786,6 +790,24 @@ function taskPolicyRules(
         state.cues.analysisCue &&
         state.taskType === "recall" &&
         !state.cues.scheduleCue,
+      apply: (state) => ({
+        ...state,
+        taskType: "analyze",
+        evidence: appendPolicyEvidence(state.evidence, "analysis_cue"),
+      }),
+    },
+    {
+      id: "task.analysis_cue_promotes_chat",
+      stage: "guardrail",
+      priority: 425,
+      reasonCode: "ANALYSIS_CUE_CHAT_PROMOTED",
+      snapshot: taskPolicySnapshot,
+      applies: (state) =>
+        state.cues.analysisCue &&
+        state.taskType === "chat" &&
+        !state.cues.scheduleCue &&
+        !state.cues.actionCue &&
+        !state.cues.explicitDelegateCue,
       apply: (state) => ({
         ...state,
         taskType: "analyze",

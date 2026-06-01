@@ -172,6 +172,89 @@ function conversationRecallResponse(score: number) {
   });
 }
 
+function productRecommendationResponse() {
+  return JSON.stringify({
+    knowledge_score: 75,
+    operation_score: 50,
+    complexity_score: 62.5,
+    complexity_reasoning:
+      "The user is initiating a conversation, requiring basic knowledge retrieval and operational execution.",
+    query_subject: "external",
+    task_type: "chat",
+    needs_external_knowledge: true,
+    needs_tool: false,
+    needs_scheduling: false,
+    candidate_agents: [],
+    time_window_days: null,
+    date_from: null,
+    date_to: null,
+    confidence: 1,
+    confidence_by_dimension: {
+      subject: 1,
+      taskType: 1,
+      memoryTarget: 1,
+      action: 1,
+      entityHints: 1,
+      topicShift: 1,
+      richIntent: 0.85,
+    },
+    evidence: ["tesla model Y", "用户评价好的行李固定装置"],
+    semantic_evidence: {
+      personalContext: { present: false, reason: "", span: "" },
+      memoryRecall: { present: false, target: "none", reason: "", span: "" },
+      actionRequest: {
+        present: true,
+        action: "read",
+        object: "tesla model Y后背箱用户评价好的行李固定装置",
+      },
+      entityHints: {
+        tickers: [],
+        technicalTerms: ["Tesla Model Y", "后背箱", "行李固定装置"],
+        peopleOrCompanies: ["Tesla"],
+      },
+    },
+    rich_intent: {
+      userGoal: "找到 Tesla Model Y 后备箱用户评价好的行李固定装置",
+      domain: "external_knowledge",
+      action: "answer",
+      primaryAction: "answer",
+      targets: [
+        { type: "external_entity", value: "Tesla Model Y" },
+        { type: "external_entity", value: "行李固定装置" },
+      ],
+      contextDependency: {
+        recentConversation: false,
+        longTermMemory: false,
+        localWorkspace: false,
+        externalWorld: true,
+      },
+      ambiguity: [],
+      riskLevel: "low",
+    },
+    intent_steps: [],
+    topic_analysis: {
+      relation: "unknown",
+      history: {
+        label: "Greeting",
+        evidence: ["Hi Jarvis"],
+        sourceTurns: [-1],
+        confidence: 0.4,
+      },
+      current: {
+        label: "Tesla Model Y trunk accessory recommendation",
+        evidence: ["tesla model Y后背箱有哪些用户评价好的行李固定装置"],
+        sourceTurns: [0],
+        confidence: 0.95,
+      },
+      relationReason: "standalone product recommendation",
+      confidence: 0.9,
+      lowGrounding: false,
+    },
+    references_recent_history: false,
+    topic_shifted: false,
+  });
+}
+
 describe("LocalModelRouter — detectTopicShift", () => {
   beforeEach(() => mockGenerate.mockReset());
 
@@ -284,7 +367,7 @@ describe("LocalModelRouter — route() topic_shifted via classify", () => {
       }),
     );
 
-    const result = await router.route("hello", HISTORY_CODING);
+    const result = await router.route("hello", []);
 
     expect(result.topicShifted).toBe(false);
   });
@@ -448,5 +531,26 @@ describe("LocalModelRouter — routing score calibration", () => {
     expect(result.classifierReason).not.toContain(
       "calibration=time_scoped_conversation_recall",
     );
+  });
+
+  it("calibrates external product recommendation after greeting history as low-operation analyze", async () => {
+    const router = makeRouter();
+    mockGenerate.mockResolvedValueOnce(productRecommendationResponse());
+
+    const result = await router.route(
+      "tesla model Y后背箱有哪些用户评价好的行李固定装置",
+      [{ role: "user", content: "Hi Jarvis" }],
+    );
+
+    expect(result.querySubject).toBe("external");
+    expect(result.intent?.taskType).toBe("analyze");
+    expect(result.intent?.needsMemory).toBe(false);
+    expect(result.intent?.operationScore).toBeLessThanOrEqual(35);
+    expect(result.score).toBeLessThan(70);
+    expect(result.model).toBe("gemini-2.5-flash");
+    expect(result.classifierReason).toContain(
+      "calibration=external_product_recommendation",
+    );
+    expect(result.classifierReason).not.toMatch(/initiating.*conversation/i);
   });
 });

@@ -57,6 +57,7 @@ type ClassifyResult = {
 };
 
 const TIME_SCOPED_CONVERSATION_RECALL_ROUTING_CAP = 58;
+const EXTERNAL_PRODUCT_RECOMMENDATION_OPERATION_CAP = 35;
 
 function hasExplicitTimeScope(intent: IntentFrame): boolean {
   return Boolean(
@@ -85,6 +86,85 @@ function isSimpleTimeScopedConversationRecall(intent: IntentFrame): boolean {
   return intent.intentSteps.every((step) =>
     ["recall", "chat"].includes(step.type),
   );
+}
+
+function intentText(intent: IntentFrame): string {
+  return [
+    intent.reason,
+    intent.richIntent.userGoal,
+    intent.semanticEvidence.actionRequest.object ?? "",
+    ...intent.evidence,
+    ...intent.richIntent.targets.map((target) => target.value),
+    ...intent.semanticEvidence.entityHints.technicalTerms,
+    ...intent.semanticEvidence.entityHints.peopleOrCompanies,
+  ].join("\n");
+}
+
+function isExternalProductRecommendation(intent: IntentFrame): boolean {
+  if (intent.subject !== "external") return false;
+  if (intent.needsMemory || intent.needsScheduling) return false;
+  if (intent.taskType !== "chat" && intent.taskType !== "analyze") {
+    return false;
+  }
+  const text = intentText(intent);
+  const hasProductOrReviewCue =
+    /用户评价|评价好|口碑|推荐|建议|哪(?:些|个).*(?:好|合适|值得)|best|top[-\s]?rated|review|reviews|recommend/i.test(
+      text,
+    );
+  const hasPhysicalProductCue =
+    /装置|配件|产品|工具|固定|收纳|行李|后备箱|后背箱|trunk|cargo|accessor(?:y|ies)|holder|organizer|mount|strap/i.test(
+      text,
+    );
+  return hasProductOrReviewCue && hasPhysicalProductCue;
+}
+
+function hasGreetingPollutedReason(reason: string): boolean {
+  return /initiating (?:a )?conversation|greeting|casual greeting|saying hi|寒暄|打招呼/i.test(
+    reason,
+  );
+}
+
+function calibrateRoutingIntent(intent: IntentFrame): {
+  intent: IntentFrame;
+  reasonSuffix: string;
+  reasonOverride?: string;
+} {
+  if (!isExternalProductRecommendation(intent)) {
+    return { intent, reasonSuffix: "" };
+  }
+  const knowledgeScore = intent.knowledgeScore ?? 65;
+  const operationScore = Math.min(
+    intent.operationScore ?? EXTERNAL_PRODUCT_RECOMMENDATION_OPERATION_CAP,
+    EXTERNAL_PRODUCT_RECOMMENDATION_OPERATION_CAP,
+  );
+  const complexityScore = Math.round(
+    knowledgeScore * 0.6 + operationScore * 0.4,
+  );
+  const calibrated =
+    operationScore !== intent.operationScore ||
+    complexityScore !== intent.complexityScore ||
+    intent.taskType === "chat";
+  if (!calibrated && !hasGreetingPollutedReason(intent.reason)) {
+    return { intent, reasonSuffix: "" };
+  }
+  return {
+    intent: {
+      ...intent,
+      taskType: intent.taskType === "chat" ? "analyze" : intent.taskType,
+      operationScore,
+      complexityScore,
+      reason: hasGreetingPollutedReason(intent.reason)
+        ? "External product recommendation/review lookup; low operational difficulty unless tool execution is explicitly requested."
+        : intent.reason,
+      evidence: intent.evidence.includes("routing_product_recommendation")
+        ? intent.evidence
+        : [...intent.evidence, "routing_product_recommendation"],
+    },
+    reasonSuffix: ` [routing_score=${complexityScore}, raw_complexity=${intent.complexityScore}, calibrated_operation=${operationScore}, calibration=external_product_recommendation]`,
+    reasonOverride: hasGreetingPollutedReason(intent.reason)
+      ? "External product recommendation/review lookup; low operational difficulty unless tool execution is explicitly requested."
+      : undefined,
+  };
 }
 
 function calibrateRoutingScore(intent: IntentFrame): {
@@ -183,7 +263,9 @@ export class LocalModelRouter {
     prompt: string,
     history: ConversationTurn[],
   ): Promise<ClassifyResult> {
-    const intent = await this.resolveIntent(prompt, history);
+    let intent = await this.resolveIntent(prompt, history);
+    const intentCalibration = calibrateRoutingIntent(intent);
+    intent = intentCalibration.intent;
     const knowledgeScore = intent.knowledgeScore;
     const operationScore = intent.operationScore;
     const routingScore = calibrateRoutingScore(intent);
@@ -194,7 +276,7 @@ export class LocalModelRouter {
 
     return {
       score: routingScore.score,
-      reason: `${intent.reason}${breakdown}${routingScore.reasonSuffix}`,
+      reason: `${intentCalibration.reasonOverride ?? intent.reason}${breakdown}${intentCalibration.reasonSuffix}${routingScore.reasonSuffix}`,
       querySubject: intent.subject,
       topicShifted: intent.topicShifted,
       timeWindowDays: intent.timeWindowDays,
