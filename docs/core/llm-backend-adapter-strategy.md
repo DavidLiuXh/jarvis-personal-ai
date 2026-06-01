@@ -170,7 +170,8 @@ make the main `agent.ts` loop consume it through a backend-neutral
 1. Define `LlmBackend`, `LlmEvent`, `LlmBackendCapabilities`, and
    `PromptCompiler` in a runtime package.
 2. Implement `GeminiCliBackendAdapter` that preserves current behavior exactly.
-3. Move the current `agent.ts` stream/tool loop into `AgentRuntime.handleTurn`.
+3. Move the current `agent.ts` stream/tool loop into runtime-owned loop
+   orchestration.
 4. Connect `AgentRuntime` to `IntentRuntime`, memory runtime, skill retrieval,
    and `IntentExecutor`.
 5. Add a non-Gemini backend for a low-risk path first, such as summarizer or
@@ -178,6 +179,62 @@ make the main `agent.ts` loop consume it through a backend-neutral
 6. Add a main-chat backend with native tool calling, such as OpenAI or Anthropic.
 7. Add a local-model backend in `planner_only` or `text_action_calling` mode.
 8. Run intent matrix and execution-contract evals per backend.
+
+## Current Implementation Status
+
+Implemented in the P6 completion pass:
+
+- `packages/agent-runtime/src/llmBackend.ts` defines the backend-neutral main
+  chat protocol:
+  - `LlmBackend`
+  - `LlmEvent`
+  - `LlmBackendCapabilities`
+  - `LlmMessage`
+  - `PromptCompiler`
+  - `ToolLoopRuntime`
+  - `ToolLoopPlanner`
+- `ToolLoopRuntime` now owns the main response loop semantics that were
+  previously hard-coded in `agent.ts`:
+  - content streaming and buffering before required tool execution;
+  - backend-native tool call collection;
+  - tool execution through `ToolExecutorAdapter`;
+  - duplicate tool-call suppression through a planner hook;
+  - deterministic multi-intent tool enforcement;
+  - missing-step enforcement prompts;
+  - post-content tool completion, such as channel push auto-completion;
+  - max tool iteration guard;
+  - consecutive tool failure guard;
+  - retry and retry-exhaustion cleanup hooks.
+- `jarvis/src/core/geminiBackendAdapter.ts` implements the Gemini CLI
+  compatibility boundary:
+  - Gemini `sendMessageStream()` -> `LlmEvent`;
+  - Gemini `ToolCallRequest` -> `RuntimeToolRequest`;
+  - runtime tool results -> Gemini `functionResponse` blocks;
+  - Gemini `Part[]` -> runtime `LlmMessage[]`.
+- `agent.ts` no longer directly runs the Gemini stream/tool loop. It now acts
+  as an application adapter that wires:
+  - `GeminiCliBackendAdapter`;
+  - `GeminiPromptCompiler`;
+  - `ToolRouter` as a `ToolExecutorAdapter`;
+  - Jarvis-specific `IntentStepRuntime` behavior through `ToolLoopPlanner`.
+
+The key design decision is that provider-specific protocol translation belongs
+at the backend adapter boundary, while loop safety, tool execution sequencing,
+and final completion obligations belong to runtime. This prevents a future
+OpenAI, Anthropic, Ollama, or local backend from inheriting Gemini `Part[]` and
+Gemini event semantics as implicit Jarvis architecture.
+
+Current test coverage:
+
+- `packages/agent-runtime/src/llmBackend.test.ts`
+  - streams content, executes tool calls, and resumes with tool results;
+  - executes deterministic planner steps when the model omits required tools;
+  - retries retryable backend errors and calls the exhaustion hook.
+- `jarvis/src/core/geminiBackendAdapter.test.ts`
+  - translates neutral messages into Gemini parts;
+  - emits neutral content/tool events;
+  - round-trips Gemini `functionResponse` through `RuntimeToolResult`;
+  - verifies prompt compilation does not expose Gemini `Part[]` to runtime.
 
 ## Backend Candidates
 

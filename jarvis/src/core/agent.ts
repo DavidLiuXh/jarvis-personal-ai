@@ -82,13 +82,27 @@ import {
   type MemoryRetrievalResult,
   type SkillRetrievalExtension,
 } from "../memory-runtime/index.js";
-import { AgentRuntime, type RuntimeSkill } from "../agent-runtime/index.js";
+import {
+  AgentRuntime,
+  ToolLoopRuntime,
+  type RuntimeSkill,
+} from "../agent-runtime/index.js";
 import {
   DefaultIntentRuntime,
   IntentExecutor,
   StaticIntentResolverAdapter,
+  type RuntimeToolRequest,
+  type RuntimeToolResult,
+  type ToolExecutorAdapter,
 } from "../intent-runtime/index.js";
 import { createJarvisMemoryStores } from "./jarvisMemoryStores.js";
+import {
+  GeminiCliBackendAdapter,
+  GeminiPromptCompiler,
+  geminiPartToRuntimeToolResult,
+  geminiPartsToLlmMessages,
+  runtimeToolResultToGeminiPart,
+} from "./geminiBackendAdapter.js";
 
 function extractSummaryCandidatesFromSection(
   section: string,
@@ -1542,8 +1556,6 @@ export class JarvisAgent extends EventEmitter {
           });
         }
 
-        let finalAssistantText = "";
-        const allToolsCalled = new Set<string>();
         const stepRuntime = new IntentStepRuntime(intentFrame);
         if (stepRuntime.active) {
           console.error(
@@ -1559,267 +1571,132 @@ export class JarvisAgent extends EventEmitter {
         const cleanOnFailure =
           networkConfig?.cleanOrphanedTurnOnFailure ?? true;
 
-        // 🛡️ Safety guards: prevent infinite loops and silent failure spirals
-        const MAX_TOOL_ITERATIONS = networkConfig?.maxToolIterations ?? 30;
-        const MAX_CONSECUTIVE_TOOL_FAILURES =
-          networkConfig?.maxConsecutiveToolFailures ?? 3;
-        const MAX_INTENT_TOOL_ENFORCEMENTS = 2;
-        let toolIterations = 0;
-        let consecutiveToolFailures = 0;
-        let intentToolEnforcements = 0;
-
-        while (true) {
-          let retryCount = 0;
-          let success = false;
-
-          while (retryCount < maxRetries && !success) {
-            try {
-              const shouldBufferPreToolContent =
-                stepRuntime.active &&
-                stepRuntime.actionableEnforceableSteps().length > 0;
-              const responseStream = this.client.sendMessageStream(
-                currentQueryParts,
-                abortController.signal,
-                pId,
-              );
-              const toolCallRequests: any[] = [];
-              let turnTextAccumulated = "";
-
-              for await (const event of responseStream) {
-                if (event.type === GeminiEventType.Content) {
-                  const newText = event.value;
-                  if (
-                    turnTextAccumulated.includes(newText) &&
-                    turnTextAccumulated.length > 0
+        const toolExecutor: ToolExecutorAdapter = {
+          executeTools: async (
+            requests: RuntimeToolRequest[],
+            signal: AbortSignal,
+          ): Promise<RuntimeToolResult[]> => {
+            const parts =
+              requests.length > 0
+                ? await this.toolRouter.route(requests, signal, (resp) =>
+                    this.emit(JarvisEventType.TOOL_CALL_RESPONSE, resp),
                   )
-                    continue;
-                  turnTextAccumulated += newText;
-                  if (!shouldBufferPreToolContent) {
-                    finalAssistantText += newText;
-                    this.emit(JarvisEventType.CONTENT, event);
-                  }
-                } else if (event.type === GeminiEventType.ToolCallRequest) {
-                  toolCallRequests.push(event.value);
-                  // Emit immediately so the web UI can show "Invoking..." before
-                  // the tool actually starts executing (which may take a long time).
-                  this.emit(JarvisEventType.CONTENT, event);
-                } else if (event.type === GeminiEventType.Error) {
-                  throw event.value.error;
-                } else if (event.type !== GeminiEventType.ModelInfo) {
-                  // Filter out ModelInfo events — model name should not appear in chat output
-                  this.emit(JarvisEventType.CONTENT, event);
-                }
-              }
-
-              if (toolCallRequests.length > 0) {
-                // Guard: max tool iterations
-                toolIterations++;
-                if (toolIterations > MAX_TOOL_ITERATIONS) {
-                  const msg = `⚠️ [Jarvis] Task aborted: exceeded ${MAX_TOOL_ITERATIONS} tool call iterations. The task may be too complex or stuck in a loop.`;
-                  console.error(msg);
-                  this.emit(JarvisEventType.CONTENT, {
-                    type: GeminiEventType.Content,
-                    value: msg,
-                  });
-                  success = true;
-                  break;
-                }
-
-                const duplicateDecision =
-                  stepRuntime.filterDuplicateToolCalls(toolCallRequests);
-                if (duplicateDecision.suppressed.length > 0) {
-                  console.error(
-                    `🧭 [Jarvis] Suppressed duplicate multi-intent tool call(s): ${duplicateDecision.suppressed
-                      .map(
-                        ({ request, stepId }) =>
-                          `${request.name}${stepId ? `@${stepId}` : ""}`,
-                      )
-                      .join(", ")}`,
-                  );
-                }
-
-                for (const req of duplicateDecision.executableRequests)
-                  allToolsCalled.add(req.name);
-                const routedParts =
-                  duplicateDecision.executableRequests.length > 0
-                    ? await this.toolRouter.route(
-                        duplicateDecision.executableRequests,
-                        abortController.signal,
-                        (resp) =>
-                          this.emit(JarvisEventType.TOOL_CALL_RESPONSE, resp),
-                      )
-                    : [];
-                const responseParts = [
-                  ...duplicateDecision.duplicateResponses,
-                  ...routedParts,
-                ];
-                stepRuntime.observeToolResults(
-                  duplicateDecision.executableRequests,
-                  routedParts,
-                );
-                if (stepRuntime.active) {
-                  console.error(
-                    `🧭 [Jarvis] Multi-intent runtime state: ${stepRuntime
-                      .snapshot()
-                      .map(
-                        (entry) =>
-                          `${entry.step.id}:${entry.status}/${entry.attempts}`,
-                      )
-                      .join(", ")}`,
-                  );
-                }
-
-                // Guard: consecutive tool failures
-                const failCount = responseParts.filter((p: any) => {
-                  const r = p?.functionResponse?.response;
-                  return (
-                    r &&
-                    typeof r === "object" &&
-                    ("error" in r || r.status === "error")
-                  );
-                }).length;
-
-                if (failCount > 0 && failCount === toolCallRequests.length) {
-                  consecutiveToolFailures++;
-                  if (
-                    consecutiveToolFailures >= MAX_CONSECUTIVE_TOOL_FAILURES
-                  ) {
-                    const msg = `⚠️ [Jarvis] Task aborted: ${MAX_CONSECUTIVE_TOOL_FAILURES} consecutive tool call rounds all failed. Please check tool availability or rephrase the request.`;
-                    console.error(msg);
-                    this.emit(JarvisEventType.CONTENT, {
-                      type: GeminiEventType.Content,
-                      value: msg,
-                    });
-                    success = true;
-                    break;
-                  }
-                } else {
-                  consecutiveToolFailures = 0;
-                }
-
-                currentQueryParts = responseParts;
-              } else {
-                const autoPushRequest = !allToolsCalled.has("push_to_channel")
-                  ? this.toolRouter.buildPushToChannelRequestFromContent(
-                      turnTextAccumulated,
-                    )
-                  : null;
-                if (autoPushRequest) {
-                  console.error(
-                    "📤 [Jarvis] Explicit channel push request completed by generated content — invoking push_to_channel.",
-                  );
-                  allToolsCalled.add("push_to_channel");
-                  currentQueryParts = await this.toolRouter.route(
-                    [autoPushRequest],
-                    abortController.signal,
-                    (resp) =>
-                      this.emit(JarvisEventType.TOOL_CALL_RESPONSE, resp),
-                  );
-                  stepRuntime.observeToolResults(
-                    [autoPushRequest],
-                    currentQueryParts,
-                  );
-                  success = false;
-                  continue;
-                }
-
-                const deterministicRequests =
-                  stepRuntime.buildDeterministicToolRequests();
-                if (deterministicRequests.length > 0) {
-                  if (shouldBufferPreToolContent && turnTextAccumulated) {
-                    console.error(
-                      "🧭 [Jarvis] Suppressed pre-tool assistant text because deterministic multi-intent tool execution is required.",
-                    );
-                  }
-                  console.error(
-                    `🧭 [Jarvis] Executing deterministic multi-intent step(s): ${deterministicRequests
-                      .map((request) => request.name)
-                      .join(", ")}`,
-                  );
-                  for (const request of deterministicRequests) {
-                    allToolsCalled.add(request.name);
-                  }
-                  const deterministicParts = await this.toolRouter.route(
-                    deterministicRequests,
-                    abortController.signal,
-                    (resp) =>
-                      this.emit(JarvisEventType.TOOL_CALL_RESPONSE, resp),
-                  );
-                  stepRuntime.observeToolResults(
-                    deterministicRequests,
-                    deterministicParts,
-                  );
-                  currentQueryParts = [
-                    ...deterministicParts,
-                    { text: stepRuntime.buildStatePrompt() },
-                  ];
-                  success = false;
-                  continue;
-                }
-
-                const missingToolPrompt =
-                  intentToolEnforcements < MAX_INTENT_TOOL_ENFORCEMENTS
-                    ? stepRuntime.buildMissingStepPrompt()
-                    : null;
-                if (missingToolPrompt) {
-                  if (shouldBufferPreToolContent && turnTextAccumulated) {
-                    console.error(
-                      "🧭 [Jarvis] Suppressed pre-tool assistant text because multi-intent execution is incomplete.",
-                    );
-                  }
-                  intentToolEnforcements++;
-                  console.error(
-                    `🧭 [Jarvis] Multi-intent execution incomplete — forcing missing tool step(s), attempt ${intentToolEnforcements}/${MAX_INTENT_TOOL_ENFORCEMENTS}.`,
-                  );
-                  currentQueryParts = [
-                    {
-                      text: `${stepRuntime.buildStatePrompt()}\n\n${missingToolPrompt}`,
-                    },
-                  ];
-                  success = false;
-                } else {
-                  if (shouldBufferPreToolContent && turnTextAccumulated) {
-                    finalAssistantText += turnTextAccumulated;
-                    this.emit(JarvisEventType.CONTENT, {
-                      type: GeminiEventType.Content,
-                      value: turnTextAccumulated,
-                    });
-                  }
-                  success = true;
-                }
-              }
-
-              if (!toolCallRequests.length && success) {
-                success = true;
-              }
-            } catch (err: any) {
-              if (isFetchError(err) && retryCount < maxRetries - 1) {
-                retryCount++;
-                const delay = Math.pow(2, retryCount) * 1000;
+                : [];
+            return parts
+              .map((part) => geminiPartToRuntimeToolResult(part))
+              .filter((result): result is RuntimeToolResult => Boolean(result));
+          },
+        };
+        const toolLoop = new ToolLoopRuntime({
+          backend: new GeminiCliBackendAdapter(this.client, pId),
+          promptCompiler: new GeminiPromptCompiler(),
+          toolExecutor,
+          maxRetries,
+          maxToolIterations: networkConfig?.maxToolIterations ?? 30,
+          maxConsecutiveToolFailures:
+            networkConfig?.maxConsecutiveToolFailures ?? 3,
+          maxIntentToolEnforcements: 2,
+          isRetryableError: isFetchError,
+          onContent: (text) =>
+            this.emit(JarvisEventType.CONTENT, {
+              type: GeminiEventType.Content,
+              value: text,
+            }),
+          onToolCall: (request) =>
+            this.emit(JarvisEventType.CONTENT, {
+              type: GeminiEventType.ToolCallRequest,
+              value: request,
+            }),
+          onLog: (message) => console.error(message),
+          onRetryExhausted: async () => {
+            if (!cleanOnFailure) return;
+            try {
+              const chat = this.client.getChat();
+              const cleaned = cleanOrphanedUserTurn(chat.getHistory());
+              if (cleaned.length < chat.getHistory().length) {
+                chat.setHistory(cleaned);
                 console.error(
-                  `⚠️ [JarvisAgent] Network error (${err.message}). Retrying in ${delay}ms... (attempt ${retryCount}/${maxRetries - 1})`,
+                  `🧹 [JarvisAgent] Cleaned orphaned user turn from history.`,
                 );
-                await new Promise((resolve) => setTimeout(resolve, delay));
-              } else {
-                // All retries exhausted — clean orphaned user turn if configured
-                if (cleanOnFailure) {
-                  try {
-                    const chat = this.client.getChat();
-                    const cleaned = cleanOrphanedUserTurn(chat.getHistory());
-                    if (cleaned.length < chat.getHistory().length) {
-                      chat.setHistory(cleaned);
-                      console.error(
-                        `🧹 [JarvisAgent] Cleaned orphaned user turn from history.`,
-                      );
-                    }
-                  } catch (_cleanErr) {}
-                }
-                throw err;
               }
-            }
-          }
-          if (success) break;
-        }
+            } catch (_cleanErr) {}
+          },
+          planner: {
+            shouldBufferPreToolContent: () =>
+              stepRuntime.active &&
+              stepRuntime.actionableEnforceableSteps().length > 0,
+            filterDuplicateToolCalls: (requests) => {
+              const duplicateDecision =
+                stepRuntime.filterDuplicateToolCalls(requests);
+              if (duplicateDecision.suppressed.length > 0) {
+                console.error(
+                  `🧭 [Jarvis] Suppressed duplicate multi-intent tool call(s): ${duplicateDecision.suppressed
+                    .map(
+                      ({ request, stepId }) =>
+                        `${request.name}${stepId ? `@${stepId}` : ""}`,
+                    )
+                    .join(", ")}`,
+                );
+              }
+              return {
+                executableRequests: duplicateDecision.executableRequests,
+                syntheticResults: duplicateDecision.duplicateResponses
+                  .map((part) => geminiPartToRuntimeToolResult(part))
+                  .filter((result): result is RuntimeToolResult =>
+                    Boolean(result),
+                  ),
+              };
+            },
+            observeToolResults: (requests, results) => {
+              stepRuntime.observeToolResults(
+                requests,
+                results.map(runtimeToolResultToGeminiPart),
+              );
+              if (stepRuntime.active) {
+                console.error(
+                  `🧭 [Jarvis] Multi-intent runtime state: ${stepRuntime
+                    .snapshot()
+                    .map(
+                      (entry) =>
+                        `${entry.step.id}:${entry.status}/${entry.attempts}`,
+                    )
+                    .join(", ")}`,
+                );
+              }
+            },
+            buildPostContentToolRequest: (text, toolsCalled) => {
+              if (toolsCalled.has("push_to_channel")) return null;
+              const request =
+                this.toolRouter.buildPushToChannelRequestFromContent(text);
+              if (request) {
+                console.error(
+                  "📤 [Jarvis] Explicit channel push request completed by generated content — invoking push_to_channel.",
+                );
+              }
+              return request;
+            },
+            buildDeterministicToolRequests: () => {
+              const requests = stepRuntime.buildDeterministicToolRequests();
+              if (requests.length > 0) {
+                console.error(
+                  `🧭 [Jarvis] Executing deterministic multi-intent step(s): ${requests
+                    .map((request) => request.name)
+                    .join(", ")}`,
+                );
+              }
+              return requests;
+            },
+            buildMissingStepPrompt: () => stepRuntime.buildMissingStepPrompt(),
+            buildStatePrompt: () => stepRuntime.buildStatePrompt(),
+          },
+        });
+        const loopResult = await toolLoop.run({
+          userPrompt,
+          initialMessages: geminiPartsToLlmMessages(currentQueryParts),
+          signal: abortController.signal,
+        });
+        const finalAssistantText = loopResult.finalText;
+        const allToolsCalled = loopResult.toolsCalled;
 
         // Skip memory ops when the turn only involved task management tools —
         // task state is already persisted in tasks.json, no need to distill facts.

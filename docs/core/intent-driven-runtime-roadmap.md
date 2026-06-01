@@ -425,8 +425,8 @@ phase.
 
 ## P6: Unified Agent Runtime
 
-Status: completed for package-level runtime and Jarvis main-path feature-flag
-integration in this phase.
+Status: completed for package-level runtime, Jarvis main-path feature-flag
+integration, and backend-neutral LLM/tool loop extraction.
 
 目标：
 
@@ -450,6 +450,7 @@ AgentRuntime.handleTurn
 交付物：
 
 - 新增 `packages/intent-runtime` 或新包 `packages/agent-runtime` 中的 `AgentRuntime` facade。
+- 新增 backend-neutral `LlmBackend` / `PromptCompiler` / `ToolLoopRuntime`，避免主响应路径继续绑定 Gemini CLI protocol。
 - 将 skill retrieval 纳入统一 runtime context，避免 `agent.ts` 单独注入。
 - 将 memory decision、step memory decision、tool/subagent memory constraints 作为同一份 `RuntimeContext` 传递。
 - 引入 `ResponseComposer`，让最终回答基于 intent、memory、execution state、tool observations 统一生成。
@@ -468,24 +469,29 @@ AgentRuntime.handleTurn
 当前实现状态：
 
 - 新增 `packages/agent-runtime/src/runtime.ts`，定义 `AgentRuntime`、`RuntimeContext`、`SkillRuntime`、`ResponseComposer`、`AgentRuntimeEvent`；
+- 新增 `packages/agent-runtime/src/llmBackend.ts`，定义 `LlmBackend`、`LlmEvent`、`LlmBackendCapabilities`、`LlmMessage`、`PromptCompiler`、`ToolLoopRuntime` 和 `ToolLoopPlanner`；
 - `AgentRuntime.handleTurn()` 已串联 `intentRuntime.understand -> memoryRuntime.plan/retrieve/inject -> skillRuntime.retrieve -> intentExecutor.execute/skip -> responseComposer.compose`；
+- `ToolLoopRuntime` 已接管原 `agent.ts` 中的主 Gemini stream/tool loop 语义，包括 streaming、native tool calls、tool result resume、retry、max tool iteration guard、consecutive tool failure guard、deterministic multi-intent enforcement、missing-step prompt 和 post-content tool completion；
 - `RuntimeContext` 统一承载 `IntentRuntimeResult`、`MemoryContract`、`StepMemoryDecision[]`、memory retrieval/injection、skills、execution result 和 composed response；
 - 默认 `ResponseComposer` 会把 memory decision、step-level memory decisions、runtime skills、memory injection 和 execution final-response contract 组成统一 system context；
 - `packages/agent-runtime` 不 import `jarvis/src/core/*`，并已纳入 `runtime:check-boundaries`；
+- 新增 `jarvis/src/core/geminiBackendAdapter.ts`，把 Gemini CLI `sendMessageStream()`、`GeminiEventType`、`Part[]`、`functionResponse` 翻译为 runtime-owned backend protocol；
 - Jarvis 增加 `agentRuntime` 配置：
   - `enabled` 默认 `true`；
-  - `executionMode` 默认 `skip`，当前主 Gemini loop 仍负责实际内容生成和 legacy tool loop；
+  - `executionMode` 默认 `skip`，当前主内容生成仍使用 Gemini compatibility backend，但 loop orchestration 已迁入 runtime；
   - `observability` 可开启 runtime 事件日志；
 - `agent.ts` 的 `refreshContext()` 已在存在 resolved intent 时通过 `AgentRuntime.handleTurn()` 生成 memory contract、step memory decisions、skill retrieval 和 runtime response context；
+- `agent.ts` 的主响应阶段已从直接操作 Gemini stream/tool loop，改为装配 `GeminiCliBackendAdapter`、`GeminiPromptCompiler`、`ToolRouter` 和 Jarvis-specific `ToolLoopPlanner`；
 - 无 resolved intent 或关闭 `agentRuntime.enabled` 时保留旧路径，作为回滚开关；
 - package-level tests 覆盖完整 intent-memory-skill-execution-response lifecycle、external memory boundary 传递、execution incomplete 时禁止成功声明；
+- backend-level tests 覆盖 neutral LLM loop、Gemini compatibility adapter、tool result round-trip、retry exhaustion hook；
 - 现有 `ToolRouter` / `IntentExecutor` / `IntentPlan` 相关回归已通过。
 
 剩余边界说明：
 
-- 当前 Jarvis 主 Gemini stream/tool loop 仍保留为 application/backend adapter；P6 的完成点是 runtime context 与 pre-response lifecycle 已统一，后续 P7/P8 前可继续把 Gemini stream loop 抽为 `LlmBackend` / `AgentRuntime` backend adapter；
-- `agentRuntime.executionMode=execute` 已由 package runtime 支持，但 Jarvis 默认仍使用 `skip`，避免在同一 turn 中同时由 `IntentExecutor` 和 legacy Gemini loop 双重执行工具；
-- 下一步若要完全删除 legacy missing-step loop，需要先完成 `LlmBackend` 和 response streaming adapter，否则会把 Gemini CLI provider 协议泄漏进 package runtime。
+- Gemini CLI 仍是当前唯一 main-chat backend，但它已经是 compatibility adapter，而不是 Jarvis runtime 的隐式协议；
+- `agentRuntime.executionMode=execute` 已由 package runtime 支持，Jarvis 默认仍使用 `skip`，避免在同一 turn 中同时由 `IntentExecutor` 和 backend-native tool calling 双重执行工具；
+- 下一步如果要加入 OpenAI / Anthropic / Ollama main-chat backend，应实现新的 `LlmBackend` 和 `PromptCompiler`，并复用同一个 `ToolLoopRuntime`。
 
 ## P7: Quality Gates And Runtime Dashboard
 
