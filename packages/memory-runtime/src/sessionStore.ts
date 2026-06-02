@@ -165,6 +165,26 @@ function timestampIso(value: string | number | undefined): string | undefined {
   return ms === null ? undefined : new Date(ms).toISOString();
 }
 
+const SESSION_RECALL_BOILERPLATE_RE =
+  /^(?:You are Jarvis,\s*a personalized AI assistant|You are an AI assistant|Knowledge cutoff:|Current date:|#?\s*System Prompt\b|<runtime_memory_context>|<memory_decision>)/i;
+
+function isBoilerplateSessionText(text: string): boolean {
+  const normalized = text.replace(/\s+/g, " ").trim();
+  return SESSION_RECALL_BOILERPLATE_RE.test(normalized);
+}
+
+export function shouldIncludeSessionSearchPair(args: {
+  userText: string;
+  assistantText: string;
+}): boolean {
+  const userText = args.userText.trim();
+  const assistantText = args.assistantText.trim();
+  if (!userText || !assistantText) return false;
+  if (isBoilerplateSessionText(userText)) return false;
+  if (isBoilerplateSessionText(assistantText)) return false;
+  return true;
+}
+
 function filenameTimestamp(value: string | number | undefined): string {
   return (timestampIso(value) ?? new Date().toISOString()).replace(
     /[:.]/g,
@@ -226,9 +246,17 @@ export class JarvisJsonlSessionStore implements SessionStore {
       for (let index = 0; index < transcript.turns.length; index++) {
         const userTurn = transcript.turns[index];
         if (userTurn.role !== "user") continue;
-        const assistantTurn = transcript.turns
-          .slice(index + 1, index + 8)
-          .find((turn) => turn.role === "assistant");
+        const followingTurns = transcript.turns.slice(index + 1, index + 8);
+        const nextUserIndex = followingTurns.findIndex(
+          (turn) => turn.role === "user",
+        );
+        const assistantSearchWindow =
+          nextUserIndex === -1
+            ? followingTurns
+            : followingTurns.slice(0, nextUserIndex);
+        const assistantTurn = assistantSearchWindow.find(
+          (turn) => turn.role === "assistant",
+        );
         const timestamp =
           normalizeSessionTimestamp(userTurn.timestamp) ??
           normalizeSessionTimestamp(assistantTurn?.timestamp) ??
@@ -242,7 +270,9 @@ export class JarvisJsonlSessionStore implements SessionStore {
         }
         const userText = userTurn.content.trim();
         const assistantText = assistantTurn?.content.trim() ?? "";
-        if (!userText && !assistantText) continue;
+        if (!shouldIncludeSessionSearchPair({ userText, assistantText })) {
+          continue;
+        }
         candidates.push({
           sessionId: transcript.sessionId,
           text: `User: ${userText}\nJarvis: ${assistantText}`.trim(),

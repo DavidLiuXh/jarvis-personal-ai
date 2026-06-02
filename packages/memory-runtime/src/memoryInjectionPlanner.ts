@@ -92,6 +92,7 @@ export class MemoryInjectionPlanner {
     factCandidates?: FactCandidate[];
     summaryCandidates: SummaryCandidate[];
     prewarmCandidates: PrewarmCandidate[];
+    maxPrewarmItems?: number;
   }): MemoryInjectionPlan {
     const rejected: MemoryInjectionRejectedItem[] = [];
     if (args.querySubject === "external") {
@@ -138,9 +139,10 @@ export class MemoryInjectionPlanner {
         ? this.options.maxSummaryItemsMixed
         : this.options.maxSummaryItemsPersonal;
     const prewarmLimit =
-      args.querySubject === "mixed"
+      args.maxPrewarmItems ??
+      (args.querySubject === "mixed"
         ? this.options.maxPrewarmItemsMixed
-        : this.options.maxPrewarmItemsPersonal;
+        : this.options.maxPrewarmItemsPersonal);
 
     const selectedFacts = this.selectItems({
       source: "fact",

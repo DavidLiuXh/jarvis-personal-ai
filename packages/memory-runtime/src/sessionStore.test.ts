@@ -4,6 +4,7 @@ import {
   extractSessionSearchTerms,
   JarvisJsonlSessionStore,
   scoreSessionSearchCandidates,
+  shouldIncludeSessionSearchPair,
   type SessionStore,
 } from "./sessionStore.js";
 import fs from "node:fs";
@@ -40,6 +41,28 @@ describe("sessionStore helpers", () => {
     });
 
     expect(results.map((result) => result.sessionId)).toEqual(["new", "old"]);
+  });
+
+  it("filters boilerplate and incomplete pairs from session search", () => {
+    expect(
+      shouldIncludeSessionSearchPair({
+        userText:
+          "You are Jarvis, a personalized AI assistant. Help the user safely, effectively, and concisely.",
+        assistantText: "好的。",
+      }),
+    ).toBe(false);
+    expect(
+      shouldIncludeSessionSearchPair({
+        userText: "给我一份今天github的趋势",
+        assistantText: "",
+      }),
+    ).toBe(false);
+    expect(
+      shouldIncludeSessionSearchPair({
+        userText: "给我一份今天github的趋势",
+        assistantText: "今天 GitHub 趋势包括多个 AI 工具项目。",
+      }),
+    ).toBe(true);
   });
 
   it("writes, reads, and searches Jarvis JSONL transcript v1", async () => {

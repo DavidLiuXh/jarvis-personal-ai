@@ -109,6 +109,62 @@ describe("GeminiCliSessionStore", () => {
     expect(results[0].text).toContain("投资风格");
   });
 
+  it("skips system prompt records and incomplete user-only turns during search", async () => {
+    const chatsDir = fs.mkdtempSync(path.join(os.tmpdir(), "jarvis-chats-"));
+    fs.writeFileSync(
+      path.join(chatsDir, "session-2026-06-01-noisy.jsonl"),
+      [
+        JSON.stringify({ sessionId: "noisy", kind: "main" }),
+        JSON.stringify({
+          id: "u-system",
+          timestamp: "2026-06-01T09:00:00.000Z",
+          type: "user",
+          content:
+            "You are Jarvis, a personalized AI assistant. Help the user safely, effectively, and concisely.",
+        }),
+        JSON.stringify({
+          id: "a-system",
+          timestamp: "2026-06-01T09:00:01.000Z",
+          type: "gemini",
+          content: "好的。",
+        }),
+        JSON.stringify({
+          id: "u-empty",
+          timestamp: "2026-06-01T10:00:00.000Z",
+          type: "user",
+          content: "给我一份今天github的趋势",
+        }),
+        JSON.stringify({
+          id: "u-real",
+          timestamp: "2026-06-01T11:00:00.000Z",
+          type: "user",
+          content: "我们讨论了 Universal Memory Layer 的召回问题",
+        }),
+        JSON.stringify({
+          id: "a-real",
+          timestamp: "2026-06-01T11:01:00.000Z",
+          type: "gemini",
+          content: "重点是过滤系统提示，并按时间范围召回真实对话。",
+        }),
+      ].join("\n") + "\n",
+    );
+
+    const store = new GeminiCliSessionStore({ chatsDir });
+    const results = await store.searchTurns({
+      query: "汇总下昨天我们讨论了什么内容 conversation_history",
+      limit: 8,
+      dateRange: {
+        from: Date.parse("2026-06-01T00:00:00+08:00"),
+        to: Date.parse("2026-06-02T00:00:00+08:00"),
+      },
+    });
+
+    expect(results).toHaveLength(1);
+    expect(results[0].text).toContain("Universal Memory Layer");
+    expect(results[0].text).not.toContain("You are Jarvis");
+    expect(results[0].text).not.toMatch(/Jarvis:\s*$/);
+  });
+
   it("reads a transcript without exposing Gemini roles to callers", async () => {
     const chatsDir = fs.mkdtempSync(path.join(os.tmpdir(), "jarvis-chats-"));
     fs.writeFileSync(

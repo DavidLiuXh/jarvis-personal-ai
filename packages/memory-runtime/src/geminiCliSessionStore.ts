@@ -21,6 +21,7 @@ import type { DateRange } from "./types.js";
 import {
   normalizeSessionTimestamp,
   scoreSessionSearchCandidates,
+  shouldIncludeSessionSearchPair,
 } from "./sessionStore.js";
 
 type RawGeminiSessionMessage = {
@@ -163,14 +164,20 @@ export class GeminiCliSessionStore implements SessionStore {
         for (let index = 0; index < messages.length; index++) {
           const userMsg = messages[index];
           if (userMsg?.type !== "user") continue;
-          const assistantMsg = messages
-            .slice(index + 1, index + 8)
-            .find(
-              (msg) =>
-                msg.type === "gemini" ||
-                msg.type === "model" ||
-                msg.type === "assistant",
-            );
+          const followingMessages = messages.slice(index + 1, index + 8);
+          const nextUserIndex = followingMessages.findIndex(
+            (msg) => msg.type === "user",
+          );
+          const assistantSearchWindow =
+            nextUserIndex === -1
+              ? followingMessages
+              : followingMessages.slice(0, nextUserIndex);
+          const assistantMsg = assistantSearchWindow.find(
+            (msg) =>
+              msg.type === "gemini" ||
+              msg.type === "model" ||
+              msg.type === "assistant",
+          );
           const timestamp =
             normalizeSessionTimestamp(userMsg.timestamp) ??
             normalizeSessionTimestamp(assistantMsg?.timestamp) ??
@@ -184,7 +191,9 @@ export class GeminiCliSessionStore implements SessionStore {
           }
           const userText = userMsg.content.trim();
           const assistantText = assistantMsg?.content.trim() ?? "";
-          if (!userText && !assistantText) continue;
+          if (!shouldIncludeSessionSearchPair({ userText, assistantText })) {
+            continue;
+          }
           const turns: SessionTranscriptTurn[] = [
             {
               id: userMsg.id,

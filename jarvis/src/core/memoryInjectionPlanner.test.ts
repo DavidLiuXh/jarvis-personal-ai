@@ -85,6 +85,33 @@ describe("MemoryInjectionPlanner", () => {
     expect(plan.prewarmSection).toContain("[Memory 2]: uncertain memory");
   });
 
+  it("supports per-call prewarm item override for time-scoped history recall", () => {
+    const planner = new MemoryInjectionPlanner();
+    const prewarmCandidates = Array.from({ length: 6 }, (_, index) => ({
+      text: `conversation memory ${index + 1}`,
+      score: 0.8,
+      tier: "verified" as const,
+    }));
+
+    const defaultPlan = planner.buildPlan({
+      querySubject: "personal",
+      summaryCandidates: [],
+      prewarmCandidates,
+    });
+    const overridePlan = planner.buildPlan({
+      querySubject: "personal",
+      summaryCandidates: [],
+      prewarmCandidates,
+      maxPrewarmItems: 6,
+    });
+
+    expect(defaultPlan.prewarmInjected).toBe(3);
+    expect(overridePlan.prewarmInjected).toBe(6);
+    expect(overridePlan.rejected).not.toContainEqual(
+      expect.objectContaining({ source: "prewarm", reason: "item_limit" }),
+    );
+  });
+
   it("compacts long summary chunks before rendering", () => {
     const planner = new MemoryInjectionPlanner({ maxSummaryItemChars: 40 });
     const longChunk =

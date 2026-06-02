@@ -537,6 +537,11 @@ export async function runJarvisUnifiedRuntimeTurn(
         })),
         summaryCandidates,
         prewarmCandidates,
+        maxPrewarmItems: memoryPolicy.reasons.includes(
+          "time_scoped_conversation_history",
+        )
+          ? Math.max(memoryPolicy.prewarmLimit, 8)
+          : undefined,
       });
       return {
         text:
