@@ -165,6 +165,24 @@ reference implementation. Production hosts can replace it with SQLite, pgvector,
 Qdrant, Milvus, Pinecone, or their own storage layer while keeping the same
 runtime contracts.
 
+For production filesystem-backed agents, `SqliteMemoryStore` provides the
+runtime-owned SQLite implementation. It initializes and operates the shared
+Jarvis memory schema:
+
+- `facts`
+- `memories`
+- `facts_fts`
+- `summary_chunks_index`
+- optional `vec_facts`
+- optional `vec_memories`
+- optional `vec_summary_chunks`
+
+It implements `FactMemoryStore`, `EntryMemoryStore`, `SessionMemoryStore`, and
+`MemoryWriteStore`, so it can be plugged directly into
+`DefaultLayeredMemoryRuntime`. Vector search is enabled by providing an
+`EmbeddingClient` and `vectorDimension`; otherwise it falls back to lexical and
+FTS search.
+
 ## Session Transcript Store
 
 Use `SessionStore` when the host needs to expose complete conversation

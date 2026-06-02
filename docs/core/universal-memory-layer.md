@@ -733,11 +733,22 @@ packages/intent-runtime/src/
   - `memory_write_finished`
 - package API smoke test 已覆盖 writer public exports。
 - `core/jarvisMemoryStores.ts` 新增 `JarvisMemoryWriteStore`，把 runtime 写入契约落到 Jarvis 现有 `MemoryService.saveFact()`、`saveEntryMemory()`、`appendSessionTurn()` 和 delete/list 方法；
-- `MemoryService` 新增 runtime-facing entry 保存、fact/entry/session list 和 delete 方法，作为 Jarvis SQLite/SessionStore 的 application adapter。
+- 新增 `packages/memory-runtime/src/sqliteMemoryStore.ts`；
+- 新增 `SqliteMemoryStore`，把以下 schema 和读写能力迁入 runtime：
+  - `facts`
+  - `memories`
+  - `facts_fts`
+  - `summary_chunks_index`
+  - 可选 `vec_facts`
+  - 可选 `vec_memories`
+  - 可选 `vec_summary_chunks`
+- `SqliteMemoryStore` 同时实现 `FactMemoryStore`、`EntryMemoryStore`、`SessionMemoryStore` 和 `MemoryWriteStore`，可以直接接入 `DefaultLayeredMemoryRuntime`；
+- `MemoryService` 新增 runtime-facing entry 保存、fact/entry/session list 和 delete 方法，并开始委托 `SqliteMemoryStore` 处理 `memories`、`vec_memories`、`summary_chunks_index`、`vec_summary_chunks` 的写入和读取。
 
 仍需注意：
 
 - Jarvis 主响应路径当前仍保留异步 `BackgroundDistiller` 和 `enqueue()` 策略，以避免改变线上行为；
+- `saveFact()` / `searchFacts()` 仍保留 Jarvis 专有逻辑，包括 entity extraction、consolidation、artifact/style/insight gating 和 reranker 排序；底层 SQLite schema 已进入 runtime，后续可以继续把这些高阶策略拆成 runtime policy/extension。
 - 新的 `DefaultLayeredMemoryRuntime` 已经提供统一三层写入入口，后续可以逐步把 distill / event extraction / manual memory tool 全部切到该入口。
 
 ### Phase 11：Memory Governance Policy

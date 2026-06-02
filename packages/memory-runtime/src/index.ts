@@ -35,6 +35,7 @@ export * from "./layeredMemoryRuntime.js";
 export * from "./memoryInjectionPlanner.js";
 export * from "./retrieval.js";
 export * from "./sessionStore.js";
+export * from "./sqliteMemoryStore.js";
 export * from "./store.js";
 export * from "./writer.js";
 export type {

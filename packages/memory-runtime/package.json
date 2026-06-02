@@ -58,6 +58,10 @@
       "types": "./dist/sessionStore.d.ts",
       "import": "./dist/sessionStore.js"
     },
+    "./sqliteMemoryStore": {
+      "types": "./dist/sqliteMemoryStore.d.ts",
+      "import": "./dist/sqliteMemoryStore.js"
+    },
     "./types": {
       "types": "./dist/types.d.ts",
       "import": "./dist/types.js"
@@ -75,6 +79,10 @@
     "build": "tsc -p tsconfig.json",
     "prepack": "npm run build",
     "pack:dry-run": "npm pack --dry-run"
+  },
+  "dependencies": {
+    "better-sqlite3": "^12.6.2",
+    "sqlite-vec": "^0.1.7-alpha.2"
   },
   "sideEffects": false
 }

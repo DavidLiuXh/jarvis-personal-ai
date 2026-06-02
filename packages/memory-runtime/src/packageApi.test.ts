@@ -11,6 +11,7 @@ import {
   GeminiCliSessionStore,
   JarvisJsonlSessionStore,
   MemoryInjectionPlanner,
+  SqliteMemoryStore,
   buildRecentConversationRecallCandidates,
   buildIntentAwareMemoryPolicy,
   extractConversationRecallTerms,
@@ -149,6 +150,29 @@ describe("@jarvis/memory-runtime package API", () => {
     expect(
       await runtime.searchEntries({ query: "Layered memory" }),
     ).toHaveLength(1);
+  });
+
+  it("exports SQLite-backed memory store implementation", async () => {
+    const dir = fs.mkdtempSync(
+      path.join(os.tmpdir(), "memory-runtime-sqlite-api-"),
+    );
+    const store = new SqliteMemoryStore({
+      dbPath: path.join(dir, "memory.db"),
+    });
+
+    await store.upsertFact({
+      id: "api-fact",
+      scope: "fact",
+      subject: "profile",
+      content: "SQLite-backed memory store is exported.",
+      confidence: 0.9,
+      sourceRefs: ["api"],
+      createdAt: "2026-06-02T00:00:00.000Z",
+      updatedAt: "2026-06-02T00:00:00.000Z",
+    });
+
+    expect(await store.searchFacts("SQLite-backed")).toHaveLength(1);
+    store.close();
   });
 
   it("exports session transcript store contracts and search helpers", () => {

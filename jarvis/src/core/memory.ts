@@ -9,7 +9,6 @@ import * as sqliteVec from "sqlite-vec";
 import path from "node:path";
 import fs from "node:fs";
 import os from "node:os";
-import crypto from "node:crypto";
 import * as genai from "@google/genai";
 import { HttpsProxyAgent } from "https-proxy-agent";
 import { debugLogger } from "../../../gemini-cli/packages/core/src/index.js";
@@ -23,6 +22,7 @@ import {
   JarvisJsonlSessionStore,
   type MemoryItem,
   type SessionMemory,
+  SqliteMemoryStore,
   type SessionStore,
   type SessionTranscriptTurn,
 } from "../memory-runtime/index.js";
@@ -42,10 +42,6 @@ function toLocalDateString(ms: number): string {
   const m = String(d.getMonth() + 1).padStart(2, "0");
   const day = String(d.getDate()).padStart(2, "0");
   return `${y}-${m}-${day}`;
-}
-
-function hashText(text: string): string {
-  return crypto.createHash("sha1").update(text).digest("hex");
 }
 
 function extractSessionMessageText(content: unknown): string {
@@ -162,30 +158,6 @@ async function callReranker(
 }
 
 export class MemoryService {
-  private static factCategoryToSubject(
-    category: string,
-  ): FactMemory["subject"] {
-    if (category === "identity") return "user";
-    if (category === "interaction_style" || category === "preference") {
-      return "preference";
-    }
-    if (category === "specification" || category === "artifact") {
-      return "project";
-    }
-    if (category === "relationship") return "relationship";
-    return "profile";
-  }
-
-  private static memorySourceToEntryKind(
-    source: string | null,
-  ): EntryMemory["kind"] {
-    if (source === "task") return "task";
-    if (source === "decision") return "decision";
-    if (source === "event") return "event";
-    if (source === "reflection") return "reflection";
-    return "conversation";
-  }
-
   private db: Database.Database;
   private jarvisConfig = ConfigManager.getInstance().get();
   private client: any = null;
@@ -216,6 +188,7 @@ export class MemoryService {
   private memoryDir: string;
   private entityExtractor: EntityExtractor | null = null;
   private sessionStore: SessionStore;
+  private sqliteMemoryStore: SqliteMemoryStore;
 
   constructor(
     sourceRoot: string,
@@ -237,7 +210,26 @@ export class MemoryService {
       fs.mkdirSync(memoryDir, { recursive: true });
     }
 
-    this.db = new Database(path.join(memoryDir, "memory.db"));
+    const memoryDbPath = path.join(memoryDir, "memory.db");
+    this.db = new Database(memoryDbPath);
+    this.sqliteMemoryStore = new SqliteMemoryStore({
+      dbPath: memoryDbPath,
+      vectorDimension: this.jarvisConfig.models.embeddingDimension,
+      embedding: {
+        embed: async (text: string) => {
+          if (this.embedContentFn) return this.embedContentFn(text);
+          if (this.client) {
+            const result = await this.client.models.embedContent({
+              model: this.jarvisConfig.models.embedding,
+              contents: [{ role: "user", parts: [{ text }] }],
+            });
+            const embeddings = result.embeddings || [result.embedding];
+            return embeddings[0].values;
+          }
+          throw new Error("Embedding client is not initialized.");
+        },
+      },
+    });
     // WAL mode: allows concurrent readers while a write is in progress,
     // and is more resilient to crashes than the default DELETE journal.
     this.db.pragma("journal_mode = WAL");
@@ -1254,30 +1246,18 @@ ${factsText}
   ) {
     // Skip raw conversation ingestion if disabled (events provide higher signal)
     if (!(this.jarvisConfig.memory.ingestConversations ?? false)) return;
-    if (!this.embedContentFn && !this.client) return;
     try {
       const text = `User: ${userPrompt}\nAssistant: ${assistantText}`;
-      let vecValues: number[];
-      if (this.embedContentFn) {
-        vecValues = await this.embedContentFn(text);
-      } else {
-        const result = await this.client.models.embedContent({
-          model: this.jarvisConfig.models.embedding,
-          contents: [{ role: "user", parts: [{ text }] }],
-        });
-        const embeddings = result.embeddings || [result.embedding];
-        vecValues = embeddings[0].values;
-      }
-      const info = this.db
-        .prepare(
-          "INSERT INTO memories (sessionId, text, timestamp) VALUES (?, ?, ?)",
-        )
-        .run(sessionId, text, Date.now());
-      try {
-        this.db
-          .prepare("INSERT INTO vec_memories (id, embedding) VALUES (?, ?)")
-          .run(BigInt(info.lastInsertRowid), new Float32Array(vecValues));
-      } catch (_vecErr) {}
+      await this.sqliteMemoryStore.upsertEntry({
+        id: "",
+        scope: "entry",
+        kind: "conversation",
+        content: text,
+        entities: [],
+        timestamp: new Date().toISOString(),
+        sourceRefs: [sessionId],
+        metadata: { sessionId, source: "conversation" },
+      });
     } catch (e) {}
   }
 
@@ -1289,185 +1269,15 @@ ${factsText}
     maxDistanceOverride?: number,
   ): Promise<Array<{ text: string; score: number }>> {
     if (!query?.trim()) return [];
-    if (!this.embedContentFn && !this.client) return [];
-    try {
-      let queryVec: number[];
-      if (this.embedContentFn) {
-        queryVec = await this.embedContentFn(query);
-      } else {
-        const result = await this.client.models.embedContent({
-          model: this.jarvisConfig.models.embedding,
-          contents: [{ role: "user", parts: [{ text: query }] }],
-        });
-        const embeddings = result.embeddings || [result.embedding];
-        queryVec = embeddings[0].values;
-      }
-
-      const fetchLimit = Math.max(limit * 4, 20);
-      const lambda = this.jarvisConfig.memory.decayLambda ?? 0.1;
-      const nowMs = Date.now();
-
-      // Resolve time window. Priority:
-      // 1. dateRange (absolute ms timestamps from LLM date_from/date_to args)
-      // 2. timeWindowDays (relative days, from LLM or router fallback)
-      // 3. null → no filter (all-time)
-      const timeWindow =
-        dateRange !== null
-          ? dateRange
-          : timeWindowDays !== null
-            ? (() => {
-                const DAY = 86_400_000;
-                const startOfToday = new Date(nowMs);
-                startOfToday.setHours(0, 0, 0, 0);
-                const fromMs = startOfToday.getTime() - timeWindowDays * DAY;
-                // For precise past-day queries (yesterday=1, day-before=2),
-                // cap to start of today to exclude today's records.
-                // For span queries (recently=3, last week=7, etc.) and today=0,
-                // use nowMs so current records are included.
-                const toMs =
-                  timeWindowDays >= 1 && timeWindowDays <= 2
-                    ? startOfToday.getTime()
-                    : nowMs;
-                return { from: fromMs, to: toMs };
-              })()
-            : null;
-
-      // Fetch candidates within distance threshold to avoid injecting
-      // semantically irrelevant memories into prewarm context.
-      // vec0 KNN requires LIMIT in the subquery; distance filter applied
-      // in the outer WHERE clause after JOIN to avoid vec0 syntax issues.
-      const memoryMaxDistance =
-        maxDistanceOverride ??
-        this.jarvisConfig.memory.memoryMaxDistance ??
-        1.0;
-
-      const rows = (
-        timeWindow
-          ? this.db
-              .prepare(
-                `SELECT m.text, m.source, m.timestamp, v.distance
-                 FROM memories m
-                 JOIN (
-                   SELECT id, distance FROM vec_memories
-                   WHERE embedding MATCH ?
-                   ORDER BY distance
-                   LIMIT ?
-                 ) v ON m.id = v.id
-                 WHERE v.distance < ?
-                   AND m.timestamp >= ?
-                   AND m.timestamp < ?`,
-              )
-              .all(
-                new Float32Array(queryVec),
-                fetchLimit,
-                memoryMaxDistance,
-                timeWindow.from,
-                timeWindow.to,
-              )
-          : this.db
-              .prepare(
-                `SELECT m.text, m.source, m.timestamp, v.distance
-                 FROM memories m
-                 JOIN (
-                   SELECT id, distance FROM vec_memories
-                   WHERE embedding MATCH ?
-                   ORDER BY distance
-                   LIMIT ?
-                 ) v ON m.id = v.id
-                 WHERE v.distance < ?`,
-              )
-              .all(new Float32Array(queryVec), fetchLimit, memoryMaxDistance)
-      ) as Array<{
-        text: string;
-        source: string;
-        timestamp: number;
-        distance: number;
-      }>;
-
-      if (timeWindow) {
-        const twSource = dateRange !== null ? "date-range" : "timeWindowDays";
-        debugLogger.debug(
-          `[search] temporal filter: [${toLocalDateString(timeWindow.from)} ~ ${toLocalDateString(timeWindow.to)}), source=${twSource}, candidates=${rows.length}`,
-        );
-      }
-
-      // Score: events get time decay bonus; conversations get no bonus
-      // fusedScore = (1 - distance) + eventBonus * decay
-      const eventBonus = 0.3;
-      const scored = rows.map((r) => {
-        const simScore = Math.max(0, 1 - (r.distance * r.distance) / 2);
-        let score = simScore;
-        if (r.source === "event" && r.timestamp) {
-          const daysSince = (nowMs - r.timestamp) / 86_400_000;
-          const decay = Math.exp(-lambda * daysSince);
-          score += eventBonus * decay;
-        }
-        return { text: r.text, score };
-      });
-
-      scored.sort((a, b) => b.score - a.score);
-
-      // Cross-encoder reranking of prewarm memories (optional, config-gated)
-      // When reranker is enabled, pass ALL scored candidates so the cross-encoder
-      // can correct bi-encoder ranking errors before slicing to limit.
-      const rerankerCfgSearch = this.jarvisConfig.reranker;
-      const searchRerankStrategy = rerankerCfgSearch?.enabled
-        ? "cross-encoder"
-        : "bi-encoder";
-      let results: Array<{ text: string; score: number }>;
-      if (rerankerCfgSearch?.enabled && scored.length > 1) {
-        const rerankerUrl =
-          rerankerCfgSearch.baseUrl ?? "http://localhost:7700";
-        const rerankerTimeout = rerankerCfgSearch.timeoutMs ?? 15_000;
-        const rerankerMaxRetries = rerankerCfgSearch.maxRetries ?? 2;
-        const rerankerModel = rerankerCfgSearch.model;
-        const pool = scored; // pass full scored pool to reranker
-        const beforeOrder = pool.slice(0, 5).map((r) => r.text.slice(0, 60));
-        const reranked = await callReranker(
-          query,
-          pool.map((r) => r.text),
-          limit,
-          rerankerUrl,
-          rerankerTimeout,
-          rerankerMaxRetries,
-          rerankerModel,
-        );
-        if (reranked) {
-          const relevanceThreshold =
-            rerankerCfgSearch.memoryRelevanceThreshold ?? -2;
-          const { filtered, filteredOut } =
-            MemoryService.applyRerankerThreshold(reranked, relevanceThreshold);
-          results = filtered.map((r) => ({ text: r.text, score: r.score }));
-          const afterOrder = results.map(
-            (r) => `${(r.score as number).toFixed(2)}:${r.text.slice(0, 60)}`,
-          );
-          console.error(
-            `🎯 [search] cross-encoder reranked ${pool.length}→${results.length} memories` +
-              (filteredOut > 0
-                ? ` (${filteredOut} below threshold=${relevanceThreshold})`
-                : "") +
-              `\n` +
-              `   before(top5): ${beforeOrder.join(" | ")}\n` +
-              `   after:  ${afterOrder.join(" | ") || "(none)"}`,
-          );
-        } else {
-          console.error(
-            `⚠️ [search] cross-encoder unavailable, using bi-encoder order`,
-          );
-          results = scored.slice(0, limit);
-        }
-      } else {
-        results = scored.slice(0, limit);
-      }
-
-      console.error(
-        `🔍 [search] strategy=${searchRerankStrategy}, rows=${rows.length}, scored=${scored.length}, returned=${results.length}`,
-      );
-      return results;
-    } catch (e: any) {
-      console.error(`⚠️ [search] failed: ${e?.message}`);
-      return [];
-    }
+    const runtimeEntries = await this.sqliteMemoryStore.searchEntries(query, {
+      limit,
+      dateRange,
+      maxDistance: maxDistanceOverride,
+    });
+    return runtimeEntries.map((entry) => ({
+      text: entry.content,
+      score: entry.score ?? 0,
+    }));
   }
 
   public async search(
@@ -1492,13 +1302,9 @@ ${factsText}
    * Each event is embedded and stored in vec_memories for semantic retrieval.
    */
   public async ingestEvents(events: string[]): Promise<void> {
-    // Capture before first await — concurrent bg agents may overwrite embedContentFn
-    const embedFn = this.embedContentFn;
-    if (!embedFn || events.length === 0) return;
-    let vecCount = 0;
+    if (events.length === 0) return;
     for (const text of events) {
       try {
-        const vec = await embedFn(text);
         // Use the date from the event text prefix [YYYY-MM-DD] as the timestamp
         // so temporal filtering matches the event's actual date, not ingestion time.
         // IMPORTANT: parse as local midnight (not UTC) so the timestamp aligns
@@ -1512,25 +1318,20 @@ ${factsText}
               return new Date(y, m - 1, d, 0, 0, 0, 0).getTime(); // local midnight
             })()
           : Date.now();
-        const info = this.db
-          .prepare(
-            "INSERT INTO memories (sessionId, text, timestamp, source) VALUES (?, ?, ?, 'event')",
-          )
-          .run("events", text, eventTimestamp);
-        try {
-          this.db
-            .prepare("INSERT INTO vec_memories (id, embedding) VALUES (?, ?)")
-            .run(BigInt(info.lastInsertRowid), new Float32Array(vec));
-          vecCount++;
-        } catch (vecErr: any) {
-          console.error(
-            `⚠️ [MemoryService] vec_memories insert failed for event: ${vecErr.message}`,
-          );
-        }
+        await this.sqliteMemoryStore.upsertEntry({
+          id: "",
+          scope: "entry",
+          kind: "event",
+          content: text,
+          entities: [],
+          timestamp: new Date(eventTimestamp).toISOString(),
+          sourceRefs: ["events"],
+          metadata: { sessionId: "events", source: "event" },
+        });
       } catch (_e) {}
     }
     console.error(
-      `📝 [MemoryService] ingestEvents: ${events.length} events → memories, ${vecCount} → vec_memories`,
+      `📝 [MemoryService] ingestEvents: ${events.length} events → runtime memories`,
     );
   }
 
@@ -1630,166 +1431,60 @@ ${factsText}
     sourceRefs?: string[];
     metadata?: Record<string, unknown>;
   }): Promise<EntryMemory> {
-    const timestampMs =
-      typeof input.timestamp === "number"
-        ? input.timestamp
-        : input.timestamp
-          ? Date.parse(input.timestamp)
-          : Date.now();
-    const safeTimestamp = Number.isNaN(timestampMs) ? Date.now() : timestampMs;
-    const source =
-      (typeof input.metadata?.source === "string" && input.metadata.source) ||
-      input.kind ||
-      "conversation";
-    const sessionId =
-      input.sessionId ??
-      (typeof input.metadata?.sessionId === "string"
-        ? input.metadata.sessionId
-        : "runtime");
-
-    let vecValues: number[] | null = null;
-    if (this.embedContentFn) {
-      vecValues = await this.embedContentFn(input.content).catch(() => null);
-    } else if (this.client) {
-      try {
-        const result = await this.client.models.embedContent({
-          model: this.jarvisConfig.models.embedding,
-          contents: [{ role: "user", parts: [{ text: input.content }] }],
-        });
-        const embeddings = result.embeddings || [result.embedding];
-        vecValues = embeddings[0].values;
-      } catch {
-        vecValues = null;
-      }
-    }
-
-    const info = this.db
-      .prepare(
-        "INSERT INTO memories (sessionId, text, timestamp, source) VALUES (?, ?, ?, ?)",
-      )
-      .run(sessionId, input.content, safeTimestamp, source);
-    if (vecValues) {
-      try {
-        this.db
-          .prepare("INSERT INTO vec_memories (id, embedding) VALUES (?, ?)")
-          .run(BigInt(info.lastInsertRowid), new Float32Array(vecValues));
-      } catch {
-        /* vec extension may be unavailable */
-      }
-    }
-
-    return {
-      id: String(info.lastInsertRowid),
+    return this.sqliteMemoryStore.upsertEntry({
+      id: input.id ?? "",
       scope: "entry",
       kind: input.kind ?? "conversation",
       content: input.content,
       entities: input.entities ?? [],
-      timestamp: new Date(safeTimestamp).toISOString(),
+      timestamp:
+        typeof input.timestamp === "number"
+          ? new Date(input.timestamp).toISOString()
+          : (input.timestamp ?? new Date().toISOString()),
       sourceRefs: input.sourceRefs ?? [],
       metadata: {
         ...input.metadata,
-        sessionId,
-        source,
+        sessionId: input.sessionId ?? input.metadata?.sessionId,
+        source: input.metadata?.source ?? input.kind ?? "conversation",
       },
-    };
+    });
   }
 
   public async listRuntimeFacts(limit = 500): Promise<FactMemory[]> {
-    const rows = this.db
-      .prepare(
-        "SELECT id, category, content, importance, timestamp FROM facts ORDER BY timestamp DESC LIMIT ?",
-      )
-      .all(limit) as Array<{
-      id: number;
-      category: string;
-      content: string;
-      importance: number;
-      timestamp: number | null;
-    }>;
-    return rows.map((row) => ({
-      id: String(row.id),
-      scope: "fact",
-      subject: MemoryService.factCategoryToSubject(row.category),
-      content: row.content,
-      confidence: Math.max(0.1, Math.min(1, (row.importance ?? 5) / 10)),
-      sourceRefs: ["jarvis:facts"],
-      createdAt: new Date(row.timestamp ?? Date.now()).toISOString(),
-      updatedAt: new Date(row.timestamp ?? Date.now()).toISOString(),
-      metadata: { category: row.category, importance: row.importance },
-    }));
+    return (await this.sqliteMemoryStore.listFacts()).slice(0, limit);
   }
 
   public async listRuntimeEntries(limit = 500): Promise<EntryMemory[]> {
-    const rows = this.db
-      .prepare(
-        "SELECT id, sessionId, text, timestamp, source FROM memories ORDER BY timestamp DESC LIMIT ?",
-      )
-      .all(limit) as Array<{
-      id: number;
-      sessionId: string | null;
-      text: string;
-      timestamp: number | null;
-      source: string | null;
-    }>;
-    return rows.map((row) => ({
-      id: String(row.id),
-      scope: "entry",
-      kind: MemoryService.memorySourceToEntryKind(row.source),
-      content: row.text,
-      entities: [],
-      timestamp: new Date(row.timestamp ?? Date.now()).toISOString(),
-      sourceRefs: row.sessionId ? [row.sessionId] : [],
-      metadata: { sessionId: row.sessionId, source: row.source },
-    }));
+    return (await this.sqliteMemoryStore.listEntries()).slice(0, limit);
   }
 
   public async listRuntimeSessions(limit = 100): Promise<SessionMemory[]> {
-    const summaries = await this.sessionStore.listSessions({ limit });
-    return summaries.map((summary) => ({
-      scope: "session",
-      sessionId: summary.sessionId,
-      turns: [],
-      summary: undefined,
-      topicState: summary.updatedAt
-        ? { label: summary.source, updatedAt: summary.updatedAt }
-        : undefined,
-    }));
+    const [summarySessions, transcriptSessions] = await Promise.all([
+      this.sqliteMemoryStore.listSessions(),
+      this.sessionStore.listSessions({ limit }),
+    ]);
+    const byId = new Map(
+      summarySessions.map((session) => [session.sessionId, session]),
+    );
+    for (const transcript of transcriptSessions) {
+      if (byId.has(transcript.sessionId)) continue;
+      byId.set(transcript.sessionId, {
+        scope: "session",
+        sessionId: transcript.sessionId,
+        turns: [],
+        topicState: transcript.updatedAt
+          ? { label: transcript.source, updatedAt: transcript.updatedAt }
+          : undefined,
+      });
+    }
+    return [...byId.values()].slice(0, limit);
   }
 
   public async deleteRuntimeMemory(input: {
     scope: MemoryItem["scope"];
     id: string;
   }): Promise<boolean> {
-    if (input.scope === "fact") {
-      const factId = Number(input.id);
-      if (!Number.isFinite(factId)) return false;
-      const info = this.db
-        .prepare("DELETE FROM facts WHERE id = ?")
-        .run(factId);
-      try {
-        this.db
-          .prepare("DELETE FROM vec_facts WHERE id = ?")
-          .run(BigInt(factId));
-      } catch {}
-      try {
-        this.db.prepare("DELETE FROM facts_fts WHERE fact_id = ?").run(factId);
-      } catch {}
-      return info.changes > 0;
-    }
-    if (input.scope === "entry") {
-      const entryId = Number(input.id);
-      if (!Number.isFinite(entryId)) return false;
-      const info = this.db
-        .prepare("DELETE FROM memories WHERE id = ?")
-        .run(entryId);
-      try {
-        this.db
-          .prepare("DELETE FROM vec_memories WHERE id = ?")
-          .run(BigInt(entryId));
-      } catch {}
-      return info.changes > 0;
-    }
-    return false;
+    return this.sqliteMemoryStore.deleteMemory(input);
   }
 
   public getCoreFacts(): string[] {
@@ -4112,90 +3807,13 @@ Events:`;
     summary: string,
   ): Promise<void> {
     if (this.isBackfillingSummaryChunks) return;
-    const embedFn = this.embedContentFn;
-
     this.isBackfillingSummaryChunks = true;
     try {
-      if (!summary.trim()) {
-        const existing = this.db
-          .prepare("SELECT id FROM summary_chunks_index WHERE session_id = ?")
-          .all(sessionId) as Array<{ id: number }>;
-        if (existing.length > 0) {
-          const ids = existing.map((row) => row.id);
-          this.db
-            .prepare(
-              `DELETE FROM summary_chunks_index WHERE id IN (${ids.map(() => "?").join(",")})`,
-            )
-            .run(...ids);
-          this.db
-            .prepare(
-              `DELETE FROM vec_summary_chunks WHERE id IN (${ids.map(() => "?").join(",")})`,
-            )
-            .run(...ids.map((id) => BigInt(id)));
-        }
-        return;
-      }
-
-      if (!embedFn) return;
-
       const chunks = extractSummaryChunks(summary);
-      const chunkPreview = summarizeChunkPreview(chunks, 4);
       debugLogger.debug(
-        `[SummaryIndex] backfill session=${sessionId} chunks=${chunks.length} preview=${chunkPreview.length > 0 ? chunkPreview.join(" | ") : "none"}`,
+        `[SummaryIndex] backfill session=${sessionId} chunks=${chunks.length} preview=${summarizeChunkPreview(chunks, 4).join(" | ") || "none"}`,
       );
-      const desiredHashes = new Set(chunks.map((chunk) => hashText(chunk)));
-      const existing = this.db
-        .prepare(
-          "SELECT id, chunk_hash, chunk_text FROM summary_chunks_index WHERE session_id = ?",
-        )
-        .all(sessionId) as Array<{
-        id: number;
-        chunk_hash: string;
-        chunk_text: string;
-      }>;
-
-      const stale = existing.filter(
-        (row) => !desiredHashes.has(row.chunk_hash),
-      );
-      if (stale.length > 0) {
-        const staleIds = stale.map((row) => row.id);
-        this.db
-          .prepare(
-            `DELETE FROM summary_chunks_index WHERE id IN (${staleIds.map(() => "?").join(",")})`,
-          )
-          .run(...staleIds);
-        this.db
-          .prepare(
-            `DELETE FROM vec_summary_chunks WHERE id IN (${staleIds.map(() => "?").join(",")})`,
-          )
-          .run(...staleIds.map((id) => BigInt(id)));
-      }
-
-      const existingMap = new Map(existing.map((row) => [row.chunk_hash, row]));
-      const toInsert = chunks.filter(
-        (chunk) => !existingMap.has(hashText(chunk)),
-      );
-
-      for (const chunk of toInsert) {
-        const vec = await embedFn(chunk);
-        const info = this.db
-          .prepare(
-            "INSERT INTO summary_chunks_index (session_id, chunk_hash, chunk_text) VALUES (?, ?, ?)",
-          )
-          .run(sessionId, hashText(chunk), chunk);
-        const id = info.lastInsertRowid as number;
-        this.db
-          .prepare(
-            "INSERT INTO vec_summary_chunks (id, embedding) VALUES (?, ?)",
-          )
-          .run(BigInt(id), new Float32Array(vec));
-      }
-
-      if (toInsert.length > 0 || stale.length > 0) {
-        console.error(
-          `✅ [SummaryIndex] session=${sessionId} +${toInsert.length} new, -${stale.length} removed (${chunks.length} active).`,
-        );
-      }
+      await this.sqliteMemoryStore.upsertSummaryChunks(sessionId, summary);
     } catch (e: any) {
       console.error(`⚠️ [SummaryIndex] backfill failed: ${e.message}`);
     } finally {
@@ -4209,51 +3827,19 @@ Events:`;
     topK: number = 3,
     maxDistance: number = 1.0,
   ): Promise<string[]> {
-    const embedFn = this.embedContentFn;
-    if (!embedFn || !query.trim()) return [];
-
+    if (!query.trim()) return [];
     try {
-      const queryVec = await embedFn(query);
-      const rows = this.db
-        .prepare(
-          `SELECT s.chunk_text, v.distance
-           FROM summary_chunks_index s
-           JOIN (
-             SELECT id, distance FROM vec_summary_chunks
-             WHERE embedding MATCH ?
-             ORDER BY distance
-             LIMIT ?
-           ) v ON s.id = v.id
-           WHERE s.session_id = ? AND v.distance < ?
-           ORDER BY v.distance ASC`,
-        )
-        .all(
-          new Float32Array(queryVec),
-          topK * 4,
-          sessionId,
-          maxDistance,
-        ) as Array<{ chunk_text: string; distance: number }>;
-
-      if (rows.length === 0) return [];
-
-      if (rows[0].distance > maxDistance) {
-        debugLogger.debug(
-          `[SummaryIndex] top hit too far (distance=${rows[0].distance.toFixed(3)} > ${maxDistance.toFixed(3)}), skipping summary injection; top=${rows[0].chunk_text.slice(0, 120).replace(/\s+/g, " ")}`,
-        );
-        return [];
-      }
-
-      const results = rows.slice(0, topK).map((row) => row.chunk_text);
+      const results = await this.sqliteMemoryStore.searchSession(query, {
+        sessionId,
+        limit: topK,
+        maxDistance,
+      });
       debugLogger.debug(
-        `[SummaryIndex] searchSummaryChunks("${query.slice(0, 50)}", topK=${topK}, maxDist=${maxDistance}) → ${results.length}; hits=${rows
-          .slice(0, topK)
-          .map(
-            (row) =>
-              `${row.distance.toFixed(3)}:${row.chunk_text.slice(0, 80).replace(/\s+/g, " ")}`,
-          )
-          .join(" | ")}`,
+        `[SummaryIndex] searchSummaryChunks("${query.slice(0, 50)}", topK=${topK}, maxDist=${maxDistance}) → ${results.length}`,
       );
-      return results;
+      return results
+        .map((result) => result.summary)
+        .filter(Boolean) as string[];
     } catch (e: any) {
       console.error(`⚠️ [SummaryIndex] search failed: ${e.message}`);
       return [];
