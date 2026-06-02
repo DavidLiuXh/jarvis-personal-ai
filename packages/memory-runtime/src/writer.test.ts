@@ -1,0 +1,158 @@
+import { describe, expect, it } from "vitest";
+import { DefaultMemoryStore } from "./store.js";
+import { DefaultMemoryWriterRuntime } from "./writer.js";
+import { DefaultMemoryRetriever } from "./retrieval.js";
+import type {
+  EntryMemory,
+  FactMemory,
+  MemoryContract,
+  SessionMemory,
+} from "./types.js";
+
+const now = "2026-06-02T00:00:00.000Z";
+
+function fact(overrides: Partial<FactMemory> = {}): FactMemory {
+  return {
+    id: overrides.id ?? "fact-1",
+    scope: "fact",
+    subject: overrides.subject ?? "profile",
+    content: overrides.content ?? "The user prefers concise Chinese replies.",
+    confidence: overrides.confidence ?? 0.8,
+    sourceRefs: overrides.sourceRefs ?? ["test"],
+    createdAt: overrides.createdAt ?? now,
+    updatedAt: overrides.updatedAt ?? now,
+    metadata: overrides.metadata,
+  };
+}
+
+function entry(overrides: Partial<EntryMemory> = {}): EntryMemory {
+  return {
+    id: overrides.id ?? "entry-1",
+    scope: "entry",
+    kind: overrides.kind ?? "conversation",
+    content: overrides.content ?? "Discussed Universal Memory Layer design.",
+    entities: overrides.entities ?? ["memory"],
+    timestamp: overrides.timestamp ?? now,
+    sourceRefs: overrides.sourceRefs ?? ["session"],
+    metadata: overrides.metadata,
+  };
+}
+
+function session(overrides: Partial<SessionMemory> = {}): SessionMemory {
+  return {
+    scope: "session",
+    sessionId: overrides.sessionId ?? "session-1",
+    turns: overrides.turns ?? [{ role: "user", content: "hello" }],
+    summary: overrides.summary,
+    topicState: overrides.topicState,
+    metadata: overrides.metadata,
+  };
+}
+
+function contract(query: string): MemoryContract {
+  return {
+    needMemory: true,
+    subjectBoundary: "personal",
+    targetScopes: ["session", "fact", "entry"],
+    memoryTarget: "conversation_history",
+    query: { raw: query, entities: ["memory"] },
+    confidence: { subject: 1, target: 1, query: 1 },
+    constraints: {
+      allowPersonalFacts: true,
+      allowSessionHistory: true,
+      allowEntries: true,
+      maxChars: 1000,
+    },
+    reasons: ["test"],
+    policyTrace: [],
+  };
+}
+
+describe("DefaultMemoryWriterRuntime", () => {
+  it("merges duplicate facts and keeps the stronger source metadata", async () => {
+    const store = new DefaultMemoryStore({
+      facts: [fact({ id: "existing", confidence: 0.7, sourceRefs: ["old"] })],
+    });
+    const writer = new DefaultMemoryWriterRuntime({ store });
+
+    const [result] = await writer.write([
+      {
+        operation: "upsert",
+        item: fact({
+          id: "incoming",
+          confidence: 0.95,
+          sourceRefs: ["new"],
+        }),
+      },
+    ]);
+
+    expect(result.decision.action).toBe("merge");
+    expect(result.decision.reasonCode).toBe("duplicate_content");
+    expect(await store.listFacts()).toHaveLength(1);
+    expect((await store.listFacts())[0].confidence).toBe(0.95);
+    expect((await store.listFacts())[0].sourceRefs).toEqual(["old", "new"]);
+  });
+
+  it("skips lower-confidence conflicting facts for the same subject", async () => {
+    const store = new DefaultMemoryStore({
+      facts: [
+        fact({
+          id: "profile",
+          subject: "profile",
+          content: "The user prefers detailed answers.",
+          confidence: 0.95,
+        }),
+      ],
+    });
+    const writer = new DefaultMemoryWriterRuntime({ store });
+
+    const [result] = await writer.write([
+      {
+        operation: "upsert",
+        item: fact({
+          id: "conflict",
+          subject: "profile",
+          content: "The user prefers one-word answers.",
+          confidence: 0.5,
+        }),
+      },
+    ]);
+
+    expect(result.decision.action).toBe("skip");
+    expect(result.decision.reasonCode).toBe("lower_confidence_conflict");
+    expect(await store.listFacts()).toHaveLength(1);
+  });
+
+  it("upserts sessions and exposes the same store through retrieval adapters", async () => {
+    const store = new DefaultMemoryStore({
+      entries: [entry()],
+    });
+    const events: string[] = [];
+    const writer = new DefaultMemoryWriterRuntime({
+      store,
+      observer(event) {
+        events.push(event.type);
+      },
+    });
+
+    await writer.write([
+      {
+        operation: "upsert",
+        item: session({
+          summary: "Discussed Universal Memory Layer write runtime.",
+        }),
+      },
+    ]);
+
+    const retriever = new DefaultMemoryRetriever({
+      stores: { facts: store, entries: store, session: store },
+      sessionId: "session-1",
+    });
+    const result = await retriever.retrieve(contract("Universal Memory Layer"));
+
+    expect(events).toContain("memory_write_started");
+    expect(events).toContain("memory_write_finished");
+    expect(result.session).toHaveLength(1);
+    expect(result.entries).toHaveLength(1);
+  });
+});

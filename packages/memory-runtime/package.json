@@ -22,6 +22,10 @@
       "types": "./dist/crudPolicy.d.ts",
       "import": "./dist/crudPolicy.js"
     },
+    "./governance": {
+      "types": "./dist/governance.d.ts",
+      "import": "./dist/governance.js"
+    },
     "./intentAwareMemoryPolicy": {
       "types": "./dist/intentAwareMemoryPolicy.d.ts",
       "import": "./dist/intentAwareMemoryPolicy.js"
@@ -42,6 +46,10 @@
       "types": "./dist/retrieval.d.ts",
       "import": "./dist/retrieval.js"
     },
+    "./store": {
+      "types": "./dist/store.d.ts",
+      "import": "./dist/store.js"
+    },
     "./runtime": {
       "types": "./dist/runtime.d.ts",
       "import": "./dist/runtime.js"
@@ -49,6 +57,10 @@
     "./types": {
       "types": "./dist/types.d.ts",
       "import": "./dist/types.js"
+    },
+    "./writer": {
+      "types": "./dist/writer.d.ts",
+      "import": "./dist/writer.js"
     }
   },
   "files": [

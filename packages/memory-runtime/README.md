@@ -10,7 +10,9 @@ This package owns:
 - memory contract planning helpers;
 - memory retrieval and injection interfaces;
 - clarification and memory policy helpers;
-- the minimal `DefaultMemoryRuntime` lifecycle.
+- the `DefaultMemoryRuntime` read lifecycle;
+- memory write governance and `DefaultMemoryWriterRuntime`;
+- a dependency-free `DefaultMemoryStore` reference implementation.
 
 It must not import from `jarvis/src/core` or from `@jarvis/intent-runtime`.
 
@@ -33,20 +35,26 @@ const runtime = new DefaultMemoryRuntime({
       subjectBoundary: "mixed",
       memoryTarget: "none",
       targetScopes: [],
-      dateRange: null,
-      timeWindowDays: null,
-      prewarmLimit: 0,
-      maxDistance: 1,
+      query: { raw: "hello", entities: [] },
+      confidence: { subject: 1, target: 1, query: 1 },
+      constraints: {
+        allowPersonalFacts: false,
+        allowSessionHistory: false,
+        allowEntries: false,
+        maxChars: 0,
+      },
+      reasons: ["example"],
+      policyTrace: [],
     };
   },
-  async retrieve() {
-    return { session: [], facts: [], entries: [] };
+  async retrieve(contract) {
+    return { contract, session: [], facts: [], entries: [] };
   },
   async inject() {
     return {
-      systemPromptSection: "",
+      text: "",
       usedChars: 0,
-      injected: [],
+      injected: { session: 0, facts: 0, entries: 0 },
       rejected: [],
       trace: [],
     };
@@ -75,6 +83,53 @@ const injected = await runtime.inject({
   budget: { maxChars: 4000 },
 });
 ```
+
+## Write Runtime
+
+Use `DefaultMemoryWriterRuntime` when the host wants memory writes to go through
+deterministic governance instead of writing directly to storage.
+
+```ts
+import {
+  DefaultMemoryStore,
+  DefaultMemoryWriterRuntime,
+} from "@jarvis/memory-runtime";
+
+const store = new DefaultMemoryStore();
+const writer = new DefaultMemoryWriterRuntime({ store });
+
+await writer.write([
+  {
+    operation: "upsert",
+    item: {
+      id: "fact-1",
+      scope: "fact",
+      subject: "preference",
+      content: "The user prefers concise Chinese replies.",
+      confidence: 0.95,
+      sourceRefs: ["profile"],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    },
+  },
+]);
+```
+
+The default governance policy handles:
+
+- empty-content rejection;
+- duplicate merge;
+- lower-confidence conflict skipping;
+- higher-confidence replacement;
+- session upsert;
+- explicit delete.
+
+`DefaultMemoryStore` implements the read adapters (`FactMemoryStore`,
+`EntryMemoryStore`, `SessionMemoryStore`) and write adapter (`MemoryWriteStore`).
+It is dependency-free and suitable for tests, examples, small agents, and as a
+reference implementation. Production hosts can replace it with SQLite, pgvector,
+Qdrant, Milvus, Pinecone, or their own storage layer while keeping the same
+runtime contracts.
 
 ## Compatibility
 

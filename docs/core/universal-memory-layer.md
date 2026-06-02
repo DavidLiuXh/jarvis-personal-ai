@@ -295,7 +295,7 @@ export interface MemoryRuntime {
 - `packages/memory-runtime/src/runtime.ts` 已提供 `MemoryRuntime` 接口；
 - 同文件已提供 `DefaultMemoryRuntime`，通过依赖注入串联 `understand -> planMemory -> retrieve -> inject -> observe`；
 - 这层不直接依赖 JarvisAgent、ToolRouter、Gemini CLI 或具体数据库；
-- Jarvis 当前主路径暂未整体切到 `DefaultMemoryRuntime`，仍由 `agent.ts` 编排，以降低迁移风险。
+- Jarvis 主响应路径已通过 `AgentRuntime` / `jarvisUnifiedRuntime` 调用 `DefaultMemoryRuntime`，`agent.ts` 只保留 application adapter、事件转发和持久化副作用。
 
 原因：
 
@@ -373,7 +373,7 @@ export interface Reranker {
 1. `IntentResolver` 实现本体；
 2. `runtimeIntentFeedbackCollector.ts`；
 3. `MemoryService` 及具体 fact / entry / vector store 实现；
-4. Jarvis 主流程中的 retrieval / prompt refresh 编排。
+4. Jarvis 专属 query rewrite、recent conversation recall、summary fallback、skill retrieval extension 实现。
 
 ## 8. 当前阻碍复用的耦合点
 
@@ -682,9 +682,133 @@ packages/intent-runtime/src/
 
 剩余限制：
 
-- `DefaultMemoryRuntime` 尚未接管 skill retrieval；
-- `DefaultMemoryRuntime` 尚未接管 tool/subagent 执行，只负责主响应 memory lifecycle；
-- memory feedback 目前进入 candidate JSONL，但还没有自动进入稳定 eval case。
+- skill retrieval 已由 `AgentRuntime` 统一编排，不属于 `DefaultMemoryRuntime` 的职责；
+- tool/subagent 执行层已消费同一份 `MemoryContract` 与 step-level memory decision，但具体执行仍是 Jarvis adapter；
+- memory feedback 目前进入 candidate JSONL，稳定 eval 晋升仍通过 review workflow。
+
+### Phase 10：Memory Writer Runtime
+
+目标：
+
+- 将 fact / entry / session / summary 的写入入口从具体应用服务中抽象出来；
+- 写入不直接落库，而是先经过 deterministic governance；
+- 写入过程产生可观察事件，进入质量门禁和 feedback loop。
+
+优先级：P0。
+
+原因：
+
+- 之前 `DefaultMemoryRuntime` 已经覆盖读路径，但写入侧仍缺 runtime contract；
+- 没有统一 writer，fact extraction、entry 写入、session 更新、summary 刷新会继续由宿主项目分散实现；
+- 写入侧如果没有治理，重复事实、低置信冲突、空内容和来源追踪会不断污染长期记忆。
+
+当前实现状态：
+
+- 新增 `packages/memory-runtime/src/writer.ts`；
+- 新增 `DefaultMemoryWriterRuntime`；
+- 新增 `MemoryWriteRequest` / `MemoryWriteResult` / `MemoryWriterRuntimeEvent`；
+- 支持 `upsert` 和 `delete`；
+- 支持 observer 事件：
+  - `memory_write_started`
+  - `memory_write_decision`
+  - `memory_write_finished`
+- package API smoke test 已覆盖 writer public exports。
+
+### Phase 11：Memory Governance Policy
+
+目标：
+
+- 将去重、冲突、低置信跳过、来源合并和 session upsert 从 store 实现中抽离；
+- 每次写入都有 reason code；
+- 后续 memory feedback 和 eval 可以基于 reason code 归因。
+
+优先级：P1。
+
+原因：
+
+- memory 写入质量比召回质量更难修复，一旦污染长期记忆，会持续影响后续响应；
+- governance 需要独立于具体数据库，否则 SQLite、pgvector、Qdrant 等 store 会各自实现一套不一致规则；
+- reason code 是 debug、eval 和线上反馈闭环的基础。
+
+当前实现状态：
+
+- 新增 `packages/memory-runtime/src/governance.ts`；
+- 新增 `MemoryGovernancePolicy`；
+- 支持 reason codes：
+  - `empty_content`
+  - `duplicate_content`
+  - `same_subject_update`
+  - `lower_confidence_conflict`
+  - `higher_confidence_replaces`
+  - `delete_requested`
+  - `new_memory`
+  - `session_upsert`
+- 默认策略支持：
+  - 空内容跳过；
+  - lexical duplicate merge；
+  - 同 subject 低置信冲突跳过；
+  - 高置信事实替换 / 合并来源；
+  - session 按 `sessionId` upsert；
+  - 显式 delete。
+
+### Phase 12：Default Memory Store
+
+目标：
+
+- 提供一个不依赖 Jarvis `MemoryService` 的默认 store；
+- 同时实现 read adapters 和 write adapter；
+- 给外部项目、测试、examples 和 quality gate 一个开箱即用的 reference implementation。
+
+优先级：P1。
+
+原因：
+
+- 只有 adapter interface 不够，外部项目仍需要自己从零实现 store；
+- 默认 store 可以证明 runtime contract 是自洽的；
+- 生产项目仍可替换为 SQLite、pgvector、Qdrant、Milvus、Pinecone 或自有存储。
+
+当前实现状态：
+
+- 新增 `packages/memory-runtime/src/store.ts`；
+- 新增 `DefaultMemoryStore`；
+- 实现 read adapters：
+  - `FactMemoryStore`
+  - `EntryMemoryStore`
+  - `SessionMemoryStore`
+- 实现 write adapter：
+  - `MemoryWriteStore`
+- 默认检索使用 dependency-free lexical similarity；
+- 适合作为测试、小型 agent 和外部嵌入参考实现。
+
+### Phase 13：Memory Quality Gate
+
+目标：
+
+- 将 memory 写入、治理、检索、注入和 external boundary 纳入独立质量门禁；
+- 避免 memory 质量只依赖 intent matrix 间接覆盖；
+- 为后续真实 memory failure 样本晋升 eval 留出稳定入口。
+
+优先级：P2。
+
+原因：
+
+- intent eval 能证明“该不该查 memory”，但不能证明“写入的 memory 是否干净、召回是否正确、注入是否安全”；
+- memory 质量退化经常表现为长期污染或召回漂移，必须有独立 gate；
+- 独立 JSON / Markdown report 方便后续 dashboard 聚合。
+
+当前实现状态：
+
+- 新增 `scripts/run_memory_quality.ts`；
+- 新增 `npm run memory:quality`；
+- `npm run runtime:quality` 已纳入 `memory:quality`；
+- 当前覆盖：
+  - duplicate fact governance；
+  - low-confidence conflict skip；
+  - retrieve then inject；
+  - external memory boundary；
+- 输出：
+  - `evals/logs/memory-quality-latest.json`
+  - `evals/logs/memory-quality-latest.md`
 
 ### Phase 9：Intent Runtime 边界稳定化
 
@@ -753,13 +877,13 @@ Universal Memory Layer 不应该负责：
 
 ## 12. 当前结论
 
-Jarvis 当前实现已经具备抽象出 Universal Memory Layer 的基础，但还没有达到开箱即用 package 的程度。
+Jarvis 当前实现已经具备抽象出 Universal Memory Layer 的基础，并且已经从“读路径 runtime”推进到“读写闭环 runtime”。
 
 当前状态可以判断为：
 
 - 作为参考实现：已经可用；
-- 作为 Jarvis 内部子系统：已经基本成型；
-- 作为其他 agent 项目的可复用库：意图、policy、contract、retrieval adapter、injection planner 和 runtime lifecycle 已具备复用基础；
-- 作为通用开源 package：还需要迁移、文档、eval 和 API 稳定化。
+- 作为 Jarvis 内部子系统：已经成型；
+- 作为其他 agent 项目的可复用库：意图、policy、contract、retrieval adapter、injection planner、writer runtime、governance policy、default store 和 runtime lifecycle 已具备复用基础；
+- 作为通用开源 package：已具备发布前工程形态，仍需真实项目持续验证 memory quality 分布。
 
-当前最实际的下一步是将 Jarvis 主响应路径逐步改为调用 `DefaultMemoryRuntime` / `DefaultMemoryRetriever`，但要先把 Jarvis 特有的 query rewrite、recent conversation recall、summary fallback 和 skill retrieval 纳入 runtime extension points。这样可以避免为了抽象而牺牲现有召回质量。
+当前最实际的下一步不是继续扩大 runtime 边界，而是把真实使用中的 memory failure 自动沉淀到 `memory:quality` 的候选集中，并通过 review workflow 晋升为稳定回归用例。

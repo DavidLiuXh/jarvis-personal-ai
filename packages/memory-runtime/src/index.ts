@@ -26,10 +26,13 @@ export {
 } from "./runtime.js";
 export * from "./clarificationPolicy.js";
 export * from "./crudPolicy.js";
+export * from "./governance.js";
 export * from "./intentAwareMemoryPolicy.js";
 export * from "./intentPolicy.js";
 export * from "./memoryInjectionPlanner.js";
 export * from "./retrieval.js";
+export * from "./store.js";
+export * from "./writer.js";
 export type {
   ClarificationQuestion,
   ConversationRole,

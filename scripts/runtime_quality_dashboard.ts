@@ -25,6 +25,7 @@ function parseArgs(argv: string[]) {
     outputDir: path.join(repoRoot, "evals/logs"),
     matrixJson: "",
     llmBackendJson: "",
+    memoryQualityJson: "",
     gate: false,
     highRiskConfidenceFloor: 0.8,
   };
@@ -42,6 +43,9 @@ function parseArgs(argv: string[]) {
       i += 1;
     } else if (arg === "--llm-backend-json" && next) {
       args.llmBackendJson = path.resolve(next);
+      i += 1;
+    } else if (arg === "--memory-quality-json" && next) {
+      args.memoryQualityJson = path.resolve(next);
       i += 1;
     } else if (arg === "--gate") {
       args.gate = true;
@@ -128,6 +132,7 @@ function successWithoutToolViolations(matrix: any) {
 function buildGates(input: {
   matrix: any;
   llmBackend: any;
+  memoryQuality: any;
   highRiskConfidenceFloor: number;
 }): GateResult[] {
   const highRiskViolations = highRiskConfidenceViolations(
@@ -176,6 +181,17 @@ function buildGates(input: {
       message: "Backend adapter smoke evals must pass.",
       actual: `${input.llmBackend?.passed ?? 0}/${input.llmBackend?.total ?? 0}`,
       expected: "failed=0",
+    },
+    {
+      id: "memory_quality_eval_pass",
+      passed:
+        input.memoryQuality !== null &&
+        (input.memoryQuality.total ?? 0) > 0 &&
+        input.memoryQuality.passed === input.memoryQuality.total,
+      severity: "blocker",
+      message: "Memory runtime write/read/injection quality evals must pass.",
+      actual: `${input.memoryQuality?.passed ?? 0}/${input.memoryQuality?.total ?? 0}`,
+      expected: "passed=total",
     },
   ];
 }
@@ -231,6 +247,7 @@ function renderMarkdown(payload: any): string {
     `- Verdict: ${payload.verdict}`,
     `- Matrix: ${payload.summary.matrix.passed}/${payload.summary.matrix.total}`,
     `- LLM backend: ${payload.summary.llmBackend.passed}/${payload.summary.llmBackend.total}`,
+    `- Memory quality: ${payload.summary.memoryQuality.passed}/${payload.summary.memoryQuality.total}`,
     "",
     "## Quality Gates",
     "",
@@ -269,16 +286,24 @@ function main() {
   const llmBackendPath =
     args.llmBackendJson ||
     findLatest(args.logsDir, "llm-backend-latest.json", "llm-backend-");
+  const memoryQualityPath =
+    args.memoryQualityJson ||
+    findLatest(args.logsDir, "memory-quality-latest.json", "memory-quality-");
   const matrix = readJson<any>(matrixPath);
   const llmBackend = readJson<any>(llmBackendPath);
+  const memoryQuality = readJson<any>(memoryQualityPath);
   if (!matrix) throw new Error(`Matrix report not found: ${matrixPath}`);
   if (!llmBackend) {
     throw new Error(`LLM backend report not found: ${llmBackendPath}`);
+  }
+  if (!memoryQuality) {
+    throw new Error(`Memory quality report not found: ${memoryQualityPath}`);
   }
 
   const gates = buildGates({
     matrix,
     llmBackend,
+    memoryQuality,
     highRiskConfidenceFloor: args.highRiskConfidenceFloor,
   });
   const verdict = gates.every((gate) => gate.passed) ? "pass" : "fail";
@@ -288,6 +313,7 @@ function main() {
     sources: {
       matrix: path.relative(repoRoot, matrixPath),
       llmBackend: path.relative(repoRoot, llmBackendPath),
+      memoryQuality: path.relative(repoRoot, memoryQualityPath),
     },
     summary: {
       matrix: {
@@ -301,6 +327,12 @@ function main() {
         passed: llmBackend.passed ?? 0,
         failed: llmBackend.failed ?? 0,
         passRate: passRate(llmBackend.passed ?? 0, llmBackend.total ?? 0),
+      },
+      memoryQuality: {
+        total: memoryQuality.total ?? 0,
+        passed: memoryQuality.passed ?? 0,
+        failed: (memoryQuality.total ?? 0) - (memoryQuality.passed ?? 0),
+        passRate: passRate(memoryQuality.passed ?? 0, memoryQuality.total ?? 0),
       },
     },
     trend: matrix.trend,

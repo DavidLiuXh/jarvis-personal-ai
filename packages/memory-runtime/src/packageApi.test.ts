@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   DefaultMemoryRuntime,
+  DefaultMemoryStore,
+  DefaultMemoryWriterRuntime,
   MemoryInjectionPlanner,
   buildIntentAwareMemoryPolicy,
   type MemoryContract,
@@ -13,26 +15,32 @@ describe("@jarvis/memory-runtime package API", () => {
       subjectBoundary: "mixed",
       memoryTarget: "none",
       targetScopes: [],
-      dateRange: null,
-      timeWindowDays: null,
-      prewarmLimit: 0,
-      maxDistance: 1,
+      query: { raw: "hello", entities: [] },
+      confidence: { subject: 1, target: 1, query: 1 },
+      constraints: {
+        allowPersonalFacts: false,
+        allowSessionHistory: false,
+        allowEntries: false,
+        maxChars: 0,
+      },
+      reasons: ["test"],
+      policyTrace: [],
     };
     const runtime = new DefaultMemoryRuntime({
       async understand(turn) {
-        return { query: turn.userPrompt, subject: "mixed" };
+        return { query: turn.prompt, subject: "mixed" };
       },
       async planMemory() {
         return contract;
       },
-      async retrieve() {
-        return { session: [], facts: [], entries: [] };
+      async retrieve(contract) {
+        return { contract, session: [], facts: [], entries: [] };
       },
       async inject() {
         return {
-          systemPromptSection: "",
+          text: "",
           usedChars: 0,
-          injected: [],
+          injected: { session: 0, facts: 0, entries: 0 },
           rejected: [],
           trace: [],
         };
@@ -82,5 +90,28 @@ describe("@jarvis/memory-runtime package API", () => {
         config: {},
       }).allowFacts,
     ).toBe(false);
+  });
+
+  it("exports writer, governance, and default store APIs", async () => {
+    const store = new DefaultMemoryStore();
+    const writer = new DefaultMemoryWriterRuntime({ store });
+    const [result] = await writer.write([
+      {
+        operation: "upsert",
+        item: {
+          id: "fact-1",
+          scope: "fact",
+          subject: "preference",
+          content: "The user prefers concise Chinese replies.",
+          confidence: 0.95,
+          sourceRefs: ["test"],
+          createdAt: "2026-06-02T00:00:00.000Z",
+          updatedAt: "2026-06-02T00:00:00.000Z",
+        },
+      },
+    ]);
+
+    expect(result.decision.action).toBe("insert");
+    expect(await store.listFacts()).toHaveLength(1);
   });
 });
