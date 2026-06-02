@@ -13,18 +13,27 @@
     <script src="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/highlight.min.js"></script>
     <style>
         :root {
-            --bg-main: #0f172a;
-            --bg-card: #1e293b;
-            --bg-hover: #334155;
-            --text-main: #f1f5f9;
-            --text-muted: #94a3b8;
-            --accent: #3b82f6;
+            --bg-main: #0b1018;
+            --bg-card: #151c28;
+            --bg-elevated: #1a2332;
+            --bg-hover: #2a3548;
+            --border-subtle: #263244;
+            --text-main: #eef3f8;
+            --text-muted: #9aa8ba;
+            --text-soft: #c7d2e0;
+            --accent: #4f8cff;
             --success: #10b981;
             --error: #f87171;
+            --composer-height: 96px;
+        }
+        * {
+            box-sizing: border-box;
         }
         body {
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-            background-color: var(--bg-main);
+            background:
+                radial-gradient(circle at top left, rgba(79, 140, 255, 0.12), transparent 34rem),
+                linear-gradient(180deg, #101827 0%, var(--bg-main) 36%);
             color: var(--text-main);
             margin: 0;
             display: flex;
@@ -33,31 +42,35 @@
             overflow: hidden;
         }
         header {
-            padding: 1rem 2rem;
-            background-color: var(--bg-card);
-            border-bottom: 1px solid var(--bg-hover);
+            padding: 0.85rem 1.5rem;
+            background-color: rgba(21, 28, 40, 0.88);
+            border-bottom: 1px solid var(--border-subtle);
             display: flex;
             align-items: center;
             justify-content: space-between;
-            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+            box-shadow: 0 12px 30px rgba(0, 0, 0, 0.18);
+            backdrop-filter: blur(12px);
+            z-index: 20;
         }
         #chat-window {
             flex: 1;
             overflow-y: auto;
-            padding: 2rem;
+            padding: 2rem clamp(1rem, 3vw, 2.75rem) 1.5rem;
             display: flex;
             flex-direction: column;
-            gap: 1.5rem;
+            gap: 1.1rem;
             scroll-behavior: smooth;
+            scrollbar-gutter: stable;
         }
         .message {
-            max-width: 90%;
-            padding: 1.25rem;
-            border-radius: 1rem;
-            line-height: 1.6;
-            word-wrap: break-word;
+            max-width: min(900px, 92%);
+            padding: 1rem 1.15rem;
+            border-radius: 0.85rem;
+            line-height: 1.68;
+            overflow-wrap: anywhere;
             position: relative;
-            animation: fadeIn 0.3s ease-out;
+            animation: fadeIn 0.18s ease-out;
+            box-shadow: 0 12px 30px rgba(0, 0, 0, 0.18);
         }
         @keyframes fadeIn {
             from { opacity: 0; transform: translateY(10px); }
@@ -65,37 +78,91 @@
         }
         .user {
             align-self: flex-end;
-            background-color: var(--accent);
+            max-width: min(720px, 86%);
+            background: linear-gradient(180deg, #4f8cff, #2f6fea);
             color: white;
-            border-bottom-right-radius: 0.25rem;
+            border: 1px solid rgba(255, 255, 255, 0.16);
+            border-bottom-right-radius: 0.3rem;
+            line-height: 1.55;
         }
         .jarvis {
             align-self: flex-start;
-            background-color: var(--bg-card);
-            border: 1px solid var(--bg-hover);
-            border-bottom-left-radius: 0.25rem;
+            background: rgba(21, 28, 40, 0.94);
+            border: 1px solid var(--border-subtle);
+            border-bottom-left-radius: 0.3rem;
+        }
+        .jarvis.streaming::after {
+            content: "";
+            display: inline-block;
+            width: 0.45rem;
+            height: 0.45rem;
+            margin: 0.35rem 0 0 0.2rem;
+            border-radius: 999px;
+            background: var(--accent);
+            box-shadow: 0 0 0 0 rgba(79, 140, 255, 0.45);
+            animation: typing-pulse 1.4s ease-out infinite;
+        }
+        @keyframes typing-pulse {
+            0% { opacity: 0.35; box-shadow: 0 0 0 0 rgba(79, 140, 255, 0.35); }
+            55% { opacity: 1; box-shadow: 0 0 0 0.45rem rgba(79, 140, 255, 0); }
+            100% { opacity: 0.35; box-shadow: 0 0 0 0 rgba(79, 140, 255, 0); }
         }
         /* Markdown Styling */
+        .markdown-body {
+            color: var(--text-main);
+            font-size: 0.98rem;
+            line-height: 1.72;
+        }
         .markdown-body pre {
-            background-color: #011627;
-            padding: 1rem;
-            border-radius: 0.5rem;
+            background-color: #07111f;
+            border: 1px solid #223047;
+            padding: 1rem 1.1rem;
+            border-radius: 0.65rem;
             overflow-x: auto;
             margin: 1rem 0;
+            box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+            position: relative;
         }
         .markdown-body code {
             font-family: 'Fira Code', 'Cascadia Code', monospace;
             font-size: 0.9rem;
+        }
+        .markdown-body :not(pre) > code {
+            background: rgba(79, 140, 255, 0.12);
+            border: 1px solid rgba(79, 140, 255, 0.22);
+            color: #dbeafe;
+            padding: 0.1rem 0.32rem;
+            border-radius: 0.35rem;
+        }
+        .code-copy-btn {
+            position: sticky;
+            left: calc(100% - 4.2rem);
+            top: 0.25rem;
+            float: right;
+            min-width: 3.5rem;
+            margin: -0.45rem -0.45rem 0.35rem 0.65rem;
+            padding: 0.28rem 0.55rem;
+            border-radius: 0.4rem;
+            border: 1px solid rgba(148, 163, 184, 0.28);
+            background: rgba(11, 16, 24, 0.92);
+            color: var(--text-muted);
+            font-size: 0.72rem;
+            font-weight: 650;
+            cursor: pointer;
+        }
+        .code-copy-btn:hover {
+            color: #ffffff;
+            background: rgba(79, 140, 255, 0.22);
         }
         .markdown-body .katex {
             color: inherit;
             font-size: 1.02em;
         }
         .markdown-body .katex-display {
-            margin: 0.75rem 0;
+            margin: 0.9rem 0;
             overflow-x: auto;
             overflow-y: hidden;
-            padding: 0.25rem 0;
+            padding: 0.45rem 0.25rem;
         }
         .markdown-body .katex-display > .katex {
             text-align: left;
@@ -112,17 +179,60 @@
             line-height: 1.3;
             font-weight: 700;
         }
-        .markdown-body h1 { font-size: 1.45rem; }
+        .markdown-body h1 {
+            font-size: 1.46rem;
+            border-bottom: 1px solid var(--border-subtle);
+            padding-bottom: 0.35rem;
+        }
         .markdown-body h2 { font-size: 1.28rem; }
-        .markdown-body h3 { font-size: 1.12rem; }
+        .markdown-body h3 { font-size: 1.14rem; }
         .markdown-body h4 { font-size: 1rem; }
-        .markdown-body p { margin: 0.5rem 0; }
-        .markdown-body ul, .markdown-body ol { padding-left: 1.5rem; }
+        .markdown-body p { margin: 0.48rem 0; }
+        .markdown-body ul,
+        .markdown-body ol {
+            padding-left: 1.45rem;
+            margin: 0.55rem 0;
+        }
+        .markdown-body li {
+            margin: 0.18rem 0;
+        }
+        .markdown-body blockquote {
+            margin: 0.85rem 0;
+            padding: 0.65rem 0.9rem;
+            border-left: 3px solid var(--accent);
+            background: rgba(79, 140, 255, 0.08);
+            color: var(--text-soft);
+            border-radius: 0 0.5rem 0.5rem 0;
+        }
+        .markdown-body table {
+            width: 100%;
+            border-collapse: collapse;
+            display: block;
+            overflow-x: auto;
+            margin: 0.95rem 0;
+            border: 1px solid var(--border-subtle);
+            border-radius: 0.65rem;
+        }
+        .markdown-body th,
+        .markdown-body td {
+            border-bottom: 1px solid var(--border-subtle);
+            padding: 0.55rem 0.7rem;
+            text-align: left;
+            vertical-align: top;
+        }
+        .markdown-body th {
+            background: rgba(255, 255, 255, 0.04);
+            color: #dbeafe;
+            font-weight: 700;
+        }
+        .markdown-body tr:last-child td {
+            border-bottom: 0;
+        }
         
         .thought-container {
-            background-color: #0f172a;
-            border-left: 4px solid #64748b;
-            padding: 0.75rem 1rem;
+            background-color: rgba(11, 16, 24, 0.78);
+            border-left: 3px solid #64748b;
+            padding: 0.65rem 0.85rem;
             margin-bottom: 1rem;
             border-radius: 0.4rem;
             font-size: 0.9rem;
@@ -141,8 +251,8 @@
             color: #64748b;
         }
         .tool-container {
-            background-color: #011627;
-            border: 1px dashed var(--bg-hover);
+            background-color: #07111f;
+            border: 1px dashed #34435a;
             padding: 0.75rem 1rem;
             margin: 0.75rem 0;
             border-radius: 0.5rem;
@@ -175,21 +285,22 @@
             border-radius: 0.25rem;
         }
         #chat-panel footer {
-            padding: 1.5rem 2rem;
-            background-color: var(--bg-main);
-            border-top: 1px solid var(--bg-hover);
+            padding: 1rem clamp(1rem, 3vw, 2rem) 1.2rem;
+            background: linear-gradient(180deg, rgba(11, 16, 24, 0), var(--bg-main) 24%);
+            border-top: 1px solid rgba(38, 50, 68, 0.65);
             flex-shrink: 0;
         }
         .input-container {
-            max-width: 900px;
+            max-width: 940px;
             margin: 0 auto;
             display: flex;
             align-items: flex-end;
-            gap: 1rem;
-            background: var(--bg-card);
-            padding: 0.5rem;
-            border-radius: 0.75rem;
-            border: 1px solid var(--bg-hover);
+            gap: 0.75rem;
+            background: rgba(21, 28, 40, 0.96);
+            padding: 0.55rem;
+            border-radius: 0.85rem;
+            border: 1px solid var(--border-subtle);
+            box-shadow: 0 16px 40px rgba(0, 0, 0, 0.24);
         }
         textarea {
             flex: 1;
@@ -208,8 +319,8 @@
             background-color: var(--accent);
             color: white;
             border: none;
-            padding: 0.75rem 1.5rem;
-            border-radius: 0.5rem;
+            padding: 0.72rem 1.25rem;
+            border-radius: 0.55rem;
             cursor: pointer;
             font-weight: 600;
             transition: all 0.2s;
@@ -350,15 +461,15 @@
 
         /* ── Background Task Result Bubble ─────────────────────────── */
         .bg-task-result {
-            max-width: 90%;
+            max-width: min(900px, 92%);
             padding: 0;
-            border-radius: 1rem;
+            border-radius: 0.85rem;
             border-bottom-left-radius: 0.25rem;
             line-height: 1.6;
             word-wrap: break-word;
             position: relative;
             animation: fadeIn 0.3s ease-out;
-            border: 2px solid #3b82f6;
+            border: 1px solid rgba(79, 140, 255, 0.55);
             background-color: var(--bg-card);
             /* same layout as .message .jarvis */
             align-self: flex-start;
@@ -407,8 +518,8 @@
         #tasks-panel {
             width: 360px;
             min-width: 360px;
-            background: var(--bg-card);
-            border-left: 1px solid var(--bg-hover);
+            background: rgba(21, 28, 40, 0.98);
+            border-left: 1px solid var(--border-subtle);
             display: flex;
             flex-direction: column;
             transition: width 0.25s ease, min-width 0.25s ease;
@@ -454,9 +565,9 @@
             padding: 2rem 1rem;
         }
         .task-card {
-            background: var(--bg-main);
-            border: 1px solid var(--bg-hover);
-            border-radius: 0.75rem;
+            background: rgba(11, 16, 24, 0.72);
+            border: 1px solid var(--border-subtle);
+            border-radius: 0.7rem;
             padding: 0.9rem 1rem;
             font-size: 0.85rem;
             display: flex;
@@ -570,6 +681,49 @@
             gap: 0.4rem;
         }
         #tasks-toggle-btn:hover { background: var(--accent); color: white; }
+
+        @media (max-width: 760px) {
+            header {
+                padding: 0.75rem 1rem;
+            }
+            #chat-window {
+                padding: 1rem 0.8rem;
+                gap: 0.85rem;
+            }
+            .message,
+            .bg-task-result {
+                max-width: 100%;
+                width: 100%;
+                border-radius: 0.75rem;
+            }
+            .user {
+                width: auto;
+                max-width: 92%;
+            }
+            #tasks-panel {
+                position: absolute;
+                right: 0;
+                top: 0;
+                bottom: 0;
+                width: min(360px, 92vw);
+                min-width: min(360px, 92vw);
+                z-index: 30;
+                box-shadow: -18px 0 40px rgba(0, 0, 0, 0.32);
+            }
+            #tasks-panel.collapsed {
+                width: 0;
+                min-width: 0;
+            }
+            #chat-panel footer {
+                padding: 0.8rem;
+            }
+            .input-container {
+                gap: 0.45rem;
+            }
+            button {
+                padding: 0.7rem 0.9rem;
+            }
+        }
     </style>
 </head>
 <body>
@@ -1036,6 +1190,24 @@
         let currentResponseEl = null;
         let currentMarkdownBuffer = '';
         let lastThoughtSubject = '';
+        let streamingRenderTimer = null;
+        let userPinnedToBottom = true;
+
+        function isNearChatBottom(threshold = 96) {
+            return chatWindow.scrollHeight - chatWindow.scrollTop - chatWindow.clientHeight < threshold;
+        }
+
+        function scrollChatToBottom() {
+            chatWindow.scrollTop = chatWindow.scrollHeight;
+        }
+
+        function scrollChatToBottomIfPinned() {
+            if (userPinnedToBottom) scrollChatToBottom();
+        }
+
+        chatWindow.addEventListener('scroll', () => {
+            userPinnedToBottom = isNearChatBottom();
+        });
 
         // Get or create Session ID
         let sessionId = localStorage.getItem('jarvis_session_id');
@@ -1070,7 +1242,32 @@
             if (window.hljs?.highlightElement) {
                 targetEl.querySelectorAll('pre code').forEach(el => hljs.highlightElement(el));
             }
+            enhanceCodeBlocks(targetEl);
             renderMath(targetEl);
+        }
+
+        function enhanceCodeBlocks(targetEl) {
+            targetEl.querySelectorAll('pre').forEach(pre => {
+                if (pre.querySelector('.code-copy-btn')) return;
+                const code = pre.querySelector('code');
+                if (!code) return;
+                const button = document.createElement('button');
+                button.type = 'button';
+                button.className = 'code-copy-btn';
+                button.textContent = 'Copy';
+                button.addEventListener('click', async () => {
+                    const text = code.innerText || code.textContent || '';
+                    try {
+                        await navigator.clipboard.writeText(text);
+                        button.textContent = 'Copied';
+                        setTimeout(() => { button.textContent = 'Copy'; }, 1200);
+                    } catch (_) {
+                        button.textContent = 'Select';
+                        setTimeout(() => { button.textContent = 'Copy'; }, 1200);
+                    }
+                });
+                pre.insertBefore(button, pre.firstChild);
+            });
         }
 
         function prepareMarkdownForDisplay(markdown) {
@@ -1326,6 +1523,7 @@
         }
 
         function appendMessage(role, content, isHistory = false) {
+            const shouldFollow = userPinnedToBottom || !isHistory;
             const msgEl = document.createElement('div');
             msgEl.className = `message ${role}`;
             if (isHistory) msgEl.style.opacity = '0.7';
@@ -1336,7 +1534,7 @@
             msgEl.appendChild(mdContainer);
 
             chatWindow.appendChild(msgEl);
-            chatWindow.scrollTop = chatWindow.scrollHeight;
+            if (shouldFollow) scrollChatToBottom();
         }
 
         function appendBgTaskResult(taskId, content, isFailed) {
@@ -1360,7 +1558,29 @@
             wrap.appendChild(header);
             wrap.appendChild(body);
             chatWindow.appendChild(wrap);
-            chatWindow.scrollTop = chatWindow.scrollHeight;
+            scrollChatToBottomIfPinned();
+        }
+
+        function flushCurrentResponseRender() {
+            if (!currentResponseEl) return;
+            const mdContainer = currentResponseEl.querySelector('.markdown-body');
+            if (!mdContainer) return;
+            renderMarkdown(mdContainer, currentMarkdownBuffer);
+            scrollChatToBottomIfPinned();
+        }
+
+        function scheduleCurrentResponseRender() {
+            if (streamingRenderTimer) return;
+            streamingRenderTimer = setTimeout(() => {
+                streamingRenderTimer = null;
+                flushCurrentResponseRender();
+            }, 60);
+        }
+
+        function clearStreamingRenderTimer() {
+            if (!streamingRenderTimer) return;
+            clearTimeout(streamingRenderTimer);
+            streamingRenderTimer = null;
         }
 
         function connect() {
@@ -1394,6 +1614,8 @@
                     msg.payload.forEach(m => {
                         appendMessage(m.role, m.content, true);
                     });
+                    userPinnedToBottom = true;
+                    requestAnimationFrame(scrollChatToBottom);
                 }
                 else if (msg.type === 'stream') {
                     const eventData = msg.payload;
@@ -1412,13 +1634,15 @@
                         // NEW STREAM STARTED: Reset buffer to prevent duplication
                         currentMarkdownBuffer = '';
                         lastThoughtSubject = '';
+                        userPinnedToBottom = isNearChatBottom();
                         
                         currentResponseEl = document.createElement('div');
-                        currentResponseEl.className = 'message jarvis';
+                        currentResponseEl.className = 'message jarvis streaming';
                         const mdContainer = document.createElement('div');
                         mdContainer.className = 'markdown-body';
                         currentResponseEl.appendChild(mdContainer);
                         chatWindow.appendChild(currentResponseEl);
+                        scrollChatToBottomIfPinned();
                     }
 
                     const mdContainer = currentResponseEl.querySelector('.markdown-body');
@@ -1431,7 +1655,7 @@
                         }
                         
                         currentMarkdownBuffer += eventData.value;
-                        renderMarkdown(mdContainer, currentMarkdownBuffer);
+                        scheduleCurrentResponseRender();
                     } 
                     else if (eventData.type === 'thought') {
                         const thought = eventData.value;
@@ -1441,6 +1665,7 @@
                             thoughtContainer.innerHTML = `<div class="thought-subject">${thought.subject}</div><div class="thought-desc">${thought.description || ''}</div>`;
                             currentResponseEl.insertBefore(thoughtContainer, mdContainer);
                             lastThoughtSubject = thought.subject;
+                            scrollChatToBottomIfPinned();
                         } else {
                             const lastThoughtDesc = currentResponseEl.querySelector('.thought-container:last-child .thought-desc');
                             if (lastThoughtDesc && thought.description) {
@@ -1461,7 +1686,7 @@
                         if (currentResponseEl) {
                             currentResponseEl.insertBefore(toolEl, mdContainer);
                         }
-                        chatWindow.scrollTop = chatWindow.scrollHeight;
+                        scrollChatToBottomIfPinned();
                     }
                     else if (eventData.type === 'tool_call_response' || eventData.type === 'tool_call_finished') {
                         const toolResult = eventData.value;
@@ -1480,18 +1705,27 @@
                         }
                     }
                     
-                    chatWindow.scrollTop = chatWindow.scrollHeight;
+                    scrollChatToBottomIfPinned();
                 } else if (msg.type === 'done') {
+                    clearStreamingRenderTimer();
+                    flushCurrentResponseRender();
+                    if (currentResponseEl) currentResponseEl.classList.remove('streaming');
                     currentResponseEl = null;
                     currentMarkdownBuffer = '';
                     lastThoughtSubject = '';
                     sendBtn.disabled = false;
                 } else if (msg.type === 'error') {
+                    clearStreamingRenderTimer();
+                    if (currentResponseEl) currentResponseEl.classList.remove('streaming');
+                    currentResponseEl = null;
+                    currentMarkdownBuffer = '';
+                    lastThoughtSubject = '';
                     const errorEl = document.createElement('div');
                     errorEl.className = 'message jarvis';
                     errorEl.style.color = 'var(--error)';
-                    errorEl.innerHTML = `<strong>Error:</strong> ${msg.message}`;
+                    errorEl.innerHTML = `<strong>Error:</strong> ${esc(msg.message)}`;
                     chatWindow.appendChild(errorEl);
+                    scrollChatToBottomIfPinned();
                     sendBtn.disabled = false;
 
                 // ── Agent Task Events ──────────────────────────────────────
