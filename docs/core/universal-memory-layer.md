@@ -719,6 +719,12 @@ packages/intent-runtime/src/
 
 - 新增 `packages/memory-runtime/src/writer.ts`；
 - 新增 `DefaultMemoryWriterRuntime`；
+- 新增 `packages/memory-runtime/src/layeredMemoryRuntime.ts`；
+- 新增 `DefaultLayeredMemoryRuntime`，作为三层记忆统一 facade，提供：
+  - `saveFact()` / `searchFacts()`
+  - `saveEntry()` / `searchEntries()`
+  - `saveSession()` / `searchSession()`
+  - `saveMany()` / `delete()` / `recall()`
 - 新增 `MemoryWriteRequest` / `MemoryWriteResult` / `MemoryWriterRuntimeEvent`；
 - 支持 `upsert` 和 `delete`；
 - 支持 observer 事件：
@@ -726,6 +732,13 @@ packages/intent-runtime/src/
   - `memory_write_decision`
   - `memory_write_finished`
 - package API smoke test 已覆盖 writer public exports。
+- `core/jarvisMemoryStores.ts` 新增 `JarvisMemoryWriteStore`，把 runtime 写入契约落到 Jarvis 现有 `MemoryService.saveFact()`、`saveEntryMemory()`、`appendSessionTurn()` 和 delete/list 方法；
+- `MemoryService` 新增 runtime-facing entry 保存、fact/entry/session list 和 delete 方法，作为 Jarvis SQLite/SessionStore 的 application adapter。
+
+仍需注意：
+
+- Jarvis 主响应路径当前仍保留异步 `BackgroundDistiller` 和 `enqueue()` 策略，以避免改变线上行为；
+- 新的 `DefaultLayeredMemoryRuntime` 已经提供统一三层写入入口，后续可以逐步把 distill / event extraction / manual memory tool 全部切到该入口。
 
 ### Phase 11：Memory Governance Policy
 

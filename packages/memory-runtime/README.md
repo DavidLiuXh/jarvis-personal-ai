@@ -125,6 +125,39 @@ The default governance policy handles:
 - session upsert;
 - explicit delete.
 
+For host projects that want one facade for all three layers, use
+`DefaultLayeredMemoryRuntime`. It exposes save, search, delete, and recall for:
+
+- `session`: transcript turns, summaries, and topic state;
+- `fact`: durable profile, preference, project, and relationship facts;
+- `entry`: episodic conversation, task, decision, event, and reflection records.
+
+```ts
+import {
+  DefaultLayeredMemoryRuntime,
+  DefaultMemoryStore,
+} from "@jarvis/memory-runtime";
+
+const store = new DefaultMemoryStore();
+const memory = new DefaultLayeredMemoryRuntime({
+  stores: { facts: store, entries: store, session: store },
+  writeStore: store,
+  sessionId: "demo",
+});
+
+await memory.saveEntry({
+  id: "entry-1",
+  scope: "entry",
+  kind: "conversation",
+  content: "Discussed a three-layer memory runtime.",
+  entities: ["memory"],
+  timestamp: new Date().toISOString(),
+  sourceRefs: ["demo"],
+});
+
+const entries = await memory.searchEntries({ query: "three-layer memory" });
+```
+
 `DefaultMemoryStore` implements the read adapters (`FactMemoryStore`,
 `EntryMemoryStore`, `SessionMemoryStore`) and write adapter (`MemoryWriteStore`).
 It is dependency-free and suitable for tests, examples, small agents, and as a

@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import {
   CompositeSessionStore,
+  DefaultLayeredMemoryRuntime,
   DefaultMemoryRuntime,
   DefaultMemoryStore,
   DefaultMemoryWriterRuntime,
@@ -125,6 +126,29 @@ describe("@jarvis/memory-runtime package API", () => {
 
     expect(result.decision.action).toBe("insert");
     expect(await store.listFacts()).toHaveLength(1);
+  });
+
+  it("exports the layered memory runtime facade", async () => {
+    const store = new DefaultMemoryStore();
+    const runtime = new DefaultLayeredMemoryRuntime({
+      stores: { facts: store, entries: store, session: store },
+      writeStore: store,
+    });
+
+    const result = await runtime.saveEntry({
+      id: "entry-api",
+      scope: "entry",
+      kind: "event",
+      content: "Layered memory runtime exported from package API.",
+      entities: ["memory"],
+      timestamp: "2026-06-02T00:00:00.000Z",
+      sourceRefs: ["test"],
+    });
+
+    expect(result.written?.id).toBe("entry-api");
+    expect(
+      await runtime.searchEntries({ query: "Layered memory" }),
+    ).toHaveLength(1);
   });
 
   it("exports session transcript store contracts and search helpers", () => {

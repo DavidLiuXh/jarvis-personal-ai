@@ -31,6 +31,7 @@ export * from "./geminiCliSessionStore.js";
 export * from "./governance.js";
 export * from "./intentAwareMemoryPolicy.js";
 export * from "./intentPolicy.js";
+export * from "./layeredMemoryRuntime.js";
 export * from "./memoryInjectionPlanner.js";
 export * from "./retrieval.js";
 export * from "./sessionStore.js";

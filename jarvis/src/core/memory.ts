@@ -18,7 +18,11 @@ import { EntityExtractor, type EntityLink } from "./entityExtractor.js";
 import { GeminiCliSessionStore } from "./geminiCliSessionStore.js";
 import {
   CompositeSessionStore,
+  type EntryMemory,
+  type FactMemory,
   JarvisJsonlSessionStore,
+  type MemoryItem,
+  type SessionMemory,
   type SessionStore,
   type SessionTranscriptTurn,
 } from "../memory-runtime/index.js";
@@ -158,6 +162,30 @@ async function callReranker(
 }
 
 export class MemoryService {
+  private static factCategoryToSubject(
+    category: string,
+  ): FactMemory["subject"] {
+    if (category === "identity") return "user";
+    if (category === "interaction_style" || category === "preference") {
+      return "preference";
+    }
+    if (category === "specification" || category === "artifact") {
+      return "project";
+    }
+    if (category === "relationship") return "relationship";
+    return "profile";
+  }
+
+  private static memorySourceToEntryKind(
+    source: string | null,
+  ): EntryMemory["kind"] {
+    if (source === "task") return "task";
+    if (source === "decision") return "decision";
+    if (source === "event") return "event";
+    if (source === "reflection") return "reflection";
+    return "conversation";
+  }
+
   private db: Database.Database;
   private jarvisConfig = ConfigManager.getInstance().get();
   private client: any = null;
@@ -1590,6 +1618,178 @@ ${factsText}
         metadata: input.metadata,
       },
     });
+  }
+
+  public async saveEntryMemory(input: {
+    id?: string;
+    sessionId?: string;
+    kind?: EntryMemory["kind"];
+    content: string;
+    timestamp?: string | number;
+    entities?: string[];
+    sourceRefs?: string[];
+    metadata?: Record<string, unknown>;
+  }): Promise<EntryMemory> {
+    const timestampMs =
+      typeof input.timestamp === "number"
+        ? input.timestamp
+        : input.timestamp
+          ? Date.parse(input.timestamp)
+          : Date.now();
+    const safeTimestamp = Number.isNaN(timestampMs) ? Date.now() : timestampMs;
+    const source =
+      (typeof input.metadata?.source === "string" && input.metadata.source) ||
+      input.kind ||
+      "conversation";
+    const sessionId =
+      input.sessionId ??
+      (typeof input.metadata?.sessionId === "string"
+        ? input.metadata.sessionId
+        : "runtime");
+
+    let vecValues: number[] | null = null;
+    if (this.embedContentFn) {
+      vecValues = await this.embedContentFn(input.content).catch(() => null);
+    } else if (this.client) {
+      try {
+        const result = await this.client.models.embedContent({
+          model: this.jarvisConfig.models.embedding,
+          contents: [{ role: "user", parts: [{ text: input.content }] }],
+        });
+        const embeddings = result.embeddings || [result.embedding];
+        vecValues = embeddings[0].values;
+      } catch {
+        vecValues = null;
+      }
+    }
+
+    const info = this.db
+      .prepare(
+        "INSERT INTO memories (sessionId, text, timestamp, source) VALUES (?, ?, ?, ?)",
+      )
+      .run(sessionId, input.content, safeTimestamp, source);
+    if (vecValues) {
+      try {
+        this.db
+          .prepare("INSERT INTO vec_memories (id, embedding) VALUES (?, ?)")
+          .run(BigInt(info.lastInsertRowid), new Float32Array(vecValues));
+      } catch {
+        /* vec extension may be unavailable */
+      }
+    }
+
+    return {
+      id: String(info.lastInsertRowid),
+      scope: "entry",
+      kind: input.kind ?? "conversation",
+      content: input.content,
+      entities: input.entities ?? [],
+      timestamp: new Date(safeTimestamp).toISOString(),
+      sourceRefs: input.sourceRefs ?? [],
+      metadata: {
+        ...input.metadata,
+        sessionId,
+        source,
+      },
+    };
+  }
+
+  public async listRuntimeFacts(limit = 500): Promise<FactMemory[]> {
+    const rows = this.db
+      .prepare(
+        "SELECT id, category, content, importance, timestamp FROM facts ORDER BY timestamp DESC LIMIT ?",
+      )
+      .all(limit) as Array<{
+      id: number;
+      category: string;
+      content: string;
+      importance: number;
+      timestamp: number | null;
+    }>;
+    return rows.map((row) => ({
+      id: String(row.id),
+      scope: "fact",
+      subject: MemoryService.factCategoryToSubject(row.category),
+      content: row.content,
+      confidence: Math.max(0.1, Math.min(1, (row.importance ?? 5) / 10)),
+      sourceRefs: ["jarvis:facts"],
+      createdAt: new Date(row.timestamp ?? Date.now()).toISOString(),
+      updatedAt: new Date(row.timestamp ?? Date.now()).toISOString(),
+      metadata: { category: row.category, importance: row.importance },
+    }));
+  }
+
+  public async listRuntimeEntries(limit = 500): Promise<EntryMemory[]> {
+    const rows = this.db
+      .prepare(
+        "SELECT id, sessionId, text, timestamp, source FROM memories ORDER BY timestamp DESC LIMIT ?",
+      )
+      .all(limit) as Array<{
+      id: number;
+      sessionId: string | null;
+      text: string;
+      timestamp: number | null;
+      source: string | null;
+    }>;
+    return rows.map((row) => ({
+      id: String(row.id),
+      scope: "entry",
+      kind: MemoryService.memorySourceToEntryKind(row.source),
+      content: row.text,
+      entities: [],
+      timestamp: new Date(row.timestamp ?? Date.now()).toISOString(),
+      sourceRefs: row.sessionId ? [row.sessionId] : [],
+      metadata: { sessionId: row.sessionId, source: row.source },
+    }));
+  }
+
+  public async listRuntimeSessions(limit = 100): Promise<SessionMemory[]> {
+    const summaries = await this.sessionStore.listSessions({ limit });
+    return summaries.map((summary) => ({
+      scope: "session",
+      sessionId: summary.sessionId,
+      turns: [],
+      summary: undefined,
+      topicState: summary.updatedAt
+        ? { label: summary.source, updatedAt: summary.updatedAt }
+        : undefined,
+    }));
+  }
+
+  public async deleteRuntimeMemory(input: {
+    scope: MemoryItem["scope"];
+    id: string;
+  }): Promise<boolean> {
+    if (input.scope === "fact") {
+      const factId = Number(input.id);
+      if (!Number.isFinite(factId)) return false;
+      const info = this.db
+        .prepare("DELETE FROM facts WHERE id = ?")
+        .run(factId);
+      try {
+        this.db
+          .prepare("DELETE FROM vec_facts WHERE id = ?")
+          .run(BigInt(factId));
+      } catch {}
+      try {
+        this.db.prepare("DELETE FROM facts_fts WHERE fact_id = ?").run(factId);
+      } catch {}
+      return info.changes > 0;
+    }
+    if (input.scope === "entry") {
+      const entryId = Number(input.id);
+      if (!Number.isFinite(entryId)) return false;
+      const info = this.db
+        .prepare("DELETE FROM memories WHERE id = ?")
+        .run(entryId);
+      try {
+        this.db
+          .prepare("DELETE FROM vec_memories WHERE id = ?")
+          .run(BigInt(entryId));
+      } catch {}
+      return info.changes > 0;
+    }
+    return false;
   }
 
   public getCoreFacts(): string[] {

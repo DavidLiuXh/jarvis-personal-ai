@@ -6,14 +6,48 @@
 
 import type {
   EntryMemoryStore,
+  type EntryMemory,
+  type FactMemory,
   FactMemorySearchResult,
   FactMemoryStore,
   MemoryContract,
+  type MemoryItem,
   MemoryRetrieverStores,
+  type MemoryWriteStore,
+  type SessionMemory,
   SessionMemoryStore,
 } from "../memory-runtime/index.js";
 
 export type JarvisMemoryServiceHandle = {
+  saveFact?: (
+    category: string,
+    content: string,
+    importance?: number,
+  ) => Promise<void>;
+  saveEntryMemory?: (input: {
+    id?: string;
+    sessionId?: string;
+    kind?: EntryMemory["kind"];
+    content: string;
+    timestamp?: string | number;
+    entities?: string[];
+    sourceRefs?: string[];
+    metadata?: Record<string, unknown>;
+  }) => Promise<EntryMemory>;
+  appendSessionTurn?: (input: {
+    sessionId: string;
+    role: SessionMemory["turns"][number]["role"];
+    content: string;
+    timestamp?: string | number;
+    metadata?: Record<string, unknown>;
+  }) => Promise<void>;
+  listRuntimeFacts?: (limit?: number) => Promise<FactMemory[]>;
+  listRuntimeEntries?: (limit?: number) => Promise<EntryMemory[]>;
+  listRuntimeSessions?: (limit?: number) => Promise<SessionMemory[]>;
+  deleteRuntimeMemory?: (input: {
+    scope: MemoryItem["scope"];
+    id: string;
+  }) => Promise<boolean>;
   searchFacts: (
     query: string,
     limit?: number,
@@ -166,6 +200,86 @@ export class JarvisSessionMemoryStore implements SessionMemoryStore {
   }
 }
 
+function factSubjectToCategory(fact: FactMemory): string {
+  if (typeof fact.metadata?.category === "string") {
+    return fact.metadata.category;
+  }
+  if (fact.subject === "user") return "identity";
+  if (fact.subject === "preference") return "interaction_style";
+  if (fact.subject === "project") return "specification";
+  return "behavior";
+}
+
+export class JarvisMemoryWriteStore implements MemoryWriteStore {
+  constructor(private readonly memoryService: JarvisMemoryServiceHandle) {}
+
+  async upsertFact(fact: FactMemory): Promise<FactMemory> {
+    if (!this.memoryService.saveFact) return fact;
+    const importance =
+      typeof fact.metadata?.importance === "number"
+        ? fact.metadata.importance
+        : Math.max(1, Math.min(10, Math.round(fact.confidence * 10)));
+    await this.memoryService.saveFact(
+      factSubjectToCategory(fact),
+      fact.content,
+      importance,
+    );
+    return fact;
+  }
+
+  async upsertEntry(entry: EntryMemory): Promise<EntryMemory> {
+    return (
+      (await this.memoryService.saveEntryMemory?.({
+        id: entry.id,
+        sessionId:
+          typeof entry.metadata?.sessionId === "string"
+            ? entry.metadata.sessionId
+            : entry.sourceRefs[0],
+        kind: entry.kind,
+        content: entry.content,
+        timestamp: entry.timestamp,
+        entities: entry.entities,
+        sourceRefs: entry.sourceRefs,
+        metadata: entry.metadata,
+      })) ?? entry
+    );
+  }
+
+  async upsertSession(session: SessionMemory): Promise<SessionMemory> {
+    if (this.memoryService.appendSessionTurn) {
+      for (const turn of session.turns) {
+        await this.memoryService.appendSessionTurn({
+          sessionId: session.sessionId,
+          role: turn.role,
+          content: turn.content,
+          timestamp: turn.timestamp,
+          metadata: turn.metadata,
+        });
+      }
+    }
+    return session;
+  }
+
+  async deleteMemory(input: {
+    scope: MemoryItem["scope"];
+    id: string;
+  }): Promise<boolean> {
+    return (await this.memoryService.deleteRuntimeMemory?.(input)) ?? false;
+  }
+
+  async listFacts(): Promise<FactMemory[]> {
+    return (await this.memoryService.listRuntimeFacts?.()) ?? [];
+  }
+
+  async listEntries(): Promise<EntryMemory[]> {
+    return (await this.memoryService.listRuntimeEntries?.()) ?? [];
+  }
+
+  async listSessions(): Promise<SessionMemory[]> {
+    return (await this.memoryService.listRuntimeSessions?.()) ?? [];
+  }
+}
+
 export function createJarvisMemoryStores(
   memoryService: JarvisMemoryServiceHandle,
   sessionId: string,
@@ -175,4 +289,10 @@ export function createJarvisMemoryStores(
     entries: new JarvisEntryMemoryStore(memoryService),
     session: new JarvisSessionMemoryStore(memoryService, sessionId),
   };
+}
+
+export function createJarvisMemoryWriteStore(
+  memoryService: JarvisMemoryServiceHandle,
+): MemoryWriteStore {
+  return new JarvisMemoryWriteStore(memoryService);
 }

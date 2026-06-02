@@ -5,7 +5,11 @@
  */
 
 import { describe, expect, it, vi } from "vitest";
-import { createJarvisMemoryStores } from "./jarvisMemoryStores.js";
+import {
+  JarvisMemoryWriteStore,
+  createJarvisMemoryStores,
+  createJarvisMemoryWriteStore,
+} from "./jarvisMemoryStores.js";
 
 describe("Jarvis memory store adapters", () => {
   it("wraps MemoryService fact, entry, and session retrieval", async () => {
@@ -110,5 +114,75 @@ describe("Jarvis memory store adapters", () => {
       content: expect.stringContaining("Universal Memory Layer"),
       metadata: { source: "conversation_history_lexical" },
     });
+  });
+
+  it("adapts runtime write operations to MemoryService writes", async () => {
+    const saveFact = vi.fn().mockResolvedValue(undefined);
+    const saveEntryMemory = vi.fn().mockImplementation(async (input) => ({
+      id: "entry-db-1",
+      scope: "entry",
+      kind: input.kind ?? "conversation",
+      content: input.content,
+      entities: input.entities ?? [],
+      timestamp: "2026-06-02T00:00:00.000Z",
+      sourceRefs: input.sourceRefs ?? [],
+      metadata: input.metadata,
+    }));
+    const appendSessionTurn = vi.fn().mockResolvedValue(undefined);
+    const deleteRuntimeMemory = vi.fn().mockResolvedValue(true);
+    const memoryService = {
+      saveFact,
+      saveEntryMemory,
+      appendSessionTurn,
+      deleteRuntimeMemory,
+      searchFacts: vi.fn(),
+      searchWithScore: vi.fn(),
+    };
+    const store = new JarvisMemoryWriteStore(memoryService);
+
+    await store.upsertFact({
+      id: "fact-1",
+      scope: "fact",
+      subject: "preference",
+      content: "The user prefers concise Chinese replies.",
+      confidence: 0.9,
+      sourceRefs: ["test"],
+      createdAt: "2026-06-02T00:00:00.000Z",
+      updatedAt: "2026-06-02T00:00:00.000Z",
+    });
+    await store.upsertEntry({
+      id: "entry-1",
+      scope: "entry",
+      kind: "conversation",
+      content: "Discussed memory runtime.",
+      entities: ["memory"],
+      timestamp: "2026-06-02T00:00:00.000Z",
+      sourceRefs: ["session-1"],
+    });
+    await store.upsertSession({
+      scope: "session",
+      sessionId: "session-1",
+      turns: [{ role: "user", content: "hello" }],
+    });
+    await store.deleteMemory({ scope: "entry", id: "entry-db-1" });
+
+    expect(saveFact).toHaveBeenCalledWith(
+      "interaction_style",
+      "The user prefers concise Chinese replies.",
+      9,
+    );
+    expect(saveEntryMemory).toHaveBeenCalledWith(
+      expect.objectContaining({ content: "Discussed memory runtime." }),
+    );
+    expect(appendSessionTurn).toHaveBeenCalledWith(
+      expect.objectContaining({ sessionId: "session-1", content: "hello" }),
+    );
+    expect(deleteRuntimeMemory).toHaveBeenCalledWith({
+      scope: "entry",
+      id: "entry-db-1",
+    });
+    expect(createJarvisMemoryWriteStore(memoryService)).toBeInstanceOf(
+      JarvisMemoryWriteStore,
+    );
   });
 });
