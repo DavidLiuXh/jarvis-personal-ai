@@ -10,7 +10,7 @@ import type {
   RuntimeToolRequest,
   RuntimeToolResult,
   ToolExecutorAdapter,
-} from "../../intent-runtime/src/executor.js";
+} from "@jarvis/intent-runtime";
 
 export type LlmBackendMode =
   | "native_tool_calling"

@@ -3,14 +3,37 @@
   "version": "0.1.0",
   "type": "module",
   "private": true,
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
   "exports": {
-    ".": "./src/index.ts",
-    "./executor": "./src/executor.ts",
-    "./executionPlan": "./src/executionPlan.ts",
-    "./runtime": "./src/runtime.ts"
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./executor": {
+      "types": "./dist/executor.d.ts",
+      "import": "./dist/executor.js"
+    },
+    "./executionPlan": {
+      "types": "./dist/executionPlan.d.ts",
+      "import": "./dist/executionPlan.js"
+    },
+    "./runtime": {
+      "types": "./dist/runtime.d.ts",
+      "import": "./dist/runtime.js"
+    }
   },
   "files": [
-    "src"
+    "dist",
+    "README.md"
   ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "prepack": "npm run build",
+    "pack:dry-run": "npm pack --dry-run"
+  },
+  "dependencies": {
+    "@jarvis/memory-runtime": "0.1.0"
+  },
   "sideEffects": false
 }

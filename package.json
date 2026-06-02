@@ -26,7 +26,10 @@
     "runtime:check-boundaries": "npx tsx scripts/check_runtime_boundaries.ts",
     "llm:backend:eval": "npx tsx scripts/run_llm_backend_evals.ts",
     "runtime:dashboard": "npx tsx scripts/runtime_quality_dashboard.ts",
-    "runtime:quality": "npm run intent:matrix && npm run llm:backend:eval && npm run runtime:check-boundaries && npx tsx scripts/runtime_quality_dashboard.ts --gate",
+    "runtime:build": "npm run build --workspace @jarvis/memory-runtime && npm run build --workspace @jarvis/intent-runtime && npm run build --workspace @jarvis/agent-runtime",
+    "runtime:pack:dry-run": "npm run pack:dry-run --workspace @jarvis/memory-runtime && npm run pack:dry-run --workspace @jarvis/intent-runtime && npm run pack:dry-run --workspace @jarvis/agent-runtime",
+    "runtime:check-examples": "npx tsx scripts/check_runtime_examples.ts",
+    "runtime:quality": "npm run runtime:build && npm run runtime:check-examples && npm run intent:matrix && npm run llm:backend:eval && npm run runtime:check-boundaries && npx tsx scripts/runtime_quality_dashboard.ts --gate",
     "test": "npm run test --workspaces --if-present",
     "prepare": "husky",
     "pre-commit": "lint-staged"

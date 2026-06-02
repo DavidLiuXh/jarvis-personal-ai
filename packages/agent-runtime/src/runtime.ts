@@ -9,13 +9,13 @@ import type {
   IntentRuntimeEvent,
   IntentRuntimeInput,
   IntentRuntimeResult,
-} from "../../intent-runtime/src/runtime.js";
+} from "@jarvis/intent-runtime";
 import type {
   IntentExecutionResult,
   IntentExecutor,
   IntentExecutorContext,
   IntentExecutorEvent,
-} from "../../intent-runtime/src/executor.js";
+} from "@jarvis/intent-runtime";
 import type {
   ConversationTurn,
   IntentFrame,
@@ -26,7 +26,7 @@ import type {
   MemoryRuntimeEvent,
   StepMemoryDecision,
   TokenBudget,
-} from "../../memory-runtime/src/index.js";
+} from "@jarvis/memory-runtime";
 import {
   ToolLoopRuntime,
   type LlmMessage,

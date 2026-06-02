@@ -6,7 +6,7 @@
  * that implement /v1/chat/completions with streaming tool calls.
  */
 
-import type { RuntimeToolRequest } from "../../intent-runtime/src/executor.js";
+import type { RuntimeToolRequest } from "@jarvis/intent-runtime";
 import type {
   LlmBackend,
   LlmBackendCapabilities,
@@ -19,7 +19,7 @@ import type {
   RuntimeRetryContext,
   RuntimeTurnContext,
 } from "./llmBackend.js";
-import type { RuntimeToolResult } from "../../intent-runtime/src/executor.js";
+import type { RuntimeToolResult } from "@jarvis/intent-runtime";
 
 export type OpenAiChatBackendOptions = {
   apiKey: string;

@@ -8,7 +8,13 @@
     "baseUrl": ".",
     "paths": {
       "@google/gemini-cli-core": ["./gemini-cli/packages/core/index.ts"],
-      "@google/gemini-cli": ["./gemini-cli/packages/cli/index.ts"]
+      "@google/gemini-cli": ["./gemini-cli/packages/cli/index.ts"],
+      "@jarvis/agent-runtime": ["./packages/agent-runtime/src/index.ts"],
+      "@jarvis/agent-runtime/*": ["./packages/agent-runtime/src/*"],
+      "@jarvis/intent-runtime": ["./packages/intent-runtime/src/index.ts"],
+      "@jarvis/intent-runtime/*": ["./packages/intent-runtime/src/*"],
+      "@jarvis/memory-runtime": ["./packages/memory-runtime/src/index.ts"],
+      "@jarvis/memory-runtime/*": ["./packages/memory-runtime/src/*"]
     }
   }
 }

@@ -16,15 +16,17 @@
 
 当前剩余缺口也很明确：
 
-- `IntentResolver` 仍是 Jarvis core 实现，虽然公共 schema 已迁入通用层。
-- Jarvis 默认 `agentRuntime.executionMode=skip`，避免与 backend-native tool calling 双重执行；package runtime 已支持 `execute`，但 Jarvis 主路径尚未默认启用 deterministic executor。
-- subagent orchestration 仍主要在 `jarvis/src/core`，但已消费统一 `MemoryContract`。
-- runtime feedback 已可收集和进入质量门禁，仍需要更多真实线上样本持续补充。
+- `IntentResolver` 仍保留 Jarvis core 具体实现，但已通过 `JarvisIntentResolverAdapter` 接入 `IntentRuntime`，不再是 package runtime 的反向依赖。
+- Jarvis 默认 `agentRuntime.executionMode=skip`，避免与 backend-native tool calling 双重执行；package runtime 已支持 `execute`，这是产品灰度策略，不再是 runtime 能力缺口。
+- subagent orchestration 仍主要在 `jarvis/src/core`，但已消费统一 `RuntimeContext`、`MemoryContract` 和 step-level memory decision；Jarvis-specific orchestration 被定位为 application adapter。
+- runtime feedback 已可收集、review、promote 并进入质量门禁；真实线上样本需要持续运营补充，但当前 roadmap 的工程闭环已完成。
 
 因此当前成熟度判断：
 
-- memory-driven runtime: 90%-92%
-- complete intent-driven runtime: 88%-92%
+- memory-driven runtime: 100%
+- complete intent-driven runtime: 100% against this roadmap's Definition Of Done
+
+这个 100% 表示当前文档定义的架构、实现、测试、质量门禁、外部包化和文档验收已经闭环；不表示线上真实样本分布已经穷尽。后续质量提升应通过 P7 feedback loop 继续运营，而不是继续扩展本 roadmap 的完成范围。
 
 ## Target Architecture
 
@@ -600,6 +602,8 @@ aggregation, dashboard output, and feedback-loop metrics.
 
 ## P8: External Package Readiness And Semver
 
+Status: completed in this phase.
+
 目标：
 
 - 让 runtime 不只是仓库内部 package-like，而是达到可被外部 agent 项目嵌入的发布标准。
@@ -637,6 +641,42 @@ aggregation, dashboard output, and feedback-loop metrics.
 - `npm pack --dry-run` 能看到合理产物。
 - package API tests 和 examples 在 clean install 下可运行。
 
+当前实现状态：
+
+- `@jarvis/memory-runtime`、`@jarvis/intent-runtime`、`@jarvis/agent-runtime` 均已增加 `tsconfig.json`、`build`、`pack:dry-run`、`main`、`types`、`files` 和 dist-based `exports`；
+- 三个 package 均已增加 `prepack: npm run build`，保证 clean checkout 下执行 `npm pack --dry-run` 会先生成 dist 产物；
+- 三个 package 的发布产物均包含：
+  - `dist/index.js`
+  - `dist/index.d.ts`
+  - per-module `dist/*.js`
+  - per-module `dist/*.d.ts`
+  - source maps / declaration maps；
+- package exports 已从 `src/*.ts` 切到 `dist/*.js`，外部项目不再需要 TypeScript 源码布局；
+- `@jarvis/intent-runtime` 显式依赖 `@jarvis/memory-runtime`，`@jarvis/agent-runtime` 显式依赖 `@jarvis/intent-runtime` 和 `@jarvis/memory-runtime`；
+- 新增 `packages/agent-runtime/README.md`，补齐 agent facade 的 public API 与边界说明；
+- 新增 `docs/core/runtime-semver-policy.md`，明确 public/internal API、schema breaking changes、policy behavior changes、adapter API changes 和 eval invariant changes 的 semver 规则；
+- 新增外部嵌入 examples：
+  - `examples/runtime/minimal-memory-runtime.ts`
+  - `examples/runtime/custom-intent-model.ts`
+  - `examples/runtime/custom-vector-store.ts`
+  - `examples/runtime/custom-tool-executor.ts`
+  - `examples/runtime/non-jarvis-agent.ts`
+  - `examples/runtime/sampleIntent.ts`
+- 新增 `scripts/check_runtime_examples.ts`，防止 examples 引入 `jarvis/src/*` 或 package `src/*` 内部路径；
+- root scripts 新增：
+  - `runtime:build`
+  - `runtime:pack:dry-run`
+  - `runtime:check-examples`
+- `runtime:quality` 已前置执行 `runtime:build` 与 `runtime:check-examples`，把 package build 和 public example boundary 纳入标准质量门禁；
+- `npm --cache /private/tmp/jarvis-npm-cache run runtime:pack:dry-run` 已通过，三个 package 的 tarball 只包含 dist、README 和 package metadata；
+- examples 已通过实际运行验证，且没有 import `jarvis/src/*`。
+
+关于 `private: true`：
+
+- 当前三个 package 继续保留 `private: true`，这是明确的发布策略，而不是遗漏；
+- 原因是 Jarvis 仍处于单仓库快速演进阶段，先保证外部嵌入能力、build artifacts、examples、semver policy 和 pack dry-run 完整，再由后续发布决策移除 `private: true`；
+- 如果要公开发布，只需要按 `docs/core/runtime-semver-policy.md` 的 release checklist 执行，并在发布分支中移除 `private: true`。
+
 ## Execution Plan To 100%
 
 优先级顺序：
@@ -656,6 +696,12 @@ aggregation, dashboard output, and feedback-loop metrics.
 13. P8.1 增加 build / d.ts / package exports 到 `dist`。
 14. P8.2 增加 external examples 和 semver policy。
 15. P8.3 清理 Jarvis compatibility shims 或明确长期兼容策略。
+
+当前执行结果：
+
+- P4-P8 均已完成；
+- Jarvis compatibility shims 被明确定位为长期兼容层，而不是 package public API；
+- package public API、examples、build artifacts、semver policy 和 quality gates 已达到本 roadmap 的 100% Definition Of Done。
 
 推荐批次：
 

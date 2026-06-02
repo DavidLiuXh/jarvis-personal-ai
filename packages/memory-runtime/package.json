@@ -3,21 +3,62 @@
   "version": "0.1.0",
   "type": "module",
   "private": true,
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
   "exports": {
-    ".": "./src/index.ts",
-    "./adapters": "./src/adapters.ts",
-    "./clarificationPolicy": "./src/clarificationPolicy.ts",
-    "./crudPolicy": "./src/crudPolicy.ts",
-    "./intentAwareMemoryPolicy": "./src/intentAwareMemoryPolicy.ts",
-    "./intentPolicy": "./src/intentPolicy.ts",
-    "./memoryInjectionPlanner": "./src/memoryInjectionPlanner.ts",
-    "./ollamaIntentModelClient": "./src/ollamaIntentModelClient.ts",
-    "./retrieval": "./src/retrieval.ts",
-    "./runtime": "./src/runtime.ts",
-    "./types": "./src/types.ts"
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./adapters": {
+      "types": "./dist/adapters.d.ts",
+      "import": "./dist/adapters.js"
+    },
+    "./clarificationPolicy": {
+      "types": "./dist/clarificationPolicy.d.ts",
+      "import": "./dist/clarificationPolicy.js"
+    },
+    "./crudPolicy": {
+      "types": "./dist/crudPolicy.d.ts",
+      "import": "./dist/crudPolicy.js"
+    },
+    "./intentAwareMemoryPolicy": {
+      "types": "./dist/intentAwareMemoryPolicy.d.ts",
+      "import": "./dist/intentAwareMemoryPolicy.js"
+    },
+    "./intentPolicy": {
+      "types": "./dist/intentPolicy.d.ts",
+      "import": "./dist/intentPolicy.js"
+    },
+    "./memoryInjectionPlanner": {
+      "types": "./dist/memoryInjectionPlanner.d.ts",
+      "import": "./dist/memoryInjectionPlanner.js"
+    },
+    "./ollamaIntentModelClient": {
+      "types": "./dist/ollamaIntentModelClient.d.ts",
+      "import": "./dist/ollamaIntentModelClient.js"
+    },
+    "./retrieval": {
+      "types": "./dist/retrieval.d.ts",
+      "import": "./dist/retrieval.js"
+    },
+    "./runtime": {
+      "types": "./dist/runtime.d.ts",
+      "import": "./dist/runtime.js"
+    },
+    "./types": {
+      "types": "./dist/types.d.ts",
+      "import": "./dist/types.js"
+    }
   },
   "files": [
-    "src"
+    "dist",
+    "README.md"
   ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "prepack": "npm run build",
+    "pack:dry-run": "npm pack --dry-run"
+  },
   "sideEffects": false
 }

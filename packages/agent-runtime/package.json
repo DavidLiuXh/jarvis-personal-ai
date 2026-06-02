@@ -3,14 +3,38 @@
   "version": "0.1.0",
   "type": "module",
   "private": true,
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
   "exports": {
-    ".": "./src/index.ts",
-    "./runtime": "./src/runtime.ts",
-    "./llmBackend": "./src/llmBackend.ts",
-    "./openAiBackend": "./src/openAiBackend.ts"
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./runtime": {
+      "types": "./dist/runtime.d.ts",
+      "import": "./dist/runtime.js"
+    },
+    "./llmBackend": {
+      "types": "./dist/llmBackend.d.ts",
+      "import": "./dist/llmBackend.js"
+    },
+    "./openAiBackend": {
+      "types": "./dist/openAiBackend.d.ts",
+      "import": "./dist/openAiBackend.js"
+    }
   },
   "files": [
-    "src"
+    "dist",
+    "README.md"
   ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "prepack": "npm run build",
+    "pack:dry-run": "npm pack --dry-run"
+  },
+  "dependencies": {
+    "@jarvis/intent-runtime": "0.1.0",
+    "@jarvis/memory-runtime": "0.1.0"
+  },
   "sideEffects": false
 }

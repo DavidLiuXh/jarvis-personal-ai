@@ -9,12 +9,12 @@ import {
   buildClarificationDecision,
   type ClarificationDecision,
   type ClarificationPolicyInput,
-} from "../../memory-runtime/src/clarificationPolicy.js";
+} from "@jarvis/memory-runtime/clarificationPolicy";
 import type {
   ConversationTurn,
   IntentFrame,
   QuerySubject,
-} from "../../memory-runtime/src/types.js";
+} from "@jarvis/memory-runtime";
 import {
   buildIntentExecutionPlan,
   type IntentExecutionPlan,

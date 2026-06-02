@@ -25,6 +25,7 @@ export {
   type MemoryRuntimeUnderstand,
 } from "./runtime.js";
 export * from "./clarificationPolicy.js";
+export * from "./crudPolicy.js";
 export * from "./intentAwareMemoryPolicy.js";
 export * from "./intentPolicy.js";
 export * from "./memoryInjectionPlanner.js";
@@ -37,6 +38,7 @@ export type {
   EntryMemory,
   FactMemory,
   GroundedTopic,
+  ActionRequestType,
   IntentConfidenceByDimension,
   IntentEvidence,
   IntentFrame,
@@ -47,6 +49,7 @@ export type {
   IntentPolicyTraceEntry,
   IntentStep,
   IntentTaskType,
+  MemoryRecallTarget,
   MemoryContract,
   MemoryInjectionRejectedItem,
   MemoryInjectionResult,
@@ -60,6 +63,12 @@ export type {
   StepMemoryDecision,
   SubjectBoundary,
   QuerySubject,
+  RichIntent,
+  RichIntentAction,
+  RichIntentDomain,
+  RichIntentPrimaryAction,
+  RichIntentRiskLevel,
+  RichIntentTargetType,
   TokenBudget,
   TopicState,
   TopicAnalysis,

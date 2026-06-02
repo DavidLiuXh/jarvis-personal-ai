@@ -4,10 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import type {
-  IntentFrame,
-  IntentStep,
-} from "../../memory-runtime/src/types.js";
+import type { IntentFrame, IntentStep } from "@jarvis/memory-runtime";
 import {
   buildIntentExecutionPlan,
   type IntentExecutionPlan,

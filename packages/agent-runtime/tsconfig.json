@@ -1,0 +1,22 @@
+{
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    "baseUrl": "../..",
+    "rootDir": "src",
+    "outDir": "dist",
+    "declaration": true,
+    "declarationMap": true,
+    "sourceMap": true,
+    "noEmit": false,
+    "composite": false,
+    "skipLibCheck": true,
+    "paths": {
+      "@jarvis/intent-runtime": ["packages/intent-runtime/dist/index.d.ts"],
+      "@jarvis/intent-runtime/*": ["packages/intent-runtime/dist/*.d.ts"],
+      "@jarvis/memory-runtime": ["packages/memory-runtime/dist/index.d.ts"],
+      "@jarvis/memory-runtime/*": ["packages/memory-runtime/dist/*.d.ts"]
+    }
+  },
+  "include": ["src/**/*.ts"],
+  "exclude": ["src/**/*.test.ts", "dist"]
+}

@@ -4,14 +4,11 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import type {
-  IntentFrame,
-  IntentStep,
-} from "../../memory-runtime/src/types.js";
 import {
   getCrudPolicyDecision,
   getStepOperation,
-} from "../../memory-runtime/src/crudPolicy.js";
+} from "@jarvis/memory-runtime/crudPolicy";
+import type { IntentFrame, IntentStep } from "@jarvis/memory-runtime";
 
 export type IntentExecutionMode =
   | "context"
