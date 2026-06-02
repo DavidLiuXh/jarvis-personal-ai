@@ -1061,7 +1061,10 @@
         function renderMarkdown(targetEl, markdown) {
             const prepared = prepareMarkdownForDisplay(markdown || '');
             targetEl.innerHTML = restoreMathSegments(
-                parseMarkdown(prepared.markdown),
+                restoreStrongSegments(
+                    parseMarkdown(prepared.markdown),
+                    prepared.strongSegments
+                ),
                 prepared.mathSegments
             );
             if (window.hljs?.highlightElement) {
@@ -1072,9 +1075,13 @@
 
         function prepareMarkdownForDisplay(markdown) {
             const protectedMath = protectMathSegments(String(markdown));
+            const protectedStrong = protectStrongSegments(
+                normalizeMarkdownOutsideMath(protectedMath.markdown)
+            );
             return {
-                markdown: normalizeMarkdownOutsideMath(protectedMath.markdown),
-                mathSegments: protectedMath.mathSegments
+                markdown: protectedStrong.markdown,
+                mathSegments: protectedMath.mathSegments,
+                strongSegments: protectedStrong.strongSegments
             };
         }
 
@@ -1158,6 +1165,36 @@
             // Keep LaTeX delimiters intact; only normalize markdown punctuation that
             // commonly appears in assistant prose.
             return String(markdown).replace(/\\([*#`])/g, '$1');
+        }
+
+        function protectStrongSegments(markdown) {
+            const strongSegments = [];
+            const protect = (content) => {
+                const token = `JARVISSTRONG${strongSegments.length}TOKEN`;
+                strongSegments.push(content);
+                return token;
+            };
+            return {
+                markdown: String(markdown)
+                    .replace(/\*\*([^*\n][\s\S]*?[^*\n])\*\*/g, (_, content) =>
+                        protect(content)
+                    )
+                    .replace(/__([^_\n][\s\S]*?[^_\n])__/g, (_, content) =>
+                        protect(content)
+                    ),
+                strongSegments
+            };
+        }
+
+        function restoreStrongSegments(html, strongSegments) {
+            return strongSegments.reduce(
+                (current, segment, index) =>
+                    current.replaceAll(
+                        `JARVISSTRONG${index}TOKEN`,
+                        () => `<strong>${escapeHtml(segment)}</strong>`
+                    ),
+                html
+            );
         }
 
         function parseMarkdown(markdown) {
