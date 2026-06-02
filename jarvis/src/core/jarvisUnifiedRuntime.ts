@@ -179,6 +179,31 @@ function buildFallbackRuntimeIntent(args: {
   };
 }
 
+function formatLocalDate(ms: number): string {
+  const date = new Date(ms);
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+}
+
+function buildTemporalRecallBoundary(contract: MemoryContract | null): string {
+  if (
+    !contract ||
+    contract.memoryTarget !== "conversation_history" ||
+    !contract.query.timeRange
+  ) {
+    return "";
+  }
+  const from = formatLocalDate(contract.query.timeRange.from);
+  const to = formatLocalDate(contract.query.timeRange.to - 1);
+  return [
+    "<temporal_recall_boundary>",
+    `requested_time_range: ${from}~${to}`,
+    "Use only retrieved conversation entries/session summaries that fall inside this requested time range.",
+    "Do not answer from the current/recent chat history when it falls outside this time range.",
+    "If the injected memory context does not contain matching entries for this range, say that no matching conversation history was found for the requested period.",
+    "</temporal_recall_boundary>",
+  ].join("\n");
+}
+
 function extractSummaryCandidatesFromSection(
   section: string,
 ): SummaryCandidate[] {
@@ -621,6 +646,7 @@ export async function runJarvisUnifiedRuntimeTurn(
           const executionContract = executionInstruction
             ? `<runtime_execution_contract>\n${executionInstruction}\n</runtime_execution_contract>`
             : "";
+          const temporalRecallBoundary = buildTemporalRecallBoundary(contract);
           const protocol = input.promptBuilder.buildFromFacts(
             injectionPlan.facts,
             input.userPrompt,
@@ -636,6 +662,7 @@ export async function runJarvisUnifiedRuntimeTurn(
               memoryDecision,
               stepMemory,
               executionContract,
+              temporalRecallBoundary,
               injectionPlan.relevantSummarySection,
               injectionPlan.prewarmSection,
             ]
@@ -695,11 +722,15 @@ export async function runJarvisUnifiedRuntimeTurn(
     relevantSkills,
   );
   const intentPlanSection = buildIntentPlanSection(input.intent);
+  const temporalRecallBoundary = buildTemporalRecallBoundary(
+    runtimeResult.context.memoryContract,
+  );
   const fallbackSystemInstruction =
     defaultInstruction +
     "\n" +
     protocol +
     intentPlanSection +
+    temporalRecallBoundary +
     injectionPlan.relevantSummarySection +
     injectionPlan.prewarmSection;
 

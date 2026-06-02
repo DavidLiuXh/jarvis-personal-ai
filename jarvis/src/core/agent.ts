@@ -67,6 +67,27 @@ import {
   type JarvisUnifiedRuntimeTurnResult,
 } from "./jarvisUnifiedRuntime.js";
 
+function shouldIsolateTimeScopedConversationRecall(
+  intent: IntentFrame | null,
+  resolvedDateRange: { from: number; to: number } | null,
+  timeWindowDays: number | null,
+): boolean {
+  if (!intent) return false;
+  return (
+    intent.taskType === "recall" &&
+    intent.semanticEvidence.memoryRecall.target === "conversation_history" &&
+    !intent.referencesRecentHistory &&
+    Boolean(
+      resolvedDateRange ||
+        intent.resolvedDateRange ||
+        intent.dateFrom ||
+        intent.dateTo ||
+        typeof timeWindowDays === "number" ||
+        typeof intent.timeWindowDays === "number",
+    )
+  );
+}
+
 /**
  * JARVIS 3.0: The Digital Lifeform Agent
  *
@@ -820,6 +841,7 @@ export class JarvisAgent extends EventEmitter {
         let timeWindowDays: number | null = null;
         let resolvedDateRange: { from: number; to: number } | null = null;
         let intentFrame: IntentFrame | null = null;
+        let isolatedChatHistorySnapshot: any[] | null = null;
         let conversationHistory: Array<{
           role: "user" | "assistant";
           content: string;
@@ -972,6 +994,24 @@ export class JarvisAgent extends EventEmitter {
               );
             }
           }
+          if (
+            shouldIsolateTimeScopedConversationRecall(
+              intentFrame,
+              resolvedDateRange,
+              timeWindowDays,
+            )
+          ) {
+            const chat = this.client.getChat();
+            const history = chat.getHistory();
+            if (history.length > 0) {
+              isolatedChatHistorySnapshot = [...history];
+              chat.setHistory([]);
+              conversationHistory = [];
+              console.error(
+                `🧹 [Jarvis] Time-scoped conversation recall — isolated ${Math.floor(history.length / 2)} recent turn(s) from response context.`,
+              );
+            }
+          }
         }
 
         const abortController = new AbortController();
@@ -1059,6 +1099,19 @@ export class JarvisAgent extends EventEmitter {
         }
         const finalAssistantText = loopResult.finalText;
         const allToolsCalled = loopResult.toolsCalled;
+        if (isolatedChatHistorySnapshot) {
+          try {
+            const chat = this.client.getChat();
+            const isolatedTurnHistory = chat.getHistory();
+            chat.setHistory([
+              ...isolatedChatHistorySnapshot,
+              ...isolatedTurnHistory,
+            ]);
+            console.error(
+              `🧹 [Jarvis] Restored ${Math.floor(isolatedChatHistorySnapshot.length / 2)} prior turn(s) after time-scoped recall.`,
+            );
+          } catch (_restoreErr) {}
+        }
         try {
           const backendProvider =
             this.jarvisConfig.llmBackend?.provider ?? "gemini";

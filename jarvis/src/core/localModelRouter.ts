@@ -58,6 +58,8 @@ type ClassifyResult = {
 
 const TIME_SCOPED_CONVERSATION_RECALL_ROUTING_CAP = 58;
 const EXTERNAL_PRODUCT_RECOMMENDATION_OPERATION_CAP = 35;
+const TIME_SCOPED_CONVERSATION_RECALL_RE =
+  /(昨天|前天|大前天|今天|上周|上个月|两天前|三天前|last\s+(?:day|week|month)|yesterday|today).*(聊|讨论|探讨|说|内容|conversation|discuss|talk)|(?:聊|讨论|探讨).*(昨天|前天|大前天|哪些|什么|内容|what)/i;
 
 function hasExplicitTimeScope(intent: IntentFrame): boolean {
   return Boolean(
@@ -68,23 +70,27 @@ function hasExplicitTimeScope(intent: IntentFrame): boolean {
   );
 }
 
-function isSimpleTimeScopedConversationRecall(intent: IntentFrame): boolean {
+function isSimpleTimeScopedConversationRecall(
+  intent: IntentFrame,
+  prompt?: string,
+): boolean {
   if (intent.taskType !== "recall") return false;
   if (intent.semanticEvidence.memoryRecall.target !== "conversation_history") {
     return false;
   }
-  if (!hasExplicitTimeScope(intent)) return false;
   if (
-    intent.needsExternalKnowledge ||
-    intent.needsTool ||
-    intent.needsScheduling
+    !hasExplicitTimeScope(intent) &&
+    !(prompt && TIME_SCOPED_CONVERSATION_RECALL_RE.test(prompt))
   ) {
+    return false;
+  }
+  if (intent.needsExternalKnowledge || intent.needsScheduling) {
     return false;
   }
   if ((intent.candidateAgents ?? []).length > 0) return false;
 
-  return intent.intentSteps.every((step) =>
-    ["recall", "chat"].includes(step.type),
+  return !intent.intentSteps.some((step) =>
+    ["analyze", "delegate", "execute", "schedule"].includes(step.type),
   );
 }
 
@@ -167,12 +173,15 @@ function calibrateRoutingIntent(intent: IntentFrame): {
   };
 }
 
-function calibrateRoutingScore(intent: IntentFrame): {
+function calibrateRoutingScore(
+  intent: IntentFrame,
+  prompt?: string,
+): {
   score: number;
   reasonSuffix: string;
 } {
   const originalScore = intent.complexityScore;
-  if (isSimpleTimeScopedConversationRecall(intent)) {
+  if (isSimpleTimeScopedConversationRecall(intent, prompt)) {
     const score = Math.min(
       originalScore,
       TIME_SCOPED_CONVERSATION_RECALL_ROUTING_CAP,
@@ -268,7 +277,7 @@ export class LocalModelRouter {
     intent = intentCalibration.intent;
     const knowledgeScore = intent.knowledgeScore;
     const operationScore = intent.operationScore;
-    const routingScore = calibrateRoutingScore(intent);
+    const routingScore = calibrateRoutingScore(intent, prompt);
     const breakdown =
       knowledgeScore !== null && operationScore !== null
         ? ` [knowledge=${knowledgeScore}, operation=${operationScore}]`

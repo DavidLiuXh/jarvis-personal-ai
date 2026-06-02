@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 // Mock Ollama retry wrapper so tests don't hit a real Ollama server
 vi.mock("./ollamaClient.js", () => ({
@@ -479,7 +479,14 @@ describe("LocalModelRouter — query subject personal-context guard", () => {
 });
 
 describe("LocalModelRouter — routing score calibration", () => {
-  beforeEach(() => mockGenerate.mockReset());
+  beforeEach(() => {
+    mockGenerate.mockReset();
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-06-02T04:00:00+08:00"));
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
 
   it("routes simple time-scoped conversation recall to flash even when raw complexity is high", async () => {
     const router = makeRouter();
@@ -489,7 +496,24 @@ describe("LocalModelRouter — routing score calibration", () => {
 
     expect(result.querySubject).toBe("personal");
     expect(result.intent?.complexityScore).toBe(97);
+    expect(result.dateFrom).toBe("2026-06-01");
+    expect(result.dateTo).toBe("2026-06-01");
     expect(result.score).toBeLessThan(70);
+    expect(result.model).toBe("gemini-2.5-flash");
+    expect(result.classifierReason).toContain(
+      "calibration=time_scoped_conversation_recall",
+    );
+  });
+
+  it("still down-scores time-scoped conversation recall when the model overstates tool need", async () => {
+    const router = makeRouter();
+    const parsed = JSON.parse(conversationRecallResponse(80));
+    parsed.needs_tool = true;
+    mockGenerate.mockResolvedValueOnce(JSON.stringify(parsed));
+
+    const result = await router.route("汇总下昨天我们讨论了什么内容");
+
+    expect(result.score).toBe(58);
     expect(result.model).toBe("gemini-2.5-flash");
     expect(result.classifierReason).toContain(
       "calibration=time_scoped_conversation_recall",

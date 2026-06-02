@@ -715,6 +715,11 @@ function hasEntityStatusDrilldown(
   );
 }
 
+function formatLocalDate(ms: number): string {
+  const date = new Date(ms);
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+}
+
 /**
  * Build the classifier prompt. Date/time resolution is handled by
  * extractDateRange() in code; the local model only needs to score and classify.
@@ -737,8 +742,8 @@ function buildIntentPrompt(
 
   const timeNote = preResolvedRange
     ? `NOTE: The system has already resolved the temporal reference to the date range ` +
-      `[${new Date(preResolvedRange.from).toISOString().slice(0, 10)} ~ ` +
-      `${new Date(preResolvedRange.to - 1).toISOString().slice(0, 10)}]. ` +
+      `[${formatLocalDate(preResolvedRange.from)} ~ ` +
+      `${formatLocalDate(preResolvedRange.to - 1)}]. ` +
       `Output date_from=null, date_to=null, time_window_days=null — the system handles this.`
     : `If the request has NO clear temporal reference, output time_window_days=null, date_from=null, date_to=null.`;
 
@@ -2937,9 +2942,8 @@ export class IntentResolver {
     let dateTo: string | null = null;
 
     if (preResolved !== null) {
-      const toIso = (ms: number) => new Date(ms).toISOString().slice(0, 10);
-      dateFrom = toIso(preResolved.from);
-      dateTo = toIso(preResolved.to - 1);
+      dateFrom = formatLocalDate(preResolved.from);
+      dateTo = formatLocalDate(preResolved.to - 1);
       timeWindowDays = null;
       evidence.push("code_resolved_date_range");
     } else {

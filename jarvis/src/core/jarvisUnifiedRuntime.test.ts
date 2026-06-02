@@ -195,4 +195,110 @@ describe("runJarvisUnifiedRuntimeTurn", () => {
 
     expect(result.llmLoop?.finalText).toBe("done");
   });
+
+  it("adds a temporal recall boundary and passes the exact date range for time-scoped conversation recall", async () => {
+    const range = {
+      from: Date.parse("2026-06-01T00:00:00+08:00"),
+      to: Date.parse("2026-06-02T00:00:00+08:00"),
+    };
+    const searchWithScore = vi.fn().mockResolvedValue([
+      {
+        text: "User: 昨天我们讨论了 Universal Memory Layer\nAssistant: 重点是三层记忆运行时。",
+        score: 0.9,
+      },
+    ]);
+
+    const result = await runJarvisUnifiedRuntimeTurn(
+      baseInput({
+        userPrompt: "汇总下昨天我们讨论了什么内容",
+        querySubject: "personal",
+        resolvedDateRange: range,
+        intent: intent({
+          subject: "personal",
+          taskType: "recall",
+          needsMemory: true,
+          needsExternalKnowledge: false,
+          timeWindowDays: null,
+          dateFrom: "2026-06-01",
+          dateTo: "2026-06-01",
+          resolvedDateRange: range,
+          semanticEvidence: {
+            personalContext: {
+              present: true,
+              reason: "asks about prior conversation",
+              span: "我们讨论",
+            },
+            memoryRecall: {
+              present: true,
+              target: "conversation_history",
+              reason: "asks about yesterday conversation",
+              span: "昨天我们讨论",
+            },
+            actionRequest: {
+              present: false,
+              action: "none",
+              object: "",
+            },
+            entityHints: {
+              tickers: [],
+              technicalTerms: [],
+              peopleOrCompanies: [],
+            },
+          },
+          richIntent: {
+            userGoal: "汇总昨天对话",
+            domain: "memory_management",
+            action: "recall",
+            primaryAction: "recall",
+            targets: [{ type: "memory", value: "conversation_history" }],
+            contextDependency: {
+              recentConversation: false,
+              longTermMemory: true,
+              externalWorld: false,
+              localWorkspace: false,
+            },
+            ambiguity: [],
+            riskLevel: "low",
+          },
+          intentSteps: [
+            step({
+              type: "recall",
+              action: "summarize conversation history",
+              target: "conversation_history",
+              operation: {
+                domain: "memory_management",
+                action: "recall",
+                targetType: "memory",
+                target: "conversation_history",
+                selector: "yesterday",
+                scope: "long_term",
+                riskLevel: "low",
+              },
+            }),
+          ],
+        }),
+        memoryService: {
+          skillIndexBuilding: false,
+          searchFacts: vi.fn().mockResolvedValue([]),
+          searchWithScore,
+          searchSummaryChunks: vi.fn().mockResolvedValue([]),
+        },
+      }),
+    );
+
+    expect(searchWithScore).toHaveBeenCalledWith(
+      expect.stringContaining("conversation_history"),
+      expect.any(Number),
+      null,
+      range,
+      expect.any(Number),
+    );
+    expect(result.systemInstruction).toContain("<temporal_recall_boundary>");
+    expect(result.systemInstruction).toContain(
+      "requested_time_range: 2026-06-01~2026-06-01",
+    );
+    expect(result.systemInstruction).toContain(
+      "Do not answer from the current/recent chat history",
+    );
+  });
 });
