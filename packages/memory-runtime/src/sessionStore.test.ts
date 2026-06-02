@@ -67,11 +67,18 @@ describe("sessionStore helpers", () => {
 
     const session = await store.readSession("session-openai");
     const results = await store.searchTurns({ query: "ONNX配置" });
+    const writtenFiles = fs.readdirSync(dir);
+    const transcriptFile = writtenFiles.find((file) =>
+      file.endsWith("_session-openai.jsonl"),
+    );
     const fileContent = fs.readFileSync(
-      path.join(dir, "session-openai.jsonl"),
+      path.join(dir, transcriptFile ?? ""),
       "utf8",
     );
 
+    expect(transcriptFile).toBe(
+      "2026-06-02T10-00-00-000Z_session-openai.jsonl",
+    );
     expect(session?.source).toBe("jarvis-jsonl-v1");
     expect(session?.turns.map((turn) => turn.role)).toEqual([
       "user",
@@ -115,9 +122,11 @@ describe("sessionStore helpers", () => {
     });
     const fallbackResults = await composite.searchTurns({ query: "梓潼" });
 
-    expect(fs.existsSync(path.join(primaryDir, "new-session.jsonl"))).toBe(
-      true,
-    );
+    expect(
+      fs
+        .readdirSync(primaryDir)
+        .some((file) => file.endsWith("_new-session.jsonl")),
+    ).toBe(true);
     expect(fallbackResults[0].sessionId).toBe("legacy");
   });
 });

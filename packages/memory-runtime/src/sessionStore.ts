@@ -165,6 +165,13 @@ function timestampIso(value: string | number | undefined): string | undefined {
   return ms === null ? undefined : new Date(ms).toISOString();
 }
 
+function filenameTimestamp(value: string | number | undefined): string {
+  return (timestampIso(value) ?? new Date().toISOString()).replace(
+    /[:.]/g,
+    "-",
+  );
+}
+
 export class JarvisJsonlSessionStore implements SessionStore {
   readonly capabilities: SessionStoreCapabilities = {
     read: true,
@@ -258,7 +265,9 @@ export class JarvisJsonlSessionStore implements SessionStore {
 
   async appendTurn(input: SessionAppendInput): Promise<void> {
     this.ensureDir();
-    const filePath = this.filePathForSession(input.sessionId);
+    const filePath =
+      this.findSessionFile(input.sessionId)?.filePath ??
+      this.filePathForNewSession(input.sessionId, input.turn.timestamp);
     if (!fs.existsSync(filePath)) {
       const now = new Date().toISOString();
       fs.appendFileSync(
@@ -294,7 +303,12 @@ export class JarvisJsonlSessionStore implements SessionStore {
 
   async upsertSession(session: SessionTranscript): Promise<void> {
     this.ensureDir();
-    const filePath = this.filePathForSession(session.sessionId);
+    const filePath =
+      this.findSessionFile(session.sessionId)?.filePath ??
+      this.filePathForNewSession(
+        session.sessionId,
+        session.createdAt ?? session.turns[0]?.timestamp,
+      );
     const now = new Date().toISOString();
     const records: unknown[] = [
       {
@@ -398,17 +412,27 @@ export class JarvisJsonlSessionStore implements SessionStore {
     filePath: string;
     mtime: number;
   } | null {
-    const expected = `${sanitizeSessionId(sessionId)}.jsonl`;
+    const safeSessionId = sanitizeSessionId(sessionId);
+    const legacyExpected = `${safeSessionId}.jsonl`;
+    const suffixExpected = `_${safeSessionId}.jsonl`;
     return (
       this.listSessionFiles(null).find(
         ({ file }) =>
-          file === expected || file.replace(/\.jsonl$/, "") === sessionId,
+          file === legacyExpected ||
+          file.endsWith(suffixExpected) ||
+          file.replace(/\.jsonl$/, "") === sessionId,
       ) ?? null
     );
   }
 
-  private filePathForSession(sessionId: string): string {
-    return path.join(this.dir, `${sanitizeSessionId(sessionId)}.jsonl`);
+  private filePathForNewSession(
+    sessionId: string,
+    timestamp?: string | number,
+  ): string {
+    return path.join(
+      this.dir,
+      `${filenameTimestamp(timestamp)}_${sanitizeSessionId(sessionId)}.jsonl`,
+    );
   }
 
   private ensureDir(): void {

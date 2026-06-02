@@ -635,7 +635,7 @@ packages/intent-runtime/src/
 - `DefaultMemoryRetriever` 根据 `MemoryContract` 决定是否检索 session / fact / entry；
 - external 或 no-memory contract 不会调用任何 store；
 - `memory-runtime/sessionStore.ts` 已定义 `SessionStore` / `SessionTranscript` / `SessionSearchResult`，用于抽象完整会话流水的 list / read / search / optional write；
-- `memory-runtime/sessionStore.ts` 已提供 `JarvisJsonlSessionStore`，定义 Jarvis Transcript JSONL v1，作为 Gemini / OpenAI / vLLM 等 backend 都可写入的标准文件格式；
+- `memory-runtime/sessionStore.ts` 已提供 `JarvisJsonlSessionStore`，定义 Jarvis Transcript JSONL v1，作为 Gemini / OpenAI / vLLM 等 backend 都可写入的标准文件格式；文件名采用 `YYYY-MM-DDTHH-MM-SS-sssZ_<sessionId>.jsonl`，便于按目录时间排序和人工检索；
 - `memory-runtime/sessionStore.ts` 已提供 `CompositeSessionStore`，用于组合 writable primary store 和 legacy read/search fallback；
 - 通用层只保留 Jarvis JSONL v1 和 session search 的纯关键词提取与 scoring helper，不绑定 Gemini CLI 文件格式；
 - `DefaultMemoryRetriever` 已支持 runtime extension points：

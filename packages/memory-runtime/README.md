@@ -172,6 +172,10 @@ const customStore: SessionStore = {
 
 `JarvisJsonlSessionStore` writes Jarvis Transcript JSONL v1:
 
+Files are stored as
+`YYYY-MM-DDTHH-MM-SS-sssZ_<sessionId>.jsonl`, using the first turn or session
+creation timestamp. Legacy `<sessionId>.jsonl` files remain readable.
+
 ```jsonl
 {"kind":"session","schemaVersion":1,"sessionId":"demo","source":"jarvis-jsonl-v1"}
 {"kind":"turn","role":"user","content":"hello","timestamp":"2026-06-02T00:00:00.000Z","backend":"openai","model":"gpt-4.1"}
