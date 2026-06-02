@@ -7,7 +7,7 @@
 当前实现已经具备一套可运行的通用层雏形：
 
 - `packages/memory-runtime/src` 已承载 `IntentFrame`、`MemoryContract`、`ClarificationQuestion`、memory policy、clarification policy、retrieval adapter、injection planner 和 `DefaultMemoryRuntime`。
-- `packages/intent-runtime/src` 已承载 `IntentExecutionPlan`、`IntentStepRuntime` 和 tool-backed execution contract 纯逻辑。
+- `packages/intent-runtime/src` 已承载 `IntentResolver`、model client abstraction、`IntentExecutionPlan`、`IntentStepRuntime` 和 tool-backed execution contract 纯逻辑。
 - `jarvis/src/memory-runtime/*` 与 `jarvis/src/intent-runtime/*` 现在是兼容 re-export shim，便于现有 Jarvis import 平滑过渡。
 - runtime packages 基本没有反向依赖 `jarvis/src/core/*`，具备继续独立化的基础。
 - `agent.ts#runUnifiedRuntimeTurn()` 已通过 `AgentRuntime.handleTurn()` 执行主响应路径的 `intent -> memory -> skill -> response compose -> LLM/tool loop`。
@@ -16,7 +16,7 @@
 
 当前剩余缺口也很明确：
 
-- `IntentResolver` 仍保留 Jarvis core 具体实现，但已通过 `JarvisIntentResolverAdapter` 接入 `IntentRuntime`，不再是 package runtime 的反向依赖。
+- `IntentResolver` 实现已迁入 `packages/intent-runtime/src/intentResolver.ts`；Jarvis core 只保留兼容 shim，并通过 `JarvisOllamaIntentModelClient` 保持本地 Ollama 行为。
 - Jarvis 默认 `agentRuntime.executionMode=skip`，避免与 backend-native tool calling 双重执行；package runtime 已支持 `execute`，这是产品灰度策略，不再是 runtime 能力缺口。
 - subagent orchestration 仍主要在 `jarvis/src/core`，但已消费统一 `RuntimeContext`、`MemoryContract` 和 step-level memory decision；Jarvis-specific orchestration 被定位为 application adapter。
 - runtime feedback 已可收集、review、promote 并进入质量门禁；真实线上样本需要持续运营补充，但当前 roadmap 的工程闭环已完成。
@@ -367,12 +367,15 @@ Status: completed for the Jarvis integration path in this phase.
 当前实现状态：
 
 - 新增 `packages/intent-runtime/src/runtime.ts`，定义 `IntentRuntime`、`DefaultIntentRuntime`、`IntentResolverAdapter`、`IntentClarificationAdapter`、`IntentExecutionPlanner`、runtime events 和 diagnostics；
+- 新增 `packages/intent-runtime/src/intentResolver.ts`，将原 Jarvis model-backed resolver 实现迁入 runtime 包；
+- 新增 `packages/intent-runtime/src/modelClient.ts`，公开 `IntentModelClient`、`OllamaIntentModelClient` 和 `OpenAICompatibleIntentModelClient`，支持本地和远端 LLM；
 - `DefaultIntentRuntime.understand()` 已串联 `resolve intent -> evaluate policy -> evaluate confidence -> resolve clarification -> plan execution`，返回统一的 `IntentRuntimeResult`；
 - 已新增 `IntentPolicyAdapter` / `IntentPolicyEvaluation`，把 query subject 与 policy trace 作为 runtime lifecycle 的一等结果和 `policy_evaluated` 事件；
 - 已沉淀 resolver 周边通用 contract：`IntentModelJsonClient`、`IntentJsonRepairAdapter`、`IntentFallbackAdapter`，供 Jarvis 或外部 host 组合 model JSON、repair 和 fallback 流程；
 - 已新增 `IntentConfidenceGate` / `evaluateIntentConfidence()`，runtime 会输出 `confidence_evaluated` 事件，并把 confidence evaluation 写入 diagnostics；critical gate 可配置为直接 fail fast；
 - 新增 `StaticIntentResolverAdapter`，用于 package tests 和外部项目快速嵌入；
-- 新增 `jarvis/src/core/jarvisIntentResolverAdapter.ts`，作为 Jarvis core `IntentResolver` 的唯一 runtime adapter；
+- `jarvis/src/core/intentResolver.ts` 现在是兼容 shim，继续注入 `JarvisOllamaIntentModelClient` 保持 Jarvis 默认本地模型行为；
+- 新增 `jarvis/src/core/jarvisIntentResolverAdapter.ts`，作为 Jarvis core 接入 `IntentRuntime` 的 adapter；
 - `LocalModelRouter` 已改为通过 `DefaultIntentRuntime + JarvisIntentResolverAdapter` 解析 intent；
 - `intent:matrix` runner 已改为通过 `DefaultIntentRuntime` 入口运行，不再直接 new `IntentResolver`；
 - package-level API smoke test 覆盖完整 intent runtime lifecycle 与 confidence gate 行为。
@@ -468,7 +471,7 @@ AgentRuntime.handleTurn
 - complete intent-driven runtime: 88%-92%
 - 判断依据：P6 验收标准已闭环；Jarvis 主响应路径已通过 `AgentRuntime.handleTurn()` 统一执行 intent、memory、skill、response compose 和 LLM/tool loop；`agent.ts` 当前主要承担 application adapter、事件转发、clarification UI、topic shift、历史压缩和持久化副作用。
 - 本轮推进后，`agent.ts` 不再承载 memory retrieval / injection / skill retrieval / response composition / AgentRuntime construction 的详细规则；这些规则已收敛到 `jarvis/src/core/jarvisUnifiedRuntime.ts`，`agent.ts#runUnifiedRuntimeTurn()` 只负责 strip old history、调用 unified runtime、应用 system instruction。
-- 尚未稳定进入 92%+ 的原因：`IntentResolver` 仍未完全抽离为通用 runtime adapter，Jarvis 默认未启用 `agentRuntime.executionMode=execute`，subagent orchestration 仍在 Jarvis core，真实线上样本反馈还需要继续积累。
+- 尚未稳定进入更高线上成熟度的原因：Jarvis 默认未启用 `agentRuntime.executionMode=execute`，subagent orchestration 仍在 Jarvis core，真实线上样本反馈还需要继续积累。
 
 验收标准：
 

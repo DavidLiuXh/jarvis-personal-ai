@@ -347,7 +347,7 @@ export interface Reranker {
 
 | 通用层能力           | Jarvis 当前实现                                          |
 | -------------------- | -------------------------------------------------------- |
-| Intent Understanding | `jarvis/src/core/intentResolver.ts`                      |
+| Intent Understanding | `packages/intent-runtime/src/intentResolver.ts`          |
 | Policy Layer         | `packages/memory-runtime/src/intentPolicy.ts`            |
 | Clarification        | `packages/memory-runtime/src/clarificationPolicy.ts`     |
 | Memory Policy        | `packages/memory-runtime/src/intentAwareMemoryPolicy.ts` |
@@ -366,22 +366,23 @@ export interface Reranker {
 3. `clarificationPolicy.ts`；
 4. `intentAwareMemoryPolicy.ts`；
 5. `memoryInjectionPlanner.ts`；
-6. `DefaultMemoryRuntime` 和 adapter interfaces。
+6. `DefaultMemoryRuntime` 和 adapter interfaces；
+7. `IntentResolver`、`IntentModelClient`、`dateRange` 等 intent runtime 纯逻辑。
 
 仍主要停留在 Jarvis core 的模块：
 
-1. `IntentResolver` 实现本体；
-2. `runtimeIntentFeedbackCollector.ts`；
-3. `MemoryService` 及具体 fact / entry / vector store 实现；
-4. Jarvis 专属 query rewrite、recent conversation recall、summary fallback、skill retrieval extension 实现。
+1. `runtimeIntentFeedbackCollector.ts`；
+2. `MemoryService` 及具体 fact / entry / vector store 实现；
+3. Jarvis 专属 query rewrite、recent conversation recall、summary fallback、skill retrieval extension 实现；
+4. Jarvis 专属 agent / subagent orchestration。
 
 ## 8. 当前阻碍复用的耦合点
 
 ### 8.1 模型调用耦合
 
-`intentResolver.ts` 当前依赖 `IntentModelClient`，不再直接依赖 `ollamaGenerate`。
+`packages/intent-runtime/src/intentResolver.ts` 当前依赖 `IntentModelClient`，不再直接依赖 `ollamaGenerate`。
 
-Jarvis 默认路径通过 `JarvisOllamaIntentModelClient` 使用本地 Ollama。通用层同时提供不依赖 Jarvis core 的 `OllamaIntentModelClient`，其他项目可以提供 OpenAI / Gemini / vLLM adapter。
+Jarvis 默认路径通过 `JarvisOllamaIntentModelClient` 使用本地 Ollama。通用层同时提供不依赖 Jarvis core 的 `OllamaIntentModelClient` 和 `OpenAICompatibleIntentModelClient`，其他项目可以提供 OpenAI-compatible、Gemini、vLLM 或云厂商 adapter。
 
 ### 8.2 ToolRouter 类型耦合
 
@@ -544,11 +545,12 @@ packages/intent-runtime/src/
 
 当前实现状态：
 
-- `IntentResolver` 依赖通用 `IntentModelClient`；
+- `IntentResolver` 已迁入 `packages/intent-runtime/src/intentResolver.ts`，依赖通用 `IntentModelClient`；
 - 默认 Jarvis 路径使用 `JarvisOllamaIntentModelClient`，行为保持为本地 Ollama，并兼容现有 core 测试 mock；
-- 通用 `memory-runtime/OllamaIntentModelClient` 已独立实现，不依赖 Jarvis core；
+- 通用 `intent-runtime/modelClient.ts` 已公开 `OllamaIntentModelClient` 和 `OpenAICompatibleIntentModelClient`，不依赖 Jarvis core；
 - JSON repair、memory target extractor、entity hints extractor 和主 intent seed 都通过同一个 model adapter；
-- `scripts/run_intent_evals.ts` 显式构造 `OllamaIntentModelClient` 后传入 resolver，为后续切换 OpenAI/Gemini/vLLM adapter 留出入口；
+- `jarvis/src/core/intentResolver.ts` 只保留兼容 shim；未显式传入 `modelClient` 时会注入 `JarvisOllamaIntentModelClient`，保持 Jarvis 默认行为不变；
+- runtime 包级 API 可直接构造 `IntentResolver + OpenAICompatibleIntentModelClient`，为后续切换 OpenAI/Gemini/vLLM adapter 留出入口；
 - `IntentResolver` 不再直接 import `ollamaClient.ts`。
 
 ### Phase 5：统一 main / tool / subagent memory policy
@@ -599,7 +601,8 @@ packages/intent-runtime/src/
 - `IntentExecutionPlan` 和 `IntentStepRuntime` 已迁入 `packages/intent-runtime/src/executionPlan.ts`，`core/intentExecutionPlan.ts` 与 `jarvis/src/intent-runtime/executionPlan.ts` 仅保留兼容 re-export；
 - 通用 `OllamaIntentModelClient` 已不再 import `core/ollamaClient.ts`；
 - Jarvis core 增加 `JarvisOllamaIntentModelClient`，用于保持现有默认 Ollama 行为和测试兼容；
-- `IntentResolver` 继续作为 Jarvis core 实现，但其公开类型从通用层 re-export。
+- `IntentResolver` 实现已迁入 `packages/intent-runtime/src/intentResolver.ts`；
+- `jarvis/src/core/intentResolver.ts` 与 `jarvis/src/core/dateRange.ts` 仅保留兼容 re-export / shim。
 
 剩余限制：
 
@@ -830,7 +833,7 @@ packages/intent-runtime/src/
 剩余限制：
 
 - `intent-runtime` 仍复用 `memory-runtime/types.ts` 与 `crudPolicy.ts`；
-- `IntentResolver` 仍在 Jarvis core；
+- `IntentResolver` 已迁入 `intent-runtime`，Jarvis core 仅保留兼容 shim；
 - tool/subagent execution 仍在 Jarvis core；
 - step orchestrator 已开始托管 known required tools，但完整 agent / subagent orchestration 仍未迁入；
 - clarification runtime 已记录 pending / answered requirements，但前端交互仍沿用现有 ask_user 通道；

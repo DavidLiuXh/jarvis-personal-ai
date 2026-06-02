@@ -10,6 +10,10 @@
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
     },
+    "./dateRange": {
+      "types": "./dist/dateRange.d.ts",
+      "import": "./dist/dateRange.js"
+    },
     "./executor": {
       "types": "./dist/executor.d.ts",
       "import": "./dist/executor.js"
@@ -17,6 +21,14 @@
     "./executionPlan": {
       "types": "./dist/executionPlan.d.ts",
       "import": "./dist/executionPlan.js"
+    },
+    "./intentResolver": {
+      "types": "./dist/intentResolver.d.ts",
+      "import": "./dist/intentResolver.js"
+    },
+    "./modelClient": {
+      "types": "./dist/modelClient.d.ts",
+      "import": "./dist/modelClient.js"
     },
     "./runtime": {
       "types": "./dist/runtime.d.ts",

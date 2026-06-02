@@ -2,11 +2,14 @@ import { describe, expect, it } from "vitest";
 import {
   DefaultIntentRuntime,
   IntentConfidenceGateError,
+  IntentResolver,
   IntentStepRuntime,
+  OpenAICompatibleIntentModelClient,
   StaticIntentResolverAdapter,
   buildIntentExecutionPlan,
   evaluateIntentConfidence,
 } from "./index.js";
+import type { IntentModelClient } from "./index.js";
 import type { IntentFrame } from "../../memory-runtime/src/index.js";
 
 describe("@jarvis/intent-runtime package API", () => {
@@ -246,5 +249,98 @@ describe("@jarvis/intent-runtime package API", () => {
       "confidence_evaluated",
       "intent_runtime_failed",
     ]);
+  });
+
+  it("exports the model-backed IntentResolver without Jarvis core dependencies", async () => {
+    const modelClient: IntentModelClient = {
+      async generateJson() {
+        return JSON.stringify({
+          complexity_score: 35,
+          knowledge_score: 70,
+          operation_score: 10,
+          complexity_reasoning: "simple external question",
+          query_subject: "external",
+          task_type: "analyze",
+          needs_external_knowledge: true,
+          needs_tool: false,
+          needs_scheduling: false,
+          candidate_agents: [],
+          confidence: 0.9,
+          confidence_by_dimension: {
+            subject: 0.9,
+            taskType: 0.9,
+            memoryTarget: 0.9,
+            action: 0.9,
+            entityHints: 0.9,
+            topicShift: 0.9,
+            richIntent: 0.9,
+          },
+          evidence: ["weather"],
+          semantic_evidence: {
+            personalContext: { present: false, reason: "" },
+            memoryRecall: { present: false, target: "none", reason: "" },
+            actionRequest: { present: false, action: "none" },
+            entityHints: {
+              tickers: [],
+              technicalTerms: [],
+              peopleOrCompanies: [],
+            },
+          },
+          topic_analysis: {
+            history: {
+              label: "",
+              evidence: [],
+              sourceTurns: [],
+              confidence: 0,
+            },
+            current: {
+              label: "weather",
+              evidence: ["天气怎么样"],
+              sourceTurns: [0],
+              confidence: 0.9,
+            },
+            relation: "unknown",
+            relationReason: "no history",
+            confidence: 0.9,
+            lowGrounding: false,
+          },
+        });
+      },
+    };
+    const resolver = new IntentResolver({ modelClient });
+    const intent = await resolver.resolve({
+      userPrompt: "天气怎么样",
+      history: [],
+      now: new Date("2026-06-02T00:00:00.000Z"),
+    });
+
+    expect(intent.subject).toBe("external");
+    expect(intent.taskType).toBe("analyze");
+    expect(intent.source).toBe("model");
+  });
+
+  it("exports an OpenAI-compatible remote IntentModelClient", async () => {
+    const client = new OpenAICompatibleIntentModelClient({
+      apiKey: "test-key",
+      model: "test-model",
+      baseUrl: "https://example.test/v1",
+      fetchFn: async (url, init) =>
+        new Response(
+          JSON.stringify({
+            choices: [{ message: { content: '{"ok":true}' } }],
+            url,
+            method: init?.method,
+          }),
+          { status: 200 },
+        ),
+    });
+
+    await expect(
+      client.generateJson({
+        system: "Return JSON.",
+        prompt: "Classify intent.",
+        responseFormat: "json",
+      }),
+    ).resolves.toBe('{"ok":true}');
   });
 });

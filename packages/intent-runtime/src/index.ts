@@ -4,6 +4,9 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+export * from "./dateRange.js";
 export * from "./executionPlan.js";
 export * from "./executor.js";
+export * from "./intentResolver.js";
+export * from "./modelClient.js";
 export * from "./runtime.js";

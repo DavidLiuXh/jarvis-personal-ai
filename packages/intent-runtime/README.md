@@ -10,6 +10,7 @@ This package owns:
 - the `IntentRuntime` lifecycle: resolve intent, resolve clarification, plan
   execution;
 - resolver adapter interfaces for host applications;
+- the model-backed `IntentResolver` implementation;
 - policy adapter interfaces for host-specific query-subject and policy-trace
   evaluation;
 - model JSON client, JSON repair, deterministic fallback, and confidence-gate
@@ -55,10 +56,10 @@ const deterministicRequests = runtime.buildDeterministicToolRequests();
 
 ## Host Adapter
 
-Applications should provide an `IntentResolverAdapter`. Jarvis uses
-`JarvisIntentResolverAdapter` in `jarvis/src/core` to wrap its current
-`IntentResolver`; external projects can provide their own model or rule-based
-resolver without importing Jarvis core.
+Applications can provide an `IntentResolverAdapter`, use the model-backed
+`IntentResolver`, or provide a rule-based resolver without importing Jarvis core.
+Jarvis keeps a compatibility shim in `jarvis/src/core/intentResolver.ts` so
+existing imports keep working while the implementation lives in this package.
 
 Resolver implementations can also compose the lower-level contracts exported by
 this package:
@@ -72,6 +73,30 @@ this package:
   clarification;
 - `IntentConfidenceGate` / `evaluateIntentConfidence()` for explicit runtime
   quality gates.
+
+Model-backed resolver usage:
+
+```ts
+import {
+  IntentResolver,
+  OpenAICompatibleIntentModelClient,
+} from "@jarvis/intent-runtime";
+
+const resolver = new IntentResolver({
+  modelClient: new OpenAICompatibleIntentModelClient({
+    apiKey: process.env.OPENAI_API_KEY,
+    model: "gpt-4.1-mini",
+  }),
+});
+
+const intent = await resolver.resolve({
+  userPrompt: "Compare React and Vue for my project",
+  history: [],
+});
+```
+
+Local Ollama usage can use `OllamaIntentModelClient` from the same entrypoint.
+Internal gateways or local OpenAI-compatible servers can omit `apiKey`.
 
 ```ts
 const guardedRuntime = new DefaultIntentRuntime(resolverAdapter, {
