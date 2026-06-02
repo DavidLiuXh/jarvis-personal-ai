@@ -1059,19 +1059,105 @@
         }
 
         function renderMarkdown(targetEl, markdown) {
-            const normalized = normalizeMarkdownForDisplay(markdown || '');
-            targetEl.innerHTML = parseMarkdown(normalized);
+            const prepared = prepareMarkdownForDisplay(markdown || '');
+            targetEl.innerHTML = restoreMathSegments(
+                parseMarkdown(prepared.markdown),
+                prepared.mathSegments
+            );
             if (window.hljs?.highlightElement) {
                 targetEl.querySelectorAll('pre code').forEach(el => hljs.highlightElement(el));
             }
             renderMath(targetEl);
         }
 
-        function normalizeMarkdownForDisplay(markdown) {
+        function prepareMarkdownForDisplay(markdown) {
+            const protectedMath = protectMathSegments(String(markdown));
+            return {
+                markdown: normalizeMarkdownOutsideMath(protectedMath.markdown),
+                mathSegments: protectedMath.mathSegments
+            };
+        }
+
+        function protectMathSegments(markdown) {
+            const mathSegments = [];
+            let result = '';
+            let index = 0;
+
+            const pushSegment = (start, end) => {
+                const token = `JARVISMATH${mathSegments.length}TOKEN`;
+                mathSegments.push(markdown.slice(start, end));
+                result += markdown.slice(index, start) + token;
+                index = end;
+            };
+
+            while (index < markdown.length) {
+                const next = findNextMathDelimiter(markdown, index);
+                if (!next) {
+                    result += markdown.slice(index);
+                    break;
+                }
+                const close = findMathClose(markdown, next.contentStart, next.close);
+                if (close < 0) {
+                    result += markdown.slice(index);
+                    break;
+                }
+                pushSegment(next.start, close + next.close.length);
+            }
+
+            return { markdown: result, mathSegments };
+        }
+
+        function findNextMathDelimiter(markdown, fromIndex) {
+            const delimiters = [
+                { open: '$$', close: '$$' },
+                { open: '\\[', close: '\\]' },
+                { open: '\\(', close: '\\)' },
+                { open: '$', close: '$' }
+            ];
+            let best = null;
+            for (const delimiter of delimiters) {
+                let start = markdown.indexOf(delimiter.open, fromIndex);
+                while (start >= 0 && isEscaped(markdown, start)) {
+                    start = markdown.indexOf(delimiter.open, start + delimiter.open.length);
+                }
+                if (start >= 0 && (!best || start < best.start || delimiter.open.length > best.open.length)) {
+                    best = {
+                        ...delimiter,
+                        start,
+                        contentStart: start + delimiter.open.length
+                    };
+                }
+            }
+            return best;
+        }
+
+        function findMathClose(markdown, fromIndex, closeDelimiter) {
+            let close = markdown.indexOf(closeDelimiter, fromIndex);
+            while (close >= 0 && isEscaped(markdown, close)) {
+                close = markdown.indexOf(closeDelimiter, close + closeDelimiter.length);
+            }
+            return close;
+        }
+
+        function isEscaped(text, index) {
+            let slashCount = 0;
+            for (let i = index - 1; i >= 0 && text[i] === '\\'; i--) slashCount++;
+            return slashCount % 2 === 1;
+        }
+
+        function restoreMathSegments(html, mathSegments) {
+            return mathSegments.reduce(
+                (current, segment, index) =>
+                    current.replaceAll(`JARVISMATH${index}TOKEN`, () => segment),
+                html
+            );
+        }
+
+        function normalizeMarkdownOutsideMath(markdown) {
             // Some model/tool paths escape markdown emphasis before it reaches the UI.
             // Keep LaTeX delimiters intact; only normalize markdown punctuation that
             // commonly appears in assistant prose.
-            return String(markdown).replace(/\\([*#_`])/g, '$1');
+            return String(markdown).replace(/\\([*#`])/g, '$1');
         }
 
         function parseMarkdown(markdown) {
