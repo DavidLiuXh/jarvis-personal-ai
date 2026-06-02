@@ -192,9 +192,9 @@ export interface JarvisConfig {
     /** Override global ollama.defaultTimeoutMs. Default: 30000. */
     timeoutMs?: number;
     /**
-     * Number of facts per batch during backfill entity extraction.
+     * Number of facts per model call during entity extraction.
      * Smaller values improve per-fact success rate but increase total calls.
-     * Default: 1 (one fact per call for best accuracy).
+     * Default: 4.
      */
     batchSize?: number;
   };
@@ -474,6 +474,7 @@ export class ConfigManager {
       entityExtraction: {
         enabled: true,
         provider: "gemini" as const,
+        batchSize: 4,
       },
       network: {
         maxRetries: 3,

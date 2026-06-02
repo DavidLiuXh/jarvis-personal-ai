@@ -585,6 +585,7 @@ export class MemoryService {
       this.jarvisConfig.ollama?.baseUrl ?? "http://localhost:11434",
       cfg.model ?? "",
       timeoutMs,
+      cfg.batchSize ?? 4,
     );
     console.error(
       `🔗 [MemoryService] EntityExtractor initialized (provider=${cfg.provider ?? "gemini"}${cfg.model ? ", model=" + cfg.model : ""}, timeout=${timeoutMs}ms)`,

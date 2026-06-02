@@ -34,6 +34,8 @@ export type EntityLink = {
 
 export type GenerateTextFn = (prompt: string) => Promise<string>;
 
+const DEFAULT_FACT_BATCH_SIZE = 4;
+
 const EXTRACTION_PROMPT = (factsText: string) =>
   `
 Extract entities and relations from the following FACTS ONLY.
@@ -78,9 +80,25 @@ export class EntityExtractor {
     private ollamaBaseUrl: string = "http://localhost:11434",
     private ollamaModel: string = "",
     private timeoutMs: number = 30_000,
+    private factBatchSize: number = DEFAULT_FACT_BATCH_SIZE,
   ) {}
 
   async extract(
+    facts: Array<{ category: string; content: string }>,
+  ): Promise<EntityLink[]> {
+    if (facts.length === 0) return [];
+
+    const batchSize = Math.max(1, Math.floor(this.factBatchSize));
+    const batches = chunkFacts(facts, batchSize);
+    const allLinks: EntityLink[] = [];
+    for (let i = 0; i < batches.length; i++) {
+      if (i > 0) await new Promise((resolve) => setImmediate(resolve));
+      allLinks.push(...(await this.extractBatch(batches[i]!)));
+    }
+    return dedupeLinks(allLinks);
+  }
+
+  private async extractBatch(
     facts: Array<{ category: string; content: string }>,
   ): Promise<EntityLink[]> {
     if (facts.length === 0) return [];
@@ -185,4 +203,30 @@ export class EntityExtractor {
       return [];
     }
   }
+}
+
+function chunkFacts<T>(items: T[], size: number): T[][] {
+  const chunks: T[][] = [];
+  for (let i = 0; i < items.length; i += size) {
+    chunks.push(items.slice(i, i + size));
+  }
+  return chunks;
+}
+
+function dedupeLinks(links: EntityLink[]): EntityLink[] {
+  const seen = new Set<string>();
+  const result: EntityLink[] = [];
+  for (const link of links) {
+    const key = [
+      link.subject,
+      link.subject_type,
+      link.relation,
+      link.object,
+      link.object_type,
+    ].join("\u0000");
+    if (seen.has(key)) continue;
+    seen.add(key);
+    result.push(link);
+  }
+  return result;
 }
