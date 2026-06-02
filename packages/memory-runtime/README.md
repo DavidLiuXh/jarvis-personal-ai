@@ -138,9 +138,25 @@ Use `SessionStore` when the host needs to expose complete conversation
 transcripts independently from any specific LLM backend.
 
 ```ts
-import type { SessionStore } from "@jarvis/memory-runtime";
+import {
+  JarvisJsonlSessionStore,
+  type SessionStore,
+} from "@jarvis/memory-runtime";
 
-const store: SessionStore = {
+const writableStore = new JarvisJsonlSessionStore({
+  dir: "/path/to/sessions",
+});
+
+await writableStore.appendTurn({
+  sessionId: "demo",
+  turn: {
+    role: "user",
+    content: "hello",
+    metadata: { backend: "openai", model: "gpt-4.1" },
+  },
+});
+
+const customStore: SessionStore = {
   capabilities: { read: true, write: false, search: true },
   async listSessions() {
     return [];
@@ -154,10 +170,18 @@ const store: SessionStore = {
 };
 ```
 
+`JarvisJsonlSessionStore` writes Jarvis Transcript JSONL v1:
+
+```jsonl
+{"kind":"session","schemaVersion":1,"sessionId":"demo","source":"jarvis-jsonl-v1"}
+{"kind":"turn","role":"user","content":"hello","timestamp":"2026-06-02T00:00:00.000Z","backend":"openai","model":"gpt-4.1"}
+{"kind":"turn","role":"assistant","content":"hi","timestamp":"2026-06-02T00:00:01.000Z","backend":"openai","model":"gpt-4.1"}
+```
+
 The runtime package intentionally does not know how Gemini CLI stores chat
-files. Jarvis provides a `GeminiCliSessionStore` adapter in `jarvis/src/core`,
-while other projects can provide SQLite, filesystem, Postgres, or backend-native
-session stores.
+files. Jarvis provides a `GeminiCliSessionStore` legacy adapter in
+`jarvis/src/core`, while other projects can use `JarvisJsonlSessionStore` or
+provide SQLite, filesystem, Postgres, or backend-native session stores.
 
 ## Compatibility
 

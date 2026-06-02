@@ -1059,6 +1059,42 @@ export class JarvisAgent extends EventEmitter {
         }
         const finalAssistantText = loopResult.finalText;
         const allToolsCalled = loopResult.toolsCalled;
+        try {
+          const backendProvider =
+            this.jarvisConfig.llmBackend?.provider ?? "gemini";
+          const model =
+            typeof this.client.config.getModel === "function"
+              ? this.client.config.getModel()
+              : undefined;
+          const timestamp = new Date().toISOString();
+          await this.memoryService.appendSessionTurn({
+            sessionId: this.sessionId,
+            role: "user",
+            content: userPrompt,
+            timestamp,
+            metadata: {
+              backend: backendProvider,
+              model,
+              source: "jarvis-main-response",
+            },
+          });
+          await this.memoryService.appendSessionTurn({
+            sessionId: this.sessionId,
+            role: "assistant",
+            content: finalAssistantText,
+            timestamp: new Date().toISOString(),
+            metadata: {
+              backend: backendProvider,
+              model,
+              source: "jarvis-main-response",
+              toolsCalled: [...allToolsCalled],
+            },
+          });
+        } catch (error: any) {
+          console.error(
+            `⚠️ [SessionStore] Failed to append transcript turn: ${error?.message ?? String(error)}`,
+          );
+        }
 
         // Skip memory ops when the turn only involved task management tools —
         // task state is already persisted in tasks.json, no need to distill facts.

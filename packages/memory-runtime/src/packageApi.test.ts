@@ -1,8 +1,13 @@
 import { describe, expect, it } from "vitest";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import {
+  CompositeSessionStore,
   DefaultMemoryRuntime,
   DefaultMemoryStore,
   DefaultMemoryWriterRuntime,
+  JarvisJsonlSessionStore,
   MemoryInjectionPlanner,
   buildIntentAwareMemoryPolicy,
   extractSessionSearchTerms,
@@ -146,5 +151,23 @@ describe("@jarvis/memory-runtime package API", () => {
     expect(store.capabilities.search).toBe(true);
     expect(terms).toContain("梓潼");
     expect(results[0].sessionId).toBe("s1");
+  });
+
+  it("exports writable JSONL and composite session stores", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "memory-runtime-api-"));
+    const jsonl = new JarvisJsonlSessionStore({ dir });
+    const composite = new CompositeSessionStore([jsonl]);
+
+    await composite.appendTurn({
+      sessionId: "api-session",
+      turn: {
+        role: "user",
+        content: "hello",
+        metadata: { backend: "openai" },
+      },
+    });
+
+    const session = await composite.readSession("api-session");
+    expect(session?.turns[0].metadata?.backend).toBe("openai");
   });
 });

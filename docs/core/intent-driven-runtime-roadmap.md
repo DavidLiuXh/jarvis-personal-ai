@@ -12,7 +12,7 @@
 - runtime packages 基本没有反向依赖 `jarvis/src/core/*`，具备继续独立化的基础。
 - `agent.ts#runUnifiedRuntimeTurn()` 已通过 `AgentRuntime.handleTurn()` 执行主响应路径的 `intent -> memory -> skill -> response compose -> LLM/tool loop`。
 - `DefaultMemoryRetriever` 已支持 `session / fact / entry` 三层 store adapter，并通过 extension points 保留 Jarvis 的 query rewrite、recent conversation recall、summary fallback。
-- `SessionStore` 已抽象完整会话 transcript 的 list / read / search / optional write；Jarvis 当前通过 `GeminiCliSessionStore` 兼容已有 Gemini CLI/Jarvis chat 文件。
+- `SessionStore` 已抽象完整会话 transcript 的 list / read / search / optional write；`JarvisJsonlSessionStore` 定义标准 Jarvis Transcript JSONL v1，`GeminiCliSessionStore` 作为旧 Gemini/Jarvis chat 文件兼容 adapter。
 - intent eval 已从单点回归 case 演进为 principle / invariant / semantic axis 矩阵。
 
 当前剩余缺口也很明确：

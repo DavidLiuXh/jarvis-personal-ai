@@ -16,7 +16,12 @@ import { debugLogger } from "../../../gemini-cli/packages/core/src/index.js";
 import { ConfigManager } from "./configManager.js";
 import { EntityExtractor, type EntityLink } from "./entityExtractor.js";
 import { GeminiCliSessionStore } from "./geminiCliSessionStore.js";
-import type { SessionStore } from "../memory-runtime/index.js";
+import {
+  CompositeSessionStore,
+  JarvisJsonlSessionStore,
+  type SessionStore,
+  type SessionTranscriptTurn,
+} from "../memory-runtime/index.js";
 import {
   extractSummaryChunks,
   summarizeChunkPreview,
@@ -189,7 +194,14 @@ export class MemoryService {
     dbPath?: string,
     sessionStore?: SessionStore,
   ) {
-    this.sessionStore = sessionStore ?? new GeminiCliSessionStore();
+    this.sessionStore =
+      sessionStore ??
+      new CompositeSessionStore([
+        new JarvisJsonlSessionStore({
+          dir: path.join(os.homedir(), ".gemini-jarvis", "storage", "sessions"),
+        }),
+        new GeminiCliSessionStore(),
+      ]);
     const memoryDir =
       dbPath ?? path.join(os.homedir(), ".gemini-jarvis", "memory");
     this.memoryDir = memoryDir;
@@ -1554,6 +1566,30 @@ ${factsText}
       score: result.score,
       timestamp: result.timestamp,
     }));
+  }
+
+  public async appendSessionTurn(input: {
+    sessionId: string;
+    role: SessionTranscriptTurn["role"];
+    content: string;
+    timestamp?: string | number;
+    metadata?: Record<string, unknown>;
+  }): Promise<void> {
+    if (
+      !this.sessionStore.capabilities.write ||
+      !this.sessionStore.appendTurn
+    ) {
+      return;
+    }
+    await this.sessionStore.appendTurn({
+      sessionId: input.sessionId,
+      turn: {
+        role: input.role,
+        content: input.content,
+        timestamp: input.timestamp ?? new Date().toISOString(),
+        metadata: input.metadata,
+      },
+    });
   }
 
   public getCoreFacts(): string[] {

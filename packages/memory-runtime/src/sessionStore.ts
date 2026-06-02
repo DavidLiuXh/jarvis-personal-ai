@@ -5,6 +5,9 @@
  */
 
 import type { ConversationRole, DateRange } from "./types.js";
+import crypto from "node:crypto";
+import fs from "node:fs";
+import path from "node:path";
 
 export type SessionStoreCapabilities = {
   read: boolean;
@@ -69,6 +72,425 @@ export interface SessionStore {
   searchTurns(query: SessionSearchQuery): Promise<SessionSearchResult[]>;
   appendTurn?(input: SessionAppendInput): Promise<void>;
   upsertSession?(session: SessionTranscript): Promise<void>;
+}
+
+export type JarvisJsonlSessionStoreOptions = {
+  dir: string;
+  maxScanFiles?: number;
+  mtimeBufferMs?: number;
+  source?: string;
+};
+
+type JarvisJsonlSessionRecord = {
+  kind: "session";
+  schemaVersion: 1;
+  sessionId: string;
+  source?: string;
+  createdAt?: string;
+  updatedAt?: string;
+  metadata?: Record<string, unknown>;
+};
+
+type JarvisJsonlTurnRecord = {
+  kind: "turn";
+  id?: string;
+  role: ConversationRole;
+  content: string;
+  timestamp?: string | number;
+  backend?: string;
+  model?: string;
+  metadata?: Record<string, unknown>;
+};
+
+function sanitizeSessionId(sessionId: string): string {
+  return (
+    sessionId
+      .trim()
+      .replace(/[^a-zA-Z0-9._-]+/g, "_")
+      .slice(0, 160) || "session"
+  );
+}
+
+function stringifyJsonlRecord(record: unknown): string {
+  return `${JSON.stringify(record)}\n`;
+}
+
+function parseJsonlFile(filePath: string): unknown[] {
+  if (!fs.existsSync(filePath)) return [];
+  return fs
+    .readFileSync(filePath, "utf8")
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => {
+      try {
+        return JSON.parse(line) as unknown;
+      } catch {
+        return null;
+      }
+    })
+    .filter((record): record is unknown => record !== null);
+}
+
+function isSessionRecord(value: unknown): value is JarvisJsonlSessionRecord {
+  return (
+    !!value &&
+    typeof value === "object" &&
+    (value as { kind?: unknown }).kind === "session" &&
+    (value as { sessionId?: unknown }).sessionId !== undefined
+  );
+}
+
+function isTurnRecord(value: unknown): value is JarvisJsonlTurnRecord {
+  return (
+    !!value &&
+    typeof value === "object" &&
+    (value as { kind?: unknown }).kind === "turn" &&
+    typeof (value as { role?: unknown }).role === "string" &&
+    typeof (value as { content?: unknown }).content === "string"
+  );
+}
+
+function fileDateTimestamp(filename: string): number | null {
+  const match = filename.match(/(\d{4})-(\d{2})-(\d{2})/);
+  if (!match) return null;
+  const value = new Date(
+    `${match[1]}-${match[2]}-${match[3]}T12:00:00`,
+  ).getTime();
+  return Number.isNaN(value) ? null : value;
+}
+
+function timestampIso(value: string | number | undefined): string | undefined {
+  const ms = normalizeSessionTimestamp(value);
+  return ms === null ? undefined : new Date(ms).toISOString();
+}
+
+export class JarvisJsonlSessionStore implements SessionStore {
+  readonly capabilities: SessionStoreCapabilities = {
+    read: true,
+    write: true,
+    search: true,
+  };
+
+  private readonly dir: string;
+  private readonly maxScanFiles: number;
+  private readonly mtimeBufferMs: number;
+  private readonly source: string;
+
+  constructor(options: JarvisJsonlSessionStoreOptions) {
+    this.dir = options.dir;
+    this.maxScanFiles = options.maxScanFiles ?? 50;
+    this.mtimeBufferMs = options.mtimeBufferMs ?? 7 * 24 * 60 * 60 * 1000;
+    this.source = options.source ?? "jarvis-jsonl-v1";
+  }
+
+  async listSessions(query?: SessionListQuery): Promise<SessionSummary[]> {
+    return this.listSessionFiles(query?.dateRange ?? null)
+      .slice(0, query?.limit ?? this.maxScanFiles)
+      .map(({ file, filePath, mtime }) => {
+        const transcript = this.readTranscriptFile(filePath, file, mtime);
+        return {
+          sessionId: transcript.sessionId,
+          source: transcript.source,
+          turnCount: transcript.turns.length,
+          updatedAt: transcript.updatedAt ?? new Date(mtime).toISOString(),
+          metadata: transcript.metadata,
+        };
+      });
+  }
+
+  async readSession(sessionId: string): Promise<SessionTranscript | null> {
+    const file = this.findSessionFile(sessionId);
+    if (!file) return null;
+    return this.readTranscriptFile(file.filePath, file.file, file.mtime);
+  }
+
+  async searchTurns(query: SessionSearchQuery): Promise<SessionSearchResult[]> {
+    const dateRange = query.dateRange ?? null;
+    const candidates: Array<{
+      sessionId: string;
+      text: string;
+      timestamp: number;
+      turns: SessionTranscriptTurn[];
+      metadata: Record<string, unknown>;
+    }> = [];
+    for (const { file, filePath, mtime } of this.listSessionFiles(dateRange)) {
+      const transcript = this.readTranscriptFile(filePath, file, mtime);
+      for (let index = 0; index < transcript.turns.length; index++) {
+        const userTurn = transcript.turns[index];
+        if (userTurn.role !== "user") continue;
+        const assistantTurn = transcript.turns
+          .slice(index + 1, index + 8)
+          .find((turn) => turn.role === "assistant");
+        const timestamp =
+          normalizeSessionTimestamp(userTurn.timestamp) ??
+          normalizeSessionTimestamp(assistantTurn?.timestamp) ??
+          fileDateTimestamp(file) ??
+          mtime;
+        if (
+          dateRange &&
+          (timestamp < dateRange.from || timestamp >= dateRange.to)
+        ) {
+          continue;
+        }
+        const userText = userTurn.content.trim();
+        const assistantText = assistantTurn?.content.trim() ?? "";
+        if (!userText && !assistantText) continue;
+        candidates.push({
+          sessionId: transcript.sessionId,
+          text: `User: ${userText}\nJarvis: ${assistantText}`.trim(),
+          timestamp,
+          turns: assistantTurn ? [userTurn, assistantTurn] : [userTurn],
+          metadata: {
+            source: transcript.source,
+            file,
+            format: "jarvis-jsonl-v1",
+          },
+        });
+      }
+    }
+    return scoreSessionSearchCandidates({
+      query: query.query,
+      candidates,
+      limit: query.limit,
+    });
+  }
+
+  async appendTurn(input: SessionAppendInput): Promise<void> {
+    this.ensureDir();
+    const filePath = this.filePathForSession(input.sessionId);
+    if (!fs.existsSync(filePath)) {
+      const now = new Date().toISOString();
+      fs.appendFileSync(
+        filePath,
+        stringifyJsonlRecord({
+          kind: "session",
+          schemaVersion: 1,
+          sessionId: input.sessionId,
+          source: this.source,
+          createdAt: now,
+          updatedAt: now,
+        } satisfies JarvisJsonlSessionRecord),
+        "utf8",
+      );
+    }
+    const metadata = input.turn.metadata ?? {};
+    fs.appendFileSync(
+      filePath,
+      stringifyJsonlRecord({
+        kind: "turn",
+        id: input.turn.id ?? crypto.randomUUID(),
+        role: input.turn.role,
+        content: input.turn.content,
+        timestamp: input.turn.timestamp ?? new Date().toISOString(),
+        backend:
+          typeof metadata.backend === "string" ? metadata.backend : undefined,
+        model: typeof metadata.model === "string" ? metadata.model : undefined,
+        metadata,
+      } satisfies JarvisJsonlTurnRecord),
+      "utf8",
+    );
+  }
+
+  async upsertSession(session: SessionTranscript): Promise<void> {
+    this.ensureDir();
+    const filePath = this.filePathForSession(session.sessionId);
+    const now = new Date().toISOString();
+    const records: unknown[] = [
+      {
+        kind: "session",
+        schemaVersion: 1,
+        sessionId: session.sessionId,
+        source: session.source || this.source,
+        createdAt: session.createdAt ?? now,
+        updatedAt: session.updatedAt ?? now,
+        metadata: session.metadata,
+      } satisfies JarvisJsonlSessionRecord,
+      ...session.turns.map(
+        (turn) =>
+          ({
+            kind: "turn",
+            id: turn.id ?? crypto.randomUUID(),
+            role: turn.role,
+            content: turn.content,
+            timestamp: turn.timestamp ?? now,
+            backend:
+              typeof turn.metadata?.backend === "string"
+                ? turn.metadata.backend
+                : undefined,
+            model:
+              typeof turn.metadata?.model === "string"
+                ? turn.metadata.model
+                : undefined,
+            metadata: turn.metadata,
+          }) satisfies JarvisJsonlTurnRecord,
+      ),
+    ];
+    fs.writeFileSync(filePath, records.map(stringifyJsonlRecord).join(""), {
+      encoding: "utf8",
+    });
+  }
+
+  private readTranscriptFile(
+    filePath: string,
+    file: string,
+    mtime: number,
+  ): SessionTranscript {
+    const records = parseJsonlFile(filePath);
+    const sessionRecord = records.find(isSessionRecord);
+    const turns = records.filter(isTurnRecord).map(
+      (record): SessionTranscriptTurn => ({
+        id: record.id,
+        role: record.role,
+        content: record.content,
+        timestamp: record.timestamp,
+        metadata: {
+          ...record.metadata,
+          backend: record.backend ?? record.metadata?.backend,
+          model: record.model ?? record.metadata?.model,
+        },
+      }),
+    );
+    const sessionId =
+      sessionRecord?.sessionId ?? file.replace(/\.(json|jsonl)$/, "");
+    const updatedAt =
+      timestampIso(turns[turns.length - 1]?.timestamp) ??
+      sessionRecord?.updatedAt ??
+      new Date(mtime).toISOString();
+    return {
+      sessionId,
+      source: sessionRecord?.source ?? this.source,
+      createdAt: sessionRecord?.createdAt,
+      updatedAt,
+      turns,
+      metadata: {
+        ...sessionRecord?.metadata,
+        file,
+        path: filePath,
+        format: "jarvis-jsonl-v1",
+      },
+    };
+  }
+
+  private listSessionFiles(dateRange: DateRange | null): Array<{
+    file: string;
+    filePath: string;
+    mtime: number;
+  }> {
+    if (!fs.existsSync(this.dir)) return [];
+    return fs
+      .readdirSync(this.dir)
+      .filter((file) => file.endsWith(".jsonl"))
+      .map((file) => {
+        const filePath = path.join(this.dir, file);
+        return { file, filePath, mtime: fs.statSync(filePath).mtimeMs };
+      })
+      .sort((a, b) => b.mtime - a.mtime)
+      .filter(
+        ({ mtime }) =>
+          !dateRange || mtime >= dateRange.from - this.mtimeBufferMs,
+      )
+      .slice(0, this.maxScanFiles);
+  }
+
+  private findSessionFile(sessionId: string): {
+    file: string;
+    filePath: string;
+    mtime: number;
+  } | null {
+    const expected = `${sanitizeSessionId(sessionId)}.jsonl`;
+    return (
+      this.listSessionFiles(null).find(
+        ({ file }) =>
+          file === expected || file.replace(/\.jsonl$/, "") === sessionId,
+      ) ?? null
+    );
+  }
+
+  private filePathForSession(sessionId: string): string {
+    return path.join(this.dir, `${sanitizeSessionId(sessionId)}.jsonl`);
+  }
+
+  private ensureDir(): void {
+    fs.mkdirSync(this.dir, { recursive: true });
+  }
+}
+
+export class CompositeSessionStore implements SessionStore {
+  readonly capabilities: SessionStoreCapabilities;
+
+  constructor(private readonly stores: SessionStore[]) {
+    this.capabilities = {
+      read: stores.some((store) => store.capabilities.read),
+      write: stores.some((store) => store.capabilities.write),
+      search: stores.some((store) => store.capabilities.search),
+    };
+  }
+
+  async listSessions(query?: SessionListQuery): Promise<SessionSummary[]> {
+    const seen = new Set<string>();
+    const sessions: SessionSummary[] = [];
+    for (const store of this.stores) {
+      for (const session of await store.listSessions(query)) {
+        if (seen.has(session.sessionId)) continue;
+        seen.add(session.sessionId);
+        sessions.push(session);
+      }
+    }
+    sessions.sort(
+      (left, right) =>
+        (normalizeSessionTimestamp(right.updatedAt) ?? 0) -
+        (normalizeSessionTimestamp(left.updatedAt) ?? 0),
+    );
+    return sessions.slice(0, query?.limit ?? sessions.length);
+  }
+
+  async readSession(sessionId: string): Promise<SessionTranscript | null> {
+    for (const store of this.stores) {
+      const session = await store.readSession(sessionId);
+      if (session) return session;
+    }
+    return null;
+  }
+
+  async searchTurns(query: SessionSearchQuery): Promise<SessionSearchResult[]> {
+    const results: SessionSearchResult[] = [];
+    const seen = new Set<string>();
+    for (const store of this.stores) {
+      for (const result of await store.searchTurns(query)) {
+        const key = result.text.trim().toLowerCase();
+        if (seen.has(key)) continue;
+        seen.add(key);
+        results.push(result);
+      }
+    }
+    results.sort((a, b) =>
+      b.score !== a.score
+        ? b.score - a.score
+        : (b.timestamp ?? 0) - (a.timestamp ?? 0),
+    );
+    return results.slice(0, query.limit ?? 5);
+  }
+
+  async appendTurn(input: SessionAppendInput): Promise<void> {
+    const store = this.stores.find(
+      (candidate) => candidate.capabilities.write && candidate.appendTurn,
+    );
+    if (!store?.appendTurn) {
+      throw new Error("No writable session store is configured.");
+    }
+    await store.appendTurn(input);
+  }
+
+  async upsertSession(session: SessionTranscript): Promise<void> {
+    const store = this.stores.find(
+      (candidate) => candidate.capabilities.write && candidate.upsertSession,
+    );
+    if (!store?.upsertSession) {
+      throw new Error("No writable session store is configured.");
+    }
+    await store.upsertSession(session);
+  }
 }
 
 const HISTORY_RECALL_STOPWORDS = new Set([
