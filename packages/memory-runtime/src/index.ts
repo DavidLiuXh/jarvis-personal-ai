@@ -31,6 +31,7 @@ export * from "./intentAwareMemoryPolicy.js";
 export * from "./intentPolicy.js";
 export * from "./memoryInjectionPlanner.js";
 export * from "./retrieval.js";
+export * from "./sessionStore.js";
 export * from "./store.js";
 export * from "./writer.js";
 export type {

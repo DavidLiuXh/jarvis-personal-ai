@@ -5,7 +5,10 @@ import {
   DefaultMemoryWriterRuntime,
   MemoryInjectionPlanner,
   buildIntentAwareMemoryPolicy,
+  extractSessionSearchTerms,
+  scoreSessionSearchCandidates,
   type MemoryContract,
+  type SessionStore,
 } from "./index.js";
 
 describe("@jarvis/memory-runtime package API", () => {
@@ -113,5 +116,35 @@ describe("@jarvis/memory-runtime package API", () => {
 
     expect(result.decision.action).toBe("insert");
     expect(await store.listFacts()).toHaveLength(1);
+  });
+
+  it("exports session transcript store contracts and search helpers", () => {
+    const store: SessionStore = {
+      capabilities: { read: true, write: false, search: true },
+      async listSessions() {
+        return [];
+      },
+      async readSession() {
+        return null;
+      },
+      async searchTurns() {
+        return [];
+      },
+    };
+    const terms = extractSessionSearchTerms("帮我汇总之前梓潼相关的探讨内容");
+    const results = scoreSessionSearchCandidates({
+      query: "梓潼",
+      candidates: [
+        {
+          sessionId: "s1",
+          text: "User: 梓潼的文化意义是什么？",
+          timestamp: 1,
+        },
+      ],
+    });
+
+    expect(store.capabilities.search).toBe(true);
+    expect(terms).toContain("梓潼");
+    expect(results[0].sessionId).toBe("s1");
   });
 });

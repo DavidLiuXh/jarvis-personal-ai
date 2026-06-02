@@ -9,6 +9,7 @@ This package owns:
 - intent and memory schema types;
 - memory contract planning helpers;
 - memory retrieval and injection interfaces;
+- session transcript store contracts and dependency-free lexical search helpers;
 - clarification and memory policy helpers;
 - the `DefaultMemoryRuntime` read lifecycle;
 - memory write governance and `DefaultMemoryWriterRuntime`;
@@ -130,6 +131,33 @@ It is dependency-free and suitable for tests, examples, small agents, and as a
 reference implementation. Production hosts can replace it with SQLite, pgvector,
 Qdrant, Milvus, Pinecone, or their own storage layer while keeping the same
 runtime contracts.
+
+## Session Transcript Store
+
+Use `SessionStore` when the host needs to expose complete conversation
+transcripts independently from any specific LLM backend.
+
+```ts
+import type { SessionStore } from "@jarvis/memory-runtime";
+
+const store: SessionStore = {
+  capabilities: { read: true, write: false, search: true },
+  async listSessions() {
+    return [];
+  },
+  async readSession() {
+    return null;
+  },
+  async searchTurns() {
+    return [];
+  },
+};
+```
+
+The runtime package intentionally does not know how Gemini CLI stores chat
+files. Jarvis provides a `GeminiCliSessionStore` adapter in `jarvis/src/core`,
+while other projects can provide SQLite, filesystem, Postgres, or backend-native
+session stores.
 
 ## Compatibility
 

@@ -54,6 +54,10 @@
       "types": "./dist/runtime.d.ts",
       "import": "./dist/runtime.js"
     },
+    "./sessionStore": {
+      "types": "./dist/sessionStore.d.ts",
+      "import": "./dist/sessionStore.js"
+    },
     "./types": {
       "types": "./dist/types.d.ts",
       "import": "./dist/types.js"

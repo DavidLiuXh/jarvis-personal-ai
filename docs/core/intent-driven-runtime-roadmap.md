@@ -6,12 +6,13 @@
 
 当前实现已经具备一套可运行的通用层雏形：
 
-- `packages/memory-runtime/src` 已承载 `IntentFrame`、`MemoryContract`、`ClarificationQuestion`、memory policy、clarification policy、retrieval adapter、injection planner 和 `DefaultMemoryRuntime`。
+- `packages/memory-runtime/src` 已承载 `IntentFrame`、`MemoryContract`、`ClarificationQuestion`、memory policy、clarification policy、retrieval adapter、session transcript store contract、injection planner 和 `DefaultMemoryRuntime`。
 - `packages/intent-runtime/src` 已承载 `IntentResolver`、model client abstraction、`IntentExecutionPlan`、`IntentStepRuntime` 和 tool-backed execution contract 纯逻辑。
 - `jarvis/src/memory-runtime/*` 与 `jarvis/src/intent-runtime/*` 现在是兼容 re-export shim，便于现有 Jarvis import 平滑过渡。
 - runtime packages 基本没有反向依赖 `jarvis/src/core/*`，具备继续独立化的基础。
 - `agent.ts#runUnifiedRuntimeTurn()` 已通过 `AgentRuntime.handleTurn()` 执行主响应路径的 `intent -> memory -> skill -> response compose -> LLM/tool loop`。
 - `DefaultMemoryRetriever` 已支持 `session / fact / entry` 三层 store adapter，并通过 extension points 保留 Jarvis 的 query rewrite、recent conversation recall、summary fallback。
+- `SessionStore` 已抽象完整会话 transcript 的 list / read / search / optional write；Jarvis 当前通过 `GeminiCliSessionStore` 兼容已有 Gemini CLI/Jarvis chat 文件。
 - intent eval 已从单点回归 case 演进为 principle / invariant / semantic axis 矩阵。
 
 当前剩余缺口也很明确：

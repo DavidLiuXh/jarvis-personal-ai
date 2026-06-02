@@ -634,6 +634,8 @@ packages/intent-runtime/src/
   - `DefaultMemoryRetriever`
 - `DefaultMemoryRetriever` 根据 `MemoryContract` 决定是否检索 session / fact / entry；
 - external 或 no-memory contract 不会调用任何 store；
+- `memory-runtime/sessionStore.ts` 已定义 `SessionStore` / `SessionTranscript` / `SessionSearchResult`，用于抽象完整会话流水的 list / read / search / optional write；
+- 通用层只保留 session search 的纯关键词提取与 scoring helper，不绑定 Gemini CLI 文件格式；
 - `DefaultMemoryRetriever` 已支持 runtime extension points：
   - `planQuery`：按 session / fact / entry 分别规划 query；
   - `augmentEntries`：把 recent conversation recall 这类非 store 召回结果并入 entry memory；
@@ -644,6 +646,8 @@ packages/intent-runtime/src/
   - `JarvisEntryMemoryStore` 包装 `MemoryService.searchWithScore()`
   - `JarvisSessionMemoryStore` 包装 `MemoryService.searchSummaryChunks()`
   - `createJarvisMemoryStores()` 一次性生成三类 adapter
+- `core/geminiCliSessionStore.ts` 已实现 `SessionStore`，封装当前 Gemini CLI / Jarvis chat transcript 文件的 JSON / JSONL 解析、时间过滤和 lexical fallback；
+- `MemoryService.searchConversationHistoryLexical()` 已改为消费 `SessionStore.searchTurns()`，不再直接理解 chats 目录和文件格式；
 - Jarvis `agent.ts` 的主响应路径已经开始通过 `DefaultMemoryRetriever` 检索 facts / entries / session summary；
 - Jarvis query rewrite、recent conversation recall、summary fallback 和 skill retrieval 已通过 extension points 保留；
 - 新增单测覆盖默认 retriever 和 Jarvis adapter。
@@ -651,6 +655,7 @@ packages/intent-runtime/src/
 剩余限制：
 
 - skill retrieval 仍在主响应路径调用，只是已经被抽象为 extension shape；
+- Gemini CLI transcript store 当前是 read/search adapter，write=false；Jarvis 自有 transcript store 仍待接入主响应写入路径；
 - runtime feedback collector 已接入 `MemoryRuntime.observe()` 的 intent / retrieval / injection 事件；
 - `DefaultMemoryRuntime` 目前接管的是主响应路径的 memory lifecycle，tool/subagent 执行层仍通过 `MemoryContract` 消费 memory decision。
 

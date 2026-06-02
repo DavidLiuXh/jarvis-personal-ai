@@ -15,6 +15,8 @@ import { HttpsProxyAgent } from "https-proxy-agent";
 import { debugLogger } from "../../../gemini-cli/packages/core/src/index.js";
 import { ConfigManager } from "./configManager.js";
 import { EntityExtractor, type EntityLink } from "./entityExtractor.js";
+import { GeminiCliSessionStore } from "./geminiCliSessionStore.js";
+import type { SessionStore } from "../memory-runtime/index.js";
 import {
   extractSummaryChunks,
   summarizeChunkPreview,
@@ -35,118 +37,6 @@ function toLocalDateString(ms: number): string {
 
 function hashText(text: string): string {
   return crypto.createHash("sha1").update(text).digest("hex");
-}
-
-const HISTORY_RECALL_STOPWORDS = new Set([
-  "conversation_history",
-  "recall",
-  "memory",
-  "history",
-  "previous",
-  "conversation",
-  "discussion",
-  "discuss",
-  "what",
-  "which",
-  "when",
-  "where",
-  "about",
-  "before",
-  "yesterday",
-  "today",
-  "内容",
-  "哪些",
-  "什么",
-  "之前",
-  "以前",
-  "上次",
-  "昨天",
-  "前天",
-  "大前天",
-  "今天",
-  "我们",
-  "咱们",
-  "相关",
-  "汇总",
-  "总结",
-]);
-
-/**
- * Single Han characters that are structural/functional fillers.
- * Bigrams that start or end with one of these are not meaningful search terms.
- */
-const HAN_FILLER_CHARS = new Set(
-  // Particles, conjunctions, prepositions, common pronouns, modal particles, helper verbs
-  "的地得了着过在是有都也就与和或把被让使给向对从到上下里外前后中内以于为之而及且但虽因如若所其该此那这您你我他她它们吗呢吧哦啊哎嗯啦嘛呀哟喔嗨哈帮".split(
-    "",
-  ),
-);
-
-/** Extract CJK bigrams that do not start or end with a filler character. */
-function extractHanBigrams(block: string): string[] {
-  const grams: string[] = [];
-  for (let i = 0; i < block.length - 1; i++) {
-    const gram = block.slice(i, i + 2);
-    if (!HAN_FILLER_CHARS.has(gram[0]) && !HAN_FILLER_CHARS.has(gram[1])) {
-      grams.push(gram);
-    }
-  }
-  return grams;
-}
-
-/**
- * Extract meaningful search terms from a history-recall query.
- *
- * Previous approach: treat the whole Han block as one unit and strip stopwords
- * from it, leaving residue like "帮我梓潼的" — a compound that never appears
- * verbatim in conversation history, causing the fallback to return empty.
- *
- * New approach: strip known meta/temporal sequences from the Han block first,
- * then extract bigrams from what remains, filtering at filler-character
- * boundaries. "帮我汇总之前梓潼相关的探讨内容" → residue "帮我梓潼的"
- * → bigrams ["帮我","我梓","梓潼","潼的"] → only "梓潼" survives filler filter.
- */
-function extractHistoryRecallTerms(query: string): string[] {
-  const terms = new Set<string>();
-  // English / alphanumeric tokens
-  const lower = query.toLowerCase();
-  for (const match of lower.matchAll(/[a-z0-9][a-z0-9_-]{1,}/g)) {
-    const term = match[0];
-    if (!HISTORY_RECALL_STOPWORDS.has(term)) terms.add(term);
-  }
-  // Chinese: strip known meta/temporal stopword sequences, then bigram the residue
-  for (const match of query.matchAll(/[\p{Script=Han}]+/gu)) {
-    const stripped = match[0]
-      .replace(
-        /之前|以前|上次|昨天|前天|大前天|今天|我们|咱们|聊了|聊过|聊|说了|说过|说|讨论了|讨论过|讨论|探讨了|探讨过|探讨|相关|内容|哪些|什么|汇总|总结|关于|帮我|告诉我|给我|了|大/g,
-        " ",
-      )
-      .trim();
-    for (const segment of stripped.split(/\s+/)) {
-      if (segment.length < 2) continue;
-      for (const gram of extractHanBigrams(segment)) {
-        if (!HISTORY_RECALL_STOPWORDS.has(gram)) {
-          terms.add(gram);
-        }
-      }
-    }
-  }
-  return Array.from(terms);
-}
-
-function toTimestamp(value: unknown): number | null {
-  if (typeof value === "number" && Number.isFinite(value)) return value;
-  if (typeof value !== "string" || !value.trim()) return null;
-  const parsed = new Date(value).getTime();
-  return Number.isNaN(parsed) ? null : parsed;
-}
-
-/** Extract a noon-of-day timestamp from a filename containing YYYY-MM-DD. */
-function extractFilenameDate(filename: string): number | null {
-  const m = filename.match(/(\d{4})-(\d{2})-(\d{2})/);
-  if (!m) return null;
-  const d = new Date(`${m[1]}-${m[2]}-${m[3]}T12:00:00`);
-  return Number.isNaN(d.getTime()) ? null : d.getTime();
 }
 
 function extractSessionMessageText(content: unknown): string {
@@ -292,8 +182,14 @@ export class MemoryService {
   private embedContentFn: ((text: string) => Promise<number[]>) | null = null;
   private memoryDir: string;
   private entityExtractor: EntityExtractor | null = null;
+  private sessionStore: SessionStore;
 
-  constructor(sourceRoot: string, dbPath?: string) {
+  constructor(
+    sourceRoot: string,
+    dbPath?: string,
+    sessionStore?: SessionStore,
+  ) {
+    this.sessionStore = sessionStore ?? new GeminiCliSessionStore();
     const memoryDir =
       dbPath ?? path.join(os.homedir(), ".gemini-jarvis", "memory");
     this.memoryDir = memoryDir;
@@ -1648,136 +1544,16 @@ ${factsText}
       dateRange?: { from: number; to: number } | null;
     },
   ): Promise<Array<{ text: string; score: number; timestamp?: number }>> {
-    const chatsDir = path.join(
-      os.homedir(),
-      ".gemini-jarvis",
-      "storage",
-      "chats",
-    );
-    if (!fs.existsSync(chatsDir)) return [];
-
-    const limit = options?.limit ?? 5;
-    const dateRange = options?.dateRange ?? null;
-    const terms = extractHistoryRecallTerms(query);
-
-    // P1: cap the number of files scanned; when dateRange is set also skip files
-    // whose mtime is well before the window (7-day buffer for mtime inaccuracy).
-    const MAX_SCAN_FILES = 50;
-    const MTIME_BUFFER_MS = 7 * 24 * 60 * 60 * 1000;
-    const files = fs
-      .readdirSync(chatsDir)
-      .filter((f) => f.endsWith(".json") || f.endsWith(".jsonl"))
-      .map((file) => {
-        const filePath = path.join(chatsDir, file);
-        return { file, filePath, mtime: fs.statSync(filePath).mtimeMs };
-      })
-      .sort((a, b) => b.mtime - a.mtime)
-      .filter(
-        ({ mtime }) => !dateRange || mtime >= dateRange.from - MTIME_BUFFER_MS,
-      )
-      .slice(0, MAX_SCAN_FILES);
-
-    // Phase 1: collect all (user, assistant) pairs that pass the dateRange filter.
-    const pairs: Array<{
-      combined: string;
-      combinedLower: string;
-      timestamp: number;
-    }> = [];
-    for (const { file, filePath, mtime } of files) {
-      try {
-        // P2a: prefer filename date over mtime as the per-file timestamp fallback
-        const filenameDate = extractFilenameDate(file);
-        const messages = this.parseSessionMessages(filePath);
-        for (let index = 0; index < messages.length; index++) {
-          const userMsg = messages[index];
-          if (userMsg?.type !== "user") continue;
-          // P2b: widen search window to bridge tool_call / tool_result messages
-          const assistantMsg = messages
-            .slice(index + 1, index + 8)
-            .find(
-              (msg) =>
-                msg.type === "gemini" ||
-                msg.type === "model" ||
-                msg.type === "assistant",
-            );
-          const timestamp =
-            toTimestamp((userMsg as { timestamp?: unknown }).timestamp) ??
-            toTimestamp((assistantMsg as { timestamp?: unknown })?.timestamp) ??
-            filenameDate ?? // P2a: filename date before mtime
-            mtime;
-          if (
-            dateRange &&
-            (timestamp < dateRange.from || timestamp >= dateRange.to)
-          ) {
-            continue;
-          }
-          const userText = String(userMsg.content ?? "").trim();
-          const assistantText = String(assistantMsg?.content ?? "").trim();
-          if (!userText && !assistantText) continue;
-          const combined = `User: ${userText}\nJarvis: ${assistantText}`.trim();
-          pairs.push({
-            combined,
-            combinedLower: combined.toLowerCase(),
-            timestamp,
-          });
-        }
-      } catch {
-        /* skip unreadable files */
-      }
-    }
-
-    // Phase 2: IDF-lite — compute per-term document frequency across all pairs.
-    // Terms that appear in fewer pairs are more discriminative and get higher weight.
-    const N = pairs.length || 1;
-    const termWeight = (term: string): number => {
-      let df = 0;
-      const lower = term.toLowerCase();
-      for (const p of pairs) {
-        if (p.combinedLower.includes(lower)) df++;
-      }
-      return Math.log(N / (df + 1) + 1); // IDF: log(N/(df+1) + 1)
-    };
-    const weights = new Map(terms.map((t) => [t, termWeight(t)]));
-    const totalWeight =
-      terms.reduce((s, t) => s + (weights.get(t) ?? 1), 0) || 1;
-
-    // Phase 3: score and filter.
-    const candidates: Array<{
-      text: string;
-      score: number;
-      timestamp: number;
-    }> = [];
-    for (const pair of pairs) {
-      const matchedTerms = terms.filter((t) =>
-        pair.combinedLower.includes(t.toLowerCase()),
-      );
-      if (terms.length > 0 && matchedTerms.length === 0) continue;
-      const matchedWeight = matchedTerms.reduce(
-        (s, t) => s + (weights.get(t) ?? 1),
-        0,
-      );
-      const score =
-        terms.length === 0
-          ? 0.55
-          : Math.min(0.95, 0.55 + 0.4 * (matchedWeight / totalWeight));
-      candidates.push({
-        text: pair.combined,
-        score,
-        timestamp: pair.timestamp,
-      });
-    }
-
-    candidates.sort((a, b) =>
-      b.score !== a.score ? b.score - a.score : b.timestamp - a.timestamp,
-    );
-    const results = candidates.slice(0, limit);
-    const rangeLabel = dateRange
-      ? `${toLocalDateString(dateRange.from)}~${toLocalDateString(dateRange.to)}`
-      : "all-time";
-    console.error(
-      `🔎 [conversation-history] lexical fallback query="${query.slice(0, 80)}" range=${rangeLabel} terms=${terms.join(",") || "-"} pairs=${pairs.length} candidates=${candidates.length} returned=${results.length}`,
-    );
-    return results;
+    const results = await this.sessionStore.searchTurns({
+      query,
+      limit: options?.limit ?? 5,
+      dateRange: options?.dateRange ?? null,
+    });
+    return results.map((result) => ({
+      text: result.text,
+      score: result.score,
+      timestamp: result.timestamp,
+    }));
   }
 
   public getCoreFacts(): string[] {
