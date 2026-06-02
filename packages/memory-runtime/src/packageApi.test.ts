@@ -7,11 +7,15 @@ import {
   DefaultMemoryRuntime,
   DefaultMemoryStore,
   DefaultMemoryWriterRuntime,
+  GeminiCliSessionStore,
   JarvisJsonlSessionStore,
   MemoryInjectionPlanner,
+  buildRecentConversationRecallCandidates,
   buildIntentAwareMemoryPolicy,
+  extractConversationRecallTerms,
   extractSessionSearchTerms,
   scoreSessionSearchCandidates,
+  type IntentFrame,
   type MemoryContract,
   type SessionStore,
 } from "./index.js";
@@ -169,5 +173,56 @@ describe("@jarvis/memory-runtime package API", () => {
 
     const session = await composite.readSession("api-session");
     expect(session?.turns[0].metadata?.backend).toBe("openai");
+  });
+
+  it("exports legacy Gemini session adapter and recent recall helpers", async () => {
+    const chatsDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), "memory-runtime-gemini-api-"),
+    );
+    fs.writeFileSync(
+      path.join(chatsDir, "session-2026-06-02-api.jsonl"),
+      [
+        JSON.stringify({
+          id: "u1",
+          timestamp: "2026-06-02T10:00:00.000Z",
+          type: "user",
+          content: "梓潼相关讨论是什么？",
+        }),
+        JSON.stringify({
+          id: "a1",
+          timestamp: "2026-06-02T10:01:00.000Z",
+          type: "gemini",
+          content: "梓潼与文昌帝君、古蜀道有关。",
+        }),
+      ].join("\n") + "\n",
+    );
+    const geminiStore = new GeminiCliSessionStore({ chatsDir });
+    const transcriptResults = await geminiStore.searchTurns({ query: "梓潼" });
+    const intent = {
+      semanticEvidence: {
+        memoryRecall: { target: "conversation_history" },
+        entityHints: { technicalTerms: [], peopleOrCompanies: [] },
+      },
+      richIntent: { targets: [{ value: "梓潼相关讨论" }] },
+      topicAnalysis: {
+        history: { label: "", evidence: [] },
+        current: { label: "", evidence: [] },
+      },
+    } as IntentFrame;
+
+    expect(transcriptResults[0].text).toContain("文昌帝君");
+    expect(
+      extractConversationRecallTerms("帮我汇总之前梓潼相关的探讨内容", intent),
+    ).toContain("梓潼");
+    expect(
+      buildRecentConversationRecallCandidates({
+        userPrompt: "帮我汇总之前梓潼相关的探讨内容",
+        intent,
+        conversationHistory: [
+          { role: "user", content: "我们聊过梓潼。" },
+          { role: "assistant", content: "梓潼和文昌帝君有关。" },
+        ],
+      })[0].text,
+    ).toContain("文昌帝君");
   });
 });

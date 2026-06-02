@@ -637,7 +637,7 @@ packages/intent-runtime/src/
 - `memory-runtime/sessionStore.ts` 已定义 `SessionStore` / `SessionTranscript` / `SessionSearchResult`，用于抽象完整会话流水的 list / read / search / optional write；
 - `memory-runtime/sessionStore.ts` 已提供 `JarvisJsonlSessionStore`，定义 Jarvis Transcript JSONL v1，作为 Gemini / OpenAI / vLLM 等 backend 都可写入的标准文件格式；文件名采用 `YYYY-MM-DDTHH-MM-SS-sssZ_<sessionId>.jsonl`，便于按目录时间排序和人工检索；
 - `memory-runtime/sessionStore.ts` 已提供 `CompositeSessionStore`，用于组合 writable primary store 和 legacy read/search fallback；
-- 通用层只保留 Jarvis JSONL v1 和 session search 的纯关键词提取与 scoring helper，不绑定 Gemini CLI 文件格式；
+- 通用层保留 Jarvis JSONL v1、Gemini CLI legacy transcript adapter、recent conversation recall helper，以及 session search 的纯关键词提取与 scoring helper；
 - `DefaultMemoryRetriever` 已支持 runtime extension points：
   - `planQuery`：按 session / fact / entry 分别规划 query；
   - `augmentEntries`：把 recent conversation recall 这类非 store 召回结果并入 entry memory；
@@ -648,7 +648,8 @@ packages/intent-runtime/src/
   - `JarvisEntryMemoryStore` 包装 `MemoryService.searchWithScore()`
   - `JarvisSessionMemoryStore` 包装 `MemoryService.searchSummaryChunks()`
   - `createJarvisMemoryStores()` 一次性生成三类 adapter
-- `core/geminiCliSessionStore.ts` 已实现 `SessionStore`，封装当前 Gemini CLI / Jarvis chat transcript 文件的 JSON / JSONL 解析、时间过滤和 lexical fallback；
+- `memory-runtime/geminiCliSessionStore.ts` 已实现 `SessionStore`，封装当前 Gemini CLI / Jarvis chat transcript 文件的 JSON / JSONL 解析、时间过滤和 lexical fallback；`core/geminiCliSessionStore.ts` 仅保留兼容 re-export；
+- `memory-runtime/conversationRecall.ts` 已承载 recent conversation recall 的通用候选生成逻辑；`core/conversationRecall.ts` 仅保留兼容 re-export；
 - `MemoryService` 默认使用 `CompositeSessionStore([JarvisJsonlSessionStore, GeminiCliSessionStore])`：主响应写入标准 v1，历史召回先搜标准 v1，再兼容旧 Gemini CLI/Jarvis chats；
 - `MemoryService.searchConversationHistoryLexical()` 已改为消费 `SessionStore.searchTurns()`，不再直接理解 chats 目录和文件格式；
 - `agent.ts` 在 unified LLM loop 完成后把 user / assistant turn 写入标准 Jarvis JSONL transcript，OpenAI backend 也会走同一套历史保存；

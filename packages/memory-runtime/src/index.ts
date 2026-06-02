@@ -25,7 +25,9 @@ export {
   type MemoryRuntimeUnderstand,
 } from "./runtime.js";
 export * from "./clarificationPolicy.js";
+export * from "./conversationRecall.js";
 export * from "./crudPolicy.js";
+export * from "./geminiCliSessionStore.js";
 export * from "./governance.js";
 export * from "./intentAwareMemoryPolicy.js";
 export * from "./intentPolicy.js";

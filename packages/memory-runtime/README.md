@@ -182,10 +182,15 @@ creation timestamp. Legacy `<sessionId>.jsonl` files remain readable.
 {"kind":"turn","role":"assistant","content":"hi","timestamp":"2026-06-02T00:00:01.000Z","backend":"openai","model":"gpt-4.1"}
 ```
 
-The runtime package intentionally does not know how Gemini CLI stores chat
-files. Jarvis provides a `GeminiCliSessionStore` legacy adapter in
-`jarvis/src/core`, while other projects can use `JarvisJsonlSessionStore` or
-provide SQLite, filesystem, Postgres, or backend-native session stores.
+`GeminiCliSessionStore` is also exported as a legacy read/search adapter for
+existing Gemini CLI or Jarvis chat transcript files. It implements the same
+`SessionStore` interface, so hosts can compose it behind `JarvisJsonlSessionStore`
+with `CompositeSessionStore`. Other projects can also provide SQLite,
+filesystem, Postgres, or backend-native session stores.
+
+`conversationRecall` helpers are exported for recent in-memory conversation
+recall. They extract specific recall terms and build short candidate windows
+from the current turn history before falling back to persisted session search.
 
 ## Compatibility
 
