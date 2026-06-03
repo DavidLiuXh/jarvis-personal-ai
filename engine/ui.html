@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="theme-color" content="#1a2030">
+<title>FORGE ENGINE</title>
+<style>
+:root{--bg:#1a2030;--panel:#243040;--panel2:#2a3850;--gold:#e8c060;--gold-lt:#ffd870;--gold-dim:#8a6820;--green:#60c878;--green-lt:#90e0a0;--green-dim:#306840;--red:#e06060;--blue:#80b0d8;--text:#e8eef8;--dim:#8090b0;--border:#354560;}
+*{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent;}
+html,body{width:100%;height:100%;background:var(--bg);color:var(--text);font-family:'Courier New',monospace;overflow:hidden;}
+#app{display:flex;flex-direction:column;height:100vh;padding:8px;}
+
+/* header */
+#hdr{display:flex;align-items:center;justify-content:space-between;padding:10px 14px;background:linear-gradient(135deg,rgba(36,48,64,.98),rgba(26,32,48,.98));border:1px solid var(--gold-dim);border-radius:8px;flex-shrink:0;margin-bottom:6px;}
+.htitle{font-size:14px;font-weight:bold;color:var(--gold);letter-spacing:3px;}
+.hsub{font-size:8px;color:var(--dim);letter-spacing:2px;margin-top:2px;}
+#device-dot{width:10px;height:10px;border-radius:50%;background:var(--green);box-shadow:0 0 6px var(--green);flex-shrink:0;}
+#device-dot.offline{background:var(--red);box-shadow:0 0 6px var(--red);}
+#device-name{font-size:9px;color:var(--green-lt);letter-spacing:2px;margin-left:6px;}
+
+/* chat */
+#chat{flex:1;overflow-y:auto;padding:6px 4px;display:flex;flex-direction:column;gap:8px;min-height:0;}
+.msg{padding:10px 12px;border-radius:8px;font-size:12px;line-height:1.55;white-space:pre-wrap;word-break:break-word;}
+.msg.user{background:rgba(232,192,96,.1);border:1px solid var(--gold-dim);align-self:flex-end;max-width:88%;}
+.msg.agent{background:var(--panel);border:1px solid var(--border);align-self:flex-start;max-width:92%;}
+.msg-meta{font-size:8px;color:var(--dim);letter-spacing:1px;margin-top:4px;}
+.thinking{color:var(--dim);font-style:italic;animation:pulse 1.2s infinite alternate;}
+@keyframes pulse{from{opacity:.4}to{opacity:1}}
+
+/* input bar */
+#bar{display:flex;gap:6px;padding:6px 0 0;flex-shrink:0;}
+#inp{flex:1;background:rgba(10,18,30,.8);border:1px solid var(--border);color:var(--text);padding:12px 12px;border-radius:8px;font-family:'Courier New',monospace;font-size:12px;outline:none;resize:none;min-height:48px;max-height:120px;}
+#inp:focus{border-color:var(--gold-dim);}
+#inp::placeholder{color:var(--dim);}
+#send{padding:12px 16px;background:rgba(232,192,96,.15);border:1px solid var(--gold-dim);color:var(--gold);border-radius:8px;cursor:pointer;font-family:'Courier New',monospace;font-size:11px;letter-spacing:1px;align-self:flex-end;min-height:48px;}
+#send:active{background:rgba(232,192,96,.3);}
+#send.disabled{opacity:.4;pointer-events:none;}
+
+/* device bar */
+#devbar{display:flex;gap:4px;flex-shrink:0;padding:4px 0;overflow-x:auto;}
+.dev{padding:4px 8px;border:1px solid var(--border);border-radius:4px;font-size:8px;letter-spacing:1px;white-space:nowrap;}
+.dev.online{color:var(--green-lt);border-color:var(--green-dim);}
+.dev.offline{color:var(--dim);}
+.dev.active{border-color:var(--gold-dim);color:var(--gold);}
+
+/* wipe btn */
+#wipe{font-size:8px;color:var(--dim);letter-spacing:1px;cursor:pointer;padding:2px 6px;border:1px solid var(--border);border-radius:4px;align-self:center;flex-shrink:0;}
+#wipe:active{color:var(--red);}
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="hdr">
+    <div>
+      <div class="htitle">FORGE ENGINE</div>
+      <div class="hsub">LOCAL ONLY · NO CLOUD · NO API</div>
+    </div>
+    <div style="display:flex;align-items:center;gap:8px">
+      <div id="device-dot"></div>
+      <div id="device-name">SCANNING...</div>
+      <div id="wipe" onclick="wipeHistory()">WIPE</div>
+    </div>
+  </div>
+
+  <div id="devbar"></div>
+  <div id="chat"></div>
+
+  <div id="bar">
+    <textarea id="inp" placeholder="Ask anything..." rows="1"></textarea>
+    <div id="send" onclick="send()">SEND</div>
+  </div>
+</div>
+
+<script>
+var BASE = window.location.origin;
+var busy = false;
+var activeDevice = null;
+
+function $(id){return document.getElementById(id);}
+
+function appendMsg(role, text, device){
+  var chat = $('chat');
+  var d = document.createElement('div');
+  d.className = 'msg ' + role;
+  d.textContent = text;
+  if(device){
+    var m = document.createElement('div');
+    m.className = 'msg-meta';
+    m.textContent = '● ' + device;
+    d.appendChild(m);
+  }
+  chat.appendChild(d);
+  chat.scrollTop = chat.scrollHeight;
+  return d;
+}
+
+function setBusy(b){
+  busy = b;
+  $('send').className = b ? 'disabled' : '';
+}
+
+function send(){
+  if(busy) return;
+  var inp = $('inp');
+  var text = inp.value.trim();
+  if(!text) return;
+  inp.value = '';
+  inp.style.height = '';
+
+  appendMsg('user', text);
+  var placeholder = appendMsg('agent', '...', null);
+  placeholder.classList.add('thinking');
+  setBusy(true);
+
+  fetch(BASE + '/api/ask', {
+    method: 'POST',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({prompt: text})
+  })
+  .then(r => r.json())
+  .then(data => {
+    placeholder.classList.remove('thinking');
+    placeholder.textContent = data.response || '[no response]';
+    if(data.device){
+      var m = document.createElement('div');
+      m.className = 'msg-meta';
+      m.textContent = '● ' + data.device;
+      placeholder.appendChild(m);
+    }
+    $('chat').scrollTop = $('chat').scrollHeight;
+    setBusy(false);
+    checkDevices();
+  })
+  .catch(e => {
+    placeholder.classList.remove('thinking');
+    placeholder.textContent = '[ENGINE OFFLINE] Start: python agent.py --server';
+    setBusy(false);
+  });
+}
+
+function wipeHistory(){
+  if(!confirm('Wipe all conversation history?')) return;
+  fetch(BASE + '/api/wipe', {method:'POST'})
+    .then(() => { $('chat').innerHTML = ''; });
+}
+
+function checkDevices(){
+  fetch(BASE + '/api/devices')
+    .then(r => r.json())
+    .then(devices => {
+      var bar = $('devbar');
+      bar.innerHTML = '';
+      var anyOnline = false;
+      devices.forEach(function(d){
+        var el = document.createElement('div');
+        el.className = 'dev ' + (d.online ? 'online' : 'offline');
+        if(d.online && !anyOnline){ el.className += ' active'; anyOnline = true; activeDevice = d.name; }
+        el.textContent = (d.online ? '● ' : '○ ') + d.name.toUpperCase();
+        bar.appendChild(el);
+      });
+      var dot = $('device-dot');
+      var lbl = $('device-name');
+      if(anyOnline){
+        dot.className = '';
+        lbl.textContent = activeDevice.toUpperCase();
+        lbl.style.color = 'var(--green-lt)';
+      } else {
+        dot.className = 'offline';
+        lbl.textContent = 'OFFLINE';
+        lbl.style.color = 'var(--red)';
+      }
+    })
+    .catch(() => {
+      $('device-dot').className = 'offline';
+      $('device-name').textContent = 'ENGINE DOWN';
+    });
+}
+
+function loadHistory(){
+  fetch(BASE + '/api/history')
+    .then(r => r.json())
+    .then(msgs => {
+      msgs.forEach(function(m){
+        appendMsg(m.role === 'user' ? 'user' : 'agent', m.content);
+      });
+    })
+    .catch(() => {});
+}
+
+// auto-resize textarea
+$('inp').addEventListener('input', function(){
+  this.style.height = '';
+  this.style.height = Math.min(this.scrollHeight, 120) + 'px';
+});
+
+// enter to send (shift+enter for newline)
+$('inp').addEventListener('keydown', function(e){
+  if(e.key === 'Enter' && !e.shiftKey){ e.preventDefault(); send(); }
+});
+
+checkDevices();
+loadHistory();
+setInterval(checkDevices, 15000);
+</script>
+</body>
+</html>

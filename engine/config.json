@@ -1,0 +1,14 @@
+{
+  "model": "qwen2.5-coder:7b",
+  "devices": [
+    {"name": "localhost",  "endpoint": "http://127.0.0.1:11434",    "priority": 1},
+    {"name": "gole2-06",  "endpoint": "http://192.168.1.200:11434", "priority": 2},
+    {"name": "pixel9",    "endpoint": "http://192.168.1.201:11434", "priority": 3},
+    {"name": "a54",       "endpoint": "http://192.168.1.202:11434", "priority": 4}
+  ],
+  "health_timeout": 2,
+  "request_timeout": 120,
+  "system_prompt": "You are a local AI assistant running entirely on the user's own hardware. You have no internet access and make no external calls. All inference is local. Be direct, honest, and practical. Never make up answers — say you don't know when you don't know.",
+  "port": 7331,
+  "version": 1
+}
