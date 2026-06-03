@@ -94,14 +94,30 @@ fi
 
 # ── 6. pull model ─────────────────────────────────────────
 say "Starting Ollama to pull model..."
-OLLAMA_HOST=0.0.0.0 ollama serve > /tmp/ollama.log 2>&1 &
-OLLAMA_PID=$!
-sleep 4
+if ! pgrep -x ollama > /dev/null; then
+  OLLAMA_HOST=0.0.0.0 ollama serve > /tmp/ollama.log 2>&1 &
+  # wait until Ollama is actually listening (up to 30s)
+  for i in $(seq 1 15); do
+    sleep 2
+    if curl -sf http://127.0.0.1:11434/api/tags > /dev/null 2>&1; then
+      say "Ollama ready"
+      break
+    fi
+    [ "$i" -eq 15 ] && warn "Ollama slow to start — pull may fail, retry manually"
+  done
+else
+  say "Ollama already running"
+fi
 
 say "Pulling qwen2.5-coder:3b (small, fast on mobile)..."
 ollama pull qwen2.5-coder:3b || {
   warn "Model pull failed — you can do it manually later: ollama pull qwen2.5-coder:3b"
 }
+
+# verify model is present before launching
+if ! ollama list 2>/dev/null | grep -q "qwen2.5-coder:3b"; then
+  warn "Model not confirmed — run 'ollama pull qwen2.5-coder:3b' before starting engine"
+fi
 
 # ── done ──────────────────────────────────────────────────
 echo ""

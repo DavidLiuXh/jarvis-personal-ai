@@ -19,10 +19,10 @@ import json
 import os
 import sqlite3
 import sys
-import time
 import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
-from urllib.parse import parse_qs, urlparse
+from socketserver import ThreadingMixIn
+from urllib.parse import urlparse
 
 try:
     import requests
@@ -30,9 +30,13 @@ except ImportError:
     print("Missing: pip install requests")
     sys.exit(1)
 
-DIR    = os.path.dirname(os.path.abspath(__file__))
-CFG    = os.path.join(DIR, "config.json")
-DB     = os.path.join(DIR, "memory.db")
+DIR = os.path.dirname(os.path.abspath(__file__))
+CFG = os.path.join(DIR, "config.json")
+DB  = os.path.join(DIR, "memory.db")
+
+MAX_BODY = 1 * 1024 * 1024  # 1 MB cap on POST bodies
+
+_db_lock = threading.Lock()
 
 
 # ── config ──────────────────────────────────────────────────────────────────
@@ -44,7 +48,7 @@ def load_cfg() -> dict:
 
 # ── memory (SQLite) ──────────────────────────────────────────────────────────
 
-def get_db() -> sqlite3.Connection:
+def _init_db():
     con = sqlite3.connect(DB)
     con.execute("""
         CREATE TABLE IF NOT EXISTS history (
@@ -62,61 +66,73 @@ def get_db() -> sqlite3.Connection:
         )
     """)
     con.commit()
-    return con
+    con.close()
+
+_init_db()
+
+
+def get_db() -> sqlite3.Connection:
+    return sqlite3.connect(DB)
 
 
 def save_turn(role: str, content: str, device: str = None):
-    con = get_db()
-    con.execute("INSERT INTO history (role, content, device) VALUES (?,?,?)",
-                (role, content, device))
-    con.commit()
-    con.close()
+    with _db_lock:
+        con = get_db()
+        con.execute("INSERT INTO history (role, content, device) VALUES (?,?,?)",
+                    (role, content, device))
+        con.commit()
+        con.close()
 
 
 def get_history(n: int = 20) -> list[dict]:
-    con = get_db()
-    rows = con.execute(
-        "SELECT role, content FROM history ORDER BY id DESC LIMIT ?", (n,)
-    ).fetchall()
-    con.close()
+    with _db_lock:
+        con = get_db()
+        rows = con.execute(
+            "SELECT role, content FROM history ORDER BY id DESC LIMIT ?", (n,)
+        ).fetchall()
+        con.close()
     return [{"role": r, "content": c} for r, c in reversed(rows)]
 
 
 def wipe_history():
-    con = get_db()
-    con.execute("DELETE FROM history")
-    con.commit()
-    con.close()
+    with _db_lock:
+        con = get_db()
+        con.execute("DELETE FROM history")
+        con.commit()
+        con.close()
 
 
 # ── device routing ───────────────────────────────────────────────────────────
 
-def find_device(cfg: dict) -> tuple:
-    """Return (name, endpoint) of first healthy Ollama device."""
+def probe_devices(cfg: dict) -> list[dict]:
+    """Return all devices with an 'online' bool, sorted by priority."""
     devices = sorted(cfg.get("devices", []), key=lambda d: d.get("priority", 99))
     timeout = cfg.get("health_timeout", 2)
+    result = []
     for d in devices:
         try:
             r = requests.get(f"{d['endpoint']}/api/tags", timeout=timeout)
-            if r.status_code == 200:
-                return d["name"], d["endpoint"]
+            online = r.status_code == 200
         except Exception:
-            continue
+            online = False
+        result.append({**d, "online": online})
+    return result
+
+
+def find_device(cfg: dict) -> tuple:
+    """Return (name, endpoint) of first healthy Ollama device."""
+    for d in probe_devices(cfg):
+        if d["online"]:
+            return d["name"], d["endpoint"]
     return None, None
 
 
 def list_devices(cfg: dict):
-    devices = sorted(cfg.get("devices", []), key=lambda d: d.get("priority", 99))
-    timeout = cfg.get("health_timeout", 2)
     print("\nDEVICE STATUS")
     print("─" * 40)
-    for d in devices:
-        try:
-            r = requests.get(f"{d['endpoint']}/api/tags", timeout=timeout)
-            status = "ONLINE" if r.status_code == 200 else "ERROR"
-        except Exception:
-            status = "OFFLINE"
-        mark = "●" if status == "ONLINE" else "○"
+    for d in probe_devices(cfg):
+        mark = "●" if d["online"] else "○"
+        status = "ONLINE" if d["online"] else "OFFLINE"
         print(f"  {mark} {d['name']:<12} {d['endpoint']:<32} {status}")
     print()
 
@@ -146,7 +162,12 @@ def ask(prompt: str, cfg: dict, history: list = None) -> tuple:
             timeout=cfg.get("request_timeout", 120)
         )
         r.raise_for_status()
-        return r.json()["message"]["content"], name
+        data = r.json()
+        content = data.get("message", {}).get("content")
+        if content is None:
+            err = data.get("error", "unexpected response shape")
+            return f"[ERROR] Ollama: {err}", name
+        return content, name
     except requests.exceptions.Timeout:
         return f"[TIMEOUT] {name} took too long. Try a smaller model.", name
     except Exception as e:
@@ -172,7 +193,7 @@ def run_cli():
 
         save_turn("user", prompt)
         history = get_history(20)
-        response, device = ask(prompt, cfg, history[:-1])  # exclude the one we just saved
+        response, device = ask(prompt, cfg, history[:-1])
         save_turn("assistant", response, device)
 
         tag = f" [{device}]" if device else ""
@@ -181,11 +202,15 @@ def run_cli():
 
 # ── HTTP server ──────────────────────────────────────────────────────────────
 
+class ThreadingHTTPServer(ThreadingMixIn, HTTPServer):
+    daemon_threads = True
+
+
 def make_handler():
     cfg_ref = [load_cfg()]
 
     class Handler(BaseHTTPRequestHandler):
-        def log_message(self, *a): pass  # silence access log
+        def log_message(self, *a): pass
 
         def send_json(self, code, data):
             body = json.dumps(data).encode()
@@ -225,50 +250,51 @@ def make_handler():
             elif p == "/api/history":
                 self.send_json(200, get_history(50))
             elif p == "/api/devices":
-                cfg = cfg_ref[0]
-                devices = sorted(cfg.get("devices", []), key=lambda d: d.get("priority", 99))
-                timeout = cfg.get("health_timeout", 2)
-                result = []
-                for d in devices:
-                    try:
-                        r = requests.get(f"{d['endpoint']}/api/tags", timeout=timeout)
-                        online = r.status_code == 200
-                    except Exception:
-                        online = False
-                    result.append({**d, "online": online})
-                self.send_json(200, result)
+                self.send_json(200, probe_devices(cfg_ref[0]))
             else:
                 self.send_json(404, {"error": "not found"})
 
         def do_POST(self):
             p = urlparse(self.path).path
-            length = int(self.headers.get("Content-Length", 0))
+
+            raw_len = self.headers.get("Content-Length")
+            try:
+                length = int(raw_len or 0)
+            except ValueError:
+                self.send_json(400, {"error": "bad Content-Length"})
+                return
+            if length > MAX_BODY:
+                self.send_json(413, {"error": "request too large"})
+                return
             body = self.rfile.read(length)
 
             if p == "/api/ask":
                 try:
                     data = json.loads(body)
-                    prompt = data.get("prompt", "").strip()
-                    if not prompt:
-                        self.send_json(400, {"error": "empty prompt"})
-                        return
-                    cfg = load_cfg()          # reload on each request (live config updates)
-                    cfg_ref[0] = cfg
-                    save_turn("user", prompt)
-                    history = get_history(20)
-                    response, device = ask(prompt, cfg, history[:-1])
-                    save_turn("assistant", response, device)
-                    self.send_json(200, {"response": response, "device": device})
-                except Exception as e:
-                    self.send_json(500, {"error": str(e)})
+                except json.JSONDecodeError:
+                    self.send_json(400, {"error": "invalid JSON"})
+                    return
+                prompt = data.get("prompt", "").strip()
+                if not prompt:
+                    self.send_json(400, {"error": "empty prompt"})
+                    return
+                save_turn("user", prompt)
+                history = get_history(20)
+                cfg = cfg_ref[0]
+                response, device = ask(prompt, cfg, history[:-1])
+                save_turn("assistant", response, device)
+                self.send_json(200, {"response": response, "device": device})
 
             elif p == "/api/wipe":
                 wipe_history()
                 self.send_json(200, {"ok": True})
 
             elif p == "/api/reload":
-                cfg_ref[0] = load_cfg()
-                self.send_json(200, {"ok": True, "model": cfg_ref[0]["model"]})
+                try:
+                    cfg_ref[0] = load_cfg()
+                    self.send_json(200, {"ok": True, "model": cfg_ref[0]["model"]})
+                except Exception as e:
+                    self.send_json(500, {"error": f"reload failed: {e}"})
 
             else:
                 self.send_json(404, {"error": "not found"})
@@ -279,7 +305,7 @@ def make_handler():
 def run_server():
     cfg = load_cfg()
     port = cfg.get("port", 7331)
-    server = HTTPServer(("0.0.0.0", port), make_handler())
+    server = ThreadingHTTPServer(("0.0.0.0", port), make_handler())
     print(f"\n  FORGE ENGINE running on http://localhost:{port}")
     print(f"  model: {cfg['model']}  |  Ctrl+C to stop\n")
     try:
@@ -309,12 +335,10 @@ if __name__ == "__main__":
     elif args[0] == "--reload":
         print(f"config loaded: {load_cfg()['model']}")
     else:
-        # single-shot question from command line
         cfg = load_cfg()
         prompt = " ".join(args)
         save_turn("user", prompt)
         history = get_history(20)
         response, device = ask(prompt, cfg, history[:-1])
         save_turn("assistant", response, device)
-        tag = f" [{device}]" if device else ""
         print(f"\n{response}\n")
