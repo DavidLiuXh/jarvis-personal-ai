@@ -1,5 +1,0 @@
-google-adk
-a2a-sdk
-uvicorn
-starlette
-google-genai
