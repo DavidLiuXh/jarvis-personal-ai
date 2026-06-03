@@ -1,10 +1,9 @@
 {
   "model": "qwen2.5-coder:7b",
   "devices": [
-    {"name": "localhost",  "endpoint": "http://127.0.0.1:11434",    "priority": 1},
-    {"name": "gole2-06",  "endpoint": "http://192.168.1.200:11434", "priority": 2},
-    {"name": "pixel9",    "endpoint": "http://192.168.1.201:11434", "priority": 3},
-    {"name": "a54",       "endpoint": "http://192.168.1.202:11434", "priority": 4}
+    {"name": "pixel9",    "endpoint": "http://127.0.0.1:11434",    "priority": 1},
+    {"name": "a54",       "endpoint": "http://192.168.1.202:11434", "priority": 2},
+    {"name": "gole2-06",  "endpoint": "http://192.168.1.200:11434", "priority": 3}
   ],
   "health_timeout": 2,
   "request_timeout": 120,
