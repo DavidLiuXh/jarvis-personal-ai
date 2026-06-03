@@ -17,7 +17,7 @@ export type RuntimeContentPart = RuntimeFunctionResponsePart & {
   functionCall?: {
     id?: string;
     name?: string;
-    args?: unknown;
+    args?: Record<string, unknown>;
   };
   thoughtSignature?: unknown;
   inlineData?: {
@@ -30,7 +30,7 @@ export type RuntimeContentPart = RuntimeFunctionResponsePart & {
 export type RuntimeToolResultLike = {
   name: string;
   callId: string;
-  status: "success" | "failed";
+  status: "success" | "failed" | "blocked";
   output: unknown;
 };
 

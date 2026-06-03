@@ -1,10 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { OpenAiPromptCompiler } from "../agent-runtime/index.js";
 import type { JarvisConfig } from "./configManager.js";
-import {
-  createJarvisLlmBackend,
-  getRuntimeToolSchemas,
-} from "./llmBackendFactory.js";
+import { getRuntimeToolSchemas } from "./geminiLlmBackendFactory.js";
+import { createJarvisLlmBackend } from "./llmBackendFactory.js";
 
 function client() {
   return {

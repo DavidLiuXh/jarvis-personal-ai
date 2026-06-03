@@ -7,9 +7,7 @@
   "type": "module",
   "workspaces": [
     "packages/*",
-    "jarvis",
-    "gemini-cli/packages/core",
-    "gemini-cli/packages/cli"
+    "jarvis"
   ],
   "private": "true",
   "repository": {
@@ -31,6 +29,7 @@
     "runtime:check-examples": "npx tsx scripts/check_runtime_examples.ts",
     "memory:quality": "npx tsx scripts/run_memory_quality.ts",
     "runtime:quality": "npm run runtime:build && npm run runtime:check-examples && npm run memory:quality && npm run intent:matrix && npm run llm:backend:eval && npm run runtime:check-boundaries && npx tsx scripts/runtime_quality_dashboard.ts --gate",
+    "runtime:quality:standalone": "npm run runtime:build && npm run llm:backend:eval && npm run runtime:check-boundaries",
     "test": "npm run test --workspaces --if-present",
     "prepare": "husky",
     "pre-commit": "lint-staged"

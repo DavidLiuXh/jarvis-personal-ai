@@ -21,27 +21,12 @@ dotenv.config({ path: path.join(SOURCE_ROOT, "packages/jarvis/.env") });
 import { ConfigManager } from "./core/configManager.js";
 const jarvisConfig = ConfigManager.getInstance().get();
 
-// --- 3. OPTIONAL GLOBAL POLICY JAILBREAK ---
-import { PolicyEngine } from "../../gemini-cli/packages/core/src/index.js";
-
-if (jarvisConfig.security.jailbreak) {
-  /**
-   * JARVIS ABSOLUTE PROTOCOL: GLOBAL AUTHORITY INJECTION
-   * Triggered only if security.jailbreak is true in config.json
-   */
-  // @ts-expect-error - overriding internal method for jailbreak mode
-  PolicyEngine.prototype.check = async function () {
-    return { decision: "allow" };
-  };
-
-  console.log(
-    "🔓 [Jarvis] GLOBAL JAILBREAK ACTIVE: Full system sovereignty granted.",
-  );
-} else {
-  console.log(
-    "🛡️ [Jarvis] SECURITY ACTIVE: Operating within standard core constraints.",
-  );
-}
+const standaloneRuntime = jarvisConfig.llmBackend?.provider === "openai";
+console.log(
+  jarvisConfig.security.jailbreak
+    ? "🔓 [Jarvis] GLOBAL JAILBREAK REQUESTED."
+    : "🛡️ [Jarvis] SECURITY ACTIVE: Operating within standard runtime constraints.",
+);
 
 // --- 4. THE STABLE SANDBOX LAYER ---
 import os from "node:os";
@@ -55,7 +40,7 @@ if (!fs.existsSync(JARVIS_RUNTIME)) {
 process.chdir(JARVIS_RUNTIME);
 // ------------------------------------
 
-import { WebSocketServer, type WebSocket } from "ws";
+import { WebSocket, WebSocketServer } from "ws";
 import express, {
   type Request,
   type Response,
@@ -64,15 +49,7 @@ import express, {
 import { createServer, type Server } from "node:http";
 import { v4 as uuidv4 } from "uuid";
 
-import {
-  debugLogger,
-  AuthType,
-} from "../../gemini-cli/packages/core/src/index.js";
-// Raise the MaxListeners limit on the shared coreEvents emitter.
-// Each background/bg-task agent registers its own model-changed listener;
-// with the default limit of 10 this triggers a spurious warning.
-import { coreEvents } from "../../gemini-cli/packages/core/src/utils/events.js";
-coreEvents.setMaxListeners(100);
+import { runtimeLogger as debugLogger } from "./core/runtimeLogger.js";
 import { JarvisManager } from "./core/manager.js";
 import { JarvisEventType, type JarvisIncomingMessage } from "./core/types.js";
 import { FeishuChannel } from "./core/channels/feishu.js";
@@ -92,10 +69,23 @@ import {
 
 const JARVIS_HOME = path.join(os.homedir(), ".gemini-jarvis");
 
-// @ts-expect-error - Relative import
-import { loadCliConfig } from "../../gemini-cli/packages/cli/src/config/config.js";
-// @ts-expect-error - Relative import
-import { loadSettings } from "../../gemini-cli/packages/cli/src/config/settings.js";
+async function initializeGeminiCompatibilityGlobals(): Promise<void> {
+  if (standaloneRuntime) return;
+  const [{ PolicyEngine }, { coreEvents }] = await Promise.all([
+    import("../../gemini-cli/packages/core/src/index.js"),
+    import("../../gemini-cli/packages/core/src/utils/events.js"),
+  ]);
+  coreEvents.setMaxListeners(100);
+  if (jarvisConfig.security.jailbreak) {
+    // @ts-expect-error - overriding Gemini compatibility policy in explicit jailbreak mode
+    PolicyEngine.prototype.check = async function () {
+      return { decision: "allow" };
+    };
+    console.log(
+      "🔓 [Jarvis] GLOBAL JAILBREAK ACTIVE: Full system sovereignty granted.",
+    );
+  }
+}
 
 /**
  * Jarvis Persistent AI Assistant Server
@@ -439,17 +429,29 @@ class JarvisServer {
   }
 
   private async initializeMemorySync() {
+    if (standaloneRuntime) {
+      console.error(
+        "🧠 [JarvisServer] Standalone runtime: Gemini startup memory sync skipped.",
+      );
+      return;
+    }
     try {
+      const [{ loadSettings }, { loadCliConfig }, { AuthType }] =
+        await Promise.all([
+          import("../../gemini-cli/packages/cli/src/config/settings.js"),
+          import("../../gemini-cli/packages/cli/src/config/config.js"),
+          import("../../gemini-cli/packages/core/src/index.js"),
+        ]);
       const settings = loadSettings(SOURCE_ROOT);
       const config = await loadCliConfig(
         settings.merged,
         "startup-sync",
-        { _: [], yolo: true },
+        { _: [], yolo: true } as any,
         { cwd: path.join(os.homedir(), ".gemini-jarvis") },
       );
       await config.refreshAuth(
-        settings.merged.security.auth.selectedType ||
-          AuthType.LOGIN_WITH_GOOGLE,
+        (settings.merged.security.auth.selectedType ||
+          AuthType.LOGIN_WITH_GOOGLE) as any,
       );
       await config.initialize();
       this.manager.getMemoryService().setConfig(config);
@@ -803,6 +805,7 @@ class JarvisServer {
   }
 
   public async start() {
+    await initializeGeminiCompatibilityGlobals();
     const port = jarvisConfig.server.port;
     const globalSessionId =
       jarvisConfig.session?.globalSessionId ?? "jarvis-global";

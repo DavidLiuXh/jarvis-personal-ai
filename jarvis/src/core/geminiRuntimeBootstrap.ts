@@ -5,7 +5,7 @@
  */
 
 import type { MemoryService } from "./memory.js";
-import { AgentInitializer } from "./agentInitializer.js";
+import { AgentInitializer } from "./geminiAgentInitializer.js";
 import { ConfigManager, type JarvisConfig } from "./configManager.js";
 import {
   createDefaultRuntimeToolRegistry,

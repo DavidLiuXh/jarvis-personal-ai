@@ -13,6 +13,7 @@ type Boundary = {
   name: string;
   root: string;
   forbidden: RegExp[];
+  allowFile?: (file: string) => boolean;
 };
 
 const boundaries: Boundary[] = [
@@ -42,6 +43,19 @@ const boundaries: Boundary[] = [
       /import\(["'].*jarvis\/src\/core\//,
     ],
   },
+  {
+    name: "jarvis-standalone",
+    root: path.join(repoRoot, "jarvis/src"),
+    forbidden: [/from\s+["'].*gemini-cli\//, /from\s+["']@google\/genai["']/],
+    allowFile: (file) => {
+      const base = path.basename(file);
+      return (
+        base.startsWith("gemini") ||
+        base.includes(".test.") ||
+        base.includes(".eval.")
+      );
+    },
+  },
 ];
 
 function walk(dir: string): string[] {
@@ -63,6 +77,7 @@ const violations: string[] = [];
 
 for (const boundary of boundaries) {
   for (const file of walk(boundary.root)) {
+    if (boundary.allowFile?.(file)) continue;
     const text = fs.readFileSync(file, "utf8");
     for (const pattern of boundary.forbidden) {
       if (pattern.test(text)) {

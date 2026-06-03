@@ -5,6 +5,14 @@
  */
 
 import { type MemoryService } from "./memory.js";
+import type { EventEmitter } from "node:events";
+import type { AgentManager } from "./agentManager.js";
+import type { BackgroundTaskRunner } from "./backgroundTaskRunner.js";
+import type { ChannelRegistry } from "./channelRegistry.js";
+import type { SkillInfo } from "./systemPromptBuilder.js";
+import type { TaskCommandHandler } from "./taskCommandHandler.js";
+import type { SkillCommandHandler } from "./skillCommandHandler.js";
+import type { RuntimeConversationContent } from "./runtimeTypes.js";
 
 export enum JarvisEventType {
   CONTENT = "content",
@@ -37,6 +45,34 @@ export interface JarvisAgentOptions {
    */
   lightweight?: boolean;
 }
+
+export type JarvisAgentLike = EventEmitter & {
+  initialize(): Promise<void>;
+  processMessage(
+    userPrompt: string,
+    imageAttachment?: { mimeType: string; data: Buffer },
+  ): Promise<void>;
+  getHistory(): readonly RuntimeConversationContent[];
+  setTaskCommandHandler(handler: TaskCommandHandler): void;
+  setChannelRegistry(registry: ChannelRegistry): void;
+  setAvailableSkills(skills: SkillInfo[]): void;
+  setSkillCommandHandler(handler: SkillCommandHandler): void;
+  setAgentManager(manager: AgentManager): void;
+  setBackgroundTaskRunner(runner: BackgroundTaskRunner): void;
+  triggerSkillExtraction(): Promise<void>;
+  setAskUserHandler(
+    ws: { readyState: number; send: (data: string) => void },
+    ownerId: string,
+  ): void;
+  clearAskUserHandlerIfOwner(ownerId: string): void;
+  rejectPendingAskUsersForOwner(ownerId: string): void;
+  provideAskUserResponse(
+    id: string,
+    answers: Record<string, string>,
+    cancelled?: boolean,
+  ): void;
+  provideConfirmationResponse(id: string, decision: "allow" | "deny"): void;
+};
 
 export interface JarvisChatMessage {
   type: "chat";

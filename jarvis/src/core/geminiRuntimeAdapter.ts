@@ -16,7 +16,7 @@ import type {
 } from "../intent-runtime/index.js";
 import type { JarvisConfig } from "./configManager.js";
 import type { IntentStepRuntime } from "./intentExecutionPlan.js";
-import { createJarvisLlmBackend } from "./llmBackendFactory.js";
+import { createGeminiJarvisLlmBackend } from "./geminiLlmBackendFactory.js";
 import {
   JarvisRuntimeEventType,
   runtimeFunctionResponseToToolResult,
@@ -160,7 +160,7 @@ export function createJarvisToolLoopOptions(
     emitToolCallResponse: input.emitToolCallResponse,
   });
   return {
-    ...createJarvisLlmBackend({
+    ...createGeminiJarvisLlmBackend({
       config: input.config,
       client: input.client,
       promptId: input.promptId,

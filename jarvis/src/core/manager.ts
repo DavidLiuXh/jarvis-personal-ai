@@ -4,18 +4,19 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { JarvisAgent } from "./agent.js";
 import { MemoryService } from "./memory.js";
-import { debugLogger } from "../../../gemini-cli/packages/core/src/index.js";
+import { runtimeLogger as debugLogger } from "./runtimeLogger.js";
 import { ConfigManager } from "./configManager.js";
 import { type AgentManager } from "./agentManager.js";
 import { type BackgroundTaskRunner } from "./backgroundTaskRunner.js";
 import { type ChannelRegistry } from "./channelRegistry.js";
 import { type TaskCommandHandler } from "./taskCommandHandler.js";
+import { StandaloneJarvisAgent } from "./standaloneAgent.js";
+import type { JarvisAgentLike } from "./types.js";
 
 export class JarvisManager {
   private static instance: JarvisManager;
-  private agents: Map<string, JarvisAgent> = new Map();
+  private agents: Map<string, JarvisAgentLike> = new Map();
   private sourceRoot: string;
   private memoryService: MemoryService;
   private agentManager: AgentManager | null = null;
@@ -72,7 +73,7 @@ export class JarvisManager {
    * Retrieves or creates a JarvisAgent.
    * Supports Global Session Mode for cross-channel synchronization.
    */
-  public async getAgent(sessionId: string): Promise<JarvisAgent> {
+  public async getAgent(sessionId: string): Promise<JarvisAgentLike> {
     const config = ConfigManager.getInstance().get();
 
     // 🌍 GLOBAL SYNC LOGIC:
@@ -89,11 +90,14 @@ export class JarvisManager {
       `[JarvisManager] Creating agent for effective session: ${effectiveId} (Requested: ${sessionId})`,
     );
 
-    const agent = new JarvisAgent({
-      sessionId: effectiveId,
-      cwd: this.sourceRoot,
-      memoryService: this.memoryService,
-    });
+    const agent =
+      config.llmBackend?.provider === "openai"
+        ? new StandaloneJarvisAgent({
+            sessionId: effectiveId,
+            cwd: this.sourceRoot,
+            memoryService: this.memoryService,
+          })
+        : await this.createGeminiCompatibilityAgent(effectiveId);
 
     if (this.agentManager) agent.setAgentManager(this.agentManager);
     if (this.backgroundTaskRunner)
@@ -104,6 +108,17 @@ export class JarvisManager {
 
     this.agents.set(effectiveId, agent);
     return agent;
+  }
+
+  private async createGeminiCompatibilityAgent(
+    sessionId: string,
+  ): Promise<JarvisAgentLike> {
+    const { JarvisAgent } = await import("./geminiAgent.js");
+    return new JarvisAgent({
+      sessionId,
+      cwd: this.sourceRoot,
+      memoryService: this.memoryService,
+    });
   }
 
   public async cleanup() {

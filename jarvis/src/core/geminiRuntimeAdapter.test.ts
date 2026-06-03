@@ -11,7 +11,7 @@ import {
   createJarvisToolExecutor,
   createJarvisToolLoopOptions,
   createJarvisToolLoopPlanner,
-} from "./jarvisRuntimeAdapter.js";
+} from "./geminiRuntimeAdapter.js";
 import { JarvisRuntimeEventType } from "./runtimeTypes.js";
 
 function step(overrides: Partial<IntentStep> = {}): IntentStep {

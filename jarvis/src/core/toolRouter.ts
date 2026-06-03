@@ -17,7 +17,7 @@ import type {
   RuntimeToolRequest,
   RuntimeToolResult,
   ToolExecutorAdapter,
-  type FunctionResponseLike,
+  FunctionResponseLike,
 } from "../intent-runtime/index.js";
 import { getCategoryBaseScore, clampScore } from "./backgroundDistiller.js";
 
@@ -80,6 +80,43 @@ type ClientHandle = {
   getCurrentSequenceModel: () => string | null;
   config: { api?: { apiVersion?: string } };
 };
+
+export function createStandaloneSchedulerHandle(): SchedulerHandle {
+  return {
+    async schedule(requests) {
+      return requests.map((request) => ({
+        request,
+        status: "failed",
+        response: {
+          responseParts: [
+            {
+              functionResponse: {
+                name: request.name,
+                response: {
+                  error:
+                    "Tool is not available in standalone runtime. Use Jarvis-native tools or register a runtime tool adapter.",
+                },
+              },
+            },
+          ],
+          resultDisplay:
+            "Tool is not available in standalone runtime. Use Jarvis-native tools or register a runtime tool adapter.",
+        },
+      }));
+    },
+  };
+}
+
+export function createStandaloneClientHandle(): ClientHandle {
+  return {
+    getChat: () => ({
+      getModel: () => "standalone",
+      recordCompletedToolCalls: () => {},
+    }),
+    getCurrentSequenceModel: () => null,
+    config: { api: { apiVersion: "runtime" } },
+  };
+}
 
 export type ToolInteractionRecorder = {
   record(config: unknown, completedCalls: unknown[]): Promise<void>;
@@ -503,8 +540,8 @@ type TaskCommandHandlerHandle = {
 };
 
 /**
- * Routes tool call requests to either Jarvis-native handlers or the Gemini
- * Scheduler, then assembles the response parts for the next LLM turn.
+ * Routes tool call requests to either Jarvis-native handlers or the active
+ * scheduler adapter, then assembles the response parts for the next LLM turn.
  */
 export class ToolRouter implements ToolExecutorAdapter {
   // Fallbacks from the current turn's routing classification.
@@ -538,6 +575,14 @@ export class ToolRouter implements ToolExecutorAdapter {
     private toolInteractionRecorder?: ToolInteractionRecorder,
     private safetyPolicy: SafetyPolicyEngine = new JarvisSafetyPolicyEngine(),
   ) {}
+
+  public setTaskCommandHandler(handler?: TaskCommandHandlerHandle): void {
+    this.taskCommandHandler = handler;
+  }
+
+  public setChannelRegistry(registry?: ChannelRegistryHandle): void {
+    this.channelRegistry = registry;
+  }
 
   /** Called by agent.ts each turn with the routing result's relative time window. */
   public setCurrentTimeWindow(days: number | null): void {

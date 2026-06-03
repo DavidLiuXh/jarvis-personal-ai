@@ -151,7 +151,7 @@ vi.mock("node:fs", () => ({
   },
 }));
 
-import { AgentInitializer } from "./agentInitializer.js";
+import { AgentInitializer } from "./geminiAgentInitializer.js";
 
 describe("AgentInitializer", () => {
   it("returns a client and scheduler after initialize()", async () => {

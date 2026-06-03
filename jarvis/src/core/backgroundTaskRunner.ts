@@ -6,8 +6,9 @@
 
 import { EventEmitter } from "node:events";
 import { randomUUID } from "node:crypto";
-import { JarvisAgent } from "./agent.js";
-import { JarvisEventType } from "./types.js";
+import { ConfigManager } from "./configManager.js";
+import { StandaloneJarvisAgent } from "./standaloneAgent.js";
+import { JarvisEventType, type JarvisAgentLike } from "./types.js";
 import type { MemoryService } from "./memory.js";
 import type { AgentManager } from "./agentManager.js";
 import type { ChannelRegistry } from "./channelRegistry.js";
@@ -150,13 +151,7 @@ export class BackgroundTaskRunner extends EventEmitter {
   ): Promise<void> {
     // Create a fully isolated agent instance — never shares isProcessing or
     // chat history with the main session agent.
-    const agent = new JarvisAgent({
-      sessionId: bgSessionId,
-      cwd: this.sourceRoot,
-      memoryService: this.memoryService,
-      skipResume: true, // no history restore
-      lightweight: true, // skip distiller/EntityExtractor/backfill/summarizer
-    });
+    const agent = await this.createBackgroundAgent(bgSessionId);
 
     if (this.agentManager) agent.setAgentManager(this.agentManager);
     if (this.channelRegistry) agent.setChannelRegistry(this.channelRegistry);
@@ -223,9 +218,33 @@ export class BackgroundTaskRunner extends EventEmitter {
       // dispose() calls Config.dispose() → coreEvents.off() for model-changed etc.
       // Without this, coreEvents holds a reference chain preventing GC of the
       // agent, its GeminiClient, and Config after the task completes.
-      await agent.dispose();
+      await (
+        agent as JarvisAgentLike & { dispose?: () => Promise<void> }
+      ).dispose?.();
       // Evict completed/failed tasks after 30 minutes to prevent unbounded map growth
       setTimeout(() => this.tasks.delete(task.taskId), 30 * 60 * 1000);
     }
+  }
+
+  private async createBackgroundAgent(
+    sessionId: string,
+  ): Promise<JarvisAgentLike> {
+    const config = ConfigManager.getInstance().get();
+    if (config.llmBackend?.provider === "openai") {
+      return new StandaloneJarvisAgent({
+        sessionId,
+        cwd: this.sourceRoot,
+        memoryService: this.memoryService,
+        lightweight: true,
+      });
+    }
+    const { JarvisAgent } = await import("./geminiAgent.js");
+    return new JarvisAgent({
+      sessionId,
+      cwd: this.sourceRoot,
+      memoryService: this.memoryService,
+      skipResume: true,
+      lightweight: true,
+    });
   }
 }

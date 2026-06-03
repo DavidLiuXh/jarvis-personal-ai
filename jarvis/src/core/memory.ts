@@ -10,7 +10,7 @@ import path from "node:path";
 import fs from "node:fs";
 import os from "node:os";
 import { HttpsProxyAgent } from "https-proxy-agent";
-import { debugLogger } from "../../../gemini-cli/packages/core/src/index.js";
+import { runtimeLogger as debugLogger } from "./runtimeLogger.js";
 import { ConfigManager } from "./configManager.js";
 import { EntityExtractor, type EntityLink } from "./entityExtractor.js";
 import { GeminiCliSessionStore } from "./geminiCliSessionStore.js";

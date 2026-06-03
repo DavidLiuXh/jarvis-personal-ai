@@ -21,7 +21,7 @@ import { DynamicToolRegistry } from "./dynamicToolRegistry.js";
 import { SystemPromptBuilder, type SkillInfo } from "./systemPromptBuilder.js";
 import { BackgroundDistiller } from "./backgroundDistiller.js";
 import { ToolRouter, type AskUserQuestion } from "./toolRouter.js";
-import { AgentInitializer } from "./agentInitializer.js";
+import { AgentInitializer } from "./geminiAgentInitializer.js";
 import { type TaskCommandHandler } from "./taskCommandHandler.js";
 import { type SkillCommandHandler } from "./skillCommandHandler.js";
 import { isFetchError, cleanOrphanedUserTurn } from "./agentNetworkUtils.js";
@@ -63,7 +63,7 @@ import {
   geminiPartsToLlmMessages,
   setGeminiChatHistory,
 } from "./geminiBackendAdapter.js";
-import { createJarvisToolLoopOptions } from "./jarvisRuntimeAdapter.js";
+import { createJarvisToolLoopOptions } from "./geminiRuntimeAdapter.js";
 import {
   runJarvisUnifiedRuntimeTurn,
   type JarvisUnifiedRuntimeTurnResult,
