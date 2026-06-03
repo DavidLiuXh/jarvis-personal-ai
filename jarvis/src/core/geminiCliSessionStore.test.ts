@@ -109,6 +109,49 @@ describe("GeminiCliSessionStore", () => {
     expect(results[0].text).toContain("投资风格");
   });
 
+  it("uses filename date to include old files in date-scoped search", async () => {
+    const chatsDir = fs.mkdtempSync(path.join(os.tmpdir(), "jarvis-chats-"));
+    const targetFile = path.join(chatsDir, "session-2026-05-01-old.jsonl");
+    const recentFile = path.join(chatsDir, "session-2026-06-01-recent.jsonl");
+    fs.writeFileSync(
+      targetFile,
+      [
+        JSON.stringify({ sessionId: "old", kind: "main" }),
+        JSON.stringify({ id: "u1", type: "user", content: "五一讨论了记忆层" }),
+        JSON.stringify({
+          id: "a1",
+          type: "gemini",
+          content: "当时重点讨论 SessionStore 抽象。",
+        }),
+      ].join("\n") + "\n",
+    );
+    fs.writeFileSync(
+      recentFile,
+      [
+        JSON.stringify({ sessionId: "recent", kind: "main" }),
+        JSON.stringify({ id: "u2", type: "user", content: "今天讨论天气" }),
+        JSON.stringify({ id: "a2", type: "gemini", content: "天气晴朗。" }),
+      ].join("\n") + "\n",
+    );
+    const recentMtime = new Date("2026-06-02T00:00:00.000Z");
+    fs.utimesSync(targetFile, recentMtime, recentMtime);
+    fs.utimesSync(recentFile, recentMtime, recentMtime);
+
+    const store = new GeminiCliSessionStore({ chatsDir });
+    const results = await store.searchTurns({
+      query: "五一记忆层 conversation_history",
+      limit: 5,
+      dateRange: {
+        from: Date.parse("2026-05-01T00:00:00+08:00"),
+        to: Date.parse("2026-05-02T00:00:00+08:00"),
+      },
+    });
+
+    expect(results).toHaveLength(1);
+    expect(results[0].text).toContain("SessionStore");
+    expect(results[0].text).not.toContain("天气");
+  });
+
   it("skips system prompt records and incomplete user-only turns during search", async () => {
     const chatsDir = fs.mkdtempSync(path.join(os.tmpdir(), "jarvis-chats-"));
     fs.writeFileSync(

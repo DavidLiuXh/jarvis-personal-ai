@@ -1267,7 +1267,7 @@ ${factsText}
     timeWindowDays: number | null = null,
     dateRange: { from: number; to: number } | null = null,
     maxDistanceOverride?: number,
-  ): Promise<Array<{ text: string; score: number }>> {
+  ): Promise<Array<{ text: string; score: number; timestamp?: number }>> {
     if (!query?.trim()) return [];
     const runtimeEntries = await this.sqliteMemoryStore.searchEntries(query, {
       limit,
@@ -1277,6 +1277,7 @@ ${factsText}
     return runtimeEntries.map((entry) => ({
       text: entry.content,
       score: entry.score ?? 0,
+      timestamp: entry.timestamp ? Date.parse(entry.timestamp) : undefined,
     }));
   }
 

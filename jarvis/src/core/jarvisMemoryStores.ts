@@ -58,7 +58,7 @@ export type JarvisMemoryServiceHandle = {
     timeWindowDays?: number | null,
     dateRange?: { from: number; to: number } | null,
     maxDistanceOverride?: number,
-  ) => Promise<Array<{ text: string; score: number }>>;
+  ) => Promise<Array<{ text: string; score: number; timestamp?: number }>>;
   searchConversationHistoryLexical?: (
     query: string,
     options?: {
@@ -116,18 +116,28 @@ export class JarvisEntryMemoryStore implements EntryMemoryStore {
     },
   ) {
     const limit = options?.limit ?? 3;
-    const entries = await this.memoryService.searchWithScore(
+    const hasTimeScopedConversationHistory =
+      options?.contract?.memoryTarget === "conversation_history" &&
+      Boolean(options?.dateRange);
+    const rawEntries = await this.memoryService.searchWithScore(
       query,
       limit,
       null,
       options?.dateRange ?? null,
       options?.maxDistance,
     );
-
+    const entries = hasTimeScopedConversationHistory
+      ? rawEntries.filter(
+          (entry) =>
+            typeof entry.timestamp === "number" &&
+            entry.timestamp >= options.dateRange!.from &&
+            entry.timestamp < options.dateRange!.to,
+        )
+      : rawEntries;
     const shouldUseHistoryFallback =
       this.memoryService.searchConversationHistoryLexical &&
       options?.contract?.memoryTarget === "conversation_history" &&
-      entries.length < limit;
+      (hasTimeScopedConversationHistory || entries.length < limit);
     const fallbackLimit =
       options?.dateRange &&
       options?.contract?.memoryTarget === "conversation_history"
@@ -144,12 +154,29 @@ export class JarvisEntryMemoryStore implements EntryMemoryStore {
         `🔎 [JarvisEntryMemoryStore] conversation_history fallback=${shouldUseHistoryFallback ? "enabled" : "skipped"} vector=${entries.length}/${limit} lexical=${fallbackEntries.length}`,
       );
     }
-    const seen = new Set(entries.map((entry) => entry.text));
+    const primaryEntries = hasTimeScopedConversationHistory
+      ? fallbackEntries
+      : entries;
+    const secondaryEntries = hasTimeScopedConversationHistory
+      ? entries
+      : fallbackEntries;
+    const seen = new Set(primaryEntries.map((entry) => entry.text));
     const merged = [
-      ...entries,
-      ...fallbackEntries
+      ...primaryEntries.map((entry) => ({
+        ...entry,
+        source: hasTimeScopedConversationHistory
+          ? "conversation_history_lexical"
+          : "memory",
+      })),
+      ...secondaryEntries
         .filter((entry) => !seen.has(entry.text))
-        .slice(0, Math.max(0, fallbackLimit - entries.length)),
+        .slice(0, Math.max(0, fallbackLimit - primaryEntries.length))
+        .map((entry) => ({
+          ...entry,
+          source: hasTimeScopedConversationHistory
+            ? "memory"
+            : "conversation_history_lexical",
+        })),
     ];
 
     return merged.map((entry, index) => ({
@@ -162,8 +189,7 @@ export class JarvisEntryMemoryStore implements EntryMemoryStore {
         ? new Date(entry.timestamp).toISOString()
         : undefined,
       metadata: {
-        source:
-          index < entries.length ? "memory" : "conversation_history_lexical",
+        source: entry.source,
       },
     }));
   }

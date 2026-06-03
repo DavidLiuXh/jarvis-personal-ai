@@ -47,7 +47,7 @@ describe("sessionStore helpers", () => {
     expect(
       shouldIncludeSessionSearchPair({
         userText:
-          "You are Jarvis, a personalized AI assistant. Help the user safely, effectively, and concisely.",
+          "Context wrapper\n\nYou are Jarvis, a personalized AI assistant. Help the user safely, effectively, and concisely.",
         assistantText: "好的。",
       }),
     ).toBe(false);

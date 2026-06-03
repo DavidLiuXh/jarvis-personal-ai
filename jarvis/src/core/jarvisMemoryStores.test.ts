@@ -116,6 +116,65 @@ describe("Jarvis memory store adapters", () => {
     });
   });
 
+  it("prefers lexical conversation history for time-scoped recall even when vector entries exist", async () => {
+    const memoryService = {
+      searchFacts: vi.fn().mockResolvedValue([]),
+      searchWithScore: vi.fn().mockResolvedValue([
+        {
+          text: "User: 今天讨论了小红书内容策略\nJarvis: 重点是选题转化。",
+          score: 0.9,
+          timestamp: Date.parse("2026-06-02T10:00:00+08:00"),
+        },
+      ]),
+      searchConversationHistoryLexical: vi.fn().mockResolvedValue([
+        {
+          text: "User: 昨天讨论了 Universal Memory Layer\nJarvis: 重点是 session recall。",
+          score: 0.55,
+          timestamp: Date.parse("2026-06-01T10:00:00+08:00"),
+        },
+      ]),
+    };
+    const stores = createJarvisMemoryStores(memoryService, "session-1");
+    const contract = {
+      needMemory: true,
+      subjectBoundary: "personal" as const,
+      targetScopes: ["entry" as const],
+      memoryTarget: "conversation_history" as const,
+      query: {
+        raw: "汇总下昨天我们讨论了什么内容 conversation_history",
+        entities: [],
+        timeRange: {
+          from: Date.parse("2026-06-01T00:00:00+08:00"),
+          to: Date.parse("2026-06-02T00:00:00+08:00"),
+        },
+      },
+      confidence: { subject: 1, target: 1, query: 1 },
+      constraints: {
+        allowPersonalFacts: false,
+        allowSessionHistory: false,
+        allowEntries: true,
+        maxChars: 1800,
+      },
+      reasons: ["time_scoped_conversation_history"],
+      policyTrace: [],
+    };
+
+    const entries = await stores.entries!.searchEntries(contract.query.raw, {
+      limit: 1,
+      dateRange: contract.query.timeRange,
+      contract,
+    });
+
+    expect(memoryService.searchConversationHistoryLexical).toHaveBeenCalled();
+    expect(entries[0]).toMatchObject({
+      content: expect.stringContaining("session recall"),
+      metadata: { source: "conversation_history_lexical" },
+    });
+    expect(entries.map((entry) => entry.content).join("\n")).not.toContain(
+      "小红书",
+    );
+  });
+
   it("adapts runtime write operations to MemoryService writes", async () => {
     const saveFact = vi.fn().mockResolvedValue(undefined);
     const saveEntryMemory = vi.fn().mockImplementation(async (input) => ({

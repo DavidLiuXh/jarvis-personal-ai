@@ -253,11 +253,25 @@ export class GeminiCliSessionStore implements SessionStore {
         return { file, filePath, mtime: fs.statSync(filePath).mtimeMs };
       })
       .sort((a, b) => b.mtime - a.mtime)
-      .filter(
-        ({ mtime }) =>
-          !dateRange || mtime >= dateRange.from - this.mtimeBufferMs,
+      .filter(({ file, mtime }) =>
+        this.fileMayOverlapDateRange(file, mtime, dateRange),
       )
       .slice(0, this.maxScanFiles);
+  }
+
+  private fileMayOverlapDateRange(
+    file: string,
+    mtime: number,
+    dateRange: DateRange | null,
+  ): boolean {
+    if (!dateRange) return true;
+    const lower = dateRange.from - this.mtimeBufferMs;
+    const upper = dateRange.to + this.mtimeBufferMs;
+    const filenameTime = extractFilenameDate(file);
+    return (
+      (mtime >= lower && mtime < upper) ||
+      (filenameTime !== null && filenameTime >= lower && filenameTime < upper)
+    );
   }
 
   private findSessionFile(sessionId: string): {
