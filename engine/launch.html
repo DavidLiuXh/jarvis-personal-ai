@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#0d0d0d">
+<link rel="manifest" href="manifest.json">
+<title>FORGE</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent;user-select:none;}
+html,body{width:100%;height:100%;background:#0d0d0d;font-family:'Courier New',monospace;overflow:hidden;touch-action:manipulation;}
+
+/* ── idle screen ─────────────────────────────────────────── */
+#idle{position:fixed;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:32px;background:#0d0d0d;}
+#btn{width:140px;height:140px;border-radius:50%;background:radial-gradient(circle at 38% 36%,#ff4040,#a00000);border:3px solid #600000;box-shadow:0 0 40px rgba(200,0,0,.5),0 0 80px rgba(200,0,0,.2),inset 0 2px 4px rgba(255,120,120,.3);cursor:pointer;transition:transform .08s,box-shadow .08s;-webkit-tap-highlight-color:transparent;}
+#btn:active{transform:scale(.94);box-shadow:0 0 20px rgba(200,0,0,.4),inset 0 2px 4px rgba(255,120,120,.2);}
+#idle-label{font-size:10px;color:#400000;letter-spacing:4px;}
+
+/* ── pin screen ──────────────────────────────────────────── */
+#pin-screen{position:fixed;inset:0;display:none;flex-direction:column;align-items:center;justify-content:center;background:#0d0d0d;gap:24px;}
+#pin-dots{display:flex;gap:14px;}
+.dot{width:14px;height:14px;border-radius:50%;border:2px solid #600;background:transparent;transition:background .15s;}
+.dot.filled{background:#c00;}
+#pin-error{font-size:10px;color:#c00;letter-spacing:2px;height:14px;}
+#keypad{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;width:240px;}
+.key{height:68px;border-radius:10px;background:#1a0a0a;border:1px solid #400;color:#e88;font-size:20px;font-family:'Courier New',monospace;font-weight:bold;display:flex;align-items:center;justify-content:center;cursor:pointer;letter-spacing:1px;}
+.key:active{background:#2a1010;border-color:#800;}
+.key.del{font-size:14px;color:#600;}
+.key.empty{background:transparent;border-color:transparent;pointer-events:none;}
+#pin-cancel{font-size:10px;color:#400;letter-spacing:3px;cursor:pointer;padding:8px 16px;}
+#pin-cancel:active{color:#a00;}
+
+/* ── setup screen ────────────────────────────────────────── */
+#setup{position:fixed;inset:0;display:none;flex-direction:column;align-items:center;justify-content:center;background:#0d0d0d;gap:20px;padding:24px;}
+#setup-title{font-size:12px;color:#c00;letter-spacing:3px;}
+#setup-sub{font-size:9px;color:#600;letter-spacing:2px;text-align:center;}
+#setup-inp{background:#1a0a0a;border:1px solid #600;color:#e88;padding:14px 16px;border-radius:8px;font-family:'Courier New',monospace;font-size:18px;letter-spacing:4px;text-align:center;width:100%;max-width:220px;outline:none;-webkit-appearance:none;}
+#setup-inp:focus{border-color:#c00;}
+#setup-go{padding:14px 32px;background:#1a0a0a;border:1px solid #800;color:#c00;border-radius:8px;cursor:pointer;font-family:'Courier New',monospace;font-size:11px;letter-spacing:2px;}
+#setup-go:active{background:#2a1010;}
+</style>
+</head>
+<body>
+
+<!-- idle: just the red button -->
+<div id="idle">
+  <div id="btn" onclick="showPin()"></div>
+  <div id="idle-label">FORGE</div>
+</div>
+
+<!-- pin entry -->
+<div id="pin-screen">
+  <div id="pin-dots">
+    <div class="dot" id="d0"></div>
+    <div class="dot" id="d1"></div>
+    <div class="dot" id="d2"></div>
+    <div class="dot" id="d3"></div>
+  </div>
+  <div id="pin-error">&nbsp;</div>
+  <div id="keypad">
+    <div class="key" onclick="key('1')">1</div>
+    <div class="key" onclick="key('2')">2</div>
+    <div class="key" onclick="key('3')">3</div>
+    <div class="key" onclick="key('4')">4</div>
+    <div class="key" onclick="key('5')">5</div>
+    <div class="key" onclick="key('6')">6</div>
+    <div class="key" onclick="key('7')">7</div>
+    <div class="key" onclick="key('8')">8</div>
+    <div class="key" onclick="key('9')">9</div>
+    <div class="key empty"></div>
+    <div class="key" onclick="key('0')">0</div>
+    <div class="key del" onclick="del()">&#9003;</div>
+  </div>
+  <div id="pin-cancel" onclick="cancel()">CANCEL</div>
+</div>
+
+<!-- first-run setup -->
+<div id="setup">
+  <div id="setup-title">SET YOUR PIN</div>
+  <div id="setup-sub">4 DIGITS — USED LOCALLY<br>NEVER SENT ANYWHERE</div>
+  <input id="setup-inp" type="tel" maxlength="4" placeholder="0000" inputmode="numeric">
+  <div id="setup-go" onclick="savePin()">SET PIN</div>
+</div>
+
+<script>
+var PIN_KEY = 'forge_pin';
+var entered  = '';
+
+function getPin(){ return localStorage.getItem(PIN_KEY); }
+
+function showPin(){
+  if(!getPin()){ showSetup(); return; }
+  entered = '';
+  updateDots();
+  document.getElementById('pin-error').innerHTML = '&nbsp;';
+  document.getElementById('idle').style.display = 'none';
+  document.getElementById('pin-screen').style.display = 'flex';
+}
+
+function cancel(){
+  document.getElementById('pin-screen').style.display = 'none';
+  document.getElementById('idle').style.display = 'flex';
+}
+
+function key(k){
+  if(entered.length >= 4) return;
+  entered += k;
+  updateDots();
+  if(entered.length === 4) setTimeout(check, 80);
+}
+
+function del(){
+  entered = entered.slice(0,-1);
+  updateDots();
+}
+
+function updateDots(){
+  for(var i=0;i<4;i++){
+    var d = document.getElementById('d'+i);
+    d.className = 'dot' + (i < entered.length ? ' filled' : '');
+  }
+}
+
+function check(){
+  if(entered === getPin()){
+    // unlock — open full UI in same tab
+    window.location.href = 'ui.html';
+  } else {
+    document.getElementById('pin-error').textContent = 'WRONG PIN';
+    // shake the dots
+    var dots = document.getElementById('pin-dots');
+    dots.style.transform = 'translateX(8px)';
+    setTimeout(function(){ dots.style.transform = 'translateX(-8px)'; }, 80);
+    setTimeout(function(){ dots.style.transform = ''; }, 160);
+    entered = '';
+    setTimeout(function(){
+      updateDots();
+      document.getElementById('pin-error').innerHTML = '&nbsp;';
+    }, 600);
+  }
+}
+
+function showSetup(){
+  document.getElementById('idle').style.display = 'none';
+  document.getElementById('setup').style.display = 'flex';
+  setTimeout(function(){ document.getElementById('setup-inp').focus(); }, 100);
+}
+
+function savePin(){
+  var p = document.getElementById('setup-inp').value.trim();
+  if(p.length !== 4 || !/^\d{4}$/.test(p)){
+    document.getElementById('setup-inp').style.borderColor = '#c00';
+    return;
+  }
+  localStorage.setItem(PIN_KEY, p);
+  document.getElementById('setup').style.display = 'none';
+  document.getElementById('idle').style.display = 'flex';
+}
+
+document.getElementById('setup-inp').addEventListener('keydown', function(e){
+  if(e.key === 'Enter') savePin();
+});
+</script>
+</body>
+</html>

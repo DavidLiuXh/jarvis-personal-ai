@@ -214,8 +214,14 @@ def make_handler():
 
         def do_GET(self):
             p = urlparse(self.path).path
-            if p in ("/", "/ui"):
+            if p in ("/", "/launch", "/launch.html"):
+                self.send_file(os.path.join(DIR, "launch.html"), "text/html")
+            elif p in ("/ui", "/ui.html"):
                 self.send_file(os.path.join(DIR, "ui.html"), "text/html")
+            elif p == "/manifest.json":
+                self.send_file(os.path.join(DIR, "manifest.json"), "application/manifest+json")
+            elif p == "/icon.svg":
+                self.send_file(os.path.join(DIR, "icon.svg"), "image/svg+xml")
             elif p == "/api/history":
                 self.send_json(200, get_history(50))
             elif p == "/api/devices":
