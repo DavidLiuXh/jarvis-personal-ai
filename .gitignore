@@ -68,3 +68,4 @@ market_report*.html
 .gemini-clipboard/
 .eslintcache
 evals/logs/
+engine/memory.db
