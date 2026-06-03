@@ -3,6 +3,12 @@
 This document records the current feasibility assessment and migration strategy
 for supporting LLM backends other than Gemini CLI in Jarvis.
 
+For the broader goal of running Jarvis without importing, initializing, or
+depending on Gemini CLI at all, see
+`docs/core/gemini-cli-decoupling-roadmap.md`. That roadmap is stricter than this
+backend adapter strategy: switching the main chat model is only one part of
+fully removing Gemini CLI as a required runtime dependency.
+
 ## Current Assessment
 
 Jarvis can support additional LLM backends, but today this is not a
