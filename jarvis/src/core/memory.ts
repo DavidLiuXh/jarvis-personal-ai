@@ -9,7 +9,6 @@ import * as sqliteVec from "sqlite-vec";
 import path from "node:path";
 import fs from "node:fs";
 import os from "node:os";
-import * as genai from "@google/genai";
 import { HttpsProxyAgent } from "https-proxy-agent";
 import { debugLogger } from "../../../gemini-cli/packages/core/src/index.js";
 import { ConfigManager } from "./configManager.js";
@@ -610,9 +609,14 @@ export class MemoryService {
 
   public startWithApiKey(apiKey: string) {
     if (this.client) return;
+    void this.initializeGoogleClient(apiKey);
+  }
+
+  private async initializeGoogleClient(apiKey: string): Promise<void> {
+    if (this.client) return;
     try {
+      const genai = await import("@google/genai");
       const proxy = this.jarvisConfig.api.proxy;
-      // Use namespace-based access which is most reliable in this environment
       this.client = new (genai as any).GoogleGenAI({
         apiKey,
         httpClient: proxy ? { agent: new HttpsProxyAgent(proxy) } : undefined,

@@ -4,19 +4,20 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {
-  recordToolCallInteractions,
-  type Part,
-} from "../../../gemini-cli/packages/core/src/index.js";
 import type {
   ClarificationQuestion,
   MemoryContract,
 } from "../memory-runtime/index.js";
 import type { StepMemoryDecision } from "../memory-runtime/types.js";
+import {
+  JarvisSafetyPolicyEngine,
+  type SafetyPolicyEngine,
+} from "./safetyPolicyEngine.js";
 import type {
   RuntimeToolRequest,
   RuntimeToolResult,
   ToolExecutorAdapter,
+  type FunctionResponseLike,
 } from "../intent-runtime/index.js";
 import { getCategoryBaseScore, clampScore } from "./backgroundDistiller.js";
 
@@ -65,7 +66,7 @@ export type SchedulerHandle = {
 type CompletedToolCall = {
   request: { name: string; callId: string };
   status: string;
-  response: { responseParts?: Part[]; resultDisplay?: unknown };
+  response: { responseParts?: FunctionResponseLike[]; resultDisplay?: unknown };
 };
 
 type ClientHandle = {
@@ -78,6 +79,10 @@ type ClientHandle = {
   };
   getCurrentSequenceModel: () => string | null;
   config: { api?: { apiVersion?: string } };
+};
+
+export type ToolInteractionRecorder = {
+  record(config: unknown, completedCalls: unknown[]): Promise<void>;
 };
 
 const JARVIS_NATIVE_TOOLS = new Set([
@@ -530,6 +535,8 @@ export class ToolRouter implements ToolExecutorAdapter {
     private client: ClientHandle,
     private taskCommandHandler?: TaskCommandHandlerHandle,
     private channelRegistry?: ChannelRegistryHandle,
+    private toolInteractionRecorder?: ToolInteractionRecorder,
+    private safetyPolicy: SafetyPolicyEngine = new JarvisSafetyPolicyEngine(),
   ) {}
 
   /** Called by agent.ts each turn with the routing result's relative time window. */
@@ -599,7 +606,7 @@ export class ToolRouter implements ToolExecutorAdapter {
     requests: ToolCallRequest[],
     signal: AbortSignal,
     onToolResponse: (response: ToolCallResponse) => void,
-  ): Promise<Part[]> {
+  ): Promise<FunctionResponseLike[]> {
     const rewrittenPushRequest = buildPushRequestFromShellWorkarounds(
       requests,
       this.currentUserPrompt,
@@ -639,6 +646,33 @@ export class ToolRouter implements ToolExecutorAdapter {
     const nativeRequests = effectiveRequests.filter((r) =>
       isNativeTool(r.name),
     );
+    const deniedNativeParts: FunctionResponseLike[] = [];
+    const allowedNativeRequests: ToolCallRequest[] = [];
+    for (const request of nativeRequests) {
+      const decision = await this.safetyPolicy.checkToolCall(request, {
+        memoryContract: this.currentMemoryContract,
+        userPrompt: this.currentUserPrompt,
+      });
+      if (decision.allowed) {
+        allowedNativeRequests.push(request);
+        continue;
+      }
+      const output =
+        decision.message ??
+        `Tool call denied by safety policy: ${decision.reasonCode}`;
+      onToolResponse({
+        name: request.name,
+        status: "denied",
+        output,
+        callId: request.callId,
+      });
+      deniedNativeParts.push({
+        functionResponse: {
+          name: request.name,
+          response: { error: output, reasonCode: decision.reasonCode },
+        },
+      });
+    }
     // Standard tools and subagents consume the same MemoryContract as the main
     // response path. This prevents subagent-specific personal memory leakage.
     const standardRequests = await Promise.all(
@@ -657,14 +691,16 @@ export class ToolRouter implements ToolExecutorAdapter {
 
     const [directParts, completedCalls] = await Promise.all([
       Promise.all(
-        nativeRequests.map((req) => this.handleNative(req, onToolResponse)),
+        allowedNativeRequests.map((req) =>
+          this.handleNative(req, onToolResponse),
+        ),
       ),
       standardRequests.length > 0
         ? this.scheduler.schedule(standardRequests, signal)
         : Promise.resolve([]),
     ]);
 
-    const standardParts: Part[] = [];
+    const standardParts: FunctionResponseLike[] = [];
     if (completedCalls.length > 0) {
       for (const completed of completedCalls) {
         if (completed.response.responseParts) {
@@ -682,16 +718,14 @@ export class ToolRouter implements ToolExecutorAdapter {
           this.client.getCurrentSequenceModel() ??
           this.client.getChat().getModel();
         this.client.getChat().recordCompletedToolCalls(model, completedCalls);
-        await recordToolCallInteractions(
-          this.client.config as Parameters<
-            typeof recordToolCallInteractions
-          >[0],
-          completedCalls as Parameters<typeof recordToolCallInteractions>[1],
+        await this.toolInteractionRecorder?.record(
+          this.client.config,
+          completedCalls,
         );
       } catch (_e) {}
     }
 
-    return [...directParts, ...standardParts];
+    return [...deniedNativeParts, ...directParts, ...standardParts];
   }
 
   async executeTools(
@@ -810,7 +844,7 @@ export class ToolRouter implements ToolExecutorAdapter {
   private async handleNative(
     req: ToolCallRequest,
     onToolResponse: (r: ToolCallResponse) => void,
-  ): Promise<Part> {
+  ): Promise<FunctionResponseLike> {
     try {
       let output = "";
 
@@ -866,7 +900,7 @@ export class ToolRouter implements ToolExecutorAdapter {
               : { result: output };
           return {
             functionResponse: { name: req.name, response: responsePayload },
-          } as Part;
+          };
         }
         const query = (req.args.query as string)?.trim() || "";
         const limit = (req.args.limit as number) || 5;
@@ -1033,12 +1067,12 @@ export class ToolRouter implements ToolExecutorAdapter {
 
       return {
         functionResponse: { name: req.name, response: responsePayload },
-      } as Part;
+      };
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
       return {
         functionResponse: { name: req.name, response: { error: msg } },
-      } as Part;
+      };
     }
   }
 }

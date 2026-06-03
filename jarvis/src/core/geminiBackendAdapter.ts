@@ -6,9 +6,15 @@
 
 import {
   GeminiEventType,
+  type Content,
   type GeminiClient,
   type Part,
 } from "../../../gemini-cli/packages/core/src/index.js";
+import type {
+  RuntimeContentPart,
+  RuntimeConversationContent,
+} from "./runtimeTypes.js";
+
 import type {
   LlmBackend,
   LlmBackendCapabilities,
@@ -93,11 +99,20 @@ export function runtimeToolResultToGeminiPart(result: RuntimeToolResult): Part {
   } as Part;
 }
 
-export function geminiPartsToLlmMessages(parts: Part[]): LlmMessage[] {
+export function geminiPartsToLlmMessages(
+  parts: RuntimeContentPart[],
+): LlmMessage[] {
   const blocks = parts
-    .map(partToBlock)
+    .map((part) => partToBlock(part as Part))
     .filter((block): block is LlmContentBlock => Boolean(block));
   return blocks.length > 0 ? [{ role: "user", blocks }] : [];
+}
+
+export function setGeminiChatHistory(
+  chat: { setHistory(history: Content[]): void },
+  history: RuntimeConversationContent[],
+): void {
+  chat.setHistory(history as unknown as Content[]);
 }
 
 export function geminiPartToRuntimeToolResult(

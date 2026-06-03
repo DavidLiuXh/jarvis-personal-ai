@@ -4,7 +4,10 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import type { Content, Part } from '../../../gemini-cli/packages/core/src/index.js';
+import type {
+  RuntimeConversationContent,
+  RuntimeFunctionResponsePart,
+} from "./runtimeTypes.js";
 
 type MessageRecord = {
   type: string;
@@ -23,41 +26,49 @@ type MessageRecord = {
  * Previously only functionResponse turns were pushed, causing the model's
  * text replies to be lost on resume.
  */
-export function buildHistoryFromMessages(messages: MessageRecord[]): Content[] {
-  const history: Content[] = [];
+export function buildHistoryFromMessages(
+  messages: MessageRecord[],
+): RuntimeConversationContent[] {
+  const history: RuntimeConversationContent[] = [];
 
   for (const m of messages) {
-    if (m.type === 'user') {
+    if (m.type === "user") {
       history.push({
-        role: 'user',
+        role: "user",
         parts: Array.isArray(m.content)
-          ? (m.content as Part[])
+          ? (m.content as Array<{ text?: string }>)
           : [{ text: String(m.content) }],
       });
-    } else if (m.type === 'gemini') {
+    } else if (m.type === "gemini") {
       // 1. Model text reply
-      const text = typeof m.content === 'string' ? m.content : '';
+      const text = typeof m.content === "string" ? m.content : "";
       if (text.trim()) {
-        history.push({ role: 'model', parts: [{ text }] });
+        history.push({ role: "model", parts: [{ text }] });
       }
 
       // 2. Tool call results (sent back as user/functionResponse)
       // tc.result may be an array (responseParts) or a plain object.
       // Gemini API requires response to be a plain object — wrap arrays.
       if (m.toolCalls && m.toolCalls.length > 0) {
-        const resParts: Part[] = [];
+        const resParts: RuntimeFunctionResponsePart[] = [];
         for (const tc of m.toolCalls) {
           if (tc.result !== undefined && tc.result !== null) {
             const response = Array.isArray(tc.result)
-              ? { output: tc.result.map((p: any) => p?.functionResponse?.response?.output ?? '').join('\n') }
-              : tc.result as any;
+              ? {
+                  output: tc.result
+                    .map(
+                      (p: any) => p?.functionResponse?.response?.output ?? "",
+                    )
+                    .join("\n"),
+                }
+              : (tc.result as any);
             resParts.push({
               functionResponse: { name: tc.name, response },
             });
           }
         }
         if (resParts.length > 0) {
-          history.push({ role: 'user', parts: resParts });
+          history.push({ role: "user", parts: resParts });
         }
       }
     }

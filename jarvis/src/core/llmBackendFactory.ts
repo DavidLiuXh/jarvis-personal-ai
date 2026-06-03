@@ -19,6 +19,7 @@ import {
   GeminiCliBackendAdapter,
   GeminiPromptCompiler,
 } from "./geminiBackendAdapter.js";
+import { createDefaultRuntimeToolRegistry } from "./jarvisToolRegistry.js";
 
 export type JarvisLlmBackendBundle = {
   provider: "gemini" | "openai";
@@ -52,11 +53,17 @@ export function getRuntimeToolSchemas(client: GeminiClient): LlmToolSchema[] {
 
 export function createJarvisLlmBackend(input: {
   config: JarvisConfig;
-  client: GeminiClient;
+  client?: GeminiClient;
   promptId: string;
+  tools?: LlmToolSchema[];
 }): JarvisLlmBackendBundle {
   const provider = input.config.llmBackend?.provider ?? "gemini";
-  const tools = getRuntimeToolSchemas(input.client);
+  const tools = (
+    input.tools ??
+    createDefaultRuntimeToolRegistry().listTools().map(normalizeToolSchema)
+  ).filter((tool: LlmToolSchema | null): tool is LlmToolSchema =>
+    Boolean(tool),
+  );
 
   if (provider === "openai") {
     const openai = input.config.llmBackend?.openai ?? {};
@@ -79,8 +86,18 @@ export function createJarvisLlmBackend(input: {
 
   return {
     provider: "gemini",
-    backend: new GeminiCliBackendAdapter(input.client, input.promptId),
+    backend: new GeminiCliBackendAdapter(
+      requireGeminiClient(input.client),
+      input.promptId,
+    ),
     promptCompiler: new GeminiPromptCompiler(),
     tools,
   };
+}
+
+function requireGeminiClient(client: GeminiClient | undefined): GeminiClient {
+  if (!client) {
+    throw new Error("Gemini backend requires a GeminiClient.");
+  }
+  return client;
 }

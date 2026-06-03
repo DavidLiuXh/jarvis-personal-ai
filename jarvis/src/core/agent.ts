@@ -12,7 +12,6 @@ import {
   promptIdContext,
   LlmRole,
   ToolConfirmationOutcome,
-  type Part,
 } from "../../../gemini-cli/packages/core/src/index.js";
 import { MessageBusType } from "../../../gemini-cli/packages/core/src/confirmation-bus/types.js";
 
@@ -60,12 +59,20 @@ import {
 import { RuntimeIntentFeedbackCollector } from "./runtimeIntentFeedbackCollector.js";
 import { type MemoryContract } from "../memory-runtime/index.js";
 import { type ToolLoopRuntimeOptions } from "../agent-runtime/index.js";
-import { geminiPartsToLlmMessages } from "./geminiBackendAdapter.js";
+import {
+  geminiPartsToLlmMessages,
+  setGeminiChatHistory,
+} from "./geminiBackendAdapter.js";
 import { createJarvisToolLoopOptions } from "./jarvisRuntimeAdapter.js";
 import {
   runJarvisUnifiedRuntimeTurn,
   type JarvisUnifiedRuntimeTurnResult,
 } from "./jarvisUnifiedRuntime.js";
+import { createGeminiToolInteractionRecorder } from "./geminiToolInteractionRecorder.js";
+import type {
+  RuntimeContentPart,
+  RuntimeConversationContent,
+} from "./runtimeTypes.js";
 
 function shouldIsolateTimeScopedConversationRecall(
   intent: IntentFrame | null,
@@ -219,6 +226,7 @@ export class JarvisAgent extends EventEmitter {
       this.client,
       this.taskCommandHandler,
       this.channelRegistry,
+      createGeminiToolInteractionRecorder(),
     );
     // If setAskUserHandler was called before initialize(), apply it now.
     if (this.pendingAskUserWs !== null) {
@@ -395,11 +403,10 @@ export class JarvisAgent extends EventEmitter {
     const removedTurns = history.length - newHistory.length;
     if (removedTurns > 0) {
       // Use setHistory to commit the filtered array back into gemini-cli's state
-      this.client
-        .getChat()
-        .setHistory(
-          newHistory as unknown as import("../../../gemini-cli/packages/core/src/index.js").Content[],
-        );
+      setGeminiChatHistory(
+        this.client.getChat(),
+        newHistory as RuntimeConversationContent[],
+      );
     }
 
     if (strippedSigs > 0 || strippedToolParts > 0 || removedTurns > 0) {
@@ -577,6 +584,7 @@ export class JarvisAgent extends EventEmitter {
         this.client,
         this.taskCommandHandler,
         this.channelRegistry,
+        createGeminiToolInteractionRecorder(),
       );
     }
   }
@@ -1015,7 +1023,7 @@ export class JarvisAgent extends EventEmitter {
         }
 
         const abortController = new AbortController();
-        let currentQueryParts: Part[] = [{ text: userPrompt }];
+        const currentQueryParts: RuntimeContentPart[] = [{ text: userPrompt }];
         if (imageAttachment) {
           currentQueryParts.push({
             inlineData: {

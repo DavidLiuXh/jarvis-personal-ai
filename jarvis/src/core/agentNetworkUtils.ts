@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import type { Content } from '../../../gemini-cli/packages/core/src/index.js';
+import type { RuntimeConversationContent } from "./runtimeTypes.js";
 
 /**
  * Returns true for any network-level error that is worth retrying:
@@ -15,11 +15,16 @@ import type { Content } from '../../../gemini-cli/packages/core/src/index.js';
  */
 export function isFetchError(err: unknown): boolean {
   if (!(err instanceof Error)) return false;
-  if (err instanceof TypeError && err.message.toLowerCase().includes('fetch failed')) return true;
-  if (err.message?.includes('Premature close')) return true;
-  if (err.message?.includes('ECONNRESET')) return true;
+  if (
+    err instanceof TypeError &&
+    err.message.toLowerCase().includes("fetch failed")
+  )
+    return true;
+  if (err.message?.includes("Premature close")) return true;
+  if (err.message?.includes("ECONNRESET")) return true;
   const code = (err as NodeJS.ErrnoException).code;
-  if (code === 'ERR_STREAM_PREMATURE_CLOSE' || code === 'ECONNRESET') return true;
+  if (code === "ERR_STREAM_PREMATURE_CLOSE" || code === "ECONNRESET")
+    return true;
   return false;
 }
 
@@ -33,14 +38,16 @@ export function isFetchError(err: unknown): boolean {
  * functionResponse parts (tool results) are NOT considered orphaned; they
  * are always paired with a preceding model functionCall and must be kept.
  */
-export function cleanOrphanedUserTurn(history: Content[]): Content[] {
+export function cleanOrphanedUserTurn<T extends RuntimeConversationContent>(
+  history: T[],
+): T[] {
   if (history.length === 0) return history;
 
   const last = history[history.length - 1];
-  if (last.role !== 'user') return history;
+  if (last.role !== "user") return history;
 
   // Keep functionResponse turns — they are tool results paired with model calls
-  const isFunctionResponse = last.parts?.some(p => 'functionResponse' in p);
+  const isFunctionResponse = last.parts?.some((p) => "functionResponse" in p);
   if (isFunctionResponse) return history;
 
   // Trailing plain user message with no model response → orphaned

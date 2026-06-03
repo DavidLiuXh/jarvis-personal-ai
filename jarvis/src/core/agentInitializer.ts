@@ -33,6 +33,10 @@ import {
   getNewOrUpdatedFiles,
 } from "./sessionSummarizer.js";
 import { buildHistoryFromMessages } from "./resumeFromDisk.js";
+import {
+  addToolsToGeminiRegistry,
+  createDefaultRuntimeToolRegistry,
+} from "./jarvisToolRegistry.js";
 
 type DynamicRegistryHandle = {
   getDynamicToolSchemas: () => unknown[];
@@ -103,6 +107,10 @@ export class AgentInitializer {
     private dynamicRegistry: DynamicRegistryHandle,
     private skipResume: boolean = false,
   ) {}
+
+  getCompatibilityConfig(): unknown {
+    return this.config;
+  }
 
   async initialize(
     onSubagentActivity: (message: unknown) => void,
@@ -195,199 +203,10 @@ export class AgentInitializer {
     // III. TOOL REGISTRATION
     const registry = config.getToolRegistry();
 
-    const recallMemoryTool = {
-      name: "recall_memory",
-      description:
-        "MANDATORY for retrieving any past interaction, technical decision, or user preference not in the current view. " +
-        "The 'query' parameter MUST contain specific topic keywords extracted from the user's question — " +
-        "e.g. if user asks 'did I ask about Ollama?', set query='Ollama'; " +
-        "if user asks 'what was my investment strategy?', set query='investment strategy'; " +
-        "if user asks 'did we discuss Anthropic yesterday?', set query='Anthropic' (extract the TOPIC, not the time word); " +
-        "if user asks 'what did we talk about last week?', set query='recent discussion'. " +
-        "When the question mentions a relative time period, set time_window_days: yesterday=1, today=0, last week=7, last month=30. " +
-        "When the user refers to a specific calendar date (e.g. '4月27日', 'January 20', '2026-04-27'), " +
-        "set date_from='YYYY-MM-DD' and date_to='YYYY-MM-DD' instead of time_window_days — this gives exact date filtering. " +
-        "NEVER call this tool without a non-empty query.",
-      parameters: {
-        type: "object",
-        properties: {
-          query: {
-            type: "string",
-            description:
-              "Specific keywords extracted from the user's question to search in long-term memory. Must be non-empty.",
-          },
-          limit: { type: "number", description: "Number of results (1-10)." },
-          time_window_days: {
-            type: "number",
-            description:
-              "Optional filter for relative time periods. 0=today, 1=yesterday, 7=last week. Leave null when using date_from/date_to.",
-          },
-          date_from: {
-            type: "string",
-            description:
-              "Optional absolute start date for memory search as ISO 8601 (e.g. '2026-01-20' or '2026-04-27T00:00:00'). " +
-              "Use for specific calendar dates. When set, overrides time_window_days.",
-          },
-          date_to: {
-            type: "string",
-            description:
-              "Optional absolute end date for memory search as ISO 8601 (e.g. '2026-01-20' or '2026-04-27T23:59:59'). " +
-              "Must be provided together with date_from.",
-          },
-        },
-        required: ["query"],
-      },
-      parallelizable: true,
-    };
-
-    const taskTools = [
-      {
-        name: "task_list",
-        description:
-          "ALWAYS use this tool when the user asks about scheduled tasks, cron jobs, or automated tasks in Jarvis. This lists Jarvis's own internal task scheduler (NOT system crontab). Do NOT use run_shell_command or crontab -l for this purpose.",
-        parameters: { type: "object", properties: {}, required: [] },
-        parallelizable: false,
-      },
-      {
-        name: "task_add",
-        description:
-          'IMMEDIATELY call this when the user says things like "每天X点做Y", "每周X做Y", "定时查询/汇总/分析", "schedule", "remind me", "automatically do X at Y time". Do NOT write code or scripts — just create a scheduled task with task_add. The prompt parameter is what Jarvis will say/do when the task fires.',
-        parameters: {
-          type: "object",
-          properties: {
-            cron: {
-              type: "string",
-              description:
-                'Schedule: cron expression OR natural language like "每天晚上8点", "weekdays at 9am", "每周一早上10点".',
-            },
-            prompt: {
-              type: "string",
-              description:
-                'The instruction Jarvis will execute when the task fires. Jarvis can use google_web_search and other tools at runtime — no code needed. E.g. "使用google_web_search查询GitHub Trending今日热门项目并汇总" or "搜索今日美股行情并分析".',
-            },
-            channel: {
-              type: "string",
-              description:
-                'Output channel: feishu or wechat. ONLY set when user explicitly mentions pushing/sending/notifying to a channel (e.g. "发到飞书", "推送到微信"). Leave unset if user does not mention push.',
-            },
-            chat_id: {
-              type: "string",
-              description:
-                "Target chat/user ID. Optional — if omitted, the channel uses its default target (WeChat: logged-in user; Feishu: defaultChatId from config). Only set when user specifies a different target.",
-            },
-          },
-          required: ["cron", "prompt"],
-        },
-        parallelizable: false,
-      },
-      {
-        name: "task_update",
-        description:
-          'Update an existing task in Jarvis\'s internal scheduler. Supports natural language for schedule (e.g. "每天早上8点", "weekdays at 9am").',
-        parameters: {
-          type: "object",
-          properties: {
-            id: { type: "string", description: "Task ID from task_list." },
-            cron: {
-              type: "string",
-              description:
-                'New schedule: cron expression or natural language like "每天早上8点".',
-            },
-            prompt: { type: "string", description: "New prompt for the task." },
-            channel: { type: "string", description: "New output channel." },
-            chat_id: {
-              type: "string",
-              description: "New target chat/user ID.",
-            },
-          },
-          required: ["id"],
-        },
-        parallelizable: false,
-      },
-      {
-        name: "task_toggle",
-        description:
-          "Enable or disable a task in Jarvis's internal scheduler by ID.",
-        parameters: {
-          type: "object",
-          properties: {
-            id: { type: "string", description: "Task ID from task_list." },
-            enabled: {
-              type: "boolean",
-              description: "true to enable, false to disable.",
-            },
-          },
-          required: ["id", "enabled"],
-        },
-        parallelizable: false,
-      },
-      {
-        name: "task_delete",
-        description:
-          "Permanently delete a task from Jarvis's internal scheduler by ID. Use task_list first to get the task ID.",
-        parameters: {
-          type: "object",
-          properties: {
-            id: { type: "string", description: "Task ID from task_list." },
-          },
-          required: ["id"],
-        },
-        parallelizable: false,
-      },
-      {
-        name: "task_run",
-        description:
-          "Immediately trigger a Jarvis internal scheduled task once, without waiting for its cron schedule.",
-        parameters: {
-          type: "object",
-          properties: {
-            id: { type: "string", description: "Task ID from task_list." },
-          },
-          required: ["id"],
-        },
-        parallelizable: false,
-      },
-    ];
-
-    const pushToChannelTool = {
-      name: "push_to_channel",
-      description:
-        'Push a message to WeChat or Feishu. Call this immediately when the user says "发到微信", "推送到飞书", "send to WeChat", "push to Feishu", or asks to share/send content to a messaging channel. Do not replace this with run_shell_command or manual copy instructions.',
-      parameters: {
-        type: "object",
-        properties: {
-          channel: {
-            type: "string",
-            description:
-              'Target channel. Use exact lowercase values: "wechat" or "feishu".',
-          },
-          content: {
-            type: "string",
-            description:
-              "The final message content to push. Can be multi-line markdown/plain text.",
-          },
-          chat_id: {
-            type: "string",
-            description:
-              "Optional target chat/user ID. Leave empty to use the default (logged-in user for WeChat, defaultChatId for Feishu).",
-          },
-        },
-        required: ["channel", "content"],
-      },
-      parallelizable: false,
-    };
-
-    // @ts-expect-error - addDiscoveredTool is not in public ToolRegistry types
-    if (typeof registry.addDiscoveredTool === "function") {
-      // @ts-expect-error - addDiscoveredTool is not in public ToolRegistry types
-      registry.addDiscoveredTool(recallMemoryTool);
-      // @ts-expect-error - addDiscoveredTool is not in public ToolRegistry types
-      registry.addDiscoveredTool(pushToChannelTool);
-      for (const tool of taskTools) {
-        // @ts-expect-error - addDiscoveredTool is not in public ToolRegistry types
-        registry.addDiscoveredTool(tool);
-      }
-    }
+    addToolsToGeminiRegistry(
+      registry,
+      createDefaultRuntimeToolRegistry().listTools(),
+    );
 
     const coreParallelTools = [
       "run_shell_command",
@@ -692,7 +511,7 @@ export class AgentInitializer {
       if (allFiles.length === 0) return;
 
       // 2. Load existing summary state
-      const existingState = loadSummaryState(memoryDir);
+      let existingState = loadSummaryState(memoryDir);
 
       // Apply summaryWindowDays: only process files within the window
       const summaryWindowDays =

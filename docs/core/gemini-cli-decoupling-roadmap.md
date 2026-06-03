@@ -29,19 +29,34 @@ Jarvis runtime can run without importing, initializing, or depending on Gemini C
 - intent runtime、memory runtime、execution contract 已基本脱离 Gemini protocol；
 - `runtime:quality` 已覆盖 runtime build、memory quality、intent matrix、backend eval、boundary check。
 
-仍然存在的 Gemini CLI 硬依赖：
+P0/P1 本轮已完成的解耦进展：
+
+- 新增 `RuntimeBootstrap`、`StandaloneJarvisBootstrap`、`GeminiRuntimeBootstrap` 和 `createRuntimeBootstrap()`，启动边界已具备 standalone / Gemini compatibility 两条路径；
+- 新增 Jarvis-owned `RuntimeToolRegistry`，`recall_memory`、`push_to_channel`、`task_*` schema 已从 `AgentInitializer` 内联定义迁移到统一 registry；
+- `llmBackendFactory` 默认从 Jarvis tool registry 编译工具 schema，OpenAI-compatible backend 不再需要从 Gemini client 提取 tool declarations；
+- `ToolRouter` 已消费 runtime-owned function response shape，并通过 `SafetyPolicyEngine` 执行 memory contract policy gate；
+- `types.ts`、`resumeFromDisk.ts`、`sessionSummarizer.ts`、`jarvisRuntimeAdapter.ts` 已移除 Gemini `Part` / `GeminiEventType` 静态 contract；
+- 新增 `RuntimeConversationContent` / `RuntimeContentPart` / `RuntimeToolResultLike`，Gemini `Part[]` 转换集中在 `geminiBackendAdapter.ts`；
+- 新增 backend-neutral `TranscriptCompiler`，支持 Jarvis transcript 编译为 runtime conversation / LLM messages；
+- 新增 `TextGenerationBackend.generateText()` / `generateJson()`，支持 Function、Ollama、OpenAI-compatible backend，包含默认 2 次 retry、timeout、fenced/trailing-comma/truncated JSON repair；
+- `EntityExtractor` 已迁移到 `TextGenerationBackend`，不再直接调用 `ollamaGenerateWithRetry`；
+- `memory.ts` 不再静态 import `@google/genai`，Google SDK 仅在 API-key 路径懒加载；
+- 新增 `JarvisRuntimeConfigProvider` / `RuntimeSecretProvider`，standalone bootstrap 可从 Jarvis-owned config/secrets provider 装配。
+
+仍然存在的 Gemini CLI 兼容路径和后续硬依赖：
 
 - `jarvis/src/index.ts` 仍 import Gemini CLI config、PolicyEngine、core events；
-- `jarvis/src/core/agentInitializer.ts` 仍创建 `GeminiClient`、加载 Gemini CLI config/settings、处理 Gemini session context；
-- `jarvis/src/core/toolRouter.ts` 仍 import Gemini CLI core 类型和工具体系；
-- `jarvis/src/core/types.ts`、`resumeFromDisk.ts`、`jarvisRuntimeAdapter.ts` 仍泄漏 Gemini `Part` / `GeminiEventType`；
-- `jarvis/src/core/memory.ts` 的 reflection / entity extraction / debug logger 仍可走 Gemini；
+- `jarvis/src/core/agent.ts` 仍是 Gemini compatibility agent，保留 `GeminiClient`、scheduler、confirmation bus 和 Gemini prompt id context；
+- `jarvis/src/core/agentInitializer.ts` 仍作为 Gemini compatibility bootstrap 创建 `GeminiClient`、加载 Gemini CLI config/settings、处理 Gemini session context；
+- `jarvis/src/core/memory.ts` 的 debug logger 和部分 Google embedding/generation runtime 路径仍可走 Gemini compatibility；
 - safety / policy / Conseca 检查仍绑定 Gemini CLI config 生命周期；
 - 部分 subagent / A2A / SDK / docs 仍假设 Gemini API、Gemini OAuth 或 Gemini CLI home 目录。
 
 ## 3. Priority Plan
 
 ### P0. Runtime Bootstrap Decoupling
+
+状态：已完成第一闭环。已提供 standalone / Gemini compatibility bootstrap 抽象和 factory，OpenAI provider 可选择 standalone bootstrap；`index.ts` 仍待 P2/P3 阶段整体改造为只消费 bootstrap result。
 
 目的：
 
@@ -74,6 +89,8 @@ Jarvis runtime can run without importing, initializing, or depending on Gemini C
 - 新增 bootstrap tests 覆盖 Gemini adapter 和 standalone adapter。
 
 ### P0. Jarvis-Owned Tool Registry
+
+状态：已完成。Jarvis native tool schema 已统一迁移到 `RuntimeToolRegistry`；Gemini registry 仅通过 compatibility mirror 接收同一份 schema。
 
 目的：
 
@@ -109,6 +126,8 @@ Jarvis runtime can run without importing, initializing, or depending on Gemini C
 
 ### P0. Remove Gemini Types From Core Contracts
 
+状态：核心 contract 已完成。`Part` / `GeminiEventType` 静态类型已从 public core contract、resume、runtime adapter 中移除；Gemini event / part 转换集中保留在 `geminiBackendAdapter.ts` 和 Gemini compatibility tests。
+
 目的：
 
 Gemini `Part`、`GeminiEventType`、`functionResponse` 只能存在于 Gemini adapter 边界。
@@ -137,6 +156,8 @@ Gemini `Part`、`GeminiEventType`、`functionResponse` 只能存在于 Gemini ad
 - Gemini backend adapter tests 和 OpenAI backend tests 通过。
 
 ### P1. Text Generation Backend For Single-Call Flows
+
+状态：已完成基础 runtime 能力和首批迁移。`TextGenerationBackend` 已支持 text/json、retry、timeout、JSON repair；`EntityExtractor` 已迁移。`MemoryService` 的 Google SDK 已改为懒加载，后续 P2 可继续把所有 reflection/consolidation call site 显式迁入 backend provider。
 
 目的：
 
@@ -177,6 +198,8 @@ memory reflection、fact consolidation、entity extraction、summarization、JSO
 
 ### P1. Backend-Neutral Session Resume And Transcript Compiler
 
+状态：已完成基础 compiler 和 runtime-owned resume 类型。`JarvisJsonlSessionStore` 已作为默认 writable session store 的一部分存在，Gemini CLI session store 保留为 legacy adapter；`TranscriptCompiler` 已提供 runtime conversation / LLM messages 编译。
+
 目的：
 
 历史会话保存、搜索、恢复和 replay 使用 Jarvis 标准 transcript，而不是 Gemini CLI message format。
@@ -206,6 +229,8 @@ memory reflection、fact consolidation、entity extraction、summarization、JSO
 
 ### P1. Safety Policy Engine Adapter
 
+状态：已完成 ToolRouter 侧第一闭环。`SafetyPolicyEngine` 已接入 native tool execution，external/no-memory contract 会阻断 personal recall；Gemini CLI PolicyEngine / Conseca 仍属于 `index.ts` compatibility path，后续 P2/P3 再完全降级为 adapter。
+
 目的：
 
 安全检查和工具调用 policy 不再绑定 Gemini CLI `PolicyEngine` / Conseca config。
@@ -233,6 +258,8 @@ memory reflection、fact consolidation、entity extraction、summarization、JSO
 - destructive tool / schedule / channel push / shell command 仍受 policy gate 控制。
 
 ### P1. Config And Secrets Decoupling
+
+状态：已完成 standalone bootstrap 所需的配置/secret provider 基础。Jarvis-owned config provider 已存在，Gemini CLI settings 仍只在 compatibility bootstrap 中读取；完整 config migration 和 standalone CI 属于 P2/P3 收口。
 
 目的：
 
@@ -416,14 +443,16 @@ P0 RuntimeBootstrap
 
 ## 7. Recommended Next Step
 
-下一步优先实现：
+P0/P1 已完成可测试闭环后，下一步优先实现：
 
 ```text
-P0 Runtime Bootstrap Decoupling
+P2 Debug Logger / Telemetry / Event Bus Decoupling
+P2 Subagent And External Agent Decoupling
+P3 Standalone Main Entrypoint And Optional Gemini CLI Dependency
 ```
 
 原因：
 
-- 它是“Jarvis 不再依赖 Gemini CLI”的根；
-- 不完成它，其他 backend 只能作为 Gemini CLI 初始化后的替代模型；
-- 完成后可以用 feature flag 同时保留 Gemini compatibility 和 standalone Jarvis 两条启动路径。
+- P0/P1 已经把 bootstrap、tool registry、core contract、text backend、session compiler、policy 和 config provider 抽出来；
+- 当前生产入口仍是 Gemini compatibility agent，`index.ts`、logger/event bus、subagent、Conseca policy 和 package dependency 是剩余硬依赖；
+- 只有完成 P2/P3，Jarvis 才能从“具备 standalone runtime 边界”进入“生产主入口不依赖 Gemini CLI”。

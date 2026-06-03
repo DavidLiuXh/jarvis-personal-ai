@@ -5,7 +5,6 @@
  */
 
 import { describe, expect, it, vi } from "vitest";
-import { GeminiEventType } from "../../../gemini-cli/packages/core/src/index.js";
 import type { IntentFrame, IntentStep } from "../memory-runtime/index.js";
 import { IntentStepRuntime } from "./intentExecutionPlan.js";
 import {
@@ -13,6 +12,7 @@ import {
   createJarvisToolLoopOptions,
   createJarvisToolLoopPlanner,
 } from "./jarvisRuntimeAdapter.js";
+import { JarvisRuntimeEventType } from "./runtimeTypes.js";
 
 function step(overrides: Partial<IntentStep> = {}): IntentStep {
   return {
@@ -227,9 +227,9 @@ describe("Jarvis runtime adapter", () => {
     expect(options.maxConsecutiveToolFailures).toBe(2);
     expect(options.planner).toBeDefined();
     expect(emitted).toEqual([
-      { type: GeminiEventType.Content, value: "hello" },
+      { type: JarvisRuntimeEventType.CONTENT, value: "hello" },
       {
-        type: GeminiEventType.ToolCallRequest,
+        type: JarvisRuntimeEventType.TOOL_CALL_REQUEST,
         value: { name: "task_add", callId: "call-1", args: {} },
       },
     ]);

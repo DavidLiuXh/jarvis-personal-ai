@@ -4,11 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import type {
-  GeminiClient,
-  Part,
-} from "../../../gemini-cli/packages/core/src/index.js";
-import { GeminiEventType } from "../../../gemini-cli/packages/core/src/index.js";
+import type { GeminiClient } from "../../../gemini-cli/packages/core/src/index.js";
 import type {
   ToolLoopPlanner,
   ToolLoopRuntimeOptions,
@@ -20,11 +16,12 @@ import type {
 } from "../intent-runtime/index.js";
 import type { JarvisConfig } from "./configManager.js";
 import type { IntentStepRuntime } from "./intentExecutionPlan.js";
-import {
-  geminiPartToRuntimeToolResult,
-  runtimeToolResultToGeminiPart,
-} from "./geminiBackendAdapter.js";
 import { createJarvisLlmBackend } from "./llmBackendFactory.js";
+import {
+  JarvisRuntimeEventType,
+  runtimeFunctionResponseToToolResult,
+  toolResultToRuntimeFunctionResponse,
+} from "./runtimeTypes.js";
 import type { ToolCallResponse, ToolRouter } from "./toolRouter.js";
 
 export type JarvisRuntimeEmitter = (
@@ -63,7 +60,7 @@ export function createJarvisToolExecutor(input: {
             )
           : [];
       return parts
-        .map((part) => geminiPartToRuntimeToolResult(part))
+        .map((part) => runtimeFunctionResponseToToolResult(part))
         .filter((result): result is RuntimeToolResult => Boolean(result));
     },
   };
@@ -107,14 +104,14 @@ export function createJarvisToolLoopPlanner(input: {
         executableRequests:
           duplicateDecision.executableRequests.map(toRuntimeToolRequest),
         syntheticResults: duplicateDecision.duplicateResponses
-          .map((part) => geminiPartToRuntimeToolResult(part as unknown as Part))
+          .map((part) => runtimeFunctionResponseToToolResult(part))
           .filter((result): result is RuntimeToolResult => Boolean(result)),
       };
     },
     observeToolResults: (requests, results) => {
       stepRuntime.observeToolResults(
         requests,
-        results.map(runtimeToolResultToGeminiPart),
+        results.map(toolResultToRuntimeFunctionResponse),
       );
       if (stepRuntime.active) {
         log(
@@ -176,12 +173,12 @@ export function createJarvisToolLoopOptions(
     isRetryableError: input.isRetryableError,
     onContent: (text) =>
       input.emitContent({
-        type: GeminiEventType.Content,
+        type: JarvisRuntimeEventType.CONTENT,
         value: text,
       }),
     onToolCall: (request) =>
       input.emitContent({
-        type: GeminiEventType.ToolCallRequest,
+        type: JarvisRuntimeEventType.TOOL_CALL_REQUEST,
         value: request,
       }),
     onLog: log,

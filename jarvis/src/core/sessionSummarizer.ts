@@ -6,8 +6,8 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import type { Content } from "../../../gemini-cli/packages/core/src/index.js";
 import { buildHistoryFromMessages } from "./resumeFromDisk.js";
+import type { RuntimeConversationContent } from "./runtimeTypes.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -543,8 +543,8 @@ export function renderStructuredContext(ctx: StructuredContext): string {
 export function buildHistoryWithSummary(
   summary: string,
   recentMessages: SessionMessage[],
-): Content[] {
-  const history: Content[] = [];
+): RuntimeConversationContent[] {
+  const history: RuntimeConversationContent[] = [];
 
   if (summary.trim()) {
     history.push({

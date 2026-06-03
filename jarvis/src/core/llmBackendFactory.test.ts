@@ -51,13 +51,13 @@ describe("llmBackendFactory", () => {
   it("creates OpenAI-compatible backend bundle from config", () => {
     const bundle = createJarvisLlmBackend({
       config: config("openai"),
-      client: client(),
       promptId: "p1",
     });
 
     expect(bundle.provider).toBe("openai");
     expect(bundle.backend.getModel()).toBe("gpt-test");
     expect(bundle.promptCompiler).toBeInstanceOf(OpenAiPromptCompiler);
-    expect(bundle.tools.map((tool) => tool.name)).toEqual(["task_add"]);
+    expect(bundle.tools.map((tool) => tool.name)).toContain("task_add");
+    expect(bundle.tools.map((tool) => tool.name)).toContain("recall_memory");
   });
 });

@@ -4,7 +4,11 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { ollamaGenerateWithRetry } from "./ollamaClient.js";
+import {
+  FunctionTextGenerationBackend,
+  OllamaTextGenerationBackend,
+  type TextGenerationBackend,
+} from "./textGenerationBackend.js";
 
 export type EntityLink = {
   subject: string;
@@ -74,14 +78,38 @@ If no relations found: {"found": false}
 `.trim();
 
 export class EntityExtractor {
+  private readonly backend: TextGenerationBackend;
+
   constructor(
-    private provider: "ollama" | "gemini",
-    private generateTextFn: GenerateTextFn | null,
-    private ollamaBaseUrl: string = "http://localhost:11434",
-    private ollamaModel: string = "",
-    private timeoutMs: number = 30_000,
+    providerOrBackend: "ollama" | "gemini" | TextGenerationBackend,
+    generateTextFn: GenerateTextFn | null,
+    ollamaBaseUrl: string = "http://localhost:11434",
+    ollamaModel: string = "",
+    timeoutMs: number = 30_000,
     private factBatchSize: number = DEFAULT_FACT_BATCH_SIZE,
-  ) {}
+  ) {
+    if (typeof providerOrBackend !== "string") {
+      this.backend = providerOrBackend;
+    } else if (providerOrBackend === "ollama") {
+      if (!ollamaModel) {
+        throw new Error("[EntityExtractor] ollamaModel is required");
+      }
+      this.backend = new OllamaTextGenerationBackend({
+        model: ollamaModel,
+        baseUrl: ollamaBaseUrl,
+        timeoutMs,
+        maxRetries: 2,
+        numCtx: 8192,
+      });
+    } else {
+      if (!generateTextFn) {
+        throw new Error("generateTextFn not set for function text provider");
+      }
+      this.backend = new FunctionTextGenerationBackend(generateTextFn, {
+        provider: "gemini-compatible-function",
+      });
+    }
+  }
 
   async extract(
     facts: Array<{ category: string; content: string }>,
@@ -110,94 +138,17 @@ export class EntityExtractor {
     const prompt = EXTRACTION_PROMPT(factsText);
 
     try {
-      let responseText: string;
-      if (this.provider === "ollama") {
-        if (!this.ollamaModel)
-          throw new Error("[EntityExtractor] ollamaModel is required");
-        responseText = await ollamaGenerateWithRetry(this.ollamaModel, prompt, {
-          baseUrl: this.ollamaBaseUrl,
-          timeoutMs: this.timeoutMs,
-          maxRetries: 2,
-          maxTimeoutMs: this.timeoutMs * 3,
-          // Ollama defaults to num_ctx=2048 which is too small for structured
-          // JSON extraction with long facts. Use 8192 to ensure the prompt +
-          // output JSON fit without truncation.
-          numCtx: 8192,
-          purpose: "entity-extraction",
-        });
-      } else {
-        if (!this.generateTextFn)
-          throw new Error("generateTextFn not set for gemini provider");
-        responseText = await this.generateTextFn(prompt);
-      }
+      const data = await this.backend.generateJson<{
+        found: boolean;
+        links?: EntityLink[];
+      }>({
+        prompt,
+        json: true,
+        purpose: "entity-extraction",
+      });
 
-      // 1. More robust JSON extraction: find the first { and the last }
-      const start = responseText.indexOf("{");
-      const end = responseText.lastIndexOf("}");
-      if (start === -1 || end === -1 || end < start) {
-        console.error(
-          `⚠️ [EntityExtractor] No JSON object found in response. Length: ${responseText.length}`,
-        );
-        return [];
-      }
-
-      const rawJson = responseText.substring(start, end + 1);
-
-      // Apply repairs in order. Try each stage, stop at first successful parse.
-      const tryParse = (s: string) => {
-        try {
-          return JSON.parse(s) as { found: boolean; links?: EntityLink[] };
-        } catch {
-          return null;
-        }
-      };
-
-      // Stage 1: trailing commas only
-      const stage1 = rawJson.replace(/,\s*]/g, "]").replace(/,\s*}/g, "}");
-
-      // Stage 2: also collapse newlines (LLM unescaped newlines inside strings)
-      const stage2 = stage1.replace(/\n/g, " ");
-
-      // Stage 3: truncation repair — if output was cut mid-array, find the last
-      // complete link object and close the JSON structure around it.
-      // Looks for the last complete `}` inside the "links" array, then appends `]}`.
-      const repairTruncated = (s: string): string => {
-        const linksStart = s.indexOf('"links"');
-        if (linksStart === -1) return s;
-        const lastCompleteObj = s.lastIndexOf("}");
-        if (lastCompleteObj === -1) return s;
-        return s.substring(0, lastCompleteObj + 1) + "]}";
-      };
-      const stage3 = repairTruncated(stage2);
-
-      const jsonText = tryParse(stage1)
-        ? stage1
-        : tryParse(stage2)
-          ? stage2
-          : stage3; // may or may not parse — handled below
-
-      try {
-        const data = tryParse(jsonText);
-        if (!data) throw new SyntaxError("All repair stages failed");
-
-        if (!data.found || !data.links) return [];
-        return data.links.filter((l) => l.subject && l.relation && l.object);
-      } catch (parseError: any) {
-        console.error(
-          `❌ [EntityExtractor] JSON parse failed: ${parseError.message}`,
-        );
-        // Log a snippet around the error position if available
-        const pos = parseError.message.match(/position (\d+)/)?.[1];
-        if (pos) {
-          const p = parseInt(pos);
-          console.error(
-            `Context: ...${jsonText.substring(Math.max(0, p - 40), Math.min(jsonText.length, p + 40))}...`,
-          );
-        } else {
-          console.error(`Raw JSON text: ${jsonText.substring(0, 200)}...`);
-        }
-        return [];
-      }
+      if (!data.found || !data.links) return [];
+      return data.links.filter((l) => l.subject && l.relation && l.object);
     } catch (e: any) {
       console.error(`⚠️ [EntityExtractor] extract failed: ${e.message}`);
       return [];
