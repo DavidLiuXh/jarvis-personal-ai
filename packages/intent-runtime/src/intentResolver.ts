@@ -593,6 +593,58 @@ function hasBroadTopicalHistory(
   );
 }
 
+type StrongTopicDomain = "ai_technology" | "financial_markets";
+
+function strongTopicDomains(text: string): Set<StrongTopicDomain> {
+  const domains = new Set<StrongTopicDomain>();
+  if (
+    /\b(?:ai|llm|gemini|openai|chatgpt|claude|llama|agentic)\b|人工智能|大模型|智能体|生成式\s*ai/i.test(
+      text,
+    )
+  ) {
+    domains.add("ai_technology");
+  }
+  if (
+    /\b(?:naaim|s&p|nasdaq|dow jones|stock market|equity exposure)\b|股市|股票|美股|投资经理|风险敞口|机构股票配置|市场情绪|标普|纳斯达克/i.test(
+      text,
+    )
+  ) {
+    domains.add("financial_markets");
+  }
+  return domains;
+}
+
+function hasBroadTopicEntityContinuity(args: {
+  prompt: string;
+  parsedTopicAnalysis: Record<string, unknown>;
+}): boolean {
+  const topicHistory = asRecord(args.parsedTopicAnalysis.history);
+  const topicCurrent = asRecord(args.parsedTopicAnalysis.current);
+  const historyLabel = normalizeOptionalString(topicHistory.label) ?? "";
+  const currentLabel = normalizeOptionalString(topicCurrent.label) ?? "";
+  const historyDomains = strongTopicDomains(historyLabel);
+  const currentDomains = strongTopicDomains(
+    [args.prompt, currentLabel].join("\n"),
+  );
+
+  // Topic labels are the resolver's most compact semantic boundary. If both
+  // sides identify strong but disjoint domains, generic words in long history
+  // evidence must not turn an unrelated entity query into a drilldown.
+  if (historyDomains.size > 0 && currentDomains.size > 0) {
+    return [...currentDomains].some((domain) => historyDomains.has(domain));
+  }
+
+  const historyEvidence = normalizeStringArray(topicHistory.evidence).join(
+    "\n",
+  );
+  const evidenceDomains = strongTopicDomains(historyEvidence);
+  if (evidenceDomains.size > 0 && currentDomains.size > 0) {
+    return [...currentDomains].some((domain) => evidenceDomains.has(domain));
+  }
+
+  return true;
+}
+
 const GENERIC_TOPIC_TOKENS = new Set([
   "about",
   "analysis",
@@ -3087,7 +3139,11 @@ export class IntentResolver {
       topicShifted &&
       topicRelation === "new_topic" &&
       hasEntityStatusDrilldown(prompt, semanticEvidence) &&
-      broadTopicalHistory;
+      broadTopicalHistory &&
+      hasBroadTopicEntityContinuity({
+        prompt,
+        parsedTopicAnalysis,
+      });
     if (broadTopicEntityDrilldown) {
       const beforeTopicShifted = topicShifted;
       topicShifted = false;

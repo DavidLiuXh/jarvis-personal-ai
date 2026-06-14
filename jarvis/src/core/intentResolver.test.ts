@@ -682,6 +682,68 @@ ${modelResponse({
     expect(policyReasonCodes(intent)).toContain("BROAD_TOPIC_ENTITY_DRILLDOWN");
   });
 
+  it("keeps a Gemini product query as a new topic after a stock sentiment report", async () => {
+    const resolver = makeResolver();
+    mockGenerate.mockResolvedValueOnce(
+      modelResponse({
+        query_subject: "external",
+        task_type: "analyze",
+        references_recent_history: false,
+        topic_shifted: true,
+        topic_analysis: {
+          relation: "new_topic",
+          history: {
+            label: "美国股市情绪监测报告",
+            evidence: ["NAAIM 风险敞口指数", "机构股票配置"],
+            source_turns: [-1],
+            confidence: 1,
+          },
+          current: {
+            label: "Gemini Spark产品发布时间",
+            evidence: ["Gemini Spark何时才能对普通用户开放可用？"],
+            source_turns: [0],
+            confidence: 1,
+          },
+          confidence: 1,
+        },
+        semantic_evidence: {
+          personalContext: { present: false, reason: "", span: "" },
+          memoryRecall: {
+            present: false,
+            target: "none",
+            reason: "",
+            span: "",
+          },
+          actionRequest: { present: false, action: "read", object: "" },
+          entityHints: {
+            tickers: [],
+            technicalTerms: ["Gemini Spark"],
+            peopleOrCompanies: ["Gemini"],
+          },
+        },
+      }),
+    );
+
+    const intent = await resolver.resolve({
+      userPrompt: "Gemini Spark何时才能对普通用户开放可用？",
+      history: [
+        { role: "user", content: "生成一份美国股市情绪监测报告" },
+        {
+          role: "assistant",
+          content:
+            "美国股市情绪报告：NAAIM 风险敞口指数为 79.27，机构股票配置仍然偏高。",
+        },
+      ],
+    });
+
+    expect(intent.topicShifted).toBe(true);
+    expect(intent.referencesRecentHistory).toBe(false);
+    expect(intent.topicAnalysis.relation).toBe("new_topic");
+    expect(policyReasonCodes(intent)).not.toContain(
+      "BROAD_TOPIC_ENTITY_DRILLDOWN",
+    );
+  });
+
   it("upgrades external to mixed for personal-context cues", async () => {
     const resolver = makeResolver();
     mockGenerate.mockResolvedValueOnce(
