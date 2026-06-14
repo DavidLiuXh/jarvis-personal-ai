@@ -71,10 +71,27 @@ const JARVIS_HOME = path.join(os.homedir(), ".gemini-jarvis");
 
 async function initializeGeminiCompatibilityGlobals(): Promise<void> {
   if (standaloneRuntime) return;
-  const [{ PolicyEngine }, { coreEvents }] = await Promise.all([
-    import("../../gemini-cli/packages/core/src/index.js"),
-    import("../../gemini-cli/packages/core/src/utils/events.js"),
-  ]);
+  let coreModule!: typeof import("../../gemini-cli/packages/core/src/index.js");
+  let eventsModule!: typeof import("../../gemini-cli/packages/core/src/utils/events.js");
+  try {
+    [coreModule, eventsModule] = await Promise.all([
+      import("../../gemini-cli/packages/core/src/index.js"),
+      import("../../gemini-cli/packages/core/src/utils/events.js"),
+    ]);
+  } catch (error) {
+    const missingPackage =
+      error instanceof Error &&
+      (error as NodeJS.ErrnoException).code === "ERR_MODULE_NOT_FOUND";
+    if (missingPackage) {
+      throw new Error(
+        "Gemini compatibility dependencies are not installed. Run `npm install` from the repository root, or configure `llmBackend.provider` as `openai` for standalone mode.",
+        { cause: error },
+      );
+    }
+    throw error;
+  }
+  const { PolicyEngine } = coreModule;
+  const { coreEvents } = eventsModule;
   coreEvents.setMaxListeners(100);
   if (jarvisConfig.security.jailbreak) {
     // @ts-expect-error - overriding Gemini compatibility policy in explicit jailbreak mode

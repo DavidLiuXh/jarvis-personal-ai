@@ -13,7 +13,6 @@ import {
   OpenAiChatCompletionsBackend,
   OpenAiPromptCompiler,
 } from "../packages/agent-runtime/src/openAiBackend.js";
-import { GeminiPromptCompiler } from "../jarvis/src/core/geminiBackendAdapter.js";
 import type {
   LlmBackend,
   LlmEvent,
@@ -25,6 +24,7 @@ import type {
 
 type EvalCase = {
   name: string;
+  suite: "standalone" | "compatibility";
   run: () => Promise<void>;
 };
 
@@ -37,6 +37,7 @@ function parseArgs(argv: string[]) {
   const args = {
     outputDir: path.join(repoRoot, "evals/logs"),
     updateLatest: true,
+    suite: "all" as "all" | "standalone" | "compatibility",
   };
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
@@ -46,6 +47,12 @@ function parseArgs(argv: string[]) {
       i += 1;
     } else if (arg === "--no-latest") {
       args.updateLatest = false;
+    } else if (
+      arg === "--suite" &&
+      (next === "standalone" || next === "compatibility" || next === "all")
+    ) {
+      args.suite = next;
+      i += 1;
     }
   }
   return args;
@@ -91,7 +98,11 @@ function sse(...payloads: unknown[]): ReadableStream<Uint8Array> {
 const cases: EvalCase[] = [
   {
     name: "gemini-compatible-prompt-compiler-tool-loop",
+    suite: "compatibility",
     async run() {
+      const { GeminiPromptCompiler } = await import(
+        "../jarvis/src/core/geminiBackendAdapter.js"
+      );
       const toolResults: RuntimeToolResult[] = [];
       const runtime = new ToolLoopRuntime({
         backend: mockBackend([
@@ -132,6 +143,7 @@ const cases: EvalCase[] = [
   },
   {
     name: "openai-compatible-streaming-tool-call",
+    suite: "standalone",
     async run() {
       const backend = new OpenAiChatCompletionsBackend({
         apiKey: "test-key",
@@ -197,13 +209,16 @@ const cases: EvalCase[] = [
 ];
 
 const args = parseArgs(process.argv.slice(2));
+const selectedCases = cases.filter(
+  (testCase) => args.suite === "all" || testCase.suite === args.suite,
+);
 const results: Array<{
   name: string;
   passed: boolean;
   durationMs: number;
   error?: string;
 }> = [];
-for (const testCase of cases) {
+for (const testCase of selectedCases) {
   const startedAt = Date.now();
   try {
     await testCase.run();

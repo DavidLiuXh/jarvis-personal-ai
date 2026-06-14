@@ -10,6 +10,10 @@
     "jarvis"
   ],
   "private": "true",
+  "optionalDependencies": {
+    "@google/gemini-cli": "file:gemini-cli/packages/cli",
+    "@google/gemini-cli-core": "file:gemini-cli/packages/core"
+  },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/DavidLiuXh/jarvis-personal-ai.git"
@@ -23,13 +27,15 @@
     "intent:attribute-failures": "npx tsx scripts/attribute_intent_failures.ts",
     "runtime:check-boundaries": "npx tsx scripts/check_runtime_boundaries.ts",
     "llm:backend:eval": "npx tsx scripts/run_llm_backend_evals.ts",
+    "llm:backend:eval:standalone": "npx tsx scripts/run_llm_backend_evals.ts --suite standalone",
+    "llm:backend:eval:compatibility": "npx tsx scripts/run_llm_backend_evals.ts --suite compatibility",
     "runtime:dashboard": "npx tsx scripts/runtime_quality_dashboard.ts",
     "runtime:build": "npm run build --workspace @jarvis/memory-runtime && npm run build --workspace @jarvis/intent-runtime && npm run build --workspace @jarvis/agent-runtime",
     "runtime:pack:dry-run": "npm run pack:dry-run --workspace @jarvis/memory-runtime && npm run pack:dry-run --workspace @jarvis/intent-runtime && npm run pack:dry-run --workspace @jarvis/agent-runtime",
     "runtime:check-examples": "npx tsx scripts/check_runtime_examples.ts",
     "memory:quality": "npx tsx scripts/run_memory_quality.ts",
     "runtime:quality": "npm run runtime:build && npm run runtime:check-examples && npm run memory:quality && npm run intent:matrix && npm run llm:backend:eval && npm run runtime:check-boundaries && npx tsx scripts/runtime_quality_dashboard.ts --gate",
-    "runtime:quality:standalone": "npm run runtime:build && npm run llm:backend:eval && npm run runtime:check-boundaries",
+    "runtime:quality:standalone": "npm run runtime:build && npm run llm:backend:eval:standalone && npm run runtime:check-boundaries",
     "test": "npm run test --workspaces --if-present",
     "prepare": "husky",
     "pre-commit": "lint-staged"

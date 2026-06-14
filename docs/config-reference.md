@@ -2,6 +2,49 @@
 
 Configuration file location: `~/.gemini-jarvis/config.json`
 
+## Main Chat Backend
+
+`llmBackend.provider` selects the backend used for Jarvis main chat and its tool-calling loop. Restart Jarvis after changing it.
+
+Use the Gemini CLI compatibility runtime (default):
+
+```json
+{
+  "llmBackend": {
+    "provider": "gemini"
+  }
+}
+```
+
+Gemini mode uses Gemini CLI authentication, model selection, and compatibility tools. Run `npm install` from the repository root after the initial checkout or dependency updates.
+
+Use the OpenAI-compatible standalone runtime:
+
+```json
+{
+  "llmBackend": {
+    "provider": "openai",
+    "openai": {
+      "apiKeyEnv": "OPENAI_API_KEY",
+      "model": "gpt-4.1",
+      "baseUrl": "https://api.openai.com/v1",
+      "timeoutMs": 120000
+    }
+  }
+}
+```
+
+Prefer supplying the API key through the environment:
+
+```bash
+export OPENAI_API_KEY="your-api-key"
+npm start
+```
+
+vLLM, local gateways, and other services exposing an OpenAI-compatible API also use `"provider": "openai"` with an appropriate `baseUrl`, `model`, and `apiKeyEnv`. The supported main-chat providers are currently `gemini` and `openai`; native Anthropic and Ollama main-chat protocols are not yet implemented.
+
+`routing.provider`, `summarizer.provider`, `reflection.provider`, and `embeddingService.provider` are independent settings and do not select the main-chat backend.
+
 ---
 
 ````jsonc
@@ -42,6 +85,31 @@ Configuration file location: `~/.gemini-jarvis/config.json`
     // Also used for consolidateFacts/reflect when reflection.provider = "gemini".
     // When reflection.provider = "ollama", this field is ignored for reflection.
     "distillation": "gemini-2.5-flash",
+  },
+
+  // ─────────────────────────────────────────────
+  // LLM Backend — main chat and tool-calling backend
+  // ─────────────────────────────────────────────
+  "llmBackend": {
+    // "gemini": Gemini CLI compatibility runtime (default)
+    // "openai": OpenAI-compatible standalone runtime
+    "provider": "gemini",
+
+    // Only used when provider = "openai".
+    "openai": {
+      // Environment variable containing the API key.
+      // Prefer this over storing apiKey in plaintext.
+      "apiKeyEnv": "OPENAI_API_KEY",
+
+      // OpenAI-compatible model name.
+      "model": "gpt-4.1",
+
+      // Compatible API URL for OpenAI, vLLM, or a local gateway.
+      "baseUrl": "https://api.openai.com/v1",
+
+      // Request timeout in milliseconds.
+      "timeoutMs": 120000,
+    },
   },
 
   // ─────────────────────────────────────────────

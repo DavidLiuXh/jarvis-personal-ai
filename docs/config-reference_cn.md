@@ -2,6 +2,49 @@
 
 配置文件路径：`~/.gemini-jarvis/config.json`
 
+## 主对话后端
+
+`llmBackend.provider` 决定 Jarvis 主对话和工具调用循环使用哪个后端。修改后需要重启 Jarvis。
+
+使用 Gemini CLI compatibility runtime（默认）：
+
+```json
+{
+  "llmBackend": {
+    "provider": "gemini"
+  }
+}
+```
+
+Gemini 模式使用 Gemini CLI 的认证、模型和兼容工具链。首次安装或更新依赖时，请在仓库根目录运行 `npm install`。
+
+使用 OpenAI-compatible standalone runtime：
+
+```json
+{
+  "llmBackend": {
+    "provider": "openai",
+    "openai": {
+      "apiKeyEnv": "OPENAI_API_KEY",
+      "model": "gpt-4.1",
+      "baseUrl": "https://api.openai.com/v1",
+      "timeoutMs": 120000
+    }
+  }
+}
+```
+
+建议通过环境变量提供密钥：
+
+```bash
+export OPENAI_API_KEY="your-api-key"
+npm start
+```
+
+提供 OpenAI-compatible API 的 vLLM、本地网关或其他服务也使用 `"provider": "openai"`，并修改 `baseUrl`、`model` 和 `apiKeyEnv`。当前主对话后端只正式支持 `gemini` 和 `openai`；Anthropic 与 Ollama 的原生主对话协议尚未接入。
+
+`routing.provider`、`summarizer.provider`、`reflection.provider` 和 `embeddingService.provider` 是独立配置，不会切换主对话后端。
+
 ---
 
 ````jsonc
@@ -42,6 +85,30 @@
     // 当 reflection.provider = "gemini" 时，也用于 consolidateFacts/reflect。
     // 当 reflection.provider = "ollama" 时，此字段不影响反思任务。
     "distillation": "gemini-2.5-flash",
+  },
+
+  // ─────────────────────────────────────────────
+  // LLM Backend — 主对话与工具调用后端
+  // ─────────────────────────────────────────────
+  "llmBackend": {
+    // "gemini"：Gemini CLI compatibility runtime（默认）
+    // "openai"：OpenAI-compatible standalone runtime
+    "provider": "gemini",
+
+    // 仅 provider = "openai" 时生效。
+    "openai": {
+      // API key 所在的环境变量。推荐使用环境变量而不是明文 apiKey。
+      "apiKeyEnv": "OPENAI_API_KEY",
+
+      // OpenAI-compatible 模型名。
+      "model": "gpt-4.1",
+
+      // OpenAI、vLLM 或本地网关的兼容 API 地址。
+      "baseUrl": "https://api.openai.com/v1",
+
+      // 单次请求超时时间（毫秒）。
+      "timeoutMs": 120000,
+    },
   },
 
   // ─────────────────────────────────────────────
