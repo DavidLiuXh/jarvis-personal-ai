@@ -17,7 +17,7 @@ import type {
   RuntimeToolResult,
   ToolExecutorAdapter,
 } from "../intent-runtime/index.js";
-import { ConfigManager } from "./configManager.js";
+import { ConfigManager, type JarvisConfig } from "./configManager.js";
 import { type AgentManager } from "./agentManager.js";
 import { type BackgroundTaskRunner } from "./backgroundTaskRunner.js";
 import { type ChannelRegistry } from "./channelRegistry.js";
@@ -49,6 +49,22 @@ import {
 } from "./toolRouter.js";
 import { JarvisEventType, type JarvisAgentLike } from "./types.js";
 import { createDefaultRuntimeToolRegistry } from "./jarvisToolRegistry.js";
+
+export type StandaloneOpenAiRoutingModels = {
+  defaultModel: string;
+  proModel: string;
+  flashModel: string;
+};
+
+export function resolveStandaloneOpenAiRoutingModels(
+  config: Pick<JarvisConfig, "llmBackend" | "routing">,
+): StandaloneOpenAiRoutingModels {
+  const openai = config.llmBackend?.openai ?? {};
+  const defaultModel = openai.model ?? "gpt-4.1";
+  const proModel = openai.proModel ?? defaultModel;
+  const flashModel = openai.flashModel ?? defaultModel;
+  return { defaultModel, proModel, flashModel };
+}
 
 function createStandaloneToolExecutor(input: {
   toolRouter: ToolRouter;
@@ -163,6 +179,9 @@ export class StandaloneJarvisAgent
   private agentManager: AgentManager | null = null;
   private backgroundTaskRunner: BackgroundTaskRunner | null = null;
   private initialized = false;
+  private currentBackendModel = resolveStandaloneOpenAiRoutingModels(
+    this.jarvisConfig,
+  ).defaultModel;
   private pendingAskUsers = new Map<
     string,
     {
@@ -200,12 +219,15 @@ export class StandaloneJarvisAgent
     if (this.initialized) return;
     const routingCfg = this.jarvisConfig.routing;
     if (routingCfg?.enabled && routingCfg.model) {
+      const routingModels = resolveStandaloneOpenAiRoutingModels(
+        this.jarvisConfig,
+      );
       this.localModelRouter = new LocalModelRouter(
         this.jarvisConfig.ollama?.baseUrl ?? "http://localhost:11434",
         routingCfg.model,
         routingCfg.threshold ?? 70,
-        routingCfg.proModel ?? "gemini-2.5-pro",
-        routingCfg.flashModel ?? "gemini-2.5-flash",
+        routingModels.proModel,
+        routingModels.flashModel,
         routingCfg.timeoutMs ?? this.jarvisConfig.ollama?.defaultTimeoutMs,
         routingCfg.historyTurns ?? 5,
         routingCfg.intentPolicyObservability,
@@ -237,8 +259,9 @@ export class StandaloneJarvisAgent
       timeWindowDays = routing.timeWindowDays;
       resolvedDateRange = routing.resolvedDateRange;
       intentFrame = routing.intent;
+      this.currentBackendModel = routing.model;
       console.error(
-        `🔀 [Jarvis] Standalone routing: ${routing.decision} | subject=${querySubject} | topic_shifted=${routing.topicShifted} | source=${routing.source}`,
+        `🔀 [Jarvis] Standalone routing: ${routing.decision} | backend_model=${this.currentBackendModel} | subject=${querySubject} | topic_shifted=${routing.topicShifted} | source=${routing.source}`,
       );
     }
 
@@ -259,7 +282,10 @@ export class StandaloneJarvisAgent
       conversationHistory,
       intentFrame,
       {
-        options: this.createToolLoopOptions(stepRuntime),
+        options: this.createToolLoopOptions(
+          stepRuntime,
+          this.currentBackendModel,
+        ),
         initialMessages: [
           { role: "user", blocks: [{ type: "text", text: userPrompt }] },
         ],
@@ -291,13 +317,14 @@ export class StandaloneJarvisAgent
 
   private createToolLoopOptions(
     stepRuntime: IntentStepRuntime,
+    backendModel: string,
   ): ToolLoopRuntimeOptions {
     const openai = this.jarvisConfig.llmBackend?.openai ?? {};
     const apiKeyEnv = openai.apiKeyEnv ?? "OPENAI_API_KEY";
     const apiKey = openai.apiKey ?? process.env[apiKeyEnv] ?? "";
     const backend = new OpenAiChatCompletionsBackend({
       apiKey,
-      model: openai.model ?? "gpt-4.1",
+      model: backendModel,
       baseUrl: openai.baseUrl,
       organization: openai.organization,
       project: openai.project,

@@ -222,6 +222,8 @@ Gemini 是当前默认值，使用 Gemini CLI authentication 和 compatibility t
     "openai": {
       "apiKeyEnv": "OPENAI_API_KEY",
       "model": "gpt-4.1",
+      "proModel": "gpt-4.1",
+      "flashModel": "gpt-4.1-mini",
       "baseUrl": "https://api.openai.com/v1",
       "timeoutMs": 120000
     }
@@ -237,6 +239,12 @@ npm start
 ```
 
 OpenAI-compatible gateway 或 vLLM 可以通过修改 `baseUrl` 和 `model` 接入。
+
+如果启用本地 routing，standalone runtime 会优先使用
+`llmBackend.openai.proModel` / `llmBackend.openai.flashModel` 作为复杂请求和简单请求
+的主对话模型；未配置时两个分支都会退回 `llmBackend.openai.model`。`routing.proModel`
+/ `routing.flashModel` 保留给 Gemini compatibility path，避免 OpenAI-compatible
+后端收到 Gemini 模型名。
 
 当前主对话正式支持：
 

@@ -131,7 +131,12 @@ export interface JarvisConfig {
       apiKey?: string;
       apiKeyEnv?: string;
       baseUrl?: string;
+      /** Default OpenAI-compatible model when routing is disabled or no variant is configured. */
       model?: string;
+      /** Model used when local routing score is >= threshold in standalone OpenAI mode. */
+      proModel?: string;
+      /** Model used when local routing score is < threshold in standalone OpenAI mode. */
+      flashModel?: string;
       organization?: string;
       project?: string;
       timeoutMs?: number;
