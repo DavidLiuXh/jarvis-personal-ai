@@ -50,19 +50,19 @@ import {
 import { JarvisEventType, type JarvisAgentLike } from "./types.js";
 import { createDefaultRuntimeToolRegistry } from "./jarvisToolRegistry.js";
 
-export type StandaloneOpenAiRoutingModels = {
+export type StandaloneRoutingTargetModels = {
   defaultModel: string;
   proModel: string;
   flashModel: string;
 };
 
-export function resolveStandaloneOpenAiRoutingModels(
+export function resolveStandaloneRoutingTargetModels(
   config: Pick<JarvisConfig, "llmBackend" | "routing">,
-): StandaloneOpenAiRoutingModels {
+): StandaloneRoutingTargetModels {
   const openai = config.llmBackend?.openai ?? {};
   const defaultModel = openai.model ?? "gpt-4.1";
-  const proModel = openai.proModel ?? defaultModel;
-  const flashModel = openai.flashModel ?? defaultModel;
+  const proModel = config.routing?.targets?.pro ?? defaultModel;
+  const flashModel = config.routing?.targets?.flash ?? defaultModel;
   return { defaultModel, proModel, flashModel };
 }
 
@@ -179,7 +179,7 @@ export class StandaloneJarvisAgent
   private agentManager: AgentManager | null = null;
   private backgroundTaskRunner: BackgroundTaskRunner | null = null;
   private initialized = false;
-  private currentBackendModel = resolveStandaloneOpenAiRoutingModels(
+  private currentBackendModel = resolveStandaloneRoutingTargetModels(
     this.jarvisConfig,
   ).defaultModel;
   private pendingAskUsers = new Map<
@@ -219,7 +219,7 @@ export class StandaloneJarvisAgent
     if (this.initialized) return;
     const routingCfg = this.jarvisConfig.routing;
     if (routingCfg?.enabled && routingCfg.model) {
-      const routingModels = resolveStandaloneOpenAiRoutingModels(
+      const routingModels = resolveStandaloneRoutingTargetModels(
         this.jarvisConfig,
       );
       this.localModelRouter = new LocalModelRouter(

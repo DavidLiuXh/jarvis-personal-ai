@@ -27,10 +27,14 @@ Gemini 模式使用 Gemini CLI 的认证、模型和兼容工具链。首次安�
     "openai": {
       "apiKeyEnv": "OPENAI_API_KEY",
       "model": "gpt-4.1",
-      "proModel": "gpt-4.1",
-      "flashModel": "gpt-4.1-mini",
       "baseUrl": "https://api.openai.com/v1",
       "timeoutMs": 120000
+    }
+  },
+  "routing": {
+    "targets": {
+      "pro": "gpt-4.1",
+      "flash": "gpt-4.1-mini"
     }
   }
 }
@@ -43,7 +47,7 @@ export OPENAI_API_KEY="your-api-key"
 npm start
 ```
 
-提供 OpenAI-compatible API 的 vLLM、本地网关或其他服务也使用 `"provider": "openai"`，并修改 `baseUrl`、`model` 和 `apiKeyEnv`。如果启用了本地 routing，OpenAI-compatible 模式会优先使用 `llmBackend.openai.proModel` / `llmBackend.openai.flashModel`；未配置时两个分支都会退回 `llmBackend.openai.model`，避免把 Gemini 模型名发给 OpenAI-compatible 服务。当前主对话后端只正式支持 `gemini` 和 `openai`；Anthropic 与 Ollama 的原生主对话协议尚未接入。
+提供 OpenAI-compatible API 的 vLLM、本地网关或其他服务也使用 `"provider": "openai"`，并修改 `baseUrl`、`model` 和 `apiKeyEnv`。如果启用了本地 routing，OpenAI-compatible 模式会使用后端无关的 `routing.targets.pro` / `routing.targets.flash`；未配置时两个分支都会退回 `llmBackend.openai.model`，避免把 Gemini 模型名发给 OpenAI-compatible 服务。当前主对话后端只正式支持 `gemini` 和 `openai`；Anthropic 与 Ollama 的原生主对话协议尚未接入。
 
 `routing.provider`、`summarizer.provider`、`reflection.provider` 和 `embeddingService.provider` 是独立配置，不会切换主对话后端。
 
@@ -104,14 +108,6 @@ npm start
 
       // OpenAI-compatible 模型名。
       "model": "gpt-4.1",
-
-      // OpenAI-compatible 模式下，routing 分数 >= threshold 时使用的模型。
-      // 未配置时退回 model。
-      "proModel": "gpt-4.1",
-
-      // OpenAI-compatible 模式下，routing 分数 < threshold 时使用的模型。
-      // 未配置时退回 model。
-      "flashModel": "gpt-4.1-mini",
 
       // OpenAI、vLLM 或本地网关的兼容 API 地址。
       "baseUrl": "https://api.openai.com/v1",
@@ -176,7 +172,7 @@ npm start
 
   // ─────────────────────────────────────────────
   // Routing — 基于 Ollama 的本地模型路由
-  // 对每条请求进行复杂度打分（1-100），自动选择 proModel 或 flashModel。
+  // 对每条请求进行复杂度打分（1-100），自动选择 pro 或 flash runtime target。
   // ─────────────────────────────────────────────
   "routing": {
     // 启用本地模型路由。默认：true（设置 model 后生效）
@@ -190,17 +186,23 @@ npm start
     "model": "gemma4:e2b",
 
     // 复杂度分数阈值（1-100）。
-    // 分数 >= 阈值 → proModel；分数 < 阈值 → flashModel。默认：70
+    // 分数 >= 阈值 → targets.pro；分数 < 阈值 → targets.flash。默认：70
     "threshold": 70,
 
-    // Gemini compatibility 模式下复杂请求使用的模型（分数 >= 阈值）。
-    // OpenAI-compatible 模式请配置 llmBackend.openai.proModel。
-    // 默认："gemini-2.5-pro"
+    // 后端无关的 runtime 模型目标。
+    // 取值必须与当前主对话后端匹配：
+    // Gemini compatibility 模式使用 Gemini 模型名；
+    // OpenAI-compatible 模式使用 OpenAI-compatible 模型 ID。
+    // Standalone OpenAI 未配置时退回 llmBackend.openai.model。
+    "targets": {
+      "pro": "gemini-2.5-pro",
+      "flash": "gemini-2.5-flash",
+    },
+
+    // targets.pro 的旧 Gemini compatibility 别名。
     "proModel": "gemini-2.5-pro",
 
-    // Gemini compatibility 模式下简单请求使用的模型（分数 < 阈值）。
-    // OpenAI-compatible 模式请配置 llmBackend.openai.flashModel。
-    // 默认："gemini-2.5-flash"
+    // targets.flash 的旧 Gemini compatibility 别名。
     "flashModel": "gemini-2.5-flash",
 
     // 分类调用的超时时间（毫秒）。默认：30000（30秒）

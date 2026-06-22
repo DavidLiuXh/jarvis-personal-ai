@@ -15,8 +15,6 @@
     "openai": {
       "apiKeyEnv": "OPENAI_API_KEY",
       "model": "gpt-4.1",
-      "proModel": "gpt-4.1",
-      "flashModel": "gpt-4.1-mini",
       "baseUrl": "https://api.openai.com/v1",
       "timeoutMs": 120000
     }
@@ -45,6 +43,10 @@
     "provider": "ollama",
     "model": "gemma4:e2b",
     "threshold": 70,
+    "targets": {
+      "pro": "gemini-2.5-pro",
+      "flash": "gemini-2.5-flash"
+    },
     "proModel": "gemini-2.5-pro",
     "flashModel": "gemini-2.5-flash"
   },

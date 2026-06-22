@@ -954,7 +954,7 @@ step，如果没有观察到 `task_add` 结果，就不能声称“已经提醒�
 `LocalModelRouter` 使用 `complexityScore` 选择本轮主模型：
 
 ```ts
-model = score >= threshold ? proModel : flashModel;
+model = score >= threshold ? routing.targets.pro : routing.targets.flash;
 ```
 
 配置位于：
@@ -965,8 +965,10 @@ model = score >= threshold ? proModel : flashModel;
     "enabled": true,
     "model": "gemma4:e2b",
     "threshold": 70,
-    "proModel": "gemini-2.5-pro",
-    "flashModel": "gemini-3.1-flash-lite"
+    "targets": {
+      "pro": "gemini-2.5-pro",
+      "flash": "gemini-3.1-flash-lite"
+    }
   }
 }
 ```
@@ -974,9 +976,10 @@ model = score >= threshold ? proModel : flashModel;
 这里有两个模型概念：
 
 - `routing.model`：本地 Ollama intent 模型；
-- `proModel/flashModel`：真正回答用户的主 LLM。
+- `routing.targets.pro/flash`：真正回答用户的主 LLM，取值需要与当前主对话 backend 匹配。
 
-如果本地 intent 模型失败，默认使用 `proModel`。
+如果本地 intent 模型失败，默认使用 `routing.targets.pro`。旧 `routing.proModel/flashModel`
+仍作为 Gemini compatibility path 的兼容别名。
 
 ## 9. 第五层：Clarification Policy
 

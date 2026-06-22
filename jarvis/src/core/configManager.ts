@@ -50,7 +50,7 @@ export interface JarvisConfig {
   };
   /**
    * Local model routing: classify request complexity via Ollama,
-   * then select proModel or flashModel accordingly.
+   * then select the configured pro or flash runtime target accordingly.
    */
   routing?: {
     /** Enable local routing. Default: false. */
@@ -59,11 +59,22 @@ export interface JarvisConfig {
     provider?: "ollama";
     /** Ollama model for complexity classification, e.g. "gemma4:e2b". */
     model: string;
-    /** Complexity score threshold (1-100). Score >= threshold → proModel. Default: 70. */
+    /** Complexity score threshold (1-100). Score >= threshold → pro target. Default: 70. */
     threshold?: number;
-    /** Model to use for complex requests. Default: "gemini-2.5-pro". */
+    /**
+     * Backend-neutral runtime model targets. These values must be valid for
+     * the selected main-chat backend, e.g. Gemini model names for Gemini CLI
+     * or OpenAI-compatible model IDs for OpenAI-compatible backends.
+     */
+    targets?: {
+      /** Model to use for complex requests. */
+      pro?: string;
+      /** Model to use for simple requests. */
+      flash?: string;
+    };
+    /** Legacy Gemini compatibility alias for targets.pro. */
     proModel?: string;
-    /** Model to use for simple requests. Default: "gemini-2.5-flash". */
+    /** Legacy Gemini compatibility alias for targets.flash. */
     flashModel?: string;
     /** Override global ollama.defaultTimeoutMs for classification calls. */
     timeoutMs?: number;
@@ -131,12 +142,8 @@ export interface JarvisConfig {
       apiKey?: string;
       apiKeyEnv?: string;
       baseUrl?: string;
-      /** Default OpenAI-compatible model when routing is disabled or no variant is configured. */
+      /** Default OpenAI-compatible model when routing is disabled or no routing target is configured. */
       model?: string;
-      /** Model used when local routing score is >= threshold in standalone OpenAI mode. */
-      proModel?: string;
-      /** Model used when local routing score is < threshold in standalone OpenAI mode. */
-      flashModel?: string;
       organization?: string;
       project?: string;
       timeoutMs?: number;

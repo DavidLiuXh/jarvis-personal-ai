@@ -27,10 +27,14 @@ Use the OpenAI-compatible standalone runtime:
     "openai": {
       "apiKeyEnv": "OPENAI_API_KEY",
       "model": "gpt-4.1",
-      "proModel": "gpt-4.1",
-      "flashModel": "gpt-4.1-mini",
       "baseUrl": "https://api.openai.com/v1",
       "timeoutMs": 120000
+    }
+  },
+  "routing": {
+    "targets": {
+      "pro": "gpt-4.1",
+      "flash": "gpt-4.1-mini"
     }
   }
 }
@@ -43,7 +47,7 @@ export OPENAI_API_KEY="your-api-key"
 npm start
 ```
 
-vLLM, local gateways, and other services exposing an OpenAI-compatible API also use `"provider": "openai"` with an appropriate `baseUrl`, `model`, and `apiKeyEnv`. If local routing is enabled, OpenAI-compatible mode prefers `llmBackend.openai.proModel` / `llmBackend.openai.flashModel`; when they are unset, both routing branches fall back to `llmBackend.openai.model` so Gemini model names are not sent to OpenAI-compatible services. The supported main-chat providers are currently `gemini` and `openai`; native Anthropic and Ollama main-chat protocols are not yet implemented.
+vLLM, local gateways, and other services exposing an OpenAI-compatible API also use `"provider": "openai"` with an appropriate `baseUrl`, `model`, and `apiKeyEnv`. If local routing is enabled, OpenAI-compatible mode uses backend-neutral `routing.targets.pro` / `routing.targets.flash`; when they are unset, both routing branches fall back to `llmBackend.openai.model` so Gemini model names are not sent to OpenAI-compatible services. The supported main-chat providers are currently `gemini` and `openai`; native Anthropic and Ollama main-chat protocols are not yet implemented.
 
 `routing.provider`, `summarizer.provider`, `reflection.provider`, and `embeddingService.provider` are independent settings and do not select the main-chat backend.
 
@@ -105,14 +109,6 @@ vLLM, local gateways, and other services exposing an OpenAI-compatible API also 
 
       // OpenAI-compatible model name.
       "model": "gpt-4.1",
-
-      // Model used for routing scores >= threshold in OpenAI-compatible mode.
-      // Falls back to model when unset.
-      "proModel": "gpt-4.1",
-
-      // Model used for routing scores < threshold in OpenAI-compatible mode.
-      // Falls back to model when unset.
-      "flashModel": "gpt-4.1-mini",
 
       // Compatible API URL for OpenAI, vLLM, or a local gateway.
       "baseUrl": "https://api.openai.com/v1",
@@ -178,7 +174,7 @@ vLLM, local gateways, and other services exposing an OpenAI-compatible API also 
 
   // ─────────────────────────────────────────────
   // Routing — local model routing via Ollama complexity classifier
-  // Classifies each request (1-100) and selects proModel or flashModel.
+  // Classifies each request (1-100) and selects a pro or flash runtime target.
   // ─────────────────────────────────────────────
   "routing": {
     // Enable local model routing. Default: true (inactive until model is set)
@@ -192,18 +188,24 @@ vLLM, local gateways, and other services exposing an OpenAI-compatible API also 
     "model": "gemma4:e2b",
 
     // Complexity score threshold (1-100).
-    // Score >= threshold → proModel; Score < threshold → flashModel.
+    // Score >= threshold → targets.pro; Score < threshold → targets.flash.
     // Default: 70
     "threshold": 70,
 
-    // Model used for complex requests in Gemini compatibility mode (score >= threshold).
-    // Use llmBackend.openai.proModel in OpenAI-compatible mode.
-    // Default: "gemini-2.5-pro"
+    // Backend-neutral runtime model targets.
+    // Values must be valid for the active main-chat backend:
+    // Gemini model names for Gemini compatibility mode, OpenAI-compatible
+    // model IDs for OpenAI-compatible mode, etc.
+    // Standalone OpenAI falls back to llmBackend.openai.model when unset.
+    "targets": {
+      "pro": "gemini-2.5-pro",
+      "flash": "gemini-2.5-flash",
+    },
+
+    // Legacy Gemini compatibility alias for targets.pro.
     "proModel": "gemini-2.5-pro",
 
-    // Model used for simple requests in Gemini compatibility mode (score < threshold).
-    // Use llmBackend.openai.flashModel in OpenAI-compatible mode.
-    // Default: "gemini-2.5-flash"
+    // Legacy Gemini compatibility alias for targets.flash.
     "flashModel": "gemini-2.5-flash",
 
     // Timeout in milliseconds for the classification call. Default: 30000 (30s)

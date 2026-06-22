@@ -240,8 +240,10 @@ export class JarvisAgent extends EventEmitter {
         this.jarvisConfig.ollama?.baseUrl ?? "http://localhost:11434",
         routingCfg.model,
         routingCfg.threshold ?? 70,
-        routingCfg.proModel ?? "gemini-2.5-pro",
-        routingCfg.flashModel ?? "gemini-2.5-flash",
+        routingCfg.targets?.pro ?? routingCfg.proModel ?? "gemini-2.5-pro",
+        routingCfg.targets?.flash ??
+          routingCfg.flashModel ??
+          "gemini-2.5-flash",
         routingCfg.timeoutMs ??
           this.jarvisConfig.ollama?.defaultTimeoutMs ??
           30_000,
