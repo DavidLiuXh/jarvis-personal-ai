@@ -44,10 +44,12 @@ export type ToolCallLike = {
   name: string;
   callId?: string;
   args?: Record<string, unknown>;
+  metadata?: Record<string, unknown>;
 };
 
 export type FunctionResponseLike = {
   functionResponse?: {
+    id?: string;
     name?: string;
     response?: unknown;
   };
@@ -599,6 +601,7 @@ export class IntentStepRuntime {
         if (dependencyReason) {
           duplicateResponses.push({
             functionResponse: {
+              id: request.callId,
               name: request.name,
               response: {
                 result:
@@ -624,6 +627,7 @@ export class IntentStepRuntime {
         const stepId = step?.step.id ?? globallySucceededStepId ?? null;
         duplicateResponses.push({
           functionResponse: {
+            id: request.callId,
             name: request.name,
             response: {
               result:

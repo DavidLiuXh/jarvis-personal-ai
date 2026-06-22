@@ -129,6 +129,7 @@ describe("ToolRouter", () => {
     expect(imp).toBe(7);
     expect(parts).toHaveLength(1);
     expect((parts[0] as any).functionResponse.name).toBe("save_memory");
+    expect((parts[0] as any).functionResponse.id).toBe(req.callId);
   });
 
   it("save_memory: explicit remember-intent raises importance", async () => {
@@ -248,6 +249,7 @@ describe("ToolRouter", () => {
 
     expect(search).toHaveBeenCalledWith("TypeScript", 3, null, null);
     expect(parts).toHaveLength(1);
+    expect((parts[0] as any).functionResponse.id).toBe(req.callId);
     const response = (parts[0] as any).functionResponse.response;
     expect(JSON.stringify(response)).toContain("memory item 1");
   });

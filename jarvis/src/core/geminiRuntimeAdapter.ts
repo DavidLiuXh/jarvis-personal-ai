@@ -70,11 +70,13 @@ function toRuntimeToolRequest(request: {
   name: string;
   callId?: string;
   args?: Record<string, unknown>;
+  metadata?: Record<string, unknown>;
 }): RuntimeToolRequest {
   return {
     name: request.name,
     callId: request.callId ?? request.name,
     args: request.args ?? {},
+    ...(request.metadata ? { metadata: request.metadata } : {}),
   };
 }
 

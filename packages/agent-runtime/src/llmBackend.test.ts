@@ -218,6 +218,77 @@ describe("ToolLoopRuntime", () => {
     });
   });
 
+  it("keeps provider metadata for suppressed synthetic tool results", async () => {
+    const request: RuntimeToolRequest = {
+      name: "task_add",
+      callId: "call-1",
+      args: { title: "review" },
+    };
+    const compiledRequests: RuntimeToolRequest[][] = [];
+    const planner: ToolLoopPlanner = {
+      filterDuplicateToolCalls: () => ({
+        executableRequests: [],
+        syntheticResults: [
+          {
+            name: "task_add",
+            callId: "call-1",
+            status: "success",
+            output: { result: "duplicate suppressed" },
+          },
+        ],
+      }),
+    };
+    const runtime = new ToolLoopRuntime({
+      backend: backendFromTurns([
+        [
+          {
+            type: "metadata",
+            value: { openai: { reasoningContent: "Already did it. " } },
+          },
+          { type: "tool_call", request },
+        ],
+        [{ type: "content", text: "continued" }],
+      ]),
+      promptCompiler: {
+        ...compiler(),
+        compileToolResults: (results, requests = []) => {
+          compiledRequests.push(requests);
+          return [
+            {
+              role: "tool" as const,
+              blocks: results.map((result) => ({
+                type: "tool_result" as const,
+                name: result.name,
+                callId: result.callId,
+                result: result.output,
+              })),
+            },
+          ];
+        },
+      },
+      toolExecutor: toolExecutor((toolRequest) => ({
+        name: toolRequest.name,
+        callId: toolRequest.callId,
+        status: "success",
+        output: { ok: true },
+      })),
+      planner,
+    });
+
+    await runtime.run({
+      userPrompt: "do it",
+      initialMessages,
+      signal: new AbortController().signal,
+    });
+
+    expect(compiledRequests[0][0]).toMatchObject({
+      name: "task_add",
+      callId: "call-1",
+      args: { title: "review" },
+      metadata: { openai: { reasoningContent: "Already did it. " } },
+    });
+  });
+
   it("retries retryable backend errors and calls exhaustion hook when retries fail", async () => {
     const exhausted = vi.fn();
     const runtime = new ToolLoopRuntime({

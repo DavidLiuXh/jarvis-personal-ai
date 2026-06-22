@@ -397,6 +397,7 @@ describe("buildIntentPlanSection", () => {
     );
     const request = {
       name: "task_add",
+      callId: "call-task-add-1",
       args: { cron: "明天早上9点", prompt: "提醒我复盘" },
     };
 
@@ -416,6 +417,9 @@ describe("buildIntentPlanSection", () => {
 
     expect(decision.executableRequests).toHaveLength(0);
     expect(decision.duplicateResponses).toHaveLength(1);
+    expect(decision.duplicateResponses[0].functionResponse?.id).toBe(
+      request.callId,
+    );
     expect(JSON.stringify(decision.duplicateResponses[0])).toContain(
       "Duplicate tool call suppressed",
     );

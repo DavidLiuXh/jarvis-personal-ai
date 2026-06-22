@@ -234,6 +234,18 @@ function withTurnMetadata(
   }));
 }
 
+function requestsForResults(
+  results: RuntimeToolResult[],
+  requests: RuntimeToolRequest[],
+): RuntimeToolRequest[] {
+  const requestByCallId = new Map(
+    requests.map((request) => [request.callId, request]),
+  );
+  return results
+    .map((result) => requestByCallId.get(result.callId))
+    .filter((request): request is RuntimeToolRequest => Boolean(request));
+}
+
 export class ToolLoopRuntime {
   constructor(private readonly options: ToolLoopRuntimeOptions) {}
 
@@ -317,8 +329,12 @@ export class ToolLoopRuntime {
               break;
             }
 
+            const toolCallRequestsWithMetadata = withTurnMetadata(
+              toolCallRequests,
+              turnMetadata,
+            );
             const duplicateDecisionRaw = normalizeDuplicateDecision(
-              withTurnMetadata(toolCallRequests, turnMetadata),
+              toolCallRequestsWithMetadata,
               this.options.planner,
             );
             const duplicateDecision = {
@@ -366,7 +382,10 @@ export class ToolLoopRuntime {
 
             messages = this.options.promptCompiler.compileToolResults(
               results,
-              duplicateDecision.executableRequests,
+              requestsForResults(results, [
+                ...toolCallRequestsWithMetadata,
+                ...duplicateDecision.executableRequests,
+              ]),
             );
           } else {
             const postContentRequest =

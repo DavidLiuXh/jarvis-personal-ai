@@ -25,6 +25,7 @@ export type ToolCallRequest = {
   name: string;
   args: Record<string, unknown>;
   callId: string;
+  metadata?: Record<string, unknown>;
 };
 
 export type ToolCallResponse = {
@@ -91,6 +92,7 @@ export function createStandaloneSchedulerHandle(): SchedulerHandle {
           responseParts: [
             {
               functionResponse: {
+                id: request.callId,
                 name: request.name,
                 response: {
                   error:
@@ -713,6 +715,7 @@ export class ToolRouter implements ToolExecutorAdapter {
       });
       deniedNativeParts.push({
         functionResponse: {
+          id: request.callId,
           name: request.name,
           response: { error: output, reasonCode: decision.reasonCode },
         },
@@ -783,6 +786,7 @@ export class ToolRouter implements ToolExecutorAdapter {
         name: request.name,
         callId: request.callId,
         args: request.args,
+        ...(request.metadata ? { metadata: request.metadata } : {}),
       })),
       signal,
       (response) => {
@@ -944,7 +948,11 @@ export class ToolRouter implements ToolExecutorAdapter {
               ? output
               : { result: output };
           return {
-            functionResponse: { name: req.name, response: responsePayload },
+            functionResponse: {
+              id: req.callId,
+              name: req.name,
+              response: responsePayload,
+            },
           };
         }
         const query = (req.args.query as string)?.trim() || "";
@@ -1111,12 +1119,20 @@ export class ToolRouter implements ToolExecutorAdapter {
           : { result: output };
 
       return {
-        functionResponse: { name: req.name, response: responsePayload },
+        functionResponse: {
+          id: req.callId,
+          name: req.name,
+          response: responsePayload,
+        },
       };
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
       return {
-        functionResponse: { name: req.name, response: { error: msg } },
+        functionResponse: {
+          id: req.callId,
+          name: req.name,
+          response: { error: msg },
+        },
       };
     }
   }
