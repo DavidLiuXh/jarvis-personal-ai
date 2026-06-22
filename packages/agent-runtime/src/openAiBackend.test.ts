@@ -99,6 +99,148 @@ describe("OpenAiChatCompletionsBackend", () => {
     ]);
   });
 
+  it("preserves reasoning_content for thinking-mode tool result resume", async () => {
+    const backend = new OpenAiChatCompletionsBackend({
+      apiKey: "test-key",
+      model: "gpt-test",
+      fetchFn: vi.fn(
+        async () =>
+          new Response(
+            sse(
+              { choices: [{ delta: { reasoning_content: "Need a tool. " } }] },
+              {
+                choices: [
+                  {
+                    delta: {
+                      tool_calls: [
+                        {
+                          index: 0,
+                          id: "call-1",
+                          function: {
+                            name: "recall_memory",
+                            arguments: '{"query":"model"}',
+                          },
+                        },
+                      ],
+                    },
+                  },
+                ],
+              },
+            ),
+            { status: 200 },
+          ),
+      ) as unknown as typeof fetch,
+    });
+
+    const events = [];
+    for await (const event of backend.sendTurn(
+      {
+        messages: [{ role: "user", blocks: [{ type: "text", text: "hi" }] }],
+        tools: [{ name: "recall_memory", parameters: { type: "object" } }],
+      },
+      new AbortController().signal,
+    )) {
+      events.push(event);
+    }
+
+    expect(events).toEqual([
+      {
+        type: "tool_call",
+        request: {
+          name: "recall_memory",
+          callId: "call-1",
+          args: { query: "model" },
+          metadata: {
+            openai: {
+              reasoningContent: "Need a tool. ",
+            },
+          },
+        },
+      },
+    ]);
+
+    const compiler = new OpenAiPromptCompiler();
+    expect(
+      compiler.compileToolResults(
+        [
+          {
+            name: "recall_memory",
+            callId: "call-1",
+            status: "success",
+            output: "memory result",
+          },
+        ],
+        [events[0].request],
+      )[0],
+    ).toMatchObject({
+      role: "assistant",
+      metadata: { openaiReasoningContent: "Need a tool. " },
+    });
+  });
+
+  it("sends reasoning_content back on assistant tool-call messages", async () => {
+    const compiler = new OpenAiPromptCompiler();
+    const messages = compiler.compileToolResults(
+      [
+        {
+          name: "recall_memory",
+          callId: "call-1",
+          status: "success",
+          output: "memory result",
+        },
+      ],
+      [
+        {
+          name: "recall_memory",
+          callId: "call-1",
+          args: { query: "model" },
+          metadata: {
+            openai: {
+              reasoningContent: "Need a tool. ",
+            },
+          },
+        },
+      ],
+    );
+    const fetchFn = vi.fn(async (_url, init) => {
+      const body = JSON.parse(String(init?.body));
+      expect(body.messages[0]).toMatchObject({
+        role: "assistant",
+        reasoning_content: "Need a tool. ",
+        tool_calls: [
+          {
+            id: "call-1",
+            type: "function",
+            function: {
+              name: "recall_memory",
+              arguments: JSON.stringify({ query: "model" }),
+            },
+          },
+        ],
+      });
+      return new Response(sse({ choices: [{ delta: { content: "done" } }] }), {
+        status: 200,
+      });
+    }) as unknown as typeof fetch;
+    const backend = new OpenAiChatCompletionsBackend({
+      apiKey: "test-key",
+      model: "gpt-test",
+      fetchFn,
+    });
+
+    const events = [];
+    for await (const event of backend.sendTurn(
+      {
+        messages,
+      },
+      new AbortController().signal,
+    )) {
+      events.push(event);
+    }
+
+    expect(events).toEqual([{ type: "content", text: "done" }]);
+  });
+
   it("requires an API key", () => {
     expect(
       () => new OpenAiChatCompletionsBackend({ apiKey: "", model: "gpt" }),

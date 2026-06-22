@@ -37,6 +37,10 @@ type OpenAiToolCallAccumulator = {
   argumentsText: string;
 };
 
+type OpenAiToolRequestMetadata = {
+  reasoningContent?: string;
+};
+
 function assertApiKey(apiKey: string): void {
   if (!apiKey.trim()) {
     throw new Error(
@@ -57,9 +61,14 @@ function toOpenAiMessage(message: LlmMessage): Record<string, unknown> {
     (block) => block.type === "tool_call",
   );
   if (message.role === "assistant" && toolCallBlocks.length > 0) {
+    const reasoningContent =
+      typeof message.metadata?.openaiReasoningContent === "string"
+        ? message.metadata.openaiReasoningContent
+        : "";
     return {
       role: "assistant",
       content: textFromBlocks(message.blocks) || null,
+      ...(reasoningContent ? { reasoning_content: reasoningContent } : {}),
       tool_calls: toolCallBlocks.map((block) => ({
         id: block.callId,
         type: "function",
@@ -113,9 +122,20 @@ export class OpenAiPromptCompiler implements PromptCompiler {
     const requestById = new Map(
       requests.map((request) => [request.callId, request]),
     );
+    const reasoningContent = requests
+      .map((request) => request.metadata?.openai)
+      .map((metadata) =>
+        metadata && typeof metadata === "object"
+          ? (metadata as OpenAiToolRequestMetadata).reasoningContent
+          : undefined,
+      )
+      .find((value): value is string => Boolean(value));
     return [
       {
         role: "assistant",
+        ...(reasoningContent
+          ? { metadata: { openaiReasoningContent: reasoningContent } }
+          : {}),
         blocks: results.map((result) => {
           const request = requestById.get(result.callId);
           return {
@@ -264,6 +284,7 @@ export class OpenAiChatCompletionsBackend implements LlmBackend {
 
       const decoder = new TextDecoder();
       const toolCalls = new Map<number, OpenAiToolCallAccumulator>();
+      let reasoningContent = "";
       let buffer = "";
       for await (const chunk of response.body as unknown as AsyncIterable<Uint8Array>) {
         buffer += decoder.decode(chunk, { stream: true });
@@ -275,6 +296,17 @@ export class OpenAiChatCompletionsBackend implements LlmBackend {
           const delta = (parsed as any).choices?.[0]?.delta ?? {};
           if (typeof delta.content === "string" && delta.content) {
             yield { type: "content", text: delta.content };
+          }
+          if (
+            typeof delta.reasoning_content === "string" &&
+            delta.reasoning_content
+          ) {
+            reasoningContent += delta.reasoning_content;
+          } else if (
+            typeof delta.reasoning?.content === "string" &&
+            delta.reasoning.content
+          ) {
+            reasoningContent += delta.reasoning.content;
           }
           for (const toolCall of delta.tool_calls ?? []) {
             const index = toolCall.index ?? 0;
@@ -303,6 +335,9 @@ export class OpenAiChatCompletionsBackend implements LlmBackend {
             name: call.name,
             callId: call.id,
             args: parseArgs(call.argumentsText),
+            ...(reasoningContent
+              ? { metadata: { openai: { reasoningContent } } }
+              : {}),
           } satisfies RuntimeToolRequest,
         };
       }

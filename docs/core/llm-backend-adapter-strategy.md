@@ -1,108 +1,64 @@
 # LLM Backend Adapter Strategy
 
-This document records the current feasibility assessment and migration strategy
-for supporting LLM backends other than Gemini CLI in Jarvis.
+本文档描述 Jarvis 当前的 LLM backend 架构、已实现能力、配置方式、兼容边界和后续验证工作。
 
-For the broader goal of running Jarvis without importing, initializing, or
-depending on Gemini CLI at all, see
-`docs/core/gemini-cli-decoupling-roadmap.md`. That roadmap is stricter than this
-backend adapter strategy: switching the main chat model is only one part of
-fully removing Gemini CLI as a required runtime dependency.
+更严格的 Gemini CLI 解耦目标参见
+`docs/core/gemini-cli-decoupling-roadmap.md`。本文聚焦模型协议与主响应执行，解耦
+roadmap 还覆盖启动、配置、session、memory、policy、日志和依赖管理。
 
-## Current Assessment
+## 1. Current Assessment
 
-Jarvis can support additional LLM backends, but today this is not a
-configuration-only switch for the main chat path.
+Jarvis 的主响应路径已经不再以 Gemini CLI protocol 作为内部 runtime contract。
 
-Recent intent-driven runtime work has already moved important Jarvis semantics
-out of Gemini-specific code:
+当前架构支持两条生产路径：
 
-- `packages/intent-runtime` owns intent lifecycle primitives, execution plans,
-  confidence gates, and the new runtime executor.
-- `ToolExecutorAdapter` and `IntentExecutor` provide backend-neutral execution
-  contracts for tool-backed work.
-- `JarvisIntentResolverAdapter` isolates Jarvis core `IntentResolver` behind a
-  runtime adapter.
-- Intent matrix evaluation can run through `DefaultIntentRuntime`, rather than
-  constructing Jarvis resolver internals directly.
+- `gemini`：Gemini CLI compatibility runtime；
+- `openai`：OpenAI-compatible standalone runtime。
 
-The remaining hard coupling is the main conversation loop. It still follows the
-Gemini CLI protocol:
+当 `llmBackend.provider=openai` 时：
+
+- `JarvisManager` 创建 `StandaloneJarvisAgent`；
+- `BackgroundTaskRunner` 创建独立的 standalone agent；
+- 不构造 `GeminiClient`；
+- 不加载 Gemini CLI config、PolicyEngine 或 core events；
+- 主响应、streaming、tool loop、memory injection、session 写入均使用
+  Jarvis-owned runtime contracts。
+
+Gemini CLI 已成为可选 compatibility layer，不再是 standalone 主路径的隐式协议。
+
+## 2. Target Architecture
 
 ```text
-agent.ts
-  -> Gemini client sendMessageStream()
-  -> GeminiEventType.Content / ToolCallRequest / Error
-  -> Gemini Part[] / functionResponse tool result format
-  -> ToolRouter.route()
-  -> send tool response parts back into Gemini stream loop
+Jarvis application
+  -> AgentRuntime
+      -> IntentRuntime
+      -> MemoryRuntime
+      -> SkillRuntime
+      -> ResponseComposer
+      -> ToolLoopRuntime
+          -> LlmBackend
+          -> PromptCompiler
+          -> ToolExecutorAdapter
+
+Backend adapters
+  -> Gemini compatibility adapter
+  -> OpenAI-compatible adapter
+  -> future Anthropic / vLLM / local adapters
 ```
 
-This means Jarvis can already swap some backend-like components, but the primary
-chat backend still depends on Gemini CLI event and tool-result shapes.
+核心设计原则：
 
-## Feasibility By Component
+1. Provider-specific protocol 只存在于 backend adapter 边界。
+2. Streaming、retry、tool sequencing 和 completion validation 由 runtime 管理。
+3. Tool schema 和执行结果使用 Jarvis-owned contracts。
+4. Backend 切换不能改变 intent、memory、policy 和 execution contract。
+5. 工具执行成功必须来自实际 tool result，不能接受模型自述。
 
-### Intent Resolver
+## 3. Runtime Contracts
 
-Feasibility: high.
+### 3.1 LlmBackend
 
-`IntentResolver` already accepts a `modelClient`, and P4 introduced
-`JarvisIntentResolverAdapter`. This makes it realistic to use local Ollama,
-OpenAI, Anthropic, or another JSON-producing model for intent understanding.
-
-Remaining work:
-
-- Provide model-specific `IntentModelJsonClient` implementations.
-- Reuse or specialize `IntentJsonRepairAdapter`.
-- Add backend-specific eval runs to compare classification and policy behavior.
-
-### Session Summarizer / Reflection / Distillation
-
-Feasibility: high.
-
-These flows are mostly single prompt -> text or JSON output, with no tool-calling
-loop. They are good early candidates for non-Gemini backends.
-
-Remaining work:
-
-- Normalize timeout, retry, and JSON repair behavior across providers.
-- Track quality and latency separately by backend.
-- Keep output schemas backend-independent.
-
-### Main Chat Backend
-
-Feasibility: medium-high, but requires an adapter layer.
-
-The core problem is not text generation. The hard part is the conversation loop:
-streaming, tool calls, tool results, retries, and final response validation are
-currently expressed in Gemini CLI terms.
-
-To support other backends, Jarvis needs a backend-neutral `LlmBackend` interface
-and a message/tool event protocol owned by Jarvis.
-
-### Backends Without Native Tool Calling
-
-Feasibility: possible, but should be treated as a different execution mode.
-
-Local models or simple chat-completion backends may not reliably emit native
-tool calls. For these, Jarvis should not depend on model-driven tool invocation.
-Instead, the runtime should use intent understanding plus `IntentExecutor` to
-execute deterministic steps.
-
-Recommended modes:
-
-- `native_tool_calling`: backend emits structured tool calls.
-- `text_action_calling`: backend emits JSON actions that Jarvis parses and
-  repairs.
-- `planner_only`: backend produces reasoning/content, while `IntentExecutor`
-  performs deterministic tool-backed obligations.
-
-## Required Abstractions
-
-### LLM Backend
-
-Jarvis should own the canonical backend interface:
+`packages/agent-runtime` 定义 backend-neutral 主对话协议：
 
 ```ts
 export type LlmBackend = {
@@ -110,154 +66,159 @@ export type LlmBackend = {
   getModel(): string;
   getCapabilities(): LlmBackendCapabilities;
 };
-
-export type LlmEvent =
-  | { type: "content"; text: string }
-  | { type: "tool_call"; request: RuntimeToolRequest }
-  | { type: "error"; error: unknown }
-  | { type: "metadata"; value: Record<string, unknown> };
 ```
 
-Gemini CLI should become `GeminiCliBackendAdapter`, not the protocol used by the
-Jarvis runtime itself.
+标准事件包括：
 
-### Backend Capabilities
+- content delta；
+- structured tool call；
+- metadata；
+- backend error。
 
-Each backend should declare capabilities so the runtime can choose the right
-strategy:
+Runtime 不需要知道 provider 使用 Gemini parts、OpenAI messages 还是其他 content
+blocks。
 
-```ts
-export type LlmBackendCapabilities = {
-  streaming: boolean;
-  nativeToolCalling: boolean;
-  jsonMode: boolean;
-  multimodalInput: boolean;
-  maxContextTokens: number | null;
-};
-```
+### 3.2 Backend Capabilities
 
-This lets Jarvis choose between native tool calls, JSON action parsing, or
-deterministic runtime execution.
+Backend 显式声明：
 
-### Prompt / Message Compiler
+- streaming；
+- native tool calling；
+- JSON mode；
+- multimodal input；
+- context window。
 
-System prompt construction, memory injection, tool results, and retry prompts
-should be compiled into backend-specific messages at the boundary:
+Runtime 据此选择 native tool calling、deterministic execution 或未来的
+text-action calling。
 
-```ts
-export type PromptCompiler = {
-  compileInitialTurn(input: RuntimeTurnContext): BackendMessage[];
-  compileToolResults(results: RuntimeToolResult[]): BackendMessage[];
-  compileRetryPrompt(input: RuntimeRetryContext): BackendMessage[];
-};
-```
+### 3.3 PromptCompiler
 
-The runtime should not know whether the provider expects Gemini `Part[]`, OpenAI
-messages, Anthropic content blocks, or plain text.
+`PromptCompiler` 负责把 runtime messages 编译为 provider-specific messages：
 
-### Tool Calling Bridge
+- initial system/user messages；
+- assistant tool-call message；
+- tool result message；
+- retry / missing-step prompt。
 
-Runtime tools should use `RuntimeToolRequest` / `RuntimeToolResult`, not
-provider-specific shapes.
+这层存在的原因是不同 provider 对 tool result 的消息顺序和格式要求不同，不能把
+这些差异泄漏到 `AgentRuntime`。
 
-Provider adapters are responsible for translating:
+### 3.4 Runtime Tool Contract
 
-- Gemini function call parts <-> `RuntimeToolRequest`
-- OpenAI tool calls <-> `RuntimeToolRequest`
-- Anthropic tool_use/tool_result blocks <-> `RuntimeToolRequest`
-- JSON action text <-> `RuntimeToolRequest`
+工具调用统一使用：
 
-P5 already added the central `ToolExecutorAdapter` shape. The next step is to
-make the main `agent.ts` loop consume it through a backend-neutral
-`AgentRuntime`.
+- `RuntimeToolRequest`；
+- `RuntimeToolResult`；
+- `LlmToolSchema`；
+- `ToolExecutorAdapter`。
 
-## Recommended Migration Order
+Jarvis 的 `RuntimeToolRegistry` 是 tool schema 的主来源。Gemini 和 OpenAI adapter
+都从同一 registry 编译自己的工具声明。
 
-1. Define `LlmBackend`, `LlmEvent`, `LlmBackendCapabilities`, and
-   `PromptCompiler` in a runtime package.
-2. Implement `GeminiCliBackendAdapter` that preserves current behavior exactly.
-3. Move the current `agent.ts` stream/tool loop into runtime-owned loop
-   orchestration.
-4. Connect `AgentRuntime` to `IntentRuntime`, memory runtime, skill retrieval,
-   and `IntentExecutor`.
-5. Add a non-Gemini backend for a low-risk path first, such as summarizer or
-   intent resolver.
-6. Add a main-chat backend with native tool calling, such as OpenAI or Anthropic.
-7. Add a local-model backend in `planner_only` or `text_action_calling` mode.
-8. Run intent matrix and execution-contract evals per backend.
+## 4. Implemented Components
 
-## Current Implementation Status
+### Agent Runtime
 
-Implemented in the P6 completion pass:
+`packages/agent-runtime` 已实现：
 
-- `packages/agent-runtime/src/llmBackend.ts` defines the backend-neutral main
-  chat protocol:
-  - `LlmBackend`
-  - `LlmEvent`
-  - `LlmBackendCapabilities`
-  - `LlmMessage`
-  - `PromptCompiler`
-  - `ToolLoopRuntime`
-  - `ToolLoopPlanner`
-- `packages/agent-runtime/src/openAiBackend.ts` implements an
-  OpenAI-compatible Chat Completions main-chat backend:
-  - streaming content deltas -> `LlmEvent`;
-  - streaming `tool_calls` accumulation -> `RuntimeToolRequest`;
-  - OpenAI tool schemas from runtime `LlmToolSchema`;
-  - `OpenAiPromptCompiler` emits the required assistant `tool_calls` message
-    before tool result messages.
-- `ToolLoopRuntime` now owns the main response loop semantics that were
-  previously hard-coded in `agent.ts`:
-  - content streaming and buffering before required tool execution;
-  - backend-native tool call collection;
-  - tool execution through `ToolExecutorAdapter`;
-  - duplicate tool-call suppression through a planner hook;
-  - deterministic multi-intent tool enforcement;
-  - missing-step enforcement prompts;
-  - post-content tool completion, such as channel push auto-completion;
-  - max tool iteration guard;
-  - consecutive tool failure guard;
-  - retry and retry-exhaustion cleanup hooks.
-- `jarvis/src/core/geminiBackendAdapter.ts` implements the Gemini CLI
-  compatibility boundary:
-  - Gemini `sendMessageStream()` -> `LlmEvent`;
-  - Gemini `ToolCallRequest` -> `RuntimeToolRequest`;
-  - runtime tool results -> Gemini `functionResponse` blocks;
-  - Gemini `Part[]` -> runtime `LlmMessage[]`.
-- `agent.ts` no longer directly runs the Gemini stream/tool loop. The Jarvis
-  application adapter is now explicit:
-  - `jarvis/src/core/llmBackendFactory.ts` selects the backend;
-  - `jarvis/src/core/jarvisRuntimeAdapter.ts` wires `ToolRouter` as a
-    `ToolExecutorAdapter`;
-  - `jarvisRuntimeAdapter.ts` converts Jarvis `IntentStepRuntime` behavior into
-    runtime `ToolLoopPlanner` hooks;
-  - `AgentRuntime.handleTurn()` owns the final LLM/tool loop for the main
-    response path.
-- `jarvis/src/core/llmBackendFactory.ts` selects `gemini` or `openai` from
-  `llmBackend.provider`, extracts Gemini CLI tool declarations into runtime
-  `LlmToolSchema[]`, and passes those schemas to non-Gemini backends.
-- `AgentRuntime.handleTurn()` can now optionally orchestrate the LLM backend
-  loop directly through `llmLoop`, so the package-level facade can own both
-  pre-response runtime state and backend-driven tool execution.
-- `jarvis/src/core/agent.ts#runUnifiedRuntimeTurn()` is the Jarvis entry point
-  into that facade. It builds turn-specific inputs and records Jarvis
-  side-effects, but runtime sequencing lives in `AgentRuntime` and
-  `ToolLoopRuntime`.
-- `npm run llm:backend:eval` runs offline backend-aware smoke evals for the
-  neutral loop and OpenAI-compatible adapter.
+- `AgentRuntime.handleTurn()`；
+- `RuntimeContext`；
+- `ResponseComposer`；
+- `ToolLoopRuntime`；
+- `ToolLoopPlanner`；
+- retry 和 retry exhaustion；
+- tool iteration guard；
+- consecutive tool failure guard；
+- deterministic multi-intent enforcement；
+- missing-step enforcement；
+- final completion contract。
 
-The key design decision is that provider-specific protocol translation belongs
-at the backend adapter boundary, while loop safety, tool execution sequencing,
-and final completion obligations belong to runtime. This prevents a future
-OpenAI, Anthropic, Ollama, or local backend from inheriting Gemini `Part[]` and
-Gemini event semantics as implicit Jarvis architecture.
+### OpenAI-Compatible Backend
 
-Current main-chat backend configuration:
+`OpenAiChatCompletionsBackend` 已支持：
+
+- Chat Completions streaming；
+- content delta；
+- streaming tool-call accumulation；
+- runtime tool schema 编译；
+- assistant tool-call 与 tool-result message 编译；
+- OpenAI、vLLM 和兼容网关的 `baseUrl` 配置；
+- timeout、API key、organization 和 project 配置。
+
+OpenAI-compatible backend 是当前 standalone 主对话实现。
+
+### Gemini Compatibility Backend
+
+Gemini compatibility 代码集中在显式的 `gemini*` 文件中：
+
+- `geminiAgent.ts`；
+- `geminiAgentInitializer.ts`；
+- `geminiBackendAdapter.ts`；
+- `geminiRuntimeAdapter.ts`；
+- `geminiLlmBackendFactory.ts`。
+
+Adapter 负责：
+
+- Gemini `sendMessageStream()` 转为 `LlmEvent`；
+- Gemini tool call 转为 `RuntimeToolRequest`；
+- `RuntimeToolResult` 转为 Gemini `functionResponse`；
+- runtime messages 转为 Gemini parts。
+
+Gemini CLI config、PolicyEngine 和 core events 只在 compatibility mode 动态加载。
+
+### Standalone Agent
+
+`StandaloneJarvisAgent` 已接入：
+
+- OpenAI-compatible backend；
+- `AgentRuntime` / `ToolLoopRuntime`；
+- intent routing；
+- memory contract、retrieval 和 injection；
+- Jarvis tool registry；
+- `ToolRouter`；
+- task、push、memory recall、ask_user；
+- multi-intent step runtime；
+- Jarvis JSONL session transcript；
+- background task isolation。
+
+Standalone runtime 不使用 Gemini CLI scheduler。未注册的非 native tool 会返回明确的
+失败结果，而不是静默模拟成功。
+
+### Single-Call Generation
+
+`TextGenerationBackend` 用于不需要主 tool loop 的流程：
+
+- text generation；
+- JSON generation；
+- timeout；
+- retry；
+- JSON repair；
+- backend metadata。
+
+Intent resolver 可以通过 `IntentModelClient` 使用 Ollama 或
+OpenAI-compatible model。主对话 backend 与 routing、summarizer、reflection、
+embedding provider 相互独立。
+
+## 5. Configuration
+
+### Gemini Compatibility
 
 ```json
 {
   "llmBackend": {
-    "provider": "gemini",
+    "provider": "gemini"
+  }
+}
+```
+
+Gemini 是当前默认值，使用 Gemini CLI authentication 和 compatibility tools。
+
+### OpenAI-Compatible Standalone
+
+```json
+{
+  "llmBackend": {
+    "provider": "openai",
     "openai": {
       "apiKeyEnv": "OPENAI_API_KEY",
       "model": "gpt-4.1",
@@ -268,77 +229,170 @@ Current main-chat backend configuration:
 }
 ```
 
-Use `provider: "openai"` for OpenAI or OpenAI-compatible gateways. Ollama/local
-planner-only backend is intentionally not implemented in this phase.
+通过环境变量提供密钥：
 
-Current test coverage:
+```bash
+export OPENAI_API_KEY="..."
+npm start
+```
 
-- `packages/agent-runtime/src/llmBackend.test.ts`
-  - streams content, executes tool calls, and resumes with tool results;
-  - executes deterministic planner steps when the model omits required tools;
-  - retries retryable backend errors and calls the exhaustion hook.
-- `jarvis/src/core/geminiBackendAdapter.test.ts`
-  - translates neutral messages into Gemini parts;
-  - emits neutral content/tool events;
-  - round-trips Gemini `functionResponse` through `RuntimeToolResult`;
-  - verifies prompt compilation does not expose Gemini `Part[]` to runtime.
-- `packages/agent-runtime/src/openAiBackend.test.ts`
-  - reconstructs streaming OpenAI tool calls;
-  - verifies API key validation;
-  - verifies assistant tool-call + tool-result prompt compilation.
-- `jarvis/src/core/llmBackendFactory.test.ts`
-  - verifies backend selection and tool schema extraction.
-- `scripts/run_llm_backend_evals.ts`
-  - validates Gemini-compatible and OpenAI-compatible backend/tool-loop
-    behavior offline.
+OpenAI-compatible gateway 或 vLLM 可以通过修改 `baseUrl` 和 `model` 接入。
 
-## Backend Candidates
+当前主对话正式支持：
 
-### Gemini CLI Adapter
+| Provider                | Main Chat       | Streaming         | Native Tools            | Runtime Mode                 |
+| ----------------------- | --------------- | ----------------- | ----------------------- | ---------------------------- |
+| Gemini CLI              | Yes             | Yes               | Yes                     | Compatibility                |
+| OpenAI-compatible       | Yes             | Yes               | Yes                     | Standalone                   |
+| Anthropic native        | No              | -                 | -                       | Future adapter               |
+| Ollama native main chat | No              | -                 | -                       | Not planned in current phase |
+| vLLM OpenAI API         | Compatible path | Depends on server | Depends on model/server | Standalone                   |
 
-Purpose: compatibility backend.
+## 6. Dependency Boundary
 
-This should remain the first adapter and preserve current behavior. It validates
-that the abstraction did not regress the existing path.
+根 workspace 不再包含 Gemini CLI packages。Gemini compatibility packages 通过根
+`optionalDependencies` 引用：
 
-### OpenAI / Anthropic Adapter
+```json
+{
+  "optionalDependencies": {
+    "@google/gemini-cli": "file:gemini-cli/packages/cli",
+    "@google/gemini-cli-core": "file:gemini-cli/packages/core"
+  }
+}
+```
 
-Purpose: production-grade alternate main chat backend.
+这意味着：
 
-These are good candidates because they support structured tool calling and
-streaming. The primary work is message translation and tool-result formatting.
+- standalone runtime 不需要把 Gemini CLI 作为 workspace 构建；
+- compatibility mode 仍可通过根目录 `npm install` 安装所需依赖；
+- 缺少 Gemini compatibility dependencies 时，启动错误会明确提示安装依赖或切换
+  `llmBackend.provider=openai`。
 
-### Ollama / Local Model Adapter
+`runtime:check-boundaries` 会阻止非 `gemini*` Jarvis core 文件静态 import Gemini CLI
+或 `@google/genai`。
 
-Purpose: local and low-cost execution.
+## 7. Quality Gates
 
-This is attractive for intent resolution, summarization, and reflection. For
-main chat, local models should initially use `planner_only` or
-`text_action_calling` because native tool calling may be less reliable.
+Backend eval 已拆分为：
 
-## Risks
+```bash
+npm run llm:backend:eval
+npm run llm:backend:eval:standalone
+npm run llm:backend:eval:compatibility
+```
 
-- Tool calling semantics differ across providers; blindly mapping one provider's
-  protocol to another can create subtle action-completion bugs.
-- Backends without strong structured output may increase JSON repair and fallback
-  rates.
-- Prompt token budgets and context-window behavior differ, so memory injection
-  policy must be evaluated per backend.
-- The main response must not claim success unless the runtime has observed
-  successful tool results. This is especially important for channel push,
-  task scheduling, file writes, shell commands, and subagent delegation.
+Standalone 标准门禁：
 
-## Near-Term Recommendation
+```bash
+npm run runtime:quality:standalone
+```
 
-Do not start by replacing Gemini CLI in the main chat path.
+完整 runtime 门禁：
 
-Instead:
+```bash
+npm run runtime:quality
+```
 
-1. Keep Gemini CLI as the compatibility backend.
-2. Extract `AgentRuntime.handleTurn` and `LlmBackend` first.
-3. Use non-Gemini models first for lower-risk single-call flows.
-4. Only then add a second main-chat backend and verify it with the same runtime
-   evals.
+当前离线覆盖包括：
 
-The strategic goal is to make Gemini CLI one backend adapter among several, not
-the implicit protocol of the Jarvis runtime.
+- Gemini-compatible prompt compiler 和 tool loop；
+- OpenAI-compatible streaming tool call；
+- runtime tool result round-trip；
+- deterministic required-tool enforcement；
+- retry exhaustion；
+- memory boundary；
+- intent matrix；
+- runtime package build；
+- static dependency boundary。
+
+Standalone suite 不加载 Gemini backend adapter，防止测试通过但进程仍隐式依赖
+Gemini compatibility code。
+
+## 8. Current Limitations
+
+当前架构闭环不等于所有 provider 都已完成生产验证。
+
+主要限制：
+
+- OpenAI standalone path 需要真实凭据和真实服务的环境级 E2E；
+- Anthropic 尚无 native adapter；
+- vLLM 的 tool calling 能力取决于服务端和所选模型；
+- 外部 subagent 可能仍自行使用 Gemini API，需要逐个迁移为 configurable provider；
+- multimodal 输入在不同 backend 上尚未形成统一生产验收矩阵；
+- backend latency、cost、retry、tool success 和 memory boundary 尚缺真实环境长期统计；
+- `runtimeLogger` 仍以兼容日志输出为主，尚未形成统一结构化 trace sink。
+
+## 9. Next Work
+
+下一阶段不再继续重构主 runtime，而是验证其生产独立性。
+
+### P0. Standalone Clean-Install CI
+
+- 不初始化 Gemini CLI submodule；
+- 使用 `npm install --omit=optional` 或等价隔离环境；
+- 构建三个 runtime packages；
+- 运行 `runtime:quality:standalone`；
+- 验证 standalone 入口不会加载 Gemini modules。
+
+### P0. Standalone End-To-End
+
+覆盖：
+
+- server startup；
+- normal and streaming response；
+- native tool calling；
+- task、push、memory recall；
+- session write、resume、time-scoped recall；
+- background tasks；
+- external personal-memory boundary；
+- failed tool result prevents success claim。
+
+### P1. Real Backend Matrix
+
+至少验证：
+
+- OpenAI；
+- 一个 OpenAI-compatible gateway 或 vLLM deployment。
+
+统计：
+
+- latency；
+- retry rate；
+- tool-call success rate；
+- tool-result completion correctness；
+- memory boundary pass rate；
+- token/cost；
+- failure feedback promotion。
+
+### P1. External Agent Provider Adapters
+
+- 盘点直接调用 Gemini API/OAuth 的 external agents；
+- 定义 external agent model provider contract；
+- 优先迁移 investment-analysis；
+- 保持 subagent `RuntimeContext` 和 `MemoryContract` 不变。
+
+### P2. Structured Runtime Tracing
+
+- 为 intent、memory、backend、tool、execution 建立统一 trace id；
+- 增加 JSON sink；
+- runtime quality dashboard 消费真实运行数据；
+- 对 retry、repair、tool failure 和 policy denial 建立稳定 reason codes。
+
+## 10. Definition Of Done
+
+Backend adapter 层当前的工程闭环标准已经满足：
+
+- 主 runtime 使用 backend-neutral protocol；
+- Gemini CLI 是 compatibility adapter；
+- OpenAI-compatible backend 可作为 standalone 主响应 backend；
+- tool schema、tool request、tool result 和 loop sequencing 归 Jarvis runtime 所有；
+- standalone quality gate 不加载 Gemini adapter；
+- Gemini compatibility path 保留并可单独验证。
+
+下一阶段的完成标准是生产验证：
+
+- 无 Gemini clean install 环境可启动和运行 Jarvis；
+- standalone E2E 覆盖主响应、工具、memory、session 和 background task；
+- 至少一个真实非 Gemini backend 通过完整质量矩阵；
+- 真实运行指标和失败样本进入 dashboard / feedback loop。

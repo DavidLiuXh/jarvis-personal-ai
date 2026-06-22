@@ -16,6 +16,7 @@ export type RuntimeToolRequest = {
   name: string;
   callId: string;
   args: Record<string, unknown>;
+  metadata?: Record<string, unknown>;
 };
 
 export type RuntimeToolResult = {
