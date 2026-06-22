@@ -197,6 +197,43 @@ function normalizeDuplicateDecision(
   );
 }
 
+function mergeMetadata(
+  base: Record<string, unknown> | undefined,
+  incoming: Record<string, unknown>,
+): Record<string, unknown> {
+  const merged = { ...(base ?? {}) };
+  for (const [key, value] of Object.entries(incoming)) {
+    const existing = merged[key];
+    if (
+      existing &&
+      typeof existing === "object" &&
+      !Array.isArray(existing) &&
+      value &&
+      typeof value === "object" &&
+      !Array.isArray(value)
+    ) {
+      merged[key] = {
+        ...(existing as Record<string, unknown>),
+        ...(value as Record<string, unknown>),
+      };
+    } else if (merged[key] === undefined) {
+      merged[key] = value;
+    }
+  }
+  return merged;
+}
+
+function withTurnMetadata(
+  requests: RuntimeToolRequest[],
+  metadata: Record<string, unknown>,
+): RuntimeToolRequest[] {
+  if (Object.keys(metadata).length === 0) return requests;
+  return requests.map((request) => ({
+    ...request,
+    metadata: mergeMetadata(request.metadata, metadata),
+  }));
+}
+
 export class ToolLoopRuntime {
   constructor(private readonly options: ToolLoopRuntimeOptions) {}
 
@@ -232,6 +269,7 @@ export class ToolLoopRuntime {
           const shouldBufferPreToolContent =
             this.options.planner?.shouldBufferPreToolContent?.() ?? false;
           const toolCallRequests: RuntimeToolRequest[] = [];
+          let turnMetadata: Record<string, unknown> = {};
           let turnTextAccumulated = "";
 
           for await (const event of this.options.backend.sendTurn(
@@ -262,6 +300,7 @@ export class ToolLoopRuntime {
             } else if (event.type === "error") {
               throw event.error;
             } else {
+              turnMetadata = mergeMetadata(turnMetadata, event.value);
               this.options.onMetadata?.(event.value);
             }
           }
@@ -278,10 +317,17 @@ export class ToolLoopRuntime {
               break;
             }
 
-            const duplicateDecision = normalizeDuplicateDecision(
-              toolCallRequests,
+            const duplicateDecisionRaw = normalizeDuplicateDecision(
+              withTurnMetadata(toolCallRequests, turnMetadata),
               this.options.planner,
             );
+            const duplicateDecision = {
+              executableRequests: withTurnMetadata(
+                duplicateDecisionRaw.executableRequests,
+                turnMetadata,
+              ),
+              syntheticResults: duplicateDecisionRaw.syntheticResults,
+            };
             duplicateDecision.executableRequests.forEach((request) =>
               toolsCalled.add(request.name),
             );
@@ -333,21 +379,25 @@ export class ToolLoopRuntime {
                 `🧭 [AgentRuntime] Generated content requires tool completion — invoking ${postContentRequest.name}.`,
               );
               toolsCalled.add(postContentRequest.name);
+              const postContentRequests = withTurnMetadata(
+                [postContentRequest],
+                turnMetadata,
+              );
               const postContentResults =
                 await this.options.toolExecutor.executeTools(
-                  [postContentRequest],
+                  postContentRequests,
                   input.signal,
                 );
               postContentResults.forEach((result) =>
                 this.options.onToolResult?.(result),
               );
               this.options.planner?.observeToolResults?.(
-                [postContentRequest],
+                postContentRequests,
                 postContentResults,
               );
               messages = this.options.promptCompiler.compileToolResults(
                 postContentResults,
-                [postContentRequest],
+                postContentRequests,
               );
               success = false;
               continue;
@@ -361,19 +411,23 @@ export class ToolLoopRuntime {
                   "🧭 [AgentRuntime] Suppressed pre-tool assistant text because deterministic multi-intent tool execution is required.",
                 );
               }
-              deterministicRequests.forEach((request) =>
+              const deterministicRequestsWithMetadata = withTurnMetadata(
+                deterministicRequests,
+                turnMetadata,
+              );
+              deterministicRequestsWithMetadata.forEach((request) =>
                 toolsCalled.add(request.name),
               );
               const deterministicResults =
                 await this.options.toolExecutor.executeTools(
-                  deterministicRequests,
+                  deterministicRequestsWithMetadata,
                   input.signal,
                 );
               deterministicResults.forEach((result) =>
                 this.options.onToolResult?.(result),
               );
               this.options.planner?.observeToolResults?.(
-                deterministicRequests,
+                deterministicRequestsWithMetadata,
                 deterministicResults,
               );
               const statePrompt =
@@ -381,7 +435,7 @@ export class ToolLoopRuntime {
               messages = [
                 ...this.options.promptCompiler.compileToolResults(
                   deterministicResults,
-                  deterministicRequests,
+                  deterministicRequestsWithMetadata,
                 ),
                 ...(statePrompt
                   ? [

@@ -327,6 +327,13 @@ export class OpenAiChatCompletionsBackend implements LlmBackend {
         }
       }
 
+      if (reasoningContent) {
+        yield {
+          type: "metadata",
+          value: { openai: { reasoningContent } },
+        };
+      }
+
       for (const call of toolCalls.values()) {
         if (!call.name) continue;
         yield {

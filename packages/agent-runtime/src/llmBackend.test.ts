@@ -152,6 +152,72 @@ describe("ToolLoopRuntime", () => {
     expect([...result.toolsCalled]).toEqual(["push_to_channel"]);
   });
 
+  it("propagates provider metadata to deterministic planner tool calls", async () => {
+    const request: RuntimeToolRequest = {
+      name: "push_to_channel",
+      callId: "det-1",
+      args: { channel: "wechat" },
+    };
+    const compiledRequests: RuntimeToolRequest[][] = [];
+    let observed = false;
+    const planner: ToolLoopPlanner = {
+      shouldBufferPreToolContent: () => true,
+      buildDeterministicToolRequests: () => (observed ? [] : [request]),
+      observeToolResults: () => {
+        observed = true;
+      },
+      buildStatePrompt: () => "tool completed",
+    };
+    const runtime = new ToolLoopRuntime({
+      backend: backendFromTurns([
+        [
+          {
+            type: "metadata",
+            value: {
+              openai: { reasoningContent: "Need deterministic tool. " },
+            },
+          },
+          { type: "content", text: "I will do that" },
+        ],
+        [{ type: "content", text: "pushed" }],
+      ]),
+      promptCompiler: {
+        ...compiler(),
+        compileToolResults: (results, requests = []) => {
+          compiledRequests.push(requests);
+          return [
+            {
+              role: "tool" as const,
+              blocks: results.map((result) => ({
+                type: "tool_result" as const,
+                name: result.name,
+                callId: result.callId,
+                result: result.output,
+              })),
+            },
+          ];
+        },
+      },
+      toolExecutor: toolExecutor((toolRequest) => ({
+        name: toolRequest.name,
+        callId: toolRequest.callId,
+        status: "success",
+        output: { ok: true },
+      })),
+      planner,
+    });
+
+    await runtime.run({
+      userPrompt: "push it",
+      initialMessages,
+      signal: new AbortController().signal,
+    });
+
+    expect(compiledRequests[0][0].metadata).toEqual({
+      openai: { reasoningContent: "Need deterministic tool. " },
+    });
+  });
+
   it("retries retryable backend errors and calls exhaustion hook when retries fail", async () => {
     const exhausted = vi.fn();
     const runtime = new ToolLoopRuntime({

@@ -145,6 +145,14 @@ describe("OpenAiChatCompletionsBackend", () => {
 
     expect(events).toEqual([
       {
+        type: "metadata",
+        value: {
+          openai: {
+            reasoningContent: "Need a tool. ",
+          },
+        },
+      },
+      {
         type: "tool_call",
         request: {
           name: "recall_memory",
@@ -170,12 +178,47 @@ describe("OpenAiChatCompletionsBackend", () => {
             output: "memory result",
           },
         ],
-        [events[0].request],
+        [events[1].request],
       )[0],
     ).toMatchObject({
       role: "assistant",
       metadata: { openaiReasoningContent: "Need a tool. " },
     });
+  });
+
+  it("emits reasoning metadata even when the model does not emit tool calls", async () => {
+    const backend = new OpenAiChatCompletionsBackend({
+      apiKey: "test-key",
+      model: "gpt-test",
+      fetchFn: vi.fn(
+        async () =>
+          new Response(
+            sse(
+              { choices: [{ delta: { reasoning_content: "Think first. " } }] },
+              { choices: [{ delta: { content: "answer" } }] },
+            ),
+            { status: 200 },
+          ),
+      ) as unknown as typeof fetch,
+    });
+
+    const events = [];
+    for await (const event of backend.sendTurn(
+      {
+        messages: [{ role: "user", blocks: [{ type: "text", text: "hi" }] }],
+      },
+      new AbortController().signal,
+    )) {
+      events.push(event);
+    }
+
+    expect(events).toEqual([
+      { type: "content", text: "answer" },
+      {
+        type: "metadata",
+        value: { openai: { reasoningContent: "Think first. " } },
+      },
+    ]);
   });
 
   it("sends reasoning_content back on assistant tool-call messages", async () => {
