@@ -1457,6 +1457,12 @@ Jarvis 会：
 - `ask_user`
 - `push_to_channel`
 - `task_*`
+- `read_file`
+- `write_file`
+- `read_many_files`
+- `glob`
+- `grep`
+- `run_shell_command`
 - `run_evolved_skill_*`
 
 #### save_memory
@@ -1501,9 +1507,24 @@ Jarvis 会：
 
 通过 `ChannelRegistry` 推送到 Feishu/WeChat 等渠道。
 
+#### workspace tools
+
+`read_file`、`write_file`、`read_many_files`、`glob`、`grep` 和 `run_shell_command`
+是 Jarvis-native workspace tools，不再依赖 Gemini CLI scheduler。
+
+这些工具的作用是让 OpenAI-compatible standalone runtime 也具备基础 workspace 操作能力。
+所有路径都会被限制在当前 workspace root 内；读文件会阻断常见敏感文件；shell 命令会阻断
+明显危险的系统/破坏性命令，并有 timeout 与输出截断。
+
+这样设计的原因是：workspace 操作是 agent 执行层的核心能力，如果继续只依赖 Gemini CLI
+内置工具，那么更换 LLM backend 时会失去文件读写、搜索和命令执行能力。把这些能力移到
+Jarvis-native runtime 后，Gemini 和 OpenAI-compatible backend 都可以消费同一套 tool
+contract。
+
 ### 15.2 标准工具
 
-非 native tools 交给 Gemini scheduler。
+非 native tools 在 Gemini compatibility path 中交给 Gemini scheduler；standalone path
+中未注册的工具会返回明确失败结果。
 
 特殊逻辑：
 

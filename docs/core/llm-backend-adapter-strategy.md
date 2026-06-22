@@ -115,6 +115,25 @@ text-action calling。
 Jarvis 的 `RuntimeToolRegistry` 是 tool schema 的主来源。Gemini 和 OpenAI adapter
 都从同一 registry 编译自己的工具声明。
 
+当前 Jarvis-owned runtime tools 包括 memory、task、channel、ask_user，以及
+Gemini CLI 迁移出来的 workspace 工具：
+
+- `read_file`
+- `write_file`
+- `read_many_files`
+- `glob`
+- `grep`
+- `run_shell_command`
+
+这些 workspace 工具由 `WorkspaceTools` 在 Jarvis runtime 层执行，路径被限制在当前
+workspace root 内，并带有基础安全策略，例如敏感文件读取阻断、路径逃逸阻断、shell
+危险命令阻断、timeout 和输出截断。
+
+这样设计的原因是：文件读写、搜索和 shell 是 agent 的基础能力，不能继续只存在于
+Gemini CLI scheduler 中。OpenAI-compatible backend 必须能消费同一套 Jarvis-owned
+tool schema 和 executor。Gemini compatibility path 会继续保留 Gemini CLI 自身的同名
+工具声明；`addToolsToGeminiRegistry()` 会跳过这些 workspace 同名工具，避免覆盖或重复注册。
+
 ## 4. Implemented Components
 
 ### Agent Runtime
@@ -177,6 +196,7 @@ Gemini CLI config、PolicyEngine 和 core events 只在 compatibility mode 动�
 - Jarvis tool registry；
 - `ToolRouter`；
 - task、push、memory recall、ask_user；
+- Jarvis-native workspace tools：`read_file`、`write_file`、`read_many_files`、`glob`、`grep`、`run_shell_command`；
 - multi-intent step runtime；
 - Jarvis JSONL session transcript；
 - background task isolation。

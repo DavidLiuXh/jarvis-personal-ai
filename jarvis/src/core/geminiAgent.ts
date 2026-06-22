@@ -69,6 +69,7 @@ import {
   type JarvisUnifiedRuntimeTurnResult,
 } from "./jarvisUnifiedRuntime.js";
 import { createGeminiToolInteractionRecorder } from "./geminiToolInteractionRecorder.js";
+import { WorkspaceTools } from "./workspaceTools.js";
 import type {
   RuntimeContentPart,
   RuntimeConversationContent,
@@ -129,6 +130,7 @@ export class JarvisAgent extends EventEmitter {
   private summarizerGenerateText: ((prompt: string) => Promise<string>) | null =
     null;
   private lightweight: boolean;
+  private readonly cwd: string;
   private conversationSummary = "";
   private pendingAskUsers = new Map<
     string,
@@ -150,6 +152,7 @@ export class JarvisAgent extends EventEmitter {
     this.sessionId = options.sessionId;
     this.memoryService = options.memoryService;
     this.lightweight = options.lightweight ?? false;
+    this.cwd = options.cwd;
     this.dynamicRegistry = new DynamicToolRegistry(options.cwd);
     this.agentInitializer = new AgentInitializer(
       options.sessionId,
@@ -227,6 +230,8 @@ export class JarvisAgent extends EventEmitter {
       this.taskCommandHandler,
       this.channelRegistry,
       createGeminiToolInteractionRecorder(),
+      undefined,
+      new WorkspaceTools({ root: this.cwd }),
     );
     // If setAskUserHandler was called before initialize(), apply it now.
     if (this.pendingAskUserWs !== null) {
@@ -587,6 +592,8 @@ export class JarvisAgent extends EventEmitter {
         this.taskCommandHandler,
         this.channelRegistry,
         createGeminiToolInteractionRecorder(),
+        undefined,
+        new WorkspaceTools({ root: this.cwd }),
       );
     }
   }

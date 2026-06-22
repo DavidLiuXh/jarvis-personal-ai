@@ -5,6 +5,9 @@
  */
 
 import { describe, it, expect, vi } from "vitest";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 
 vi.mock("../../../core/src/index.js", () => ({
   recordToolCallInteractions: vi.fn().mockResolvedValue(undefined),
@@ -13,6 +16,7 @@ vi.mock("../../../core/src/index.js", () => ({
 import { ToolRouter } from "./toolRouter.js";
 import type { MemoryContract } from "../memory-runtime/index.js";
 import type { StepMemoryDecision } from "../memory-runtime/types.js";
+import { WorkspaceTools } from "./workspaceTools.js";
 
 describe("ToolRouter", () => {
   const makeReq = (name: string, args: Record<string, unknown> = {}) => ({
@@ -30,6 +34,7 @@ describe("ToolRouter", () => {
       schedule?: ReturnType<typeof vi.fn>;
       pushSafe?: ReturnType<typeof vi.fn>;
       handleTool?: ReturnType<typeof vi.fn>;
+      workspaceRoot?: string;
     } = {},
   ) => {
     const saveFact = overrides.saveFact ?? vi.fn().mockResolvedValue(undefined);
@@ -53,6 +58,11 @@ describe("ToolRouter", () => {
       { getChat, getCurrentSequenceModel, config } as any,
       { handleTool } as any,
       { pushSafe } as any,
+      undefined,
+      undefined,
+      overrides.workspaceRoot
+        ? new WorkspaceTools({ root: overrides.workspaceRoot })
+        : undefined,
     );
     return {
       router,
@@ -324,18 +334,18 @@ describe("ToolRouter", () => {
 
   it("delegates standard tool calls to scheduler", async () => {
     const completedCall = {
-      request: { name: "read_file", callId: "call-read_file" },
+      request: { name: "external_tool", callId: "call-external_tool" },
       status: "success",
       response: {
-        responseParts: [{ text: "file content" }],
-        resultDisplay: "file content",
+        responseParts: [{ text: "external result" }],
+        resultDisplay: "external result",
       },
     };
     const schedule = vi.fn().mockResolvedValue([completedCall]);
     const { router } = makeRouter({ schedule });
 
     const onToolResponse = vi.fn();
-    const req = makeReq("read_file", { path: "/some/file" });
+    const req = makeReq("external_tool", { input: "test" });
     const parts = await router.route(
       [req],
       new AbortController().signal,
@@ -345,11 +355,32 @@ describe("ToolRouter", () => {
     expect(schedule).toHaveBeenCalledWith([req], expect.any(AbortSignal));
     expect(parts).toHaveLength(1);
     expect(onToolResponse).toHaveBeenCalledWith({
-      name: "read_file",
+      name: "external_tool",
       status: "success",
-      output: "file content",
-      callId: "call-read_file",
+      output: "external result",
+      callId: "call-external_tool",
     });
+  });
+
+  it("routes workspace file tools through Jarvis-native executor", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "jarvis-router-tools-"));
+    try {
+      await writeFile(path.join(root, "note.txt"), "hello workspace\n");
+      const schedule = vi.fn().mockResolvedValue([]);
+      const { router } = makeRouter({ schedule, workspaceRoot: root });
+
+      const parts = await router.route(
+        [makeReq("read_file", { file_path: "note.txt" })],
+        new AbortController().signal,
+        vi.fn(),
+      );
+
+      expect(schedule).not.toHaveBeenCalled();
+      expect(parts).toHaveLength(1);
+      expect(JSON.stringify(parts[0])).toContain("hello workspace");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
   });
 
   it("injects subagent memory only through the current MemoryContract", async () => {

@@ -42,6 +42,15 @@ export class DefaultRuntimeToolRegistry implements RuntimeToolRegistry {
   }
 }
 
+const WORKSPACE_TOOL_NAMES = new Set([
+  "read_file",
+  "write_file",
+  "read_many_files",
+  "glob",
+  "grep",
+  "run_shell_command",
+]);
+
 export function createJarvisNativeToolSchemas(): JarvisToolSchema[] {
   const recallMemoryTool: JarvisToolSchema = {
     name: "recall_memory",
@@ -113,7 +122,7 @@ export function createJarvisNativeToolSchemas(): JarvisToolSchema[] {
           prompt: {
             type: "string",
             description:
-              'The instruction Jarvis will execute when the task fires. Jarvis can use google_web_search and other tools at runtime — no code needed. E.g. "使用google_web_search查询GitHub Trending今日热门项目并汇总" or "搜索今日美股行情并分析".',
+              'The instruction Jarvis will execute when the task fires. Jarvis can use Jarvis-native runtime tools when available — no code needed. E.g. "搜索今日美股行情并分析" or "读取本地报告并汇总".',
           },
           channel: {
             type: "string",
@@ -236,7 +245,155 @@ export function createJarvisNativeToolSchemas(): JarvisToolSchema[] {
     tags: ["channel", "write"],
   };
 
-  return [recallMemoryTool, pushToChannelTool, ...taskTools];
+  const workspaceTools: JarvisToolSchema[] = [
+    {
+      name: "read_file",
+      description:
+        "Read a text file inside the current workspace. Use start_line and end_line for targeted reads. Paths must stay within the workspace.",
+      parameters: {
+        type: "object",
+        properties: {
+          file_path: {
+            type: "string",
+            description: "Workspace-relative path.",
+          },
+          start_line: {
+            type: "number",
+            description: "Optional 1-based start line.",
+          },
+          end_line: {
+            type: "number",
+            description: "Optional 1-based inclusive end line.",
+          },
+        },
+        required: ["file_path"],
+      },
+      parallelizable: true,
+      riskLevel: "low",
+      tags: ["workspace", "file", "read"],
+    },
+    {
+      name: "read_many_files",
+      description:
+        "Read multiple text files inside the current workspace. Use this when several specific files are needed.",
+      parameters: {
+        type: "object",
+        properties: {
+          paths: {
+            type: "array",
+            items: { type: "string" },
+            description: "Workspace-relative file paths.",
+          },
+          start_line: { type: "number" },
+          end_line: { type: "number" },
+        },
+        required: ["paths"],
+      },
+      parallelizable: true,
+      riskLevel: "low",
+      tags: ["workspace", "file", "read"],
+    },
+    {
+      name: "glob",
+      description:
+        'Find files in the current workspace using a glob pattern such as "src/**/*.ts" or "**/*.md".',
+      parameters: {
+        type: "object",
+        properties: {
+          pattern: {
+            type: "string",
+            description: "Workspace-relative glob pattern.",
+          },
+        },
+        required: ["pattern"],
+      },
+      parallelizable: true,
+      riskLevel: "low",
+      tags: ["workspace", "search", "read"],
+    },
+    {
+      name: "grep",
+      description:
+        "Search text in workspace files using a regular expression pattern. Prefer this before broad file reads.",
+      parameters: {
+        type: "object",
+        properties: {
+          pattern: {
+            type: "string",
+            description: "Regular expression to search for.",
+          },
+          path: {
+            type: "string",
+            description: "Optional workspace-relative file or directory path.",
+          },
+          include: {
+            type: "string",
+            description: 'Optional file glob filter, e.g. "**/*.ts".',
+          },
+          ignore_case: {
+            type: "boolean",
+            description: "Default true. Set false for case-sensitive search.",
+          },
+        },
+        required: ["pattern"],
+      },
+      parallelizable: true,
+      riskLevel: "low",
+      tags: ["workspace", "search", "read"],
+    },
+    {
+      name: "write_file",
+      description:
+        "Create, overwrite, or append to a file inside the current workspace. Never use this for secrets or files outside the workspace.",
+      parameters: {
+        type: "object",
+        properties: {
+          file_path: {
+            type: "string",
+            description: "Workspace-relative path.",
+          },
+          content: { type: "string", description: "Full content to write." },
+          mode: {
+            type: "string",
+            enum: ["overwrite", "append", "create"],
+            description: 'Default "overwrite".',
+          },
+        },
+        required: ["file_path", "content"],
+      },
+      parallelizable: false,
+      riskLevel: "high",
+      tags: ["workspace", "file", "write"],
+    },
+    {
+      name: "run_shell_command",
+      description:
+        "Run a non-interactive shell command inside the current workspace. Destructive/system commands are blocked by Jarvis workspace policy.",
+      parameters: {
+        type: "object",
+        properties: {
+          command: {
+            type: "string",
+            description: "Command to run from the workspace.",
+          },
+          cwd: {
+            type: "string",
+            description: "Optional workspace-relative working directory.",
+          },
+          timeout_ms: {
+            type: "number",
+            description: "Optional timeout, capped by Jarvis policy.",
+          },
+        },
+        required: ["command"],
+      },
+      parallelizable: false,
+      riskLevel: "high",
+      tags: ["workspace", "shell", "execute"],
+    },
+  ];
+
+  return [recallMemoryTool, pushToChannelTool, ...taskTools, ...workspaceTools];
 }
 
 export function createDefaultRuntimeToolRegistry(
@@ -256,6 +413,7 @@ export function addToolsToGeminiRegistry(
     ?.addDiscoveredTool;
   if (typeof addDiscoveredTool !== "function") return;
   for (const tool of tools) {
+    if (WORKSPACE_TOOL_NAMES.has(tool.name)) continue;
     addDiscoveredTool.call(registry, tool);
   }
 }

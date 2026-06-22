@@ -13,7 +13,13 @@ describe("Jarvis runtime tool registry", () => {
     expect(names).toContain("recall_memory");
     expect(names).toContain("task_add");
     expect(names).toContain("push_to_channel");
+    expect(names).toContain("read_file");
+    expect(names).toContain("write_file");
+    expect(names).toContain("grep");
+    expect(names).toContain("glob");
+    expect(names).toContain("run_shell_command");
     expect(registry.getTool("task_delete")?.riskLevel).toBe("high");
+    expect(registry.getTool("write_file")?.riskLevel).toBe("high");
   });
 
   it("can mirror Jarvis-owned schemas into a Gemini-compatible registry", () => {
@@ -30,5 +36,7 @@ describe("Jarvis runtime tool registry", () => {
     expect(added).toContain("recall_memory");
     expect(added).toContain("task_add");
     expect(added).toContain("push_to_channel");
+    expect(added).not.toContain("read_file");
+    expect(added).not.toContain("run_shell_command");
   });
 });

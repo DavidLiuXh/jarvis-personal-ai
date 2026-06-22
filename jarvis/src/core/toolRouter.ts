@@ -20,6 +20,7 @@ import type {
   FunctionResponseLike,
 } from "../intent-runtime/index.js";
 import { getCategoryBaseScore, clampScore } from "./backgroundDistiller.js";
+import { WorkspaceTools } from "./workspaceTools.js";
 
 export type ToolCallRequest = {
   name: string;
@@ -129,6 +130,12 @@ const JARVIS_NATIVE_TOOLS = new Set([
   "recall_memory",
   "ask_user",
   "push_to_channel",
+  "read_file",
+  "write_file",
+  "read_many_files",
+  "glob",
+  "grep",
+  "run_shell_command",
 ]);
 
 // Prefix-style commands: anchored to start of string to avoid matching
@@ -576,6 +583,7 @@ export class ToolRouter implements ToolExecutorAdapter {
     private channelRegistry?: ChannelRegistryHandle,
     private toolInteractionRecorder?: ToolInteractionRecorder,
     private safetyPolicy: SafetyPolicyEngine = new JarvisSafetyPolicyEngine(),
+    private workspaceTools?: WorkspaceTools,
   ) {}
 
   public setTaskCommandHandler(handler?: TaskCommandHandlerHandle): void {
@@ -1104,6 +1112,9 @@ export class ToolRouter implements ToolExecutorAdapter {
         } else {
           output = "❌ Push not available (ChannelRegistry not initialized).";
         }
+      } else if (this.workspaceTools?.canHandle(req.name)) {
+        const result = await this.workspaceTools.execute(req);
+        output = JSON.stringify(result);
       }
 
       onToolResponse({

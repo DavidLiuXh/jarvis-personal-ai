@@ -49,6 +49,7 @@ import {
 } from "./toolRouter.js";
 import { JarvisEventType, type JarvisAgentLike } from "./types.js";
 import { createDefaultRuntimeToolRegistry } from "./jarvisToolRegistry.js";
+import { WorkspaceTools } from "./workspaceTools.js";
 
 export type StandaloneRoutingTargetModels = {
   defaultModel: string;
@@ -214,6 +215,9 @@ export class StandaloneJarvisAgent
       createStandaloneClientHandle(),
       this.taskCommandHandler,
       this.channelRegistry,
+      undefined,
+      undefined,
+      new WorkspaceTools({ root: options.cwd }),
     );
   }
 
