@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   JarvisMemoryWriteStore,
   createJarvisMemoryStores,
@@ -12,7 +12,12 @@ import {
 } from "./jarvisMemoryStores.js";
 
 describe("Jarvis memory store adapters", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
   it("wraps MemoryService fact, entry, and session retrieval", async () => {
+    const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     const memoryService = {
       searchFacts: vi
         .fn()
@@ -36,6 +41,14 @@ describe("Jarvis memory store adapters", () => {
     });
 
     expect(memoryService.searchFacts).toHaveBeenCalledWith("TypeScript", 2);
+    expect(consoleSpy).toHaveBeenCalledWith(
+      expect.stringContaining("[MemoryRetrieval] jarvis.facts.adapter started"),
+    );
+    expect(consoleSpy).toHaveBeenCalledWith(
+      expect.stringContaining(
+        "[MemoryRetrieval] jarvis.facts.adapter finished",
+      ),
+    );
     expect(memoryService.searchWithScore).toHaveBeenCalledWith(
       "TypeScript",
       3,
@@ -61,6 +74,7 @@ describe("Jarvis memory store adapters", () => {
       sessionId: "session-1",
       summary: "summary chunk",
     });
+    consoleSpy.mockRestore();
   });
 
   it("falls back to lexical conversation history when vector entries are empty", async () => {

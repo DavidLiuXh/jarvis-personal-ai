@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { DefaultMemoryRetriever } from "./retrieval.js";
 import type { MemoryContract } from "./types.js";
 
@@ -34,7 +34,12 @@ function contract(overrides: Partial<MemoryContract> = {}): MemoryContract {
 }
 
 describe("DefaultMemoryRetriever", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
   it("retrieves only scopes allowed by the MemoryContract", async () => {
+    const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     const searchFacts = vi
       .fn()
       .mockResolvedValue([
@@ -71,9 +76,16 @@ describe("DefaultMemoryRetriever", () => {
       "TypeScript discussion",
       expect.objectContaining({ sessionId: "s1", limit: 2 }),
     );
+    expect(consoleSpy).toHaveBeenCalledWith(
+      expect.stringContaining("[MemoryRetrieval] facts.search started"),
+    );
+    expect(consoleSpy).toHaveBeenCalledWith(
+      expect.stringContaining("[MemoryRetrieval] facts.search finished"),
+    );
     expect(result.facts[0].item.content).toBe("prefers TypeScript");
     expect(result.entries[0].item.content).toBe("previous discussion");
     expect(result.session[0].item.summary).toBe("session summary");
+    consoleSpy.mockRestore();
   });
 
   it("does not call stores for external or no-memory contracts", async () => {

@@ -222,19 +222,37 @@ export class DefaultMemoryRetriever {
   }
 
   private async retrieveFacts(contract: MemoryContract, query: string) {
-    if (
-      !contract.targetScopes.includes("fact") ||
-      !contract.constraints.allowPersonalFacts ||
-      !this.options.stores.facts
-    ) {
+    const preview = query.replace(/\s+/g, " ").trim().slice(0, 120);
+    if (!contract.targetScopes.includes("fact")) {
+      console.error(
+        `[MemoryRetrieval] facts.search skipped reason=scope_disabled query=${JSON.stringify(preview)} targetScopes=${JSON.stringify(contract.targetScopes)}`,
+      );
+      return [];
+    }
+    if (!contract.constraints.allowPersonalFacts) {
+      console.error(
+        `[MemoryRetrieval] facts.search skipped reason=personal_facts_disallowed query=${JSON.stringify(preview)} memoryTarget=${contract.memoryTarget}`,
+      );
+      return [];
+    }
+    if (!this.options.stores.facts) {
+      console.error(
+        `[MemoryRetrieval] facts.search skipped reason=store_missing query=${JSON.stringify(preview)}`,
+      );
       return [];
     }
 
+    console.error(
+      `[MemoryRetrieval] facts.search started query=${JSON.stringify(preview)} limit=${this.options.factLimit ?? 5} memoryTarget=${contract.memoryTarget}`,
+    );
     const results = await this.options.stores.facts.searchFacts(query, {
       limit: this.options.factLimit ?? 5,
       contract,
     });
     const timestamp = this.now().toISOString();
+    console.error(
+      `[MemoryRetrieval] facts.search finished returned=${results.length} ids=${JSON.stringify(results.map((result) => result.id ?? null).slice(0, 8))} categories=${JSON.stringify(results.map((result) => result.metadata?.category ?? result.subject ?? "unknown").slice(0, 8))}`,
+    );
 
     return results.map((result, index) => ({
       item: {

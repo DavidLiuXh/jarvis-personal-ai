@@ -91,7 +91,15 @@ export class JarvisFactMemoryStore implements FactMemoryStore {
     query: string,
     options?: { limit?: number; contract?: MemoryContract },
   ): Promise<FactMemorySearchResult[]> {
+    const limit = options?.limit;
+    const preview = query.replace(/\s+/g, " ").trim().slice(0, 120);
+    console.error(
+      `[MemoryRetrieval] jarvis.facts.adapter started query=${JSON.stringify(preview)} limit=${limit ?? "default"} memoryTarget=${options?.contract?.memoryTarget ?? "unknown"}`,
+    );
     const facts = await this.memoryService.searchFacts(query, options?.limit);
+    console.error(
+      `[MemoryRetrieval] jarvis.facts.adapter finished returned=${facts.length} categories=${JSON.stringify(facts.map((fact) => fact.category).slice(0, 8))} previews=${JSON.stringify(facts.map((fact) => fact.content.replace(/\s+/g, " ").trim().slice(0, 80)).slice(0, 3))}`,
+    );
     return facts.map((fact, index) => ({
       id: `jarvis-fact-${index}`,
       subject: mapFactSubject(fact.category),
