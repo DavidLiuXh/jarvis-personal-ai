@@ -469,6 +469,31 @@ Gemini 模式使用 Gemini CLI 的认证、模型和兼容工具链。首次安�
   },
 
   // ─────────────────────────────────────────────
+  // UI — 浏览器诊断与渲染控制
+  // ─────────────────────────────────────────────
+  "ui": {
+    // 输出 Markdown 渲染诊断到浏览器 console 和服务端 stderr。
+    // 记录 stream chunk 形态、累计 Markdown、受保护数学片段、
+    // 渲染后的 KaTeX 数量、无空格标题、疑似异常 LaTeX 标记。
+    // 对 OpenAI-compatible 和 DeepSeek 后端，还会输出
+    // [LLMStreamDiagnostics:<provider>] 前缀的 backend-level SSE 诊断。
+    // 默认：false
+    "markdownDiagnostics": false,
+
+    // 诊断 start/end 片段最多包含的字符数。默认：240
+    "markdownDiagnosticsMaxChars": 240,
+
+    // 每 N 个 stream chunk 输出一次诊断。0 表示关闭逐 chunk 采样。
+    // delimiter 配对类 warning 只在 final buffer 上判断，不在单个 chunk 上判断，
+    // 因为 streaming 可能把数学/代码 delimiter 切开。默认：0
+    "markdownDiagnosticsChunkSampleRate": 0,
+  },
+
+  // 浏览器临时开关：
+  // 打开 DevTools console，执行 `jarvisMarkdownDiagnostics.enable()`。
+  // 关闭时执行 `jarvisMarkdownDiagnostics.disable()`。
+
+  // ─────────────────────────────────────────────
   // Memory — DNI 记忆系统调优
   // ─────────────────────────────────────────────
   "memory": {

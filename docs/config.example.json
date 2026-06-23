@@ -78,6 +78,11 @@
   "server": {
     "port": 3000
   },
+  "ui": {
+    "markdownDiagnostics": false,
+    "markdownDiagnosticsMaxChars": 240,
+    "markdownDiagnosticsChunkSampleRate": 0
+  },
   "memory": {
     "ingestionDelayMs": 800,
     "retrievalLimit": 5,

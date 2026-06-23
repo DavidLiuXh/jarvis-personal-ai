@@ -136,6 +136,43 @@ describe("ToolLoopRuntime", () => {
     expect([...result.toolsCalled]).toEqual(["task_add"]);
   });
 
+  it("preserves repeated content chunks instead of deduplicating by substring", async () => {
+    const content: string[] = [];
+    const runtime = new ToolLoopRuntime({
+      backend: backendFromTurns([
+        [
+          { type: "content", text: "## 一、概述\n" },
+          { type: "content", text: "DeepSeek " },
+          { type: "content", text: "DeepSeek " },
+          { type: "content", text: "PPO " },
+          { type: "content", text: "PPO " },
+          { type: "content", text: "\\(x\\)" },
+          { type: "content", text: " and " },
+          { type: "content", text: "\\(x\\)" },
+        ],
+      ]),
+      promptCompiler: compiler(),
+      toolExecutor: toolExecutor((request) => ({
+        name: request.name,
+        callId: request.callId,
+        status: "success",
+        output: {},
+      })),
+      onContent: (text) => content.push(text),
+    });
+
+    const result = await runtime.run({
+      userPrompt: "explain",
+      initialMessages,
+      signal: new AbortController().signal,
+    });
+
+    expect(content.join("")).toBe(
+      "## 一、概述\nDeepSeek DeepSeek PPO PPO \\(x\\) and \\(x\\)",
+    );
+    expect(result.finalText).toBe(content.join(""));
+  });
+
   it("deduplicates repeated backend tool call ids before execution", async () => {
     const requests: RuntimeToolRequest[] = [
       {

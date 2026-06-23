@@ -343,12 +343,6 @@ export class ToolLoopRuntime {
           )) {
             if (event.type === "content") {
               const newText = event.text;
-              if (
-                turnTextAccumulated.includes(newText) &&
-                turnTextAccumulated.length > 0
-              ) {
-                continue;
-              }
               turnTextAccumulated += newText;
               if (!shouldBufferPreToolContent) {
                 finalText += newText;

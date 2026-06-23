@@ -25,6 +25,23 @@ export type JarvisLlmBackendBundle = {
   tools: LlmToolSchema[];
 };
 
+function createStreamDiagnostics(
+  config: JarvisConfig,
+  label: string,
+): {
+  enabled: boolean;
+  label: string;
+  maxSnippetChars: number;
+  chunkSampleRate: number;
+} {
+  return {
+    enabled: config.ui?.markdownDiagnostics === true,
+    label,
+    maxSnippetChars: config.ui?.markdownDiagnosticsMaxChars ?? 240,
+    chunkSampleRate: config.ui?.markdownDiagnosticsChunkSampleRate ?? 0,
+  };
+}
+
 export function normalizeToolSchema(declaration: any): LlmToolSchema | null {
   const name = declaration?.name ?? declaration?.function?.name;
   if (!name || typeof name !== "string") return null;
@@ -68,6 +85,7 @@ export function createJarvisLlmBackend(input: {
         timeoutMs: deepseek.timeoutMs,
         thinking: deepseek.thinking,
         reasoningEffort: deepseek.reasoningEffort,
+        diagnostics: createStreamDiagnostics(input.config, "deepseek"),
       }),
       promptCompiler: new DeepSeekPromptCompiler(),
       tools,
@@ -86,6 +104,7 @@ export function createJarvisLlmBackend(input: {
       organization: openai.organization,
       project: openai.project,
       timeoutMs: openai.timeoutMs,
+      diagnostics: createStreamDiagnostics(input.config, "openai"),
     }),
     promptCompiler: new OpenAiPromptCompiler(),
     tools,

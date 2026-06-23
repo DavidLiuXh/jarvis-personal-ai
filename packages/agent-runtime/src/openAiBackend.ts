@@ -29,7 +29,16 @@ export type OpenAiChatBackendOptions = {
   project?: string;
   timeoutMs?: number;
   extraBody?: Record<string, unknown>;
+  diagnostics?: OpenAiStreamDiagnosticsOptions;
   fetchFn?: typeof fetch;
+};
+
+export type OpenAiStreamDiagnosticsOptions = {
+  enabled?: boolean;
+  label?: string;
+  maxSnippetChars?: number;
+  chunkSampleRate?: number;
+  log?: (message: string) => void;
 };
 
 type OpenAiToolCallAccumulator = {
@@ -259,6 +268,47 @@ function decodeSseLine(line: string): unknown | null {
   return JSON.parse(payload);
 }
 
+function diagnosticSnippet(value: string, maxChars: number): string {
+  const normalized = value.replace(/\r/g, "\\r").replace(/\n/g, "\\n");
+  if (normalized.length <= maxChars) return normalized;
+  return `${normalized.slice(0, maxChars)}…`;
+}
+
+function countMatches(value: string, pattern: RegExp): number {
+  return value.match(pattern)?.length ?? 0;
+}
+
+function analyzeStreamText(value: string, maxSnippetChars: number) {
+  return {
+    chars: value.length,
+    lines: value ? value.split(/\r?\n/).length : 0,
+    dollars: countMatches(value, /\$/g),
+    escapedParenMathOpen: countMatches(value, /\\\(/g),
+    escapedParenMathClose: countMatches(value, /\\\)/g),
+    escapedBracketMathOpen: countMatches(value, /\\\[/g),
+    escapedBracketMathClose: countMatches(value, /\\\]/g),
+    headingsNoSpace: countMatches(value, /^#{1,6}\S/gm),
+    headingsWithSpace: countMatches(value, /^#{1,6}\s+\S/gm),
+    likelyLatexCommands: countMatches(value, /\\[a-zA-Z]+/g),
+    startsWith: diagnosticSnippet(
+      value.slice(0, maxSnippetChars),
+      maxSnippetChars,
+    ),
+    endsWith: diagnosticSnippet(value.slice(-maxSnippetChars), maxSnippetChars),
+  };
+}
+
+function emitStreamDiagnostic(
+  options: OpenAiStreamDiagnosticsOptions | undefined,
+  stage: string,
+  payload: Record<string, unknown>,
+): void {
+  if (!options?.enabled) return;
+  const label = options.label ?? "openai";
+  const log = options.log ?? console.error;
+  log(`[LLMStreamDiagnostics:${label}] ${stage} ${JSON.stringify(payload)}`);
+}
+
 export class OpenAiChatCompletionsBackend implements LlmBackend {
   private readonly baseUrl: string;
   private readonly fetchFn: typeof fetch;
@@ -339,16 +389,55 @@ export class OpenAiChatCompletionsBackend implements LlmBackend {
       const decoder = new TextDecoder();
       const toolCalls = new Map<number, OpenAiToolCallAccumulator>();
       let reasoningContent = "";
+      let contentAccumulated = "";
       let buffer = "";
+      let rawChunkIndex = 0;
+      let sseEventIndex = 0;
+      let contentDeltaIndex = 0;
+      const diagnostics = this.options.diagnostics;
+      const maxSnippetChars = diagnostics?.maxSnippetChars ?? 240;
+      const chunkSampleRate = Math.max(0, diagnostics?.chunkSampleRate ?? 0);
       for await (const chunk of response.body as unknown as AsyncIterable<Uint8Array>) {
-        buffer += decoder.decode(chunk, { stream: true });
+        rawChunkIndex += 1;
+        const decodedChunk = decoder.decode(chunk, { stream: true });
+        if (
+          diagnostics?.enabled &&
+          chunkSampleRate > 0 &&
+          rawChunkIndex % chunkSampleRate === 0
+        ) {
+          emitStreamDiagnostic(diagnostics, "raw_chunk_sample", {
+            rawChunkIndex,
+            bytes: chunk.byteLength,
+            chars: decodedChunk.length,
+            startsWith: diagnosticSnippet(decodedChunk, maxSnippetChars),
+            endsWith: diagnosticSnippet(
+              decodedChunk.slice(-maxSnippetChars),
+              maxSnippetChars,
+            ),
+          });
+        }
+        buffer += decodedChunk;
         const lines = buffer.split(/\r?\n/);
         buffer = lines.pop() ?? "";
         for (const line of lines) {
           const parsed = decodeSseLine(line);
           if (!parsed) continue;
+          sseEventIndex += 1;
           const delta = (parsed as any).choices?.[0]?.delta ?? {};
           if (typeof delta.content === "string" && delta.content) {
+            contentDeltaIndex += 1;
+            contentAccumulated += delta.content;
+            if (
+              diagnostics?.enabled &&
+              chunkSampleRate > 0 &&
+              contentDeltaIndex % chunkSampleRate === 0
+            ) {
+              emitStreamDiagnostic(diagnostics, "content_delta_sample", {
+                contentDeltaIndex,
+                sseEventIndex,
+                analysis: analyzeStreamText(delta.content, maxSnippetChars),
+              });
+            }
             yield { type: "content", text: delta.content };
           }
           if (
@@ -380,6 +469,14 @@ export class OpenAiChatCompletionsBackend implements LlmBackend {
           }
         }
       }
+
+      emitStreamDiagnostic(diagnostics, "final_content", {
+        rawChunks: rawChunkIndex,
+        sseEvents: sseEventIndex,
+        contentDeltas: contentDeltaIndex,
+        remainingBufferChars: buffer.length,
+        analysis: analyzeStreamText(contentAccumulated, maxSnippetChars),
+      });
 
       if (reasoningContent) {
         yield {

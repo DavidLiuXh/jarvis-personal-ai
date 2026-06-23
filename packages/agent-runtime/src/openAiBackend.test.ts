@@ -320,6 +320,54 @@ describe("OpenAiChatCompletionsBackend", () => {
     expect(events).toEqual([{ type: "content", text: "done" }]);
   });
 
+  it("emits sampled and final stream diagnostics when enabled", async () => {
+    const logs: string[] = [];
+    const backend = new OpenAiChatCompletionsBackend({
+      apiKey: "test-key",
+      model: "gpt-test",
+      diagnostics: {
+        enabled: true,
+        label: "test-provider",
+        chunkSampleRate: 1,
+        maxSnippetChars: 20,
+        log: (message) => logs.push(message),
+      },
+      fetchFn: vi.fn(
+        async () =>
+          new Response(
+            sse(
+              { choices: [{ delta: { content: "##Title" } }] },
+              { choices: [{ delta: { content: " body" } }] },
+            ),
+            { status: 200 },
+          ),
+      ) as unknown as typeof fetch,
+    });
+
+    const events = [];
+    for await (const event of backend.sendTurn(
+      {
+        messages: [{ role: "user", blocks: [{ type: "text", text: "hi" }] }],
+      },
+      new AbortController().signal,
+    )) {
+      events.push(event);
+    }
+
+    expect(events).toEqual([
+      { type: "content", text: "##Title" },
+      { type: "content", text: " body" },
+    ]);
+    expect(logs.some((line) => line.includes("raw_chunk_sample"))).toBe(true);
+    expect(logs.some((line) => line.includes("content_delta_sample"))).toBe(
+      true,
+    );
+    const finalLog = logs.find((line) => line.includes("final_content"));
+    expect(finalLog).toBeTruthy();
+    expect(finalLog).toContain('"headingsNoSpace":1');
+    expect(finalLog).toContain('"contentDeltas":2');
+  });
+
   it("requires an API key", () => {
     expect(
       () => new OpenAiChatCompletionsBackend({ apiKey: "", model: "gpt" }),

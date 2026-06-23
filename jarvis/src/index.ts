@@ -70,6 +70,63 @@ import {
 
 const JARVIS_HOME = path.join(os.homedir(), ".gemini-jarvis");
 
+function snippet(value: string, maxChars: number): string {
+  const normalized = value.replace(/\r/g, "\\r").replace(/\n/g, "\\n");
+  if (normalized.length <= maxChars) return normalized;
+  return `${normalized.slice(0, maxChars)}…`;
+}
+
+function countMatches(value: string, pattern: RegExp): number {
+  return value.match(pattern)?.length ?? 0;
+}
+
+function analyzeMarkdownPayload(value: string, maxSnippetChars: number) {
+  const inlineMathDelimiters = countMatches(value, /(?<!\\)\$(?!\$)/g);
+  const displayMathDelimiters = countMatches(value, /(?<!\\)\$\$/g);
+  const escapedParenMathOpen = countMatches(value, /\\\(/g);
+  const escapedParenMathClose = countMatches(value, /\\\)/g);
+  const escapedBracketMathOpen = countMatches(value, /\\\[/g);
+  const escapedBracketMathClose = countMatches(value, /\\\]/g);
+  const fencedCodeDelimiters = countMatches(value, /```/g);
+  const headingsNoSpace = countMatches(value, /^#{1,6}\S/gm);
+  const likelyBrokenLatexCommands = countMatches(
+    value,
+    /\\(?:logpi|cdot|infty|gamma|sum|theta|lambda|delta|nabla)(?![a-zA-Z])/g,
+  );
+  const warnings = [
+    ...(headingsNoSpace > 0 ? ["heading_without_space"] : []),
+    ...(likelyBrokenLatexCommands > 0 ? ["broken_latex_command"] : []),
+    ...(inlineMathDelimiters % 2 !== 0 ? ["unbalanced_inline_math"] : []),
+    ...(displayMathDelimiters % 2 !== 0 ? ["unbalanced_display_math"] : []),
+    ...(escapedParenMathOpen !== escapedParenMathClose
+      ? ["unbalanced_paren_math"]
+      : []),
+    ...(escapedBracketMathOpen !== escapedBracketMathClose
+      ? ["unbalanced_bracket_math"]
+      : []),
+    ...(fencedCodeDelimiters % 2 !== 0 ? ["unbalanced_code_fence"] : []),
+  ];
+  return {
+    chars: value.length,
+    lines: value ? value.split(/\r?\n/).length : 0,
+    dollars: countMatches(value, /\$/g),
+    inlineMathDelimiters,
+    displayMathDelimiters,
+    escapedParenMathOpen,
+    escapedParenMathClose,
+    escapedBracketMathOpen,
+    escapedBracketMathClose,
+    fencedCodeDelimiters,
+    headingsNoSpace,
+    headingsWithSpace: countMatches(value, /^#{1,6}\s+\S/gm),
+    likelyLatexCommands: countMatches(value, /\\[a-zA-Z]+/g),
+    likelyBrokenLatexCommands,
+    warnings,
+    startsWith: snippet(value.slice(0, maxSnippetChars), maxSnippetChars),
+    endsWith: snippet(value.slice(-maxSnippetChars), maxSnippetChars),
+  };
+}
+
 async function initializeGeminiCompatibilityGlobals(): Promise<void> {
   if (standaloneRuntime) return;
   let coreModule!: typeof import("../../gemini-cli/packages/core/src/index.js");
@@ -488,6 +545,16 @@ class JarvisServer {
       });
     });
 
+    this.app.get("/api/ui-config", (_req: Request, res: Response) => {
+      res.json({
+        markdownDiagnostics: jarvisConfig.ui?.markdownDiagnostics === true,
+        markdownDiagnosticsMaxChars:
+          jarvisConfig.ui?.markdownDiagnosticsMaxChars ?? 240,
+        markdownDiagnosticsChunkSampleRate:
+          jarvisConfig.ui?.markdownDiagnosticsChunkSampleRate ?? 0,
+      });
+    });
+
     // Agent task REST endpoints (used by UI on reconnect to restore state)
     this.app.get("/api/agents", (_req: Request, res: Response) => {
       res.json(this.agentManager.getRegistry());
@@ -698,6 +765,47 @@ class JarvisServer {
     // Bind ask_user handler to this WebSocket connection for this turn.
     // Pass connectionId as ownerId so close can reject only this connection's pending.
     agent.setAskUserHandler(ws, connectionId);
+    const markdownDiagnostics = jarvisConfig.ui?.markdownDiagnostics === true;
+    const markdownDiagnosticsMaxChars =
+      jarvisConfig.ui?.markdownDiagnosticsMaxChars ?? 240;
+    const markdownDiagnosticsChunkSampleRate = Math.max(
+      0,
+      jarvisConfig.ui?.markdownDiagnosticsChunkSampleRate ?? 0,
+    );
+    let markdownDiagnosticBuffer = "";
+    let markdownDiagnosticChunkIndex = 0;
+
+    const sendMarkdownDiagnostic = (
+      stage: string,
+      text: string,
+      extra: Record<string, unknown> = {},
+    ) => {
+      if (!markdownDiagnostics) return;
+      const analysis = analyzeMarkdownPayload(
+        text,
+        markdownDiagnosticsMaxChars,
+      );
+      const payload = {
+        type: "markdown_diagnostic",
+        value: {
+          stage,
+          chunkIndex: markdownDiagnosticChunkIndex,
+          sessionId,
+          timestamp: Date.now(),
+          ...extra,
+          analysis,
+        },
+      };
+      const shouldLogToStderr = stage === "server.final_buffer";
+      if (shouldLogToStderr) {
+        console.error(
+          `[MarkdownDiagnostics] ${stage} ${JSON.stringify(payload.value)}`,
+        );
+      }
+      if (ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: "stream", sessionId, payload }));
+      }
+    };
 
     const onContent = (event: any) => {
       if (event.type === "ask_user_request") {
@@ -725,6 +833,23 @@ class JarvisServer {
       }
 
       if (ws.readyState === WebSocket.OPEN) {
+        if (event.type === "content" && typeof event.value === "string") {
+          markdownDiagnosticChunkIndex += 1;
+          markdownDiagnosticBuffer += event.value;
+          if (markdownDiagnostics) {
+            const shouldSample =
+              markdownDiagnosticsChunkSampleRate > 0 &&
+              markdownDiagnosticChunkIndex %
+                markdownDiagnosticsChunkSampleRate ===
+                0;
+            if (shouldSample) {
+              sendMarkdownDiagnostic(
+                "server.content_chunk_sample",
+                event.value,
+              );
+            }
+          }
+        }
         ws.send(JSON.stringify({ type: "stream", sessionId, payload: event }));
       }
     };
@@ -754,6 +879,9 @@ class JarvisServer {
     };
 
     const onDone = () => {
+      sendMarkdownDiagnostic("server.final_buffer", markdownDiagnosticBuffer, {
+        chunks: markdownDiagnosticChunkIndex,
+      });
       if (ws.readyState === WebSocket.OPEN) {
         ws.send(JSON.stringify({ type: "done", sessionId }));
       }

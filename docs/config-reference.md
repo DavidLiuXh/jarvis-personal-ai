@@ -473,6 +473,32 @@ Gemini mode uses Gemini CLI authentication, model selection, and compatibility t
   },
 
   // ─────────────────────────────────────────────
+  // UI — browser diagnostics and rendering controls
+  // ─────────────────────────────────────────────
+  "ui": {
+    // Emit Markdown rendering diagnostics to browser console and server stderr.
+    // Captures stream chunk shape, accumulated Markdown, protected math spans,
+    // rendered KaTeX counts, headings without spaces, and suspicious LaTeX markers.
+    // For OpenAI-compatible and DeepSeek backends, this also emits backend-level
+    // SSE diagnostics prefixed with [LLMStreamDiagnostics:<provider>].
+    // Default: false
+    "markdownDiagnostics": false,
+
+    // Max characters included in diagnostic start/end snippets. Default: 240
+    "markdownDiagnosticsMaxChars": 240,
+
+    // Emit every Nth stream chunk diagnostic. 0 disables per-chunk sampling.
+    // Delimiter-balance warnings are evaluated on the final buffer, not on
+    // individual chunks, because streaming can split math/code delimiters.
+    // Default: 0
+    "markdownDiagnosticsChunkSampleRate": 0,
+  },
+
+  // Temporary browser-only override:
+  // open DevTools console and run `jarvisMarkdownDiagnostics.enable()`.
+  // Disable it with `jarvisMarkdownDiagnostics.disable()`.
+
+  // ─────────────────────────────────────────────
   // Memory — DNI memory system tuning
   // ─────────────────────────────────────────────
   "memory": {

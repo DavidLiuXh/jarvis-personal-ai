@@ -133,6 +133,24 @@ export interface JarvisConfig {
     observability?: boolean;
   };
   /**
+   * Browser UI diagnostics and rendering controls.
+   */
+  ui?: {
+    /**
+     * Emit Markdown rendering diagnostics to browser console and server stderr.
+     * Useful for debugging stream assembly, Markdown parsing, and KaTeX math
+     * rendering issues. Default: false.
+     */
+    markdownDiagnostics?: boolean;
+    /** Max characters included in diagnostic snippets. Default: 240. */
+    markdownDiagnosticsMaxChars?: number;
+    /**
+     * Log/send every Nth content chunk while Markdown diagnostics are enabled.
+     * 0 disables per-chunk diagnostics. Default: 0.
+     */
+    markdownDiagnosticsChunkSampleRate?: number;
+  };
+  /**
    * Main chat LLM backend. Gemini remains the default compatibility backend;
    * non-Gemini backends run through the standalone runtime.
    */
@@ -591,6 +609,11 @@ export class ConfigManager {
         executionMode: "skip",
         observability: false,
       },
+      ui: {
+        markdownDiagnostics: false,
+        markdownDiagnosticsMaxChars: 240,
+        markdownDiagnosticsChunkSampleRate: 0,
+      },
       llmBackend: {
         provider: "gemini",
         openai: {
@@ -650,6 +673,10 @@ export class ConfigManager {
           agentRuntime: {
             ...defaults.agentRuntime,
             ...saved.agentRuntime,
+          },
+          ui: {
+            ...defaults.ui,
+            ...saved.ui,
           },
           llmBackend: {
             ...defaults.llmBackend,

@@ -77,11 +77,17 @@ export function resolveStandaloneRoutingTargetModels(
   return { defaultModel, proModel, flashModel };
 }
 
-function createStandaloneBackend(input: {
+export function createStandaloneBackend(input: {
   config: JarvisConfig;
   model: string;
 }): { backend: LlmBackend; promptCompiler: PromptCompiler } {
   const provider = input.config.llmBackend?.provider ?? "openai";
+  const diagnostics = {
+    enabled: input.config.ui?.markdownDiagnostics === true,
+    label: provider === "deepseek" ? "deepseek" : "openai",
+    maxSnippetChars: input.config.ui?.markdownDiagnosticsMaxChars ?? 240,
+    chunkSampleRate: input.config.ui?.markdownDiagnosticsChunkSampleRate ?? 0,
+  };
   if (provider === "deepseek") {
     const deepseek = input.config.llmBackend?.deepseek ?? {};
     const apiKeyEnv = deepseek.apiKeyEnv ?? "DEEPSEEK_API_KEY";
@@ -94,6 +100,7 @@ function createStandaloneBackend(input: {
         timeoutMs: deepseek.timeoutMs,
         thinking: deepseek.thinking,
         reasoningEffort: deepseek.reasoningEffort,
+        diagnostics,
       }),
       promptCompiler: new DeepSeekPromptCompiler(),
     };
@@ -110,6 +117,7 @@ function createStandaloneBackend(input: {
       organization: openai.organization,
       project: openai.project,
       timeoutMs: openai.timeoutMs,
+      diagnostics,
     }),
     promptCompiler: new OpenAiPromptCompiler(),
   };
