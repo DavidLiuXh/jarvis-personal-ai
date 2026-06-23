@@ -16,7 +16,9 @@
       "apiKeyEnv": "OPENAI_API_KEY",
       "model": "gpt-4.1",
       "baseUrl": "https://api.openai.com/v1",
-      "timeoutMs": 120000
+      "timeoutMs": 120000,
+      "thinking": "disabled",
+      "reasoningEffort": "high"
     }
   },
   "ollama": {

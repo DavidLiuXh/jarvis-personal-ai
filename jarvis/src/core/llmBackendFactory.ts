@@ -65,6 +65,8 @@ export function createJarvisLlmBackend(input: {
       organization: openai.organization,
       project: openai.project,
       timeoutMs: openai.timeoutMs,
+      thinking: openai.thinking ? { type: openai.thinking } : undefined,
+      reasoningEffort: openai.reasoningEffort,
     }),
     promptCompiler: new OpenAiPromptCompiler(),
     tools,

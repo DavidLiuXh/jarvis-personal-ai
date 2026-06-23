@@ -284,6 +284,40 @@ describe("OpenAiChatCompletionsBackend", () => {
     expect(events).toEqual([{ type: "content", text: "done" }]);
   });
 
+  it("sends DeepSeek-compatible thinking controls when configured", async () => {
+    const fetchFn = vi.fn(async (_url, init) => {
+      const body = JSON.parse(String(init?.body));
+      expect(body).toMatchObject({
+        model: "deepseek-v4-pro",
+        stream: true,
+        reasoning_effort: "high",
+        thinking: { type: "disabled" },
+      });
+      return new Response(sse({ choices: [{ delta: { content: "done" } }] }), {
+        status: 200,
+      });
+    }) as unknown as typeof fetch;
+    const backend = new OpenAiChatCompletionsBackend({
+      apiKey: "test-key",
+      model: "deepseek-v4-pro",
+      fetchFn,
+      thinking: { type: "disabled" },
+      reasoningEffort: "high",
+    });
+
+    const events = [];
+    for await (const event of backend.sendTurn(
+      {
+        messages: [{ role: "user", blocks: [{ type: "text", text: "hi" }] }],
+      },
+      new AbortController().signal,
+    )) {
+      events.push(event);
+    }
+
+    expect(events).toEqual([{ type: "content", text: "done" }]);
+  });
+
   it("requires an API key", () => {
     expect(
       () => new OpenAiChatCompletionsBackend({ apiKey: "", model: "gpt" }),

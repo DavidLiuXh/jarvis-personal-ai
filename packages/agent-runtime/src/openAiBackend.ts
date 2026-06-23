@@ -28,6 +28,8 @@ export type OpenAiChatBackendOptions = {
   organization?: string;
   project?: string;
   timeoutMs?: number;
+  thinking?: { type: "enabled" | "disabled" };
+  reasoningEffort?: string;
   fetchFn?: typeof fetch;
 };
 
@@ -162,6 +164,7 @@ export class OpenAiPromptCompiler implements PromptCompiler {
   compileToolResults(
     results: RuntimeToolResult[],
     requests: RuntimeToolRequest[] = [],
+    context: { assistantContent?: string } = {},
   ): LlmMessage[] {
     const pairedResults = pairResultsWithRequests(results, requests);
     const reasoningContent = requests
@@ -178,14 +181,24 @@ export class OpenAiPromptCompiler implements PromptCompiler {
         ...(reasoningContent
           ? { metadata: { openaiReasoningContent: reasoningContent } }
           : {}),
-        blocks: pairedResults.map(({ result, request, callId }) => {
-          return {
-            type: "tool_call" as const,
-            name: result.name,
-            callId,
-            args: request?.args ?? {},
-          };
-        }),
+        blocks: [
+          ...(context.assistantContent
+            ? [
+                {
+                  type: "text" as const,
+                  text: context.assistantContent,
+                },
+              ]
+            : []),
+          ...pairedResults.map(({ result, request, callId }) => {
+            return {
+              type: "tool_call" as const,
+              name: result.name,
+              callId,
+              args: request?.args ?? {},
+            };
+          }),
+        ],
       },
       ...pairedResults.map(({ result, callId }) => ({
         role: "tool" as const,
@@ -304,6 +317,10 @@ export class OpenAiChatCompletionsBackend implements LlmBackend {
           model: this.options.model,
           stream: true,
           messages: input.messages.map(toOpenAiMessage),
+          ...(this.options.reasoningEffort
+            ? { reasoning_effort: this.options.reasoningEffort }
+            : {}),
+          ...(this.options.thinking ? { thinking: this.options.thinking } : {}),
           ...(tools.length > 0
             ? {
                 tools,

@@ -115,6 +115,13 @@ vLLM, local gateways, and other services exposing an OpenAI-compatible API also 
 
       // Request timeout in milliseconds.
       "timeoutMs": 120000,
+
+      // Optional DeepSeek/OpenAI-compatible thinking toggle.
+      // Omit to use the provider default.
+      "thinking": "disabled",
+
+      // Optional DeepSeek/OpenAI-compatible reasoning effort, e.g. "high" or "max".
+      "reasoningEffort": "high",
     },
   },
 

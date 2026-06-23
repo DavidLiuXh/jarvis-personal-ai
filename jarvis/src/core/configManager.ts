@@ -147,6 +147,10 @@ export interface JarvisConfig {
       organization?: string;
       project?: string;
       timeoutMs?: number;
+      /** DeepSeek/OpenAI-compatible thinking toggle. Omit to use provider default. */
+      thinking?: "enabled" | "disabled";
+      /** DeepSeek/OpenAI-compatible reasoning effort, e.g. high or max. */
+      reasoningEffort?: string;
     };
   };
   /**

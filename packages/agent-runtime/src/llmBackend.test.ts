@@ -15,6 +15,7 @@ import {
   type LlmBackend,
   type LlmEvent,
   type LlmMessage,
+  type LlmTurnInput,
   type PromptCompiler,
   type ToolLoopPlanner,
 } from "./llmBackend.js";
@@ -32,6 +33,29 @@ function backendFromTurns(turns: LlmEvent[][]): LlmBackend {
       modes: ["native_tool_calling"],
     }),
     async *sendTurn() {
+      const events = turns[index++] ?? [];
+      for (const event of events) yield event;
+    },
+  };
+}
+
+function recordingBackend(
+  turns: LlmEvent[][],
+  inputs: LlmTurnInput[],
+): LlmBackend {
+  let index = 0;
+  return {
+    getModel: () => "mock-backend",
+    getCapabilities: () => ({
+      streaming: true,
+      nativeToolCalling: true,
+      jsonMode: false,
+      multimodalInput: false,
+      maxContextTokens: 8192,
+      modes: ["native_tool_calling"],
+    }),
+    async *sendTurn(input) {
+      inputs.push(input);
       const events = turns[index++] ?? [];
       for (const event of events) yield event;
     },
@@ -152,6 +176,131 @@ describe("ToolLoopRuntime", () => {
     expect(executed.map((request) => request.callId)).toEqual([
       "recall_memory",
       "recall_memory-2",
+    ]);
+  });
+
+  it("appends tool-call and tool-result messages when resuming stateless chat completions", async () => {
+    const request: RuntimeToolRequest = {
+      name: "recall_memory",
+      callId: "call-1",
+      args: { query: "DeepSeek" },
+      metadata: { openai: { reasoningContent: "Need memory. " } },
+    };
+    const inputs: LlmTurnInput[] = [];
+    const runtime = new ToolLoopRuntime({
+      backend: recordingBackend(
+        [
+          [
+            {
+              type: "metadata",
+              value: { openai: { reasoningContent: "Need memory. " } },
+            },
+            { type: "content", text: "Let me check." },
+            { type: "tool_call", request },
+          ],
+          [{ type: "content", text: "final" }],
+        ],
+        inputs,
+      ),
+      promptCompiler: new (class implements PromptCompiler {
+        compileInitialTurn({ initialMessages }) {
+          return initialMessages;
+        }
+        compileToolResults(
+          results: RuntimeToolResult[],
+          requests: RuntimeToolRequest[] = [],
+          context: { assistantContent?: string } = {},
+        ) {
+          return [
+            {
+              role: "assistant" as const,
+              blocks: [
+                ...(context.assistantContent
+                  ? [
+                      {
+                        type: "text" as const,
+                        text: context.assistantContent,
+                      },
+                    ]
+                  : []),
+                ...requests.map((toolRequest) => ({
+                  type: "tool_call" as const,
+                  name: toolRequest.name,
+                  callId: toolRequest.callId,
+                  args: toolRequest.args,
+                })),
+              ],
+              metadata: {
+                openaiReasoningContent: "Need memory. ",
+              },
+            },
+            ...results.map((result) => ({
+              role: "tool" as const,
+              blocks: [
+                {
+                  type: "tool_result" as const,
+                  name: result.name,
+                  callId: result.callId,
+                  result: result.output,
+                },
+              ],
+            })),
+          ];
+        }
+        compileRetryPrompt({ reason }) {
+          return [
+            {
+              role: "user" as const,
+              blocks: [{ type: "text" as const, text: reason }],
+            },
+          ];
+        }
+      })(),
+      toolExecutor: toolExecutor((toolRequest) => ({
+        name: toolRequest.name,
+        callId: toolRequest.callId,
+        status: "success",
+        output: "memory result",
+      })),
+    });
+
+    const result = await runtime.run({
+      userPrompt: "recall",
+      initialMessages,
+      signal: new AbortController().signal,
+    });
+
+    expect(result.finalText).toBe("Let me check.final");
+    expect(inputs[1].messages).toEqual([
+      ...initialMessages,
+      {
+        role: "assistant",
+        blocks: [
+          { type: "text", text: "Let me check." },
+          {
+            type: "tool_call",
+            name: "recall_memory",
+            callId: "call-1",
+            args: { query: "DeepSeek" },
+          },
+        ],
+        metadata: { openaiReasoningContent: "Need memory. " },
+      },
+      {
+        role: "tool",
+        blocks: [
+          {
+            type: "tool_result",
+            name: "recall_memory",
+            callId: "call-1",
+            result: "memory result",
+          },
+        ],
+      },
+    ]);
+    expect(result.messages).toEqual([
+      ...inputs[1].messages,
+      { role: "assistant", blocks: [{ type: "text", text: "final" }] },
     ]);
   });
 

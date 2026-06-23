@@ -114,6 +114,13 @@ npm start
 
       // 单次请求超时时间（毫秒）。
       "timeoutMs": 120000,
+
+      // 可选：DeepSeek/OpenAI-compatible thinking 开关。
+      // 省略时使用服务端默认值。
+      "thinking": "disabled",
+
+      // 可选：DeepSeek/OpenAI-compatible 思考强度，例如 "high" 或 "max"。
+      "reasoningEffort": "high",
     },
   },
 

@@ -161,6 +161,9 @@ tool schema 和 executor。Gemini compatibility path 会继续保留 Gemini CLI 
 - streaming tool-call accumulation；
 - runtime tool schema 编译；
 - assistant tool-call 与 tool-result message 编译；
+- DeepSeek-compatible `thinking` 与 `reasoning_effort` 请求参数；
+- 工具续跑时按 `/chat/completions` 无状态协议追加历史 `messages`，保留
+  assistant tool call、`reasoning_content` 与 tool result；
 - OpenAI、vLLM 和兼容网关的 `baseUrl` 配置；
 - timeout、API key、organization 和 project 配置。
 

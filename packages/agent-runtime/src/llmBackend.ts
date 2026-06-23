@@ -107,6 +107,7 @@ export type PromptCompiler = {
   compileToolResults(
     results: RuntimeToolResult[],
     requests?: RuntimeToolRequest[],
+    context?: { assistantContent?: string },
   ): LlmMessage[];
   compileRetryPrompt(input: RuntimeRetryContext): LlmMessage[];
 };
@@ -169,6 +170,7 @@ export type ToolLoopRunResult = {
   toolsCalled: Set<string>;
   iterations: number;
   stoppedReason: "completed" | "max_tool_iterations" | "tool_failures";
+  messages: LlmMessage[];
 };
 
 function defaultRetryDelayMs(retryCount: number): number {
@@ -276,6 +278,20 @@ function requestsForResults(
   return results
     .map((result) => requestByCallId.get(result.callId))
     .filter((request): request is RuntimeToolRequest => Boolean(request));
+}
+
+function appendAssistantMessage(
+  messages: LlmMessage[],
+  text: string,
+): LlmMessage[] {
+  if (!text) return messages;
+  return [
+    ...messages,
+    {
+      role: "assistant",
+      blocks: [{ type: "text", text }],
+    },
+  ];
 }
 
 export class ToolLoopRuntime {
@@ -416,13 +432,17 @@ export class ToolLoopRuntime {
               consecutiveToolFailures = 0;
             }
 
-            messages = this.options.promptCompiler.compileToolResults(
-              results,
-              requestsForResults(results, [
-                ...toolCallRequestsWithMetadata,
-                ...duplicateDecision.executableRequests,
-              ]),
-            );
+            messages = [
+              ...messages,
+              ...this.options.promptCompiler.compileToolResults(
+                results,
+                requestsForResults(results, [
+                  ...toolCallRequestsWithMetadata,
+                  ...duplicateDecision.executableRequests,
+                ]),
+                { assistantContent: turnTextAccumulated },
+              ),
+            ];
           } else {
             const postContentRequest =
               this.options.planner?.buildPostContentToolRequest?.(
@@ -449,10 +469,14 @@ export class ToolLoopRuntime {
                 postContentRequests,
                 postContentResults,
               );
-              messages = this.options.promptCompiler.compileToolResults(
-                postContentResults,
-                postContentRequests,
-              );
+              messages = [
+                ...messages,
+                ...this.options.promptCompiler.compileToolResults(
+                  postContentResults,
+                  postContentRequests,
+                  { assistantContent: turnTextAccumulated },
+                ),
+              ];
               success = false;
               continue;
             }
@@ -486,9 +510,11 @@ export class ToolLoopRuntime {
               const statePrompt =
                 this.options.planner?.buildStatePrompt?.() ?? "";
               messages = [
+                ...messages,
                 ...this.options.promptCompiler.compileToolResults(
                   deterministicResults,
                   deterministicRequestsWithMetadata,
+                  { assistantContent: turnTextAccumulated },
                 ),
                 ...(statePrompt
                   ? [
@@ -520,6 +546,7 @@ export class ToolLoopRuntime {
                 `🧭 [AgentRuntime] Multi-intent execution incomplete — forcing missing tool step(s), attempt ${intentToolEnforcements}/${maxIntentToolEnforcements}.`,
               );
               messages = [
+                ...messages,
                 {
                   role: "user",
                   blocks: [
@@ -536,6 +563,7 @@ export class ToolLoopRuntime {
                 finalText += turnTextAccumulated;
                 this.options.onContent?.(turnTextAccumulated);
               }
+              messages = appendAssistantMessage(messages, turnTextAccumulated);
               success = true;
             }
           }
@@ -560,6 +588,7 @@ export class ToolLoopRuntime {
           toolsCalled,
           iterations: toolIterations,
           stoppedReason,
+          messages,
         };
       }
     }

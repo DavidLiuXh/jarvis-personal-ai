@@ -163,6 +163,15 @@ function conversationHistoryFromRuntime(
     .filter((turn) => turn.content.trim());
 }
 
+function conversationHistoryToLlmMessages(
+  history: RuntimeConversationContent[],
+): LlmMessage[] {
+  return conversationHistoryFromRuntime(history).map((turn) => ({
+    role: turn.role,
+    blocks: [{ type: "text", text: turn.content }],
+  }));
+}
+
 export class StandaloneJarvisAgent
   extends EventEmitter
   implements JarvisAgentLike
@@ -173,6 +182,7 @@ export class StandaloneJarvisAgent
   private readonly runtimeIntentFeedbackCollector =
     new RuntimeIntentFeedbackCollector(this.jarvisConfig.intentFeedback);
   private readonly history: RuntimeConversationContent[] = [];
+  private llmHistory: LlmMessage[] = [];
   private readonly toolRouter: ToolRouter;
   private localModelRouter: LocalModelRouter | null = null;
   private taskCommandHandler?: TaskCommandHandler;
@@ -254,6 +264,7 @@ export class StandaloneJarvisAgent
     let timeWindowDays: number | null = null;
     let resolvedDateRange: { from: number; to: number } | null = null;
     let intentFrame: IntentFrame | null = null;
+    let topicShifted = false;
     const conversationHistory = conversationHistoryFromRuntime(this.history);
 
     if (this.localModelRouter) {
@@ -265,6 +276,7 @@ export class StandaloneJarvisAgent
       timeWindowDays = routing.timeWindowDays;
       resolvedDateRange = routing.resolvedDateRange;
       intentFrame = routing.intent;
+      topicShifted = routing.topicShifted;
       this.currentBackendModel = routing.model;
       console.error(
         `🔀 [Jarvis] Standalone routing: ${routing.decision} | backend_model=${this.currentBackendModel} | subject=${querySubject} | topic_shifted=${routing.topicShifted} | source=${routing.source}`,
@@ -293,6 +305,11 @@ export class StandaloneJarvisAgent
           this.currentBackendModel,
         ),
         initialMessages: [
+          ...(!topicShifted && this.llmHistory.length > 0
+            ? this.llmHistory
+            : !topicShifted
+              ? conversationHistoryToLlmMessages(this.history)
+              : []),
           { role: "user", blocks: [{ type: "text", text: userPrompt }] },
         ],
         signal: abortController.signal,
@@ -304,6 +321,9 @@ export class StandaloneJarvisAgent
       { role: "user", parts: [{ text: userPrompt }] },
       { role: "assistant", parts: [{ text: assistantText }] },
     );
+    this.llmHistory = (runtimeTurn.llmLoop?.messages ?? [])
+      .filter((message) => message.role !== "system")
+      .slice(-24);
     await Promise.all([
       this.options.memoryService.appendSessionTurn({
         sessionId: this.options.sessionId,
@@ -335,6 +355,8 @@ export class StandaloneJarvisAgent
       organization: openai.organization,
       project: openai.project,
       timeoutMs: openai.timeoutMs,
+      thinking: openai.thinking ? { type: openai.thinking } : undefined,
+      reasoningEffort: openai.reasoningEffort,
     });
     return {
       backend,
