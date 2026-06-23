@@ -11,7 +11,7 @@
     "distillation": "gemini-2.5-flash"
   },
   "llmBackend": {
-    "provider": "gemini",
+    "provider": "deepseek",
     "openai": {
       "apiKeyEnv": "OPENAI_API_KEY",
       "model": "gpt-4.1",
@@ -52,11 +52,9 @@
     "model": "gemma4:e2b",
     "threshold": 70,
     "targets": {
-      "pro": "gemini-2.5-pro",
-      "flash": "gemini-2.5-flash"
-    },
-    "proModel": "gemini-2.5-pro",
-    "flashModel": "gemini-2.5-flash"
+      "pro": "deepseek-v4-pro",
+      "flash": "deepseek-v4-flash"
+    }
   },
   "intentFeedback": {
     "enabled": false,

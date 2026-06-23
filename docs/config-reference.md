@@ -6,17 +6,42 @@ Configuration file location: `~/.gemini-jarvis/config.json`
 
 `llmBackend.provider` selects the backend used for Jarvis main chat and its tool-calling loop. Restart Jarvis after changing it.
 
-Use the Gemini CLI compatibility runtime (default):
+Jarvis currently supports three peer main-chat backends:
+
+- `deepseek`: dedicated DeepSeek standalone runtime with thinking/reasoning support.
+- `openai`: generic OpenAI-compatible standalone runtime for OpenAI, vLLM, local gateways, and similar `/chat/completions` services.
+- `gemini`: Gemini compatibility runtime for users who want Gemini CLI authentication and tools.
+
+Use the DeepSeek standalone runtime:
 
 ```json
 {
   "llmBackend": {
-    "provider": "gemini"
+    "provider": "deepseek",
+    "deepseek": {
+      "apiKeyEnv": "DEEPSEEK_API_KEY",
+      "model": "deepseek-v4-pro",
+      "baseUrl": "https://api.deepseek.com",
+      "timeoutMs": 120000,
+      "thinking": "disabled",
+      "reasoningEffort": "high"
+    }
+  },
+  "routing": {
+    "targets": {
+      "pro": "deepseek-v4-pro",
+      "flash": "deepseek-v4-flash"
+    }
   }
 }
 ```
 
-Gemini mode uses Gemini CLI authentication, model selection, and compatibility tools. Run `npm install` from the repository root after the initial checkout or dependency updates.
+Prefer supplying the API key through the environment:
+
+```bash
+export DEEPSEEK_API_KEY="your-api-key"
+npm start
+```
 
 Use the OpenAI-compatible standalone runtime:
 
@@ -40,7 +65,7 @@ Use the OpenAI-compatible standalone runtime:
 }
 ```
 
-Prefer supplying the API key through the environment:
+For OpenAI-compatible services, supply the API key through the selected `apiKeyEnv`:
 
 ```bash
 export OPENAI_API_KEY="your-api-key"
@@ -48,6 +73,18 @@ npm start
 ```
 
 vLLM, local gateways, and other services exposing a generic OpenAI-compatible API use `"provider": "openai"` with an appropriate `baseUrl`, `model`, and `apiKeyEnv`. DeepSeek uses `"provider": "deepseek"` so its thinking and reasoning semantics stay out of the generic OpenAI-compatible adapter. If local routing is enabled, standalone backends use backend-neutral `routing.targets.pro` / `routing.targets.flash`; when they are unset, both routing branches fall back to the selected backend default model. The supported main-chat providers are currently `gemini`, `openai`, and `deepseek`; native Anthropic and Ollama main-chat protocols are not yet implemented.
+
+Use the Gemini compatibility runtime:
+
+```json
+{
+  "llmBackend": {
+    "provider": "gemini"
+  }
+}
+```
+
+Gemini mode uses Gemini CLI authentication, model selection, and compatibility tools. Run `npm install` from the repository root after the initial checkout or dependency updates.
 
 `routing.provider`, `summarizer.provider`, `reflection.provider`, and `embeddingService.provider` are independent settings and do not select the main-chat backend.
 

@@ -2,7 +2,7 @@
 
 [📄 English Version](./README.md)
 
-Jarvis 是一个深度个性化的 AI 助手。它了解你是谁，记住你的历史，并随着时间不断成长。基于 Gemini CLI 构建，通过微信和飞书融入你的日常生活，主动为你服务，在每一次对话中都变得更懂你。
+Jarvis 是一个深度个性化的 AI 助手。它了解你是谁，记住你的历史，并随着时间不断成长。Jarvis 基于后端无关的 runtime 架构运行，一等支持 Gemini、OpenAI-compatible 服务和 DeepSeek，通过微信和飞书融入你的日常生活，主动为你服务，在每一次对话中都变得更懂你。
 
 ---
 
@@ -28,6 +28,14 @@ Jarvis 在每次请求发往云端之前，先在本地完成分类：
 - **主题分类** — 请求被分类为 `personal`（个人）/ `external`（外部）/ `mixed`（混合），以此控制记忆注入，防止不相关的历史上下文污染回答。
 - **自动模型选择** — 简单问题路由到快速 Flash 模型，复杂分析路由到 Pro 模型。在节省成本的同时，关键任务质量不打折。
 - **时间感知** — "昨天"、"上周"、"4月27日"等时间表达会被解析成精确的日期范围，再用于记忆检索，实现准确的历史回溯。
+
+### 🔌 可插拔 LLM 后端
+
+Jarvis 不再绑定单一模型供应商。主响应循环、工具调用、记忆注入、session 历史和流式输出都运行在 Jarvis 自有的 runtime contract 之上。
+
+- **Gemini** — 兼容后端，适合继续使用 Gemini CLI 认证和模型能力。
+- **OpenAI-compatible** — 支持 OpenAI、vLLM、本地网关以及其他 OpenAI-shape `/chat/completions` 服务。
+- **DeepSeek** — 独立后端，明确支持 DeepSeek thinking mode、reasoning content、streaming 和 tool-call resume 语义。
 
 ### ⚡ 后台任务与 A2A Agent 网络
 
@@ -63,19 +71,43 @@ Jarvis 主动将每次请求的 token 消耗降到最低：
 ### 前置条件
 
 - **Node.js** >= 20.0.0
-- **Google 账号**（用于 Google 登录）或 **Gemini API Key**
+- 至少配置一个主对话后端：**OpenAI-compatible API Key**、**DeepSeek API Key** 或 **Gemini 凭证**
 
-### 身份认证
+### 后端认证
 
-**方案 A：Google 账号登录（推荐）**
+**方案 A：DeepSeek**
+
+```json
+"llmBackend": {
+  "provider": "deepseek",
+  "deepseek": {
+    "apiKeyEnv": "DEEPSEEK_API_KEY",
+    "model": "deepseek-v4-pro",
+    "baseUrl": "https://api.deepseek.com"
+  }
+}
+```
+
+**方案 B：OpenAI-compatible**
+
+```json
+"llmBackend": {
+  "provider": "openai",
+  "openai": {
+    "apiKeyEnv": "OPENAI_API_KEY",
+    "model": "gpt-4.1",
+    "baseUrl": "https://api.openai.com/v1"
+  }
+}
+```
+
+**方案 C：Gemini compatibility**
 
 ```bash
 npx gemini login
 ```
 
-**方案 B：API Key**
-
-在 `~/.gemini-jarvis/config.json` 中设置：
+或者在 `~/.gemini-jarvis/config.json` 中设置 Gemini API Key：
 
 ```json
 "api": {
@@ -86,20 +118,18 @@ npx gemini login
 ### 安装与启动
 
 ```bash
-# 克隆项目（必须包含 submodule）
-git clone --recurse-submodules https://github.com/DavidLiuXh/jarvis-personal-ai.git
+git clone https://github.com/DavidLiuXh/jarvis-personal-ai.git
 cd jarvis-personal-ai
 
 npm install
 npx tsx jarvis/src/index.ts
 ```
 
-> 如果已经 clone 但忘了 `--recurse-submodules`，先执行
-> `git submodule update --init --recursive`。
+> Gemini compatibility backend 会使用仓库中的 `gemini-cli` workspace。如果使用该后端且 clone 时没有拉取 submodule，请执行 `git submodule update --init --recursive`。
 
-### 更新 gemini-cli
+### 更新 Gemini Compatibility 依赖
 
-Jarvis 在上游 gemini-cli 之上维护了本地补丁，请使用提供的脚本安全更新：
+Jarvis 主后端可以不依赖 Gemini。如果你使用 Gemini compatibility backend，Jarvis 在上游 gemini-cli 之上维护了本地补丁，请使用提供的脚本安全更新：
 
 ```bash
 ./scripts/update-gemini-cli.sh
@@ -115,7 +145,7 @@ npm install
 
 Jarvis 通过 `~/.gemini-jarvis/config.json` 进行配置，首次启动时会自动创建并填入默认值。
 
-完整配置项说明请参阅 [配置参考文档](docs/config-reference_cn.md)。
+OpenAI-compatible、DeepSeek 示例、routing targets 和完整配置项说明请参阅 [配置参考文档](docs/config-reference_cn.md)。
 
 ---
 
@@ -164,4 +194,4 @@ Jarvis 的所有数据都存放在 `~/.gemini-jarvis/` 目录下——与你日�
 
 ## 📜 开源协议
 
-Apache-2.0 — 继承自 [gemini-cli](https://github.com/google-gemini/gemini-cli)
+Apache-2.0。

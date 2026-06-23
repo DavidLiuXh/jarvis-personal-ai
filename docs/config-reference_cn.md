@@ -6,17 +6,42 @@
 
 `llmBackend.provider` 决定 Jarvis 主对话和工具调用循环使用哪个后端。修改后需要重启 Jarvis。
 
-使用 Gemini CLI compatibility runtime（默认）：
+Jarvis 当前支持三个平等的主对话后端：
+
+- `deepseek`：DeepSeek 独立 standalone runtime，支持 thinking / reasoning 语义。
+- `openai`：通用 OpenAI-compatible standalone runtime，适用于 OpenAI、vLLM、本地网关和类似 `/chat/completions` 服务。
+- `gemini`：Gemini compatibility runtime，适合继续使用 Gemini CLI 认证和工具链。
+
+使用 DeepSeek standalone runtime：
 
 ```json
 {
   "llmBackend": {
-    "provider": "gemini"
+    "provider": "deepseek",
+    "deepseek": {
+      "apiKeyEnv": "DEEPSEEK_API_KEY",
+      "model": "deepseek-v4-pro",
+      "baseUrl": "https://api.deepseek.com",
+      "timeoutMs": 120000,
+      "thinking": "disabled",
+      "reasoningEffort": "high"
+    }
+  },
+  "routing": {
+    "targets": {
+      "pro": "deepseek-v4-pro",
+      "flash": "deepseek-v4-flash"
+    }
   }
 }
 ```
 
-Gemini 模式使用 Gemini CLI 的认证、模型和兼容工具链。首次安装或更新依赖时，请在仓库根目录运行 `npm install`。
+建议通过环境变量提供密钥：
+
+```bash
+export DEEPSEEK_API_KEY="your-api-key"
+npm start
+```
 
 使用 OpenAI-compatible standalone runtime：
 
@@ -40,7 +65,7 @@ Gemini 模式使用 Gemini CLI 的认证、模型和兼容工具链。首次安�
 }
 ```
 
-建议通过环境变量提供密钥：
+OpenAI-compatible 服务通过所选 `apiKeyEnv` 提供密钥：
 
 ```bash
 export OPENAI_API_KEY="your-api-key"
@@ -48,6 +73,18 @@ npm start
 ```
 
 提供通用 OpenAI-compatible API 的 vLLM、本地网关或其他服务使用 `"provider": "openai"`，并修改 `baseUrl`、`model` 和 `apiKeyEnv`。DeepSeek 使用 `"provider": "deepseek"`，这样 thinking 和 reasoning 语义不会污染通用 OpenAI-compatible adapter。如果启用了本地 routing，standalone backend 会使用后端无关的 `routing.targets.pro` / `routing.targets.flash`；未配置时两个分支都会退回所选 backend 的默认模型。当前主对话后端正式支持 `gemini`、`openai` 和 `deepseek`；Anthropic 与 Ollama 的原生主对话协议尚未接入。
+
+使用 Gemini compatibility runtime：
+
+```json
+{
+  "llmBackend": {
+    "provider": "gemini"
+  }
+}
+```
+
+Gemini 模式使用 Gemini CLI 的认证、模型和兼容工具链。首次安装或更新依赖时，请在仓库根目录运行 `npm install`。
 
 `routing.provider`、`summarizer.provider`、`reflection.provider` 和 `embeddingService.provider` 是独立配置，不会切换主对话后端。
 
