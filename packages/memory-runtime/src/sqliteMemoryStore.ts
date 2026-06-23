@@ -209,22 +209,33 @@ export class SqliteMemoryStore
     const vectorScores = new Map(vectorRows.map((row) => [row.id, row.score]));
     const rows = this.db
       .prepare(
-        "SELECT id, category, content, importance, timestamp, embedding, last_accessed, access_count FROM facts ORDER BY importance DESC LIMIT ?",
+        `SELECT id, category, content, importance, timestamp, embedding, last_accessed, access_count
+           FROM facts
+          ORDER BY timestamp DESC, importance DESC
+          LIMIT ?`,
       )
-      .all(Math.max(limit * 8, 50)) as FactRow[];
+      .all(Math.max(limit * 40, 500)) as FactRow[];
     const results = rows
       .map((row) => {
         const vectorScore = vectorScores.get(row.id);
         const lexicalScore = lexicalSimilarity(query, row.content);
+        const baseScore =
+          vectorScore !== undefined
+            ? Math.max(vectorScore, lexicalScore)
+            : lexicalScore;
+        const userMemoryBoost =
+          options.contract?.memoryTarget === "user_memory" &&
+          ["identity", "behavior", "interaction_style", "preference"].includes(
+            row.category,
+          )
+            ? 0.08
+            : 0;
         return {
           id: String(row.id),
           subject: factCategoryToSubject(row.category),
           content: row.content,
           confidence: Math.max(0.1, Math.min(1, row.importance / 10)),
-          score:
-            vectorScore !== undefined
-              ? Math.max(vectorScore, lexicalScore)
-              : lexicalScore,
+          score: baseScore + userMemoryBoost,
           createdAt: iso(row.timestamp),
           updatedAt: iso(row.timestamp),
           metadata: { category: row.category, importance: row.importance },

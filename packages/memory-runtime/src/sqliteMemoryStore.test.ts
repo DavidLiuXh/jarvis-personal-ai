@@ -101,6 +101,76 @@ describe("SqliteMemoryStore", () => {
     store.close();
   });
 
+  it("recalls short Chinese hobby facts for user-memory queries", async () => {
+    const store = new SqliteMemoryStore({ dbPath: dbPath() });
+    const facts: Array<Pick<FactMemory, "content" | "confidence">> = [
+      {
+        content:
+          "USER is interested in Chrome extension development and commercialisation.",
+        confidence: 0.7,
+      },
+      {
+        content:
+          "The user wants to know about successful cases of monetising a free tool into paid tools.",
+        confidence: 0.7,
+      },
+      { content: "爱好骑自行车", confidence: 0.6 },
+      { content: "爱好逛胡同", confidence: 0.6 },
+    ];
+
+    for (const fact of facts) {
+      await store.upsertFact({
+        id: "",
+        scope: "fact",
+        subject: "profile",
+        content: fact.content,
+        confidence: fact.confidence,
+        sourceRefs: ["test"],
+        createdAt: now,
+        updatedAt: now,
+        metadata: {
+          category: "behavior",
+          importance: Math.round(fact.confidence * 10),
+        },
+      });
+    }
+
+    const results = await store.searchFacts(
+      "你记录了我有哪些爱好？ user_memory",
+      {
+        limit: 5,
+        contract: {
+          needMemory: true,
+          subjectBoundary: "personal",
+          targetScopes: ["fact"],
+          memoryTarget: "user_memory",
+          query: {
+            raw: "你记录了我有哪些爱好？",
+            entities: ["爱好"],
+          },
+          confidence: {
+            subject: 1,
+            target: 1,
+            query: 1,
+          },
+          constraints: {
+            allowPersonalFacts: true,
+            allowSessionHistory: false,
+            allowEntries: false,
+            maxChars: 1000,
+          },
+          reasons: [],
+          policyTrace: [],
+        },
+      },
+    );
+
+    expect(results.map((result) => result.content)).toEqual(
+      expect.arrayContaining(["爱好骑自行车", "爱好逛胡同"]),
+    );
+    store.close();
+  });
+
   it("works through DefaultLayeredMemoryRuntime", async () => {
     const store = new SqliteMemoryStore({ dbPath: dbPath() });
     const runtime = new DefaultLayeredMemoryRuntime({

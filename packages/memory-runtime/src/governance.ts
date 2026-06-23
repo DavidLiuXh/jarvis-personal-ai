@@ -52,7 +52,14 @@ function normalizeText(text: string): string {
 }
 
 function tokenSet(text: string): Set<string> {
-  return new Set(normalizeText(text).split(" ").filter(Boolean));
+  const terms = new Set(normalizeText(text).split(" ").filter(Boolean));
+  for (const sequence of text.match(/[\p{Script=Han}]+/gu) ?? []) {
+    for (const char of sequence) terms.add(char);
+    for (let index = 0; index < sequence.length - 1; index++) {
+      terms.add(sequence.slice(index, index + 2));
+    }
+  }
+  return terms;
 }
 
 export function lexicalSimilarity(left: string, right: string): number {
