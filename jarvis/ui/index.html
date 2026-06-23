@@ -1681,7 +1681,10 @@
       }
 
       function prepareMarkdownForDisplay(markdown) {
-        const protectedMath = protectMathSegments(String(markdown));
+        const normalizedBareLatex = normalizeBareLatexOutsideFences(
+          String(markdown),
+        );
+        const protectedMath = protectMathSegments(normalizedBareLatex);
         const protectedStrong = protectStrongSegments(
           normalizeMarkdownOutsideMath(protectedMath.markdown),
         );
@@ -1690,6 +1693,59 @@
           mathSegments: protectedMath.mathSegments,
           strongSegments: protectedStrong.strongSegments,
         };
+      }
+
+      function normalizeBareLatexOutsideFences(markdown) {
+        const lines = String(markdown).split(/(\r?\n)/);
+        let inFence = false;
+        return lines
+          .map((part) => {
+            if (/^\r?\n$/.test(part)) return part;
+            const fenceMatch = part.match(/^\s*```/);
+            if (fenceMatch) {
+              inFence = !inFence;
+              return part;
+            }
+            if (inFence) return part;
+            return normalizeBareLatexLine(part);
+          })
+          .join("");
+      }
+
+      function normalizeBareLatexLine(line) {
+        const text = String(line);
+        const trimmed = text.trim();
+        if (!trimmed || hasMathDelimiter(trimmed)) return text;
+        if (!looksLikeStandaloneLatexExpression(trimmed)) return text;
+
+        const leading = text.match(/^\s*/)?.[0] || "";
+        const trailing = text.match(/\s*$/)?.[0] || "";
+        const expression = repairCommonBareLatexShape(trimmed);
+        return `${leading}\\[${expression}\\]${trailing}`;
+      }
+
+      function hasMathDelimiter(text) {
+        return /(^|[^\\])(\$\$|\$|\\\(|\\\[)/.test(text);
+      }
+
+      function looksLikeStandaloneLatexExpression(text) {
+        if (!/\\[A-Za-z]+/.test(text)) return false;
+        if (!/[=_^{}]|\\(?:frac|sum|prod|int|sqrt|hat|bar|tilde|vec)\b/.test(text)) {
+          return false;
+        }
+        if (/[。！？；，、]/.test(text)) return false;
+        const proseWords = text.match(/[A-Za-z]{3,}/g) || [];
+        const latexCommands = text.match(/\\[A-Za-z]+/g) || [];
+        return proseWords.length <= latexCommands.length + 4;
+      }
+
+      function repairCommonBareLatexShape(expression) {
+        return String(expression)
+          .replace(
+            /(\\(?:hat|bar|tilde|vec|dot|ddot)\{[^{}]+\})([A-Za-z0-9])/g,
+            "$1_$2",
+          )
+          .replace(/(^|[^\\A-Za-z])([A-Za-z])\{([A-Za-z0-9]+)\}/g, "$1$2_{$3}");
       }
 
       function protectMathSegments(markdown) {
