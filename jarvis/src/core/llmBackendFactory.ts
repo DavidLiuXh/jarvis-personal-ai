@@ -7,6 +7,8 @@
  */
 
 import {
+  DeepSeekChatBackend,
+  DeepSeekPromptCompiler,
   OpenAiChatCompletionsBackend,
   OpenAiPromptCompiler,
   type LlmBackend,
@@ -17,7 +19,7 @@ import type { JarvisConfig } from "./configManager.js";
 import { createDefaultRuntimeToolRegistry } from "./jarvisToolRegistry.js";
 
 export type JarvisLlmBackendBundle = {
-  provider: "openai";
+  provider: "openai" | "deepseek";
   backend: LlmBackend;
   promptCompiler: PromptCompiler;
   tools: LlmToolSchema[];
@@ -41,7 +43,7 @@ export function createJarvisLlmBackend(input: {
   tools?: LlmToolSchema[];
 }): JarvisLlmBackendBundle {
   const provider = input.config.llmBackend?.provider ?? "gemini";
-  if (provider !== "openai") {
+  if (provider === "gemini") {
     throw new Error(
       "createJarvisLlmBackend handles non-Gemini backends only. Use createGeminiJarvisLlmBackend in Gemini compatibility adapters.",
     );
@@ -52,6 +54,25 @@ export function createJarvisLlmBackend(input: {
   ).filter((tool: LlmToolSchema | null): tool is LlmToolSchema =>
     Boolean(tool),
   );
+
+  if (provider === "deepseek") {
+    const deepseek = input.config.llmBackend?.deepseek ?? {};
+    const apiKeyEnv = deepseek.apiKeyEnv ?? "DEEPSEEK_API_KEY";
+    const apiKey = deepseek.apiKey ?? process.env[apiKeyEnv] ?? "";
+    return {
+      provider,
+      backend: new DeepSeekChatBackend({
+        apiKey,
+        model: deepseek.model ?? "deepseek-v4-pro",
+        baseUrl: deepseek.baseUrl,
+        timeoutMs: deepseek.timeoutMs,
+        thinking: deepseek.thinking,
+        reasoningEffort: deepseek.reasoningEffort,
+      }),
+      promptCompiler: new DeepSeekPromptCompiler(),
+      tools,
+    };
+  }
 
   const openai = input.config.llmBackend?.openai ?? {};
   const apiKeyEnv = openai.apiKeyEnv ?? "OPENAI_API_KEY";
@@ -65,8 +86,6 @@ export function createJarvisLlmBackend(input: {
       organization: openai.organization,
       project: openai.project,
       timeoutMs: openai.timeoutMs,
-      thinking: openai.thinking ? { type: openai.thinking } : undefined,
-      reasoningEffort: openai.reasoningEffort,
     }),
     promptCompiler: new OpenAiPromptCompiler(),
     tools,

@@ -230,7 +230,7 @@ export class BackgroundTaskRunner extends EventEmitter {
     sessionId: string,
   ): Promise<JarvisAgentLike> {
     const config = ConfigManager.getInstance().get();
-    if (config.llmBackend?.provider === "openai") {
+    if ((config.llmBackend?.provider ?? "gemini") !== "gemini") {
       return new StandaloneJarvisAgent({
         sessionId,
         cwd: this.sourceRoot,

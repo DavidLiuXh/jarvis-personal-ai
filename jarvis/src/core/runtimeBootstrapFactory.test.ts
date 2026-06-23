@@ -34,6 +34,15 @@ describe("runtime bootstrap factory", () => {
     );
   });
 
+  it("selects standalone runtime for DeepSeek backend", () => {
+    const config = { llmBackend: { provider: "deepseek" } } as any;
+
+    expect(shouldUseStandaloneRuntime(config)).toBe(true);
+    expect(createRuntimeBootstrap({ ...baseInput, config })).toBeInstanceOf(
+      StandaloneJarvisBootstrap,
+    );
+  });
+
   it("keeps Gemini compatibility runtime as the default", () => {
     const config = { llmBackend: { provider: "gemini" } } as any;
 

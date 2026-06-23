@@ -47,7 +47,7 @@ export OPENAI_API_KEY="your-api-key"
 npm start
 ```
 
-提供 OpenAI-compatible API 的 vLLM、本地网关或其他服务也使用 `"provider": "openai"`，并修改 `baseUrl`、`model` 和 `apiKeyEnv`。如果启用了本地 routing，OpenAI-compatible 模式会使用后端无关的 `routing.targets.pro` / `routing.targets.flash`；未配置时两个分支都会退回 `llmBackend.openai.model`，避免把 Gemini 模型名发给 OpenAI-compatible 服务。当前主对话后端只正式支持 `gemini` 和 `openai`；Anthropic 与 Ollama 的原生主对话协议尚未接入。
+提供通用 OpenAI-compatible API 的 vLLM、本地网关或其他服务使用 `"provider": "openai"`，并修改 `baseUrl`、`model` 和 `apiKeyEnv`。DeepSeek 使用 `"provider": "deepseek"`，这样 thinking 和 reasoning 语义不会污染通用 OpenAI-compatible adapter。如果启用了本地 routing，standalone backend 会使用后端无关的 `routing.targets.pro` / `routing.targets.flash`；未配置时两个分支都会退回所选 backend 的默认模型。当前主对话后端正式支持 `gemini`、`openai` 和 `deepseek`；Anthropic 与 Ollama 的原生主对话协议尚未接入。
 
 `routing.provider`、`summarizer.provider`、`reflection.provider` 和 `embeddingService.provider` 是独立配置，不会切换主对话后端。
 
@@ -99,6 +99,7 @@ npm start
   "llmBackend": {
     // "gemini"：Gemini CLI compatibility runtime（默认）
     // "openai"：OpenAI-compatible standalone runtime
+    // "deepseek"：DeepSeek standalone runtime
     "provider": "gemini",
 
     // 仅 provider = "openai" 时生效。
@@ -114,12 +115,27 @@ npm start
 
       // 单次请求超时时间（毫秒）。
       "timeoutMs": 120000,
+    },
 
-      // 可选：DeepSeek/OpenAI-compatible thinking 开关。
+    // 仅 provider = "deepseek" 时生效。
+    "deepseek": {
+      // API key 所在的环境变量。
+      "apiKeyEnv": "DEEPSEEK_API_KEY",
+
+      // DeepSeek 模型名。
+      "model": "deepseek-v4-pro",
+
+      // DeepSeek API 地址。
+      "baseUrl": "https://api.deepseek.com",
+
+      // 单次请求超时时间（毫秒）。
+      "timeoutMs": 120000,
+
+      // 可选：DeepSeek thinking 开关。
       // 省略时使用服务端默认值。
       "thinking": "disabled",
 
-      // 可选：DeepSeek/OpenAI-compatible 思考强度，例如 "high" 或 "max"。
+      // 可选：DeepSeek 思考强度，例如 "high" 或 "max"。
       "reasoningEffort": "high",
     },
   },

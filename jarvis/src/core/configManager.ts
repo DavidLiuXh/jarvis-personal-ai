@@ -134,10 +134,10 @@ export interface JarvisConfig {
   };
   /**
    * Main chat LLM backend. Gemini remains the default compatibility backend;
-   * OpenAI-compatible backends can be enabled without changing runtime logic.
+   * non-Gemini backends run through the standalone runtime.
    */
   llmBackend?: {
-    provider?: "gemini" | "openai";
+    provider?: "gemini" | "openai" | "deepseek";
     openai?: {
       apiKey?: string;
       apiKeyEnv?: string;
@@ -147,9 +147,17 @@ export interface JarvisConfig {
       organization?: string;
       project?: string;
       timeoutMs?: number;
-      /** DeepSeek/OpenAI-compatible thinking toggle. Omit to use provider default. */
+    };
+    deepseek?: {
+      apiKey?: string;
+      apiKeyEnv?: string;
+      baseUrl?: string;
+      /** Default DeepSeek model when routing is disabled or no routing target is configured. */
+      model?: string;
+      timeoutMs?: number;
+      /** DeepSeek thinking toggle. Omit to use provider default. */
       thinking?: "enabled" | "disabled";
-      /** DeepSeek/OpenAI-compatible reasoning effort, e.g. high or max. */
+      /** DeepSeek reasoning effort, e.g. high or max. */
       reasoningEffort?: string;
     };
   };
@@ -590,6 +598,14 @@ export class ConfigManager {
           model: "gpt-4.1",
           baseUrl: "https://api.openai.com/v1",
           timeoutMs: 120_000,
+        },
+        deepseek: {
+          apiKeyEnv: "DEEPSEEK_API_KEY",
+          model: "deepseek-v4-pro",
+          baseUrl: "https://api.deepseek.com",
+          timeoutMs: 120_000,
+          thinking: "disabled",
+          reasoningEffort: "high",
         },
       },
     };

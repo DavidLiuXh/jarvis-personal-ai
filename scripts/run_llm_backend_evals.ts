@@ -10,9 +10,11 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
+  DeepSeekChatBackend,
+  DeepSeekPromptCompiler,
   OpenAiChatCompletionsBackend,
   OpenAiPromptCompiler,
-} from "../packages/agent-runtime/src/openAiBackend.js";
+} from "../packages/agent-runtime/src/index.js";
 import type {
   LlmBackend,
   LlmEvent,
@@ -204,6 +206,96 @@ const cases: EvalCase[] = [
       );
       assert(compiled[0]?.role === "assistant", "assistant tool call missing");
       assert(compiled[1]?.role === "tool", "tool result missing");
+    },
+  },
+  {
+    name: "deepseek-thinking-streaming-tool-call",
+    suite: "standalone",
+    async run() {
+      const backend = new DeepSeekChatBackend({
+        apiKey: "test-key",
+        model: "deepseek-v4-pro",
+        thinking: "enabled",
+        reasoningEffort: "high",
+        fetchFn: (async (_url, init) => {
+          const body = JSON.parse(String(init?.body));
+          assert(
+            body.thinking?.type === "enabled",
+            "DeepSeek thinking control missing",
+          );
+          assert(
+            body.reasoning_effort === "high",
+            "DeepSeek reasoning effort missing",
+          );
+          return new Response(
+            sse(
+              { choices: [{ delta: { reasoning_content: "Need tool. " } }] },
+              {
+                choices: [
+                  {
+                    delta: {
+                      tool_calls: [
+                        {
+                          index: 0,
+                          id: "call-1",
+                          function: {
+                            name: "recall_memory",
+                            arguments: '{"query":"DeepSeek"}',
+                          },
+                        },
+                      ],
+                    },
+                  },
+                ],
+              },
+            ),
+            { status: 200 },
+          );
+        }) as unknown as typeof fetch,
+      });
+      const events = [];
+      for await (const event of backend.sendTurn(
+        {
+          messages: [
+            {
+              role: "user",
+              blocks: [{ type: "text", text: "recall DeepSeek" }],
+            },
+          ],
+          tools: [{ name: "recall_memory", parameters: { type: "object" } }],
+        },
+        new AbortController().signal,
+      )) {
+        events.push(event);
+      }
+      assert(
+        events.some((event) => event.type === "metadata"),
+        "DeepSeek reasoning metadata missing",
+      );
+      const toolCall = events.find((event) => event.type === "tool_call") as
+        | { type: "tool_call"; request: RuntimeToolRequest }
+        | undefined;
+      assert(toolCall, "DeepSeek tool call missing");
+      assert(
+        toolCall.request.metadata?.openai,
+        "DeepSeek reasoning metadata not attached to tool call",
+      );
+      const compiled = new DeepSeekPromptCompiler().compileToolResults(
+        [
+          {
+            name: "recall_memory",
+            callId: "call-1",
+            status: "success",
+            output: "memory",
+          },
+        ],
+        [toolCall.request],
+      );
+      assert(
+        (compiled[0] as any)?.metadata?.openaiReasoningContent ===
+          "Need tool. ",
+        "DeepSeek reasoning_content was not preserved for resume",
+      );
     },
   },
 ];

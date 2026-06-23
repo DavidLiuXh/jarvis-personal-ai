@@ -10,12 +10,13 @@ roadmap 还覆盖启动、配置、session、memory、policy、日志和依赖�
 
 Jarvis 的主响应路径已经不再以 Gemini CLI protocol 作为内部 runtime contract。
 
-当前架构支持两条生产路径：
+当前架构支持三条生产路径：
 
 - `gemini`：Gemini CLI compatibility runtime；
-- `openai`：OpenAI-compatible standalone runtime。
+- `openai`：OpenAI-compatible standalone runtime；
+- `deepseek`：DeepSeek standalone runtime。
 
-当 `llmBackend.provider=openai` 时：
+当 `llmBackend.provider` 为 `openai` 或 `deepseek` 时：
 
 - `JarvisManager` 创建 `StandaloneJarvisAgent`；
 - `BackgroundTaskRunner` 创建独立的 standalone agent；
@@ -161,13 +162,28 @@ tool schema 和 executor。Gemini compatibility path 会继续保留 Gemini CLI 
 - streaming tool-call accumulation；
 - runtime tool schema 编译；
 - assistant tool-call 与 tool-result message 编译；
-- DeepSeek-compatible `thinking` 与 `reasoning_effort` 请求参数；
 - 工具续跑时按 `/chat/completions` 无状态协议追加历史 `messages`，保留
   assistant tool call、`reasoning_content` 与 tool result；
 - OpenAI、vLLM 和兼容网关的 `baseUrl` 配置；
 - timeout、API key、organization 和 project 配置。
 
-OpenAI-compatible backend 是当前 standalone 主对话实现。
+OpenAI-compatible backend 是通用 OpenAI-shape transport，不承载 provider-specific
+语义。
+
+### DeepSeek Backend
+
+`DeepSeekChatBackend` 是独立 provider adapter。它复用 OpenAI-shape transport，但把
+DeepSeek 专属行为收敛在 DeepSeek 层：
+
+- 默认 `baseUrl=https://api.deepseek.com`；
+- `DEEPSEEK_API_KEY` 默认凭据环境变量；
+- DeepSeek `thinking` 与 `reasoning_effort` 请求参数；
+- thinking mode 下 `reasoning_content` + tool call resume 的回传契约；
+- DeepSeek 专属测试与配置文档。
+
+这样做的原因是 DeepSeek 与 OpenAI-compatible 在 HTTP 形态上相似，但 thinking /
+reasoning 语义、工具续跑约束和质量调参策略不同。把 DeepSeek 抽成独立 backend 可以让
+OpenAI-compatible 保持通用协议层，避免 provider-specific 行为继续污染通用 adapter。
 
 ### Gemini Compatibility Backend
 
@@ -258,6 +274,30 @@ Gemini 是当前默认值，使用 Gemini CLI authentication 和 compatibility t
 }
 ```
 
+### DeepSeek Standalone
+
+```json
+{
+  "llmBackend": {
+    "provider": "deepseek",
+    "deepseek": {
+      "apiKeyEnv": "DEEPSEEK_API_KEY",
+      "model": "deepseek-v4-pro",
+      "baseUrl": "https://api.deepseek.com",
+      "timeoutMs": 120000,
+      "thinking": "disabled",
+      "reasoningEffort": "high"
+    }
+  },
+  "routing": {
+    "targets": {
+      "pro": "deepseek-v4-pro",
+      "flash": "deepseek-v4-flash"
+    }
+  }
+}
+```
+
 通过环境变量提供密钥：
 
 ```bash
@@ -278,6 +318,7 @@ compatibility path 的兼容别名，避免 OpenAI-compatible 后端收到 Gemin
 | ----------------------- | --------------- | ----------------- | ----------------------- | ---------------------------- |
 | Gemini CLI              | Yes             | Yes               | Yes                     | Compatibility                |
 | OpenAI-compatible       | Yes             | Yes               | Yes                     | Standalone                   |
+| DeepSeek                | Yes             | Yes               | Yes                     | Standalone                   |
 | Anthropic native        | No              | -                 | -                       | Future adapter               |
 | Ollama native main chat | No              | -                 | -                       | Not planned in current phase |
 | vLLM OpenAI API         | Compatible path | Depends on server | Depends on model/server | Standalone                   |
@@ -301,7 +342,7 @@ compatibility path 的兼容别名，避免 OpenAI-compatible 后端收到 Gemin
 - standalone runtime 不需要把 Gemini CLI 作为 workspace 构建；
 - compatibility mode 仍可通过根目录 `npm install` 安装所需依赖；
 - 缺少 Gemini compatibility dependencies 时，启动错误会明确提示安装依赖或切换
-  `llmBackend.provider=openai`。
+  `llmBackend.provider=openai/deepseek`。
 
 `runtime:check-boundaries` 会阻止非 `gemini*` Jarvis core 文件静态 import Gemini CLI
 或 `@google/genai`。

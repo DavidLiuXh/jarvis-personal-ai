@@ -28,8 +28,7 @@ export type OpenAiChatBackendOptions = {
   organization?: string;
   project?: string;
   timeoutMs?: number;
-  thinking?: { type: "enabled" | "disabled" };
-  reasoningEffort?: string;
+  extraBody?: Record<string, unknown>;
   fetchFn?: typeof fetch;
 };
 
@@ -317,10 +316,7 @@ export class OpenAiChatCompletionsBackend implements LlmBackend {
           model: this.options.model,
           stream: true,
           messages: input.messages.map(toOpenAiMessage),
-          ...(this.options.reasoningEffort
-            ? { reasoning_effort: this.options.reasoningEffort }
-            : {}),
-          ...(this.options.thinking ? { thinking: this.options.thinking } : {}),
+          ...(this.options.extraBody ?? {}),
           ...(tools.length > 0
             ? {
                 tools,

@@ -23,7 +23,7 @@ type RuntimeBootstrapFactoryInput = {
 };
 
 export function shouldUseStandaloneRuntime(config: JarvisConfig): boolean {
-  return config.llmBackend?.provider === "openai";
+  return (config.llmBackend?.provider ?? "gemini") !== "gemini";
 }
 
 export function createRuntimeBootstrap(

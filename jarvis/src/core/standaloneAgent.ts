@@ -6,9 +6,13 @@
 
 import { EventEmitter } from "node:events";
 import {
+  DeepSeekChatBackend,
+  DeepSeekPromptCompiler,
   OpenAiChatCompletionsBackend,
   OpenAiPromptCompiler,
+  type LlmBackend,
   type LlmMessage,
+  type PromptCompiler,
   type ToolLoopPlanner,
   type ToolLoopRuntimeOptions,
 } from "../agent-runtime/index.js";
@@ -60,11 +64,55 @@ export type StandaloneRoutingTargetModels = {
 export function resolveStandaloneRoutingTargetModels(
   config: Pick<JarvisConfig, "llmBackend" | "routing">,
 ): StandaloneRoutingTargetModels {
-  const openai = config.llmBackend?.openai ?? {};
-  const defaultModel = openai.model ?? "gpt-4.1";
+  const provider = config.llmBackend?.provider ?? "gemini";
+  const backendConfig =
+    provider === "deepseek"
+      ? config.llmBackend?.deepseek
+      : config.llmBackend?.openai;
+  const defaultModel =
+    backendConfig?.model ??
+    (provider === "deepseek" ? "deepseek-v4-pro" : "gpt-4.1");
   const proModel = config.routing?.targets?.pro ?? defaultModel;
   const flashModel = config.routing?.targets?.flash ?? defaultModel;
   return { defaultModel, proModel, flashModel };
+}
+
+function createStandaloneBackend(input: {
+  config: JarvisConfig;
+  model: string;
+}): { backend: LlmBackend; promptCompiler: PromptCompiler } {
+  const provider = input.config.llmBackend?.provider ?? "openai";
+  if (provider === "deepseek") {
+    const deepseek = input.config.llmBackend?.deepseek ?? {};
+    const apiKeyEnv = deepseek.apiKeyEnv ?? "DEEPSEEK_API_KEY";
+    const apiKey = deepseek.apiKey ?? process.env[apiKeyEnv] ?? "";
+    return {
+      backend: new DeepSeekChatBackend({
+        apiKey,
+        model: input.model,
+        baseUrl: deepseek.baseUrl,
+        timeoutMs: deepseek.timeoutMs,
+        thinking: deepseek.thinking,
+        reasoningEffort: deepseek.reasoningEffort,
+      }),
+      promptCompiler: new DeepSeekPromptCompiler(),
+    };
+  }
+
+  const openai = input.config.llmBackend?.openai ?? {};
+  const apiKeyEnv = openai.apiKeyEnv ?? "OPENAI_API_KEY";
+  const apiKey = openai.apiKey ?? process.env[apiKeyEnv] ?? "";
+  return {
+    backend: new OpenAiChatCompletionsBackend({
+      apiKey,
+      model: input.model,
+      baseUrl: openai.baseUrl,
+      organization: openai.organization,
+      project: openai.project,
+      timeoutMs: openai.timeoutMs,
+    }),
+    promptCompiler: new OpenAiPromptCompiler(),
+  };
 }
 
 function createStandaloneToolExecutor(input: {
@@ -345,22 +393,13 @@ export class StandaloneJarvisAgent
     stepRuntime: IntentStepRuntime,
     backendModel: string,
   ): ToolLoopRuntimeOptions {
-    const openai = this.jarvisConfig.llmBackend?.openai ?? {};
-    const apiKeyEnv = openai.apiKeyEnv ?? "OPENAI_API_KEY";
-    const apiKey = openai.apiKey ?? process.env[apiKeyEnv] ?? "";
-    const backend = new OpenAiChatCompletionsBackend({
-      apiKey,
+    const { backend, promptCompiler } = createStandaloneBackend({
+      config: this.jarvisConfig,
       model: backendModel,
-      baseUrl: openai.baseUrl,
-      organization: openai.organization,
-      project: openai.project,
-      timeoutMs: openai.timeoutMs,
-      thinking: openai.thinking ? { type: openai.thinking } : undefined,
-      reasoningEffort: openai.reasoningEffort,
     });
     return {
       backend,
-      promptCompiler: new OpenAiPromptCompiler(),
+      promptCompiler,
       tools: createDefaultRuntimeToolRegistry()
         .listTools()
         .map((tool) => ({

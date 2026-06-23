@@ -21,7 +21,8 @@ dotenv.config({ path: path.join(SOURCE_ROOT, "packages/jarvis/.env") });
 import { ConfigManager } from "./core/configManager.js";
 const jarvisConfig = ConfigManager.getInstance().get();
 
-const standaloneRuntime = jarvisConfig.llmBackend?.provider === "openai";
+const standaloneRuntime =
+  (jarvisConfig.llmBackend?.provider ?? "gemini") !== "gemini";
 console.log(
   jarvisConfig.security.jailbreak
     ? "🔓 [Jarvis] GLOBAL JAILBREAK REQUESTED."
@@ -84,7 +85,7 @@ async function initializeGeminiCompatibilityGlobals(): Promise<void> {
       (error as NodeJS.ErrnoException).code === "ERR_MODULE_NOT_FOUND";
     if (missingPackage) {
       throw new Error(
-        "Gemini compatibility dependencies are not installed. Run `npm install` from the repository root, or configure `llmBackend.provider` as `openai` for standalone mode.",
+        "Gemini compatibility dependencies are not installed. Run `npm install` from the repository root, or configure `llmBackend.provider` as `openai` or `deepseek` for standalone mode.",
         { cause: error },
       );
     }

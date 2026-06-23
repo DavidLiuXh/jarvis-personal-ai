@@ -91,7 +91,7 @@ export class JarvisManager {
     );
 
     const agent =
-      config.llmBackend?.provider === "openai"
+      (config.llmBackend?.provider ?? "gemini") !== "gemini"
         ? new StandaloneJarvisAgent({
             sessionId: effectiveId,
             cwd: this.sourceRoot,

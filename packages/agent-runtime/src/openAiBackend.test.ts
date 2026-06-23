@@ -284,7 +284,7 @@ describe("OpenAiChatCompletionsBackend", () => {
     expect(events).toEqual([{ type: "content", text: "done" }]);
   });
 
-  it("sends DeepSeek-compatible thinking controls when configured", async () => {
+  it("sends generic extra body fields when configured", async () => {
     const fetchFn = vi.fn(async (_url, init) => {
       const body = JSON.parse(String(init?.body));
       expect(body).toMatchObject({
@@ -301,8 +301,10 @@ describe("OpenAiChatCompletionsBackend", () => {
       apiKey: "test-key",
       model: "deepseek-v4-pro",
       fetchFn,
-      thinking: { type: "disabled" },
-      reasoningEffort: "high",
+      extraBody: {
+        reasoning_effort: "high",
+        thinking: { type: "disabled" },
+      },
     });
 
     const events = [];

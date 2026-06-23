@@ -47,7 +47,7 @@ export OPENAI_API_KEY="your-api-key"
 npm start
 ```
 
-vLLM, local gateways, and other services exposing an OpenAI-compatible API also use `"provider": "openai"` with an appropriate `baseUrl`, `model`, and `apiKeyEnv`. If local routing is enabled, OpenAI-compatible mode uses backend-neutral `routing.targets.pro` / `routing.targets.flash`; when they are unset, both routing branches fall back to `llmBackend.openai.model` so Gemini model names are not sent to OpenAI-compatible services. The supported main-chat providers are currently `gemini` and `openai`; native Anthropic and Ollama main-chat protocols are not yet implemented.
+vLLM, local gateways, and other services exposing a generic OpenAI-compatible API use `"provider": "openai"` with an appropriate `baseUrl`, `model`, and `apiKeyEnv`. DeepSeek uses `"provider": "deepseek"` so its thinking and reasoning semantics stay out of the generic OpenAI-compatible adapter. If local routing is enabled, standalone backends use backend-neutral `routing.targets.pro` / `routing.targets.flash`; when they are unset, both routing branches fall back to the selected backend default model. The supported main-chat providers are currently `gemini`, `openai`, and `deepseek`; native Anthropic and Ollama main-chat protocols are not yet implemented.
 
 `routing.provider`, `summarizer.provider`, `reflection.provider`, and `embeddingService.provider` are independent settings and do not select the main-chat backend.
 
@@ -99,6 +99,7 @@ vLLM, local gateways, and other services exposing an OpenAI-compatible API also 
   "llmBackend": {
     // "gemini": Gemini CLI compatibility runtime (default)
     // "openai": OpenAI-compatible standalone runtime
+    // "deepseek": DeepSeek standalone runtime
     "provider": "gemini",
 
     // Only used when provider = "openai".
@@ -115,12 +116,27 @@ vLLM, local gateways, and other services exposing an OpenAI-compatible API also 
 
       // Request timeout in milliseconds.
       "timeoutMs": 120000,
+    },
 
-      // Optional DeepSeek/OpenAI-compatible thinking toggle.
+    // Only used when provider = "deepseek".
+    "deepseek": {
+      // Environment variable containing the API key.
+      "apiKeyEnv": "DEEPSEEK_API_KEY",
+
+      // DeepSeek model name.
+      "model": "deepseek-v4-pro",
+
+      // DeepSeek API URL.
+      "baseUrl": "https://api.deepseek.com",
+
+      // Request timeout in milliseconds.
+      "timeoutMs": 120000,
+
+      // Optional DeepSeek thinking toggle.
       // Omit to use the provider default.
       "thinking": "disabled",
 
-      // Optional DeepSeek/OpenAI-compatible reasoning effort, e.g. "high" or "max".
+      // Optional DeepSeek reasoning effort, e.g. "high" or "max".
       "reasoningEffort": "high",
     },
   },

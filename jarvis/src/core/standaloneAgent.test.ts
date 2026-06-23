@@ -51,4 +51,27 @@ describe("StandaloneJarvisAgent OpenAI routing models", () => {
       flashModel: "qwen-turbo",
     });
   });
+
+  it("uses the default DeepSeek model for routing branches unless targets are configured", () => {
+    expect(
+      resolveStandaloneRoutingTargetModels({
+        llmBackend: {
+          provider: "deepseek",
+          deepseek: {
+            model: "deepseek-v4-pro",
+          },
+        },
+        routing: {
+          enabled: true,
+          model: "gemma4:e2b",
+          proModel: "gemini-2.5-pro",
+          flashModel: "gemini-2.5-flash",
+        },
+      }),
+    ).toEqual({
+      defaultModel: "deepseek-v4-pro",
+      proModel: "deepseek-v4-pro",
+      flashModel: "deepseek-v4-pro",
+    });
+  });
 });
