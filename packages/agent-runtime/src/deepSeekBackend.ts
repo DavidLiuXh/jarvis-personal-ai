@@ -40,10 +40,19 @@ function deepSeekExtraBody(
   };
 }
 
+function assertDeepSeekApiKey(apiKey: string): void {
+  if (!apiKey.trim()) {
+    throw new Error(
+      "DeepSeek backend requires an API key. Set llmBackend.deepseek.apiKey or the configured apiKeyEnv.",
+    );
+  }
+}
+
 export class DeepSeekChatBackend implements LlmBackend {
   private readonly delegate: OpenAiChatCompletionsBackend;
 
   constructor(private readonly options: DeepSeekChatBackendOptions) {
+    assertDeepSeekApiKey(options.apiKey);
     this.delegate = new OpenAiChatCompletionsBackend({
       ...options,
       baseUrl: options.baseUrl ?? "https://api.deepseek.com",
