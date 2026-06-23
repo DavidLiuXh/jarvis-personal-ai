@@ -297,6 +297,8 @@ export interface JarvisConfig {
   };
   memory: {
     ingestionDelayMs: number;
+    /** Log runtime memory writes (fact/entry/session decisions and result summaries). Default: true. */
+    writeObservability: boolean;
     retrievalLimit: number;
     consolidationThreshold: number;
     /** Dedup strategy for saveFact: 'jaccard' (local, no network) or 'embedding' (semantic, requires CLI auth). Default: 'jaccard'. */
@@ -529,6 +531,7 @@ export class ConfigManager {
       },
       memory: {
         ingestionDelayMs: 800,
+        writeObservability: true,
         retrievalLimit: 5,
         consolidationThreshold: 3,
         dedupStrategy: "embedding" as const,

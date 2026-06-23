@@ -357,6 +357,8 @@ export async function runJarvisUnifiedRuntimeTurn(
   const runtimeMemoryLayer = createJarvisRuntimeMemoryLayer({
     memoryService: input.memoryService,
     sessionId: input.sessionId,
+    config: input.jarvisConfig,
+    runtimeIntentFeedbackCollector: input.runtimeIntentFeedbackCollector,
   });
 
   const memoryRuntime = new DefaultMemoryRuntime<IntentFrame | null>({

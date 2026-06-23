@@ -47,18 +47,41 @@ export type MemoryWriterRuntimeEvent =
       action: string;
       scope: MemoryItem["scope"];
       id: string;
+      item: MemoryWriteEventItem;
     }
   | {
       type: "memory_write_finished";
       written: number;
       skipped: number;
       deleted: number;
+      results: MemoryWriteEventResult[];
     };
 
 export type MemoryWriterRuntimeOptions = {
   store: MemoryWriteStore;
   governance?: MemoryGovernancePolicy;
   observer?: MemoryWriterRuntimeObserver;
+};
+
+export type MemoryWriteEventItem = {
+  scope: MemoryItem["scope"];
+  id: string;
+  subject?: string;
+  kind?: string;
+  contentPreview?: string;
+  confidence?: number;
+  sourceRefs?: string[];
+  metadata?: Record<string, unknown>;
+};
+
+export type MemoryWriteEventResult = {
+  scope: MemoryItem["scope"];
+  id: string;
+  action: string;
+  reasonCode: string;
+  written: boolean;
+  deleted: boolean;
+  item: MemoryWriteEventItem;
 };
 
 async function candidatesForItem<T extends MemoryItem>(
@@ -110,6 +133,7 @@ export class DefaultMemoryWriterRuntime {
           request.item.scope === "session"
             ? request.item.sessionId
             : request.item.id,
+        item: summarizeMemoryItem(request.item),
       });
 
       if (decision.action === "delete") {
@@ -147,6 +171,18 @@ export class DefaultMemoryWriterRuntime {
       skipped: results.filter((result) => result.decision.action === "skip")
         .length,
       deleted: results.filter((result) => result.deleted).length,
+      results: results.map((result) => ({
+        scope: result.request.item.scope,
+        id:
+          result.request.item.scope === "session"
+            ? result.request.item.sessionId
+            : result.request.item.id,
+        action: result.decision.action,
+        reasonCode: result.decision.reasonCode,
+        written: Boolean(result.written),
+        deleted: result.deleted,
+        item: summarizeMemoryItem(result.written ?? result.request.item),
+      })),
     });
     return results;
   }
@@ -154,4 +190,42 @@ export class DefaultMemoryWriterRuntime {
   private async emit(event: MemoryWriterRuntimeEvent): Promise<void> {
     await this.options.observer?.(event);
   }
+}
+
+function summarizeMemoryItem(item: MemoryItem): MemoryWriteEventItem {
+  if (item.scope === "fact") {
+    return {
+      scope: item.scope,
+      id: item.id,
+      subject: item.subject,
+      contentPreview: compactPreview(item.content),
+      confidence: item.confidence,
+      sourceRefs: item.sourceRefs,
+      metadata: item.metadata,
+    };
+  }
+  if (item.scope === "entry") {
+    return {
+      scope: item.scope,
+      id: item.id,
+      kind: item.kind,
+      contentPreview: compactPreview(item.content),
+      sourceRefs: item.sourceRefs,
+      metadata: item.metadata,
+    };
+  }
+  return {
+    scope: item.scope,
+    id: item.sessionId,
+    contentPreview: compactPreview(
+      item.summary ?? item.turns.map((turn) => turn.content).join("\n"),
+    ),
+  };
+}
+
+function compactPreview(value: string, maxChars = 120): string {
+  const compact = String(value).replace(/\s+/g, " ").trim();
+  return compact.length <= maxChars
+    ? compact
+    : `${compact.slice(0, Math.max(0, maxChars - 1))}…`;
 }

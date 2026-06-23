@@ -755,6 +755,11 @@ AgentRuntime
 - `facts` / `entries` / `session summary` / runtime writes 默认直接消费 `SqliteMemoryStore`，不再通过 `MemoryService.searchFacts()`、`MemoryService.searchWithScore()` 或 `JarvisMemoryWriteStore` 绕回旧实现；
 - Jarvis 特有的 `conversation_history` 时间范围 lexical fallback 保留为 `EntryMemoryStore` decorator：底层先查 `SqliteMemoryStore`，当请求是 conversation-history recall 且有精确时间范围或结果不足时，再调用 `MemoryService.searchConversationHistoryLexical()`；
 - `MemoryService` 当前只作为应用层 lifecycle/provider 保留：负责持有同一个 `SqliteMemoryStore` 实例、提供 session transcript lexical fallback、技能索引、reflection/entity extraction/backfill 等尚未迁移的 Jarvis 专有副作用。
+- `memory.writeObservability` 默认开启。通过 `DefaultMemoryWriterRuntime` 的 write event 输出统一日志：
+  - `[MemoryWrite] started count=N`
+  - `[MemoryWrite] decision scope=fact id=... action=insert|merge|skip|delete reason=... category=... importance=... preview="..."`
+  - `[MemoryWrite] finished written=N skipped=N deleted=N`
+- 同一批 write event 会以 `runtime_feedback` / `memory_write_observed` 进入 `RuntimeIntentFeedbackCollector`，用于后续 memory quality 归因和 eval 候选沉淀。
 
 仍需注意：
 

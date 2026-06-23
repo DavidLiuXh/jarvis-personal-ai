@@ -6,14 +6,19 @@
 
 import {
   DefaultLayeredMemoryRuntime,
+  DefaultMemoryWriterRuntime,
   type EntryMemorySearchResult,
   type EntryMemoryStore,
   type MemoryRetrieverStores,
+  type MemoryWriteEventItem,
   type MemoryWriteStore,
+  type MemoryWriterRuntimeEvent,
   type SessionMemoryStore,
   type SqliteMemoryStore,
 } from "../memory-runtime/index.js";
+import type { JarvisConfig } from "./configManager.js";
 import type { MemoryService } from "./memory.js";
+import type { RuntimeIntentFeedbackCollector } from "./runtimeIntentFeedbackCollector.js";
 
 type ConversationHistoryFallback = Pick<
   MemoryService,
@@ -122,6 +127,8 @@ class JarvisConversationHistoryEntryStore implements EntryMemoryStore {
 export function createJarvisRuntimeMemoryLayer(input: {
   memoryService: MemoryService;
   sessionId: string;
+  config?: Pick<JarvisConfig, "memory">;
+  runtimeIntentFeedbackCollector?: RuntimeIntentFeedbackCollector;
 }): JarvisRuntimeMemoryLayer {
   const sqliteStore = input.memoryService.getRuntimeSqliteMemoryStore();
   const entries = new JarvisConversationHistoryEntryStore(
@@ -134,10 +141,24 @@ export function createJarvisRuntimeMemoryLayer(input: {
     entries,
     session,
   };
+  const writeObservability = input.config?.memory?.writeObservability !== false;
+  const writer = new DefaultMemoryWriterRuntime({
+    store: sqliteStore,
+    observer: async (event) => {
+      if (writeObservability) logMemoryWriteEvent(event);
+      await input.runtimeIntentFeedbackCollector?.recordMemoryEvent({
+        type: "runtime_feedback",
+        sessionId: input.sessionId,
+        signal: "memory_write_observed",
+        observed: event,
+      });
+    },
+  });
   const layeredRuntime = new DefaultLayeredMemoryRuntime({
     stores,
     writeStore: sqliteStore,
     sessionId: input.sessionId,
+    writer,
   });
   return {
     sqliteStore,
@@ -145,4 +166,48 @@ export function createJarvisRuntimeMemoryLayer(input: {
     writeStore: sqliteStore,
     layeredRuntime,
   };
+}
+
+function logMemoryWriteEvent(event: MemoryWriterRuntimeEvent): void {
+  if (event.type === "memory_write_started") {
+    console.error(`[MemoryWrite] started count=${event.count}`);
+    return;
+  }
+  if (event.type === "memory_write_decision") {
+    const item = event.item;
+    console.error(
+      `[MemoryWrite] decision scope=${event.scope} id=${event.id} action=${event.action} reason=${event.reasonCode}${formatMemoryWriteItem(item)}`,
+    );
+    return;
+  }
+  console.error(
+    `[MemoryWrite] finished written=${event.written} skipped=${event.skipped} deleted=${event.deleted}`,
+  );
+  for (const result of event.results) {
+    if (!result.written && !result.deleted) continue;
+    console.error(
+      `[MemoryWrite] ${result.written ? "upserted" : "deleted"} scope=${result.scope} id=${result.id} action=${result.action} reason=${result.reasonCode}${formatMemoryWriteItem(result.item)}`,
+    );
+  }
+}
+
+function formatMemoryWriteItem(item: MemoryWriteEventItem): string {
+  const parts: string[] = [];
+  if (item.subject) parts.push(`subject=${item.subject}`);
+  if (item.kind) parts.push(`kind=${item.kind}`);
+  if (typeof item.confidence === "number") {
+    parts.push(`confidence=${item.confidence.toFixed(2)}`);
+  }
+  const category =
+    typeof item.metadata?.category === "string" ? item.metadata.category : null;
+  if (category) parts.push(`category=${category}`);
+  const importance =
+    typeof item.metadata?.importance === "number"
+      ? item.metadata.importance
+      : null;
+  if (importance !== null) parts.push(`importance=${importance}`);
+  if (item.sourceRefs?.length)
+    parts.push(`source=${item.sourceRefs.join(",")}`);
+  if (item.contentPreview) parts.push(`preview="${item.contentPreview}"`);
+  return parts.length > 0 ? ` ${parts.join(" ")}` : "";
 }

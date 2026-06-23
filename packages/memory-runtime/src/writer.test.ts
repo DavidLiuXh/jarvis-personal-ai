@@ -155,4 +155,58 @@ describe("DefaultMemoryWriterRuntime", () => {
     expect(result.session).toHaveLength(1);
     expect(result.entries).toHaveLength(1);
   });
+
+  it("emits item summaries for write observability", async () => {
+    const store = new DefaultMemoryStore();
+    const events: unknown[] = [];
+    const writer = new DefaultMemoryWriterRuntime({
+      store,
+      observer(event) {
+        events.push(event);
+      },
+    });
+
+    await writer.write([
+      {
+        operation: "upsert",
+        item: fact({
+          id: "fact-observed",
+          subject: "preference",
+          content: "The user prefers runtime memory write logs.",
+          confidence: 0.92,
+          metadata: { category: "interaction_style", importance: 9 },
+        }),
+      },
+    ]);
+
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: "memory_write_decision",
+        scope: "fact",
+        id: "fact-observed",
+        item: expect.objectContaining({
+          scope: "fact",
+          subject: "preference",
+          contentPreview: "The user prefers runtime memory write logs.",
+          confidence: 0.92,
+          metadata: { category: "interaction_style", importance: 9 },
+        }),
+      }),
+    );
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: "memory_write_finished",
+        written: 1,
+        results: [
+          expect.objectContaining({
+            scope: "fact",
+            written: true,
+            item: expect.objectContaining({
+              contentPreview: "The user prefers runtime memory write logs.",
+            }),
+          }),
+        ],
+      }),
+    );
+  });
 });

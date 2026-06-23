@@ -28,6 +28,7 @@ function memoryServiceFor(store: SqliteMemoryStore) {
 }
 
 afterEach(() => {
+  vi.restoreAllMocks();
   while (tempDirs.length > 0) {
     rmSync(tempDirs.pop()!, { recursive: true, force: true });
   }
@@ -95,6 +96,79 @@ describe("Jarvis runtime memory layer", () => {
         summary: "Universal memory runtime migration summary.",
       }),
     ]);
+
+    sqliteStore.close();
+  });
+
+  it("logs runtime fact writes by default and records feedback", async () => {
+    const sqliteStore = new SqliteMemoryStore({
+      dbPath: tempDbPath(),
+      enableVectors: false,
+    });
+    const logSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const recordMemoryEvent = vi.fn();
+    const layer = createJarvisRuntimeMemoryLayer({
+      memoryService: memoryServiceFor(sqliteStore),
+      sessionId: "session-1",
+      config: { memory: { writeObservability: true } } as any,
+      runtimeIntentFeedbackCollector: { recordMemoryEvent } as any,
+    });
+
+    await layer.layeredRuntime.saveFact({
+      id: "fact-log-1",
+      scope: "fact",
+      subject: "preference",
+      content: "The user wants memory write observability.",
+      confidence: 0.9,
+      sourceRefs: ["test"],
+      metadata: { category: "interaction_style", importance: 9 },
+    });
+
+    expect(logSpy).toHaveBeenCalledWith(
+      expect.stringContaining("[MemoryWrite] decision scope=fact"),
+    );
+    expect(logSpy).toHaveBeenCalledWith(
+      expect.stringContaining(
+        'category=interaction_style importance=9 source=test preview="The user wants memory write observability."',
+      ),
+    );
+    expect(recordMemoryEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "runtime_feedback",
+        sessionId: "session-1",
+        signal: "memory_write_observed",
+        observed: expect.objectContaining({ type: "memory_write_decision" }),
+      }),
+    );
+
+    sqliteStore.close();
+  });
+
+  it("can disable runtime memory write logs", async () => {
+    const sqliteStore = new SqliteMemoryStore({
+      dbPath: tempDbPath(),
+      enableVectors: false,
+    });
+    const logSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const layer = createJarvisRuntimeMemoryLayer({
+      memoryService: memoryServiceFor(sqliteStore),
+      sessionId: "session-1",
+      config: { memory: { writeObservability: false } } as any,
+    });
+
+    await layer.layeredRuntime.saveFact({
+      id: "fact-log-disabled",
+      scope: "fact",
+      subject: "profile",
+      content: "This write should not be logged.",
+      confidence: 0.8,
+      sourceRefs: ["test"],
+    });
+
+    expect(logSpy).not.toHaveBeenCalledWith(
+      expect.stringContaining("[MemoryWrite]"),
+    );
+    expect(await sqliteStore.listFacts()).toHaveLength(1);
 
     sqliteStore.close();
   });

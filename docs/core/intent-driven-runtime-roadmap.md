@@ -15,6 +15,7 @@
 - `DefaultLayeredMemoryRuntime` 已提供三层记忆统一 facade，覆盖 `save/search/delete/recall`；Jarvis 主响应路径现在通过 `jarvisRuntimeMemoryLayer` 走 `AgentRuntime -> DefaultMemoryRuntime -> DefaultLayeredMemoryRuntime -> SqliteMemoryStore -> SQLite`。
 - `SqliteMemoryStore` 已进入 `memory-runtime`，拥有 `facts / memories / facts_fts / summary_chunks_index` 以及可选 `vec_facts / vec_memories / vec_summary_chunks` 的 schema、写入和检索。
 - `JarvisMemoryWriteStore` / `JarvisMemoryStores` 仍作为 legacy compatibility adapter 保留，但不再是 Jarvis 主响应 runtime 的标准 memory 通道；`conversation_history` lexical fallback 以 `EntryMemoryStore` decorator 保留在 Jarvis application adapter 层。
+- `memory.writeObservability` 默认开启，runtime memory writes 会输出统一 `[MemoryWrite]` trace，并以 `memory_write_observed` 反馈事件进入 runtime feedback collector。
 - `SessionStore` 已抽象完整会话 transcript 的 list / read / search / optional write；`JarvisJsonlSessionStore` 定义标准 Jarvis Transcript JSONL v1，文件名带创建时间前缀以支持按时间查找；`GeminiCliSessionStore` 已迁入 `memory-runtime`，作为旧 Gemini/Jarvis chat 文件兼容 adapter。
 - `conversationRecall` 的 recent conversation recall term extraction / candidate generation 已迁入 `memory-runtime`，Jarvis core 仅保留兼容 re-export。
 - intent eval 已从单点回归 case 演进为 principle / invariant / semantic axis 矩阵。
