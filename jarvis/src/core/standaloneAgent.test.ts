@@ -1,7 +1,8 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   createStandaloneBackend,
   resolveStandaloneRoutingTargetModels,
+  StandaloneJarvisAgent,
 } from "./standaloneAgent.js";
 
 describe("StandaloneJarvisAgent OpenAI routing models", () => {
@@ -103,5 +104,39 @@ describe("StandaloneJarvisAgent OpenAI routing models", () => {
       maxSnippetChars: 80,
       chunkSampleRate: 10,
     });
+  });
+
+  it("distills standalone turns into facts through MemoryService.saveFact", async () => {
+    const saveFact = vi.fn().mockResolvedValue(undefined);
+    const agent = new StandaloneJarvisAgent({
+      sessionId: "session-1",
+      cwd: process.cwd(),
+      memoryService: {
+        saveFact,
+      } as any,
+      distillGenerateText: vi.fn().mockResolvedValue(
+        JSON.stringify({
+          found: true,
+          facts: [
+            {
+              category: "behavior",
+              content: "用户有徒步这个爱好。",
+              importance: 8,
+            },
+          ],
+        }),
+      ),
+    });
+
+    await (agent as any).distillFactsInBackground(
+      "我还有一个爱好是徒步",
+      "好的，已记下。",
+    );
+
+    expect(saveFact).toHaveBeenCalledWith(
+      "behavior",
+      "用户有徒步这个爱好。",
+      expect.any(Number),
+    );
   });
 });

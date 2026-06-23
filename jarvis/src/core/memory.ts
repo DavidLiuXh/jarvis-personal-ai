@@ -891,29 +891,70 @@ export class MemoryService {
     importance: number = 5,
   ) {
     if (!content?.trim()) return; // guard against null/empty content
+    const logMemoryWrite = (message: string) => {
+      if (this.jarvisConfig.memory.writeObservability !== false) {
+        console.error(message);
+      }
+    };
+    const logValue = (value: unknown) => JSON.stringify(value);
+    const preview = content.replace(/\s+/g, " ").trim().slice(0, 120);
+    logMemoryWrite(
+      `[MemoryWrite] started count=1 source=legacy_memory_service`,
+    );
     try {
       // Exact-string dedup (fast path)
       const exists = this.db
         .prepare("SELECT id FROM facts WHERE content = ?")
         .get(content);
-      if (exists) return;
+      if (exists) {
+        logMemoryWrite(
+          `[MemoryWrite] decision scope=fact id=${(exists as { id: unknown }).id} action=skip reason=duplicate_exact category=${logValue(category)} importance=${importance} preview=${logValue(preview)}`,
+        );
+        logMemoryWrite(`[MemoryWrite] finished written=0 skipped=1 deleted=0`);
+        return;
+      }
 
       // Strategy-based semantic dedup
       const strategy = this.jarvisConfig.memory.dedupStrategy ?? "jaccard";
+      let rowid: bigint;
       if (strategy === "embedding" && this.embedContentFn) {
-        if (await this.isDuplicateByEmbedding(content)) return;
+        if (await this.isDuplicateByEmbedding(content)) {
+          logMemoryWrite(
+            `[MemoryWrite] decision scope=fact id=pending action=skip reason=duplicate_embedding category=${logValue(category)} importance=${importance} preview=${logValue(preview)}`,
+          );
+          logMemoryWrite(
+            `[MemoryWrite] finished written=0 skipped=1 deleted=0`,
+          );
+          return;
+        }
         const embText = MemoryService.buildEmbeddingText(category, content);
         const newVec = await this.embedContentFn(embText).catch(() => null);
-        this.insertFactWithVec(category, content, importance, newVec);
+        rowid = this.insertFactWithVec(category, content, importance, newVec);
       } else {
-        if (this.isDuplicateByJaccard(content)) return;
-        this.insertFactWithVec(category, content, importance, null);
+        if (this.isDuplicateByJaccard(content)) {
+          logMemoryWrite(
+            `[MemoryWrite] decision scope=fact id=pending action=skip reason=duplicate_jaccard category=${logValue(category)} importance=${importance} preview=${logValue(preview)}`,
+          );
+          logMemoryWrite(
+            `[MemoryWrite] finished written=0 skipped=1 deleted=0`,
+          );
+          return;
+        }
+        rowid = this.insertFactWithVec(category, content, importance, null);
       }
+
+      logMemoryWrite(
+        `[MemoryWrite] decision scope=fact id=${String(rowid)} action=insert reason=new_memory category=${logValue(category)} importance=${importance} preview=${logValue(preview)}`,
+      );
+      logMemoryWrite(
+        `[MemoryWrite] upserted scope=fact id=${String(rowid)} action=insert reason=new_memory category=${logValue(category)} importance=${importance} preview=${logValue(preview)}`,
+      );
 
       const count = this.db
         .prepare("SELECT count(*) as c FROM facts")
         .get() as any;
       console.error(`🔥 [MemoryService] New fact distilled. Total: ${count.c}`);
+      logMemoryWrite(`[MemoryWrite] finished written=1 skipped=0 deleted=0`);
 
       // L1 realtime write
       if ((this.jarvisConfig.memory.l1WriteMode ?? "batch") === "realtime") {
@@ -940,6 +981,7 @@ export class MemoryService {
         void this.consolidateFacts();
       }
     } catch (e: any) {
+      logMemoryWrite(`[MemoryWrite] finished written=0 skipped=0 deleted=0`);
       console.error(`❌ [MemoryService] Fact save failed: ${e.message}`);
     }
   }

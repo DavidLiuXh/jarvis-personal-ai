@@ -24,6 +24,7 @@ import type {
 import { ConfigManager, type JarvisConfig } from "./configManager.js";
 import { type AgentManager } from "./agentManager.js";
 import { type BackgroundTaskRunner } from "./backgroundTaskRunner.js";
+import { BackgroundDistiller } from "./backgroundDistiller.js";
 import { type ChannelRegistry } from "./channelRegistry.js";
 import { type SkillCommandHandler } from "./skillCommandHandler.js";
 import { type TaskCommandHandler } from "./taskCommandHandler.js";
@@ -270,6 +271,7 @@ export class StandaloneJarvisAgent
       cwd: string;
       memoryService: MemoryService;
       lightweight?: boolean;
+      distillGenerateText?: (prompt: string) => Promise<string>;
     },
   ) {
     super();
@@ -394,7 +396,42 @@ export class StandaloneJarvisAgent
         metadata: { backend: "standalone" },
       }),
     ]);
+    if (!this.options.lightweight) {
+      void this.distillFactsInBackground(userPrompt, assistantText);
+    }
     this.emit(JarvisEventType.DONE);
+  }
+
+  private async distillFactsInBackground(
+    userPrompt: string,
+    assistantText: string,
+  ): Promise<void> {
+    const distiller = new BackgroundDistiller(
+      async (prompt) => this.generateStandaloneText(prompt),
+      async (category, content, importance) =>
+        this.options.memoryService.saveFact(category, content, importance),
+    );
+    await distiller.distill(userPrompt, assistantText);
+  }
+
+  private async generateStandaloneText(prompt: string): Promise<string> {
+    if (this.options.distillGenerateText) {
+      return this.options.distillGenerateText(prompt);
+    }
+    const { backend } = createStandaloneBackend({
+      config: this.jarvisConfig,
+      model: this.currentBackendModel,
+    });
+    let text = "";
+    for await (const event of backend.sendTurn(
+      {
+        messages: [{ role: "user", blocks: [{ type: "text", text: prompt }] }],
+      },
+      new AbortController().signal,
+    )) {
+      if (event.type === "content") text += event.text;
+    }
+    return text;
   }
 
   private createToolLoopOptions(
