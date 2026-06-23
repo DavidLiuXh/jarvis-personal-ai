@@ -234,6 +234,38 @@ function withTurnMetadata(
   }));
 }
 
+function makeUniqueToolCallId(
+  callId: string,
+  index: number,
+  seen: Set<string>,
+): string {
+  if (!seen.has(callId)) {
+    seen.add(callId);
+    return callId;
+  }
+  let candidate = `${callId}-${index + 1}`;
+  let suffix = 2;
+  while (seen.has(candidate)) {
+    candidate = `${callId}-${index + 1}-${suffix++}`;
+  }
+  seen.add(candidate);
+  return candidate;
+}
+
+function withUniqueToolCallIds(
+  requests: RuntimeToolRequest[],
+): RuntimeToolRequest[] {
+  const seen = new Set<string>();
+  let changed = false;
+  const normalized = requests.map((request, index) => {
+    const callId = makeUniqueToolCallId(request.callId, index, seen);
+    if (callId === request.callId) return request;
+    changed = true;
+    return { ...request, callId };
+  });
+  return changed ? normalized : requests;
+}
+
 function requestsForResults(
   results: RuntimeToolResult[],
   requests: RuntimeToolRequest[],
@@ -280,7 +312,7 @@ export class ToolLoopRuntime {
         try {
           const shouldBufferPreToolContent =
             this.options.planner?.shouldBufferPreToolContent?.() ?? false;
-          const toolCallRequests: RuntimeToolRequest[] = [];
+          const rawToolCallRequests: RuntimeToolRequest[] = [];
           let turnMetadata: Record<string, unknown> = {};
           let turnTextAccumulated = "";
 
@@ -307,8 +339,7 @@ export class ToolLoopRuntime {
                 this.options.onContent?.(newText);
               }
             } else if (event.type === "tool_call") {
-              toolCallRequests.push(event.request);
-              this.options.onToolCall?.(event.request);
+              rawToolCallRequests.push(event.request);
             } else if (event.type === "error") {
               throw event.error;
             } else {
@@ -316,6 +347,11 @@ export class ToolLoopRuntime {
               this.options.onMetadata?.(event.value);
             }
           }
+
+          const toolCallRequests = withUniqueToolCallIds(rawToolCallRequests);
+          toolCallRequests.forEach((request) =>
+            this.options.onToolCall?.(request),
+          );
 
           if (toolCallRequests.length > 0) {
             toolIterations++;
@@ -398,9 +434,8 @@ export class ToolLoopRuntime {
                 `🧭 [AgentRuntime] Generated content requires tool completion — invoking ${postContentRequest.name}.`,
               );
               toolsCalled.add(postContentRequest.name);
-              const postContentRequests = withTurnMetadata(
-                [postContentRequest],
-                turnMetadata,
+              const postContentRequests = withUniqueToolCallIds(
+                withTurnMetadata([postContentRequest], turnMetadata),
               );
               const postContentResults =
                 await this.options.toolExecutor.executeTools(
@@ -430,9 +465,8 @@ export class ToolLoopRuntime {
                   "🧭 [AgentRuntime] Suppressed pre-tool assistant text because deterministic multi-intent tool execution is required.",
                 );
               }
-              const deterministicRequestsWithMetadata = withTurnMetadata(
-                deterministicRequests,
-                turnMetadata,
+              const deterministicRequestsWithMetadata = withUniqueToolCallIds(
+                withTurnMetadata(deterministicRequests, turnMetadata),
               );
               deterministicRequestsWithMetadata.forEach((request) =>
                 toolsCalled.add(request.name),

@@ -103,6 +103,50 @@ function toOpenAiMessage(message: LlmMessage): Record<string, unknown> {
   };
 }
 
+function makeUniqueCallId(
+  callId: string,
+  index: number,
+  seen: Set<string>,
+): string {
+  if (!seen.has(callId)) {
+    seen.add(callId);
+    return callId;
+  }
+  let candidate = `${callId}-${index + 1}`;
+  let suffix = 2;
+  while (seen.has(candidate)) {
+    candidate = `${callId}-${index + 1}-${suffix++}`;
+  }
+  seen.add(candidate);
+  return candidate;
+}
+
+function pairResultsWithRequests(
+  results: RuntimeToolResult[],
+  requests: RuntimeToolRequest[],
+): Array<{
+  result: RuntimeToolResult;
+  request?: RuntimeToolRequest;
+  callId: string;
+}> {
+  const requestsById = new Map<string, RuntimeToolRequest[]>();
+  for (const request of requests) {
+    const bucket = requestsById.get(request.callId) ?? [];
+    bucket.push(request);
+    requestsById.set(request.callId, bucket);
+  }
+
+  const seen = new Set<string>();
+  return results.map((result, index) => {
+    const request = requestsById.get(result.callId)?.shift();
+    return {
+      result,
+      request,
+      callId: makeUniqueCallId(result.callId, index, seen),
+    };
+  });
+}
+
 export class OpenAiPromptCompiler implements PromptCompiler {
   compileInitialTurn(input: RuntimeTurnContext): LlmMessage[] {
     const messages = [...input.initialMessages];
@@ -119,9 +163,7 @@ export class OpenAiPromptCompiler implements PromptCompiler {
     results: RuntimeToolResult[],
     requests: RuntimeToolRequest[] = [],
   ): LlmMessage[] {
-    const requestById = new Map(
-      requests.map((request) => [request.callId, request]),
-    );
+    const pairedResults = pairResultsWithRequests(results, requests);
     const reasoningContent = requests
       .map((request) => request.metadata?.openai)
       .map((metadata) =>
@@ -136,23 +178,22 @@ export class OpenAiPromptCompiler implements PromptCompiler {
         ...(reasoningContent
           ? { metadata: { openaiReasoningContent: reasoningContent } }
           : {}),
-        blocks: results.map((result) => {
-          const request = requestById.get(result.callId);
+        blocks: pairedResults.map(({ result, request, callId }) => {
           return {
             type: "tool_call" as const,
             name: result.name,
-            callId: result.callId,
+            callId,
             args: request?.args ?? {},
           };
         }),
       },
-      ...results.map((result) => ({
+      ...pairedResults.map(({ result, callId }) => ({
         role: "tool" as const,
         blocks: [
           {
             type: "tool_result" as const,
             name: result.name,
-            callId: result.callId,
+            callId,
             result: result.output,
           },
         ],

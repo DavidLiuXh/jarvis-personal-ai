@@ -112,6 +112,49 @@ describe("ToolLoopRuntime", () => {
     expect([...result.toolsCalled]).toEqual(["task_add"]);
   });
 
+  it("deduplicates repeated backend tool call ids before execution", async () => {
+    const requests: RuntimeToolRequest[] = [
+      {
+        name: "recall_memory",
+        callId: "recall_memory",
+        args: { query: "Claude" },
+      },
+      {
+        name: "recall_memory",
+        callId: "recall_memory",
+        args: { query: "DeepSeek" },
+      },
+    ];
+    const executed: RuntimeToolRequest[] = [];
+    const runtime = new ToolLoopRuntime({
+      backend: backendFromTurns([
+        requests.map((request) => ({ type: "tool_call", request })),
+        [{ type: "content", text: "done" }],
+      ]),
+      promptCompiler: compiler(),
+      toolExecutor: toolExecutor((toolRequest) => {
+        executed.push(toolRequest);
+        return {
+          name: toolRequest.name,
+          callId: toolRequest.callId,
+          status: "success",
+          output: { ok: true },
+        };
+      }),
+    });
+
+    await runtime.run({
+      userPrompt: "recall",
+      initialMessages,
+      signal: new AbortController().signal,
+    });
+
+    expect(executed.map((request) => request.callId)).toEqual([
+      "recall_memory",
+      "recall_memory-2",
+    ]);
+  });
+
   it("executes deterministic planner steps when the model omits required tools", async () => {
     const request: RuntimeToolRequest = {
       name: "push_to_channel",

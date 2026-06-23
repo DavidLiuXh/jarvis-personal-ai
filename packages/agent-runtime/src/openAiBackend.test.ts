@@ -329,4 +329,78 @@ describe("OpenAiChatCompletionsBackend", () => {
       },
     ]);
   });
+
+  it("deduplicates repeated tool call ids when compiling OpenAI tool results", () => {
+    const compiler = new OpenAiPromptCompiler();
+    const messages = compiler.compileToolResults(
+      [
+        {
+          name: "recall_memory",
+          callId: "recall_memory",
+          status: "success",
+          output: "first",
+        },
+        {
+          name: "recall_memory",
+          callId: "recall_memory",
+          status: "success",
+          output: "second",
+        },
+      ],
+      [
+        {
+          name: "recall_memory",
+          callId: "recall_memory",
+          args: { query: "Claude" },
+        },
+        {
+          name: "recall_memory",
+          callId: "recall_memory",
+          args: { query: "DeepSeek" },
+        },
+      ],
+    );
+
+    expect(messages).toEqual([
+      {
+        role: "assistant",
+        blocks: [
+          {
+            type: "tool_call",
+            name: "recall_memory",
+            callId: "recall_memory",
+            args: { query: "Claude" },
+          },
+          {
+            type: "tool_call",
+            name: "recall_memory",
+            callId: "recall_memory-2",
+            args: { query: "DeepSeek" },
+          },
+        ],
+      },
+      {
+        role: "tool",
+        blocks: [
+          {
+            type: "tool_result",
+            name: "recall_memory",
+            callId: "recall_memory",
+            result: "first",
+          },
+        ],
+      },
+      {
+        role: "tool",
+        blocks: [
+          {
+            type: "tool_result",
+            name: "recall_memory",
+            callId: "recall_memory-2",
+            result: "second",
+          },
+        ],
+      },
+    ]);
+  });
 });
