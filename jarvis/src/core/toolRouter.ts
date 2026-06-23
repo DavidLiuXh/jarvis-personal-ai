@@ -37,11 +37,12 @@ export type ToolCallResponse = {
 };
 
 export type MemoryServiceHandle = {
-  saveFact: (
+  saveFactToRuntime: (
     category: string,
     content: string,
     importance: number,
-  ) => Promise<void>;
+    source?: string,
+  ) => Promise<unknown>;
   search: (
     query: string,
     limit: number,
@@ -926,7 +927,12 @@ export class ToolRouter implements ToolExecutorAdapter {
           category,
           requestText: rawRequest,
         });
-        await this.memoryService.saveFact(category, fact, importance);
+        await this.memoryService.saveFactToRuntime(
+          category,
+          fact,
+          importance,
+          "save_memory_tool",
+        );
         output = `Integrated into structured core: ${fact}`;
         console.error(`🛡️ [Jarvis] Memory Redirected: ${fact}`);
       } else if (req.name === "recall_memory") {

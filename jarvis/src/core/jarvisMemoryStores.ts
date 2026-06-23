@@ -19,35 +19,7 @@ import type {
 } from "../memory-runtime/index.js";
 
 export type JarvisMemoryServiceHandle = {
-  saveFact?: (
-    category: string,
-    content: string,
-    importance?: number,
-  ) => Promise<void>;
-  saveEntryMemory?: (input: {
-    id?: string;
-    sessionId?: string;
-    kind?: EntryMemory["kind"];
-    content: string;
-    timestamp?: string | number;
-    entities?: string[];
-    sourceRefs?: string[];
-    metadata?: Record<string, unknown>;
-  }) => Promise<EntryMemory>;
-  appendSessionTurn?: (input: {
-    sessionId: string;
-    role: SessionMemory["turns"][number]["role"];
-    content: string;
-    timestamp?: string | number;
-    metadata?: Record<string, unknown>;
-  }) => Promise<void>;
-  listRuntimeFacts?: (limit?: number) => Promise<FactMemory[]>;
-  listRuntimeEntries?: (limit?: number) => Promise<EntryMemory[]>;
-  listRuntimeSessions?: (limit?: number) => Promise<SessionMemory[]>;
-  deleteRuntimeMemory?: (input: {
-    scope: MemoryItem["scope"];
-    id: string;
-  }) => Promise<boolean>;
+  getRuntimeSqliteMemoryStore?: () => MemoryWriteStore;
   searchFacts: (
     query: string,
     limit?: number,
@@ -234,83 +206,38 @@ export class JarvisSessionMemoryStore implements SessionMemoryStore {
   }
 }
 
-function factSubjectToCategory(fact: FactMemory): string {
-  if (typeof fact.metadata?.category === "string") {
-    return fact.metadata.category;
-  }
-  if (fact.subject === "user") return "identity";
-  if (fact.subject === "preference") return "interaction_style";
-  if (fact.subject === "project") return "specification";
-  return "behavior";
-}
-
 export class JarvisMemoryWriteStore implements MemoryWriteStore {
-  constructor(private readonly memoryService: JarvisMemoryServiceHandle) {}
+  constructor(private readonly store: MemoryWriteStore) {}
 
   async upsertFact(fact: FactMemory): Promise<FactMemory> {
-    if (!this.memoryService.saveFact) return fact;
-    const importance =
-      typeof fact.metadata?.importance === "number"
-        ? fact.metadata.importance
-        : Math.max(1, Math.min(10, Math.round(fact.confidence * 10)));
-    await this.memoryService.saveFact(
-      factSubjectToCategory(fact),
-      fact.content,
-      importance,
-    );
-    return fact;
+    return this.store.upsertFact(fact);
   }
 
   async upsertEntry(entry: EntryMemory): Promise<EntryMemory> {
-    return (
-      (await this.memoryService.saveEntryMemory?.({
-        id: entry.id,
-        sessionId:
-          typeof entry.metadata?.sessionId === "string"
-            ? entry.metadata.sessionId
-            : entry.sourceRefs[0],
-        kind: entry.kind,
-        content: entry.content,
-        timestamp: entry.timestamp,
-        entities: entry.entities,
-        sourceRefs: entry.sourceRefs,
-        metadata: entry.metadata,
-      })) ?? entry
-    );
+    return this.store.upsertEntry(entry);
   }
 
   async upsertSession(session: SessionMemory): Promise<SessionMemory> {
-    if (this.memoryService.appendSessionTurn) {
-      for (const turn of session.turns) {
-        await this.memoryService.appendSessionTurn({
-          sessionId: session.sessionId,
-          role: turn.role,
-          content: turn.content,
-          timestamp: turn.timestamp,
-          metadata: turn.metadata,
-        });
-      }
-    }
-    return session;
+    return this.store.upsertSession(session);
   }
 
   async deleteMemory(input: {
     scope: MemoryItem["scope"];
     id: string;
   }): Promise<boolean> {
-    return (await this.memoryService.deleteRuntimeMemory?.(input)) ?? false;
+    return this.store.deleteMemory(input);
   }
 
   async listFacts(): Promise<FactMemory[]> {
-    return (await this.memoryService.listRuntimeFacts?.()) ?? [];
+    return this.store.listFacts();
   }
 
   async listEntries(): Promise<EntryMemory[]> {
-    return (await this.memoryService.listRuntimeEntries?.()) ?? [];
+    return this.store.listEntries();
   }
 
   async listSessions(): Promise<SessionMemory[]> {
-    return (await this.memoryService.listRuntimeSessions?.()) ?? [];
+    return this.store.listSessions();
   }
 }
 
@@ -328,5 +255,9 @@ export function createJarvisMemoryStores(
 export function createJarvisMemoryWriteStore(
   memoryService: JarvisMemoryServiceHandle,
 ): MemoryWriteStore {
-  return new JarvisMemoryWriteStore(memoryService);
+  const store = memoryService.getRuntimeSqliteMemoryStore?.();
+  if (!store) {
+    throw new Error("Runtime SqliteMemoryStore is required for memory writes");
+  }
+  return new JarvisMemoryWriteStore(store);
 }

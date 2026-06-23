@@ -55,6 +55,7 @@ import {
 import { JarvisEventType, type JarvisAgentLike } from "./types.js";
 import { createDefaultRuntimeToolRegistry } from "./jarvisToolRegistry.js";
 import { WorkspaceTools } from "./workspaceTools.js";
+import type { SessionMemory } from "../memory-runtime/index.js";
 
 export type StandaloneRoutingTargetModels = {
   defaultModel: string;
@@ -382,20 +383,28 @@ export class StandaloneJarvisAgent
     this.llmHistory = (runtimeTurn.llmLoop?.messages ?? [])
       .filter((message) => message.role !== "system")
       .slice(-24);
-    await Promise.all([
-      this.options.memoryService.appendSessionTurn({
-        sessionId: this.options.sessionId,
-        role: "user",
-        content: userPrompt,
-        metadata: { backend: "standalone" },
-      }),
-      this.options.memoryService.appendSessionTurn({
-        sessionId: this.options.sessionId,
-        role: "assistant",
-        content: assistantText,
-        metadata: { backend: "standalone" },
-      }),
-    ]);
+    const now = new Date().toISOString();
+    const session: SessionMemory = {
+      scope: "session",
+      sessionId: this.options.sessionId,
+      turns: [
+        {
+          role: "user",
+          content: userPrompt,
+          timestamp: now,
+          metadata: { backend: "standalone" },
+        },
+        {
+          role: "assistant",
+          content: assistantText,
+          timestamp: new Date().toISOString(),
+          metadata: { backend: "standalone" },
+        },
+      ],
+    };
+    await this.options.memoryService
+      .getRuntimeSqliteMemoryStore()
+      .upsertSession(session);
     if (!this.options.lightweight) {
       void this.distillFactsInBackground(userPrompt, assistantText);
     }
@@ -408,8 +417,14 @@ export class StandaloneJarvisAgent
   ): Promise<void> {
     const distiller = new BackgroundDistiller(
       async (prompt) => this.generateStandaloneText(prompt),
-      async (category, content, importance) =>
-        this.options.memoryService.saveFact(category, content, importance),
+      async (category, content, importance) => {
+        await this.options.memoryService.saveFactToRuntime(
+          category,
+          content,
+          importance,
+          "background_distiller",
+        );
+      },
     );
     await distiller.distill(userPrompt, assistantText);
   }

@@ -27,7 +27,7 @@ describe("ToolRouter", () => {
 
   const makeRouter = (
     overrides: {
-      saveFact?: ReturnType<typeof vi.fn>;
+      saveFactToRuntime?: ReturnType<typeof vi.fn>;
       search?: ReturnType<typeof vi.fn>;
       searchFacts?: ReturnType<typeof vi.fn>;
       runSkill?: ReturnType<typeof vi.fn>;
@@ -37,7 +37,8 @@ describe("ToolRouter", () => {
       workspaceRoot?: string;
     } = {},
   ) => {
-    const saveFact = overrides.saveFact ?? vi.fn().mockResolvedValue(undefined);
+    const saveFactToRuntime =
+      overrides.saveFactToRuntime ?? vi.fn().mockResolvedValue(undefined);
     const search = overrides.search ?? vi.fn().mockResolvedValue([]);
     const searchFacts = overrides.searchFacts ?? vi.fn().mockResolvedValue([]);
     const runSkill = overrides.runSkill ?? vi.fn();
@@ -52,7 +53,7 @@ describe("ToolRouter", () => {
     const handleTool = overrides.handleTool ?? vi.fn().mockResolvedValue("ok");
 
     const router = new ToolRouter(
-      { saveFact, search, searchFacts },
+      { saveFactToRuntime, search, searchFacts },
       { runSkill },
       { schedule },
       { getChat, getCurrentSequenceModel, config } as any,
@@ -66,7 +67,7 @@ describe("ToolRouter", () => {
     );
     return {
       router,
-      saveFact,
+      saveFactToRuntime,
       search,
       searchFacts,
       schedule,
@@ -123,7 +124,7 @@ describe("ToolRouter", () => {
   });
 
   it("routes save_memory (fact arg) with two-factor importance formula", async () => {
-    const { router, saveFact } = makeRouter();
+    const { router, saveFactToRuntime } = makeRouter();
 
     const req = makeReq("save_memory", { fact: "user likes TypeScript" });
     const parts = await router.route(
@@ -132,8 +133,8 @@ describe("ToolRouter", () => {
       vi.fn(),
     );
 
-    expect(saveFact).toHaveBeenCalledOnce();
-    const [cat, , imp] = saveFact.mock.calls[0];
+    expect(saveFactToRuntime).toHaveBeenCalledOnce();
+    const [cat, , imp] = saveFactToRuntime.mock.calls[0];
     // interaction_style category, no remember-intent → 0.7*7 + 0.3*6 = 4.9+1.8 = 6.7 → 7
     expect(cat).toBe("interaction_style");
     expect(imp).toBe(7);
@@ -143,19 +144,19 @@ describe("ToolRouter", () => {
   });
 
   it("save_memory: explicit remember-intent raises importance", async () => {
-    const { router, saveFact } = makeRouter();
+    const { router, saveFactToRuntime } = makeRouter();
 
     // "记住这个" triggers remember_intent=9
     // interaction_style: 0.7*7 + 0.3*9 = 4.9+2.7 = 7.6 → 8
     const req = makeReq("save_memory", { fact: "记住这个：用中文回答" });
     await router.route([req], new AbortController().signal, vi.fn());
 
-    const [, , imp] = saveFact.mock.calls[0];
+    const [, , imp] = saveFactToRuntime.mock.calls[0];
     expect(imp).toBe(8);
   });
 
   it("save_memory: identity category has higher base importance", async () => {
-    const { router, saveFact } = makeRouter();
+    const { router, saveFactToRuntime } = makeRouter();
 
     const req = makeReq("save_memory", {
       fact: "user is a software engineer",
@@ -163,7 +164,7 @@ describe("ToolRouter", () => {
     });
     await router.route([req], new AbortController().signal, vi.fn());
 
-    const [cat, , imp] = saveFact.mock.calls[0];
+    const [cat, , imp] = saveFactToRuntime.mock.calls[0];
     expect(cat).toBe("identity");
     // identity: 0.7*9 + 0.3*6 = 6.3+1.8 = 8.1 → 8
     expect(imp).toBe(8);
@@ -171,60 +172,60 @@ describe("ToolRouter", () => {
 
   it("save_memory: prefix form 'Remember: ...' triggers high intent", async () => {
     // The most common compat-path format — anchored prefix must be detected
-    const { router, saveFact } = makeRouter();
+    const { router, saveFactToRuntime } = makeRouter();
     const req = makeReq("save_memory", {
       request: "Remember: user prefers TypeScript over JavaScript",
     });
     await router.route([req], new AbortController().signal, vi.fn());
-    const [, , imp] = saveFact.mock.calls[0];
+    const [, , imp] = saveFactToRuntime.mock.calls[0];
     // rememberIntent=9 → interaction_style: 0.7*7 + 0.3*9 = 7.6 → 8
     expect(imp).toBe(8);
   });
 
   it("save_memory: prefix variant 'remember - ...' triggers high intent", async () => {
-    const { router, saveFact } = makeRouter();
+    const { router, saveFactToRuntime } = makeRouter();
     const req = makeReq("save_memory", {
       request: "remember - use Chinese for all replies",
     });
     await router.route([req], new AbortController().signal, vi.fn());
-    const [, , imp] = saveFact.mock.calls[0];
+    const [, , imp] = saveFactToRuntime.mock.calls[0];
     expect(imp).toBe(8);
   });
 
   it("save_memory: in-sentence 'Remember that ...' triggers high intent", async () => {
-    const { router, saveFact } = makeRouter();
+    const { router, saveFactToRuntime } = makeRouter();
     const req = makeReq("save_memory", {
       request: "Remember that I prefer TypeScript over JavaScript",
     });
     await router.route([req], new AbortController().signal, vi.fn());
-    const [, , imp] = saveFact.mock.calls[0];
+    const [, , imp] = saveFactToRuntime.mock.calls[0];
     // "remember that" matches in-sentence pattern → rememberIntent=9
     expect(imp).toBe(8);
   });
 
   it("save_memory: mid-sentence 'I remember: ...' does NOT trigger intent (not anchored)", async () => {
     // "I remember: we used TypeScript" is a recall statement, not a command
-    const { router, saveFact } = makeRouter();
+    const { router, saveFactToRuntime } = makeRouter();
     const req = makeReq("save_memory", {
       request: "I remember: we used TypeScript in the last project",
     });
     await router.route([req], new AbortController().signal, vi.fn());
-    const [, , imp] = saveFact.mock.calls[0];
+    const [, , imp] = saveFactToRuntime.mock.calls[0];
     // No intent detected → rememberIntent=6 → interaction_style: 0.7*7 + 0.3*6 = 6.7 → 7
     expect(imp).toBe(7);
   });
 
   it("save_memory fact arg without remember-intent uses neutral score", async () => {
-    const { router, saveFact } = makeRouter();
+    const { router, saveFactToRuntime } = makeRouter();
     const req = makeReq("save_memory", { fact: "user prefers TypeScript" });
     await router.route([req], new AbortController().signal, vi.fn());
-    const [, , imp] = saveFact.mock.calls[0];
+    const [, , imp] = saveFactToRuntime.mock.calls[0];
     // interaction_style: 0.7*7 + 0.3*6 = 4.9+1.8 = 6.7 → 7
     expect(imp).toBe(7);
   });
 
   it("save_memory importance is always in [1, 10]", async () => {
-    const { router, saveFact } = makeRouter();
+    const { router, saveFactToRuntime } = makeRouter();
 
     for (const category of [
       "identity",
@@ -232,13 +233,13 @@ describe("ToolRouter", () => {
       "behavior",
       "interaction_style",
     ]) {
-      saveFact.mockClear();
+      saveFactToRuntime.mockClear();
       await router.route(
         [makeReq("save_memory", { fact: "some fact", category })],
         new AbortController().signal,
         vi.fn(),
       );
-      const [, , imp] = saveFact.mock.calls[0];
+      const [, , imp] = saveFactToRuntime.mock.calls[0];
       expect(imp).toBeGreaterThanOrEqual(1);
       expect(imp).toBeLessThanOrEqual(10);
     }

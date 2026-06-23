@@ -57,7 +57,10 @@ import {
   type BackgroundTaskRunner,
 } from "./backgroundTaskRunner.js";
 import { RuntimeIntentFeedbackCollector } from "./runtimeIntentFeedbackCollector.js";
-import { type MemoryContract } from "../memory-runtime/index.js";
+import {
+  type MemoryContract,
+  type SessionMemory,
+} from "../memory-runtime/index.js";
 import { type ToolLoopRuntimeOptions } from "../agent-runtime/index.js";
 import {
   geminiPartsToLlmMessages,
@@ -201,8 +204,14 @@ export class JarvisAgent extends EventEmitter {
 
       this.distiller = new BackgroundDistiller(
         distillGenerateText,
-        (category, content, importance) =>
-          this.memoryService.saveFact(category, content, importance),
+        async (category, content, importance) => {
+          await this.memoryService.saveFactToRuntime(
+            category,
+            content,
+            importance,
+            "background_distiller",
+          );
+        },
       );
 
       // setGenerateText triggers EntityExtractor initialization inside MemoryService
@@ -1137,29 +1146,36 @@ export class JarvisAgent extends EventEmitter {
               ? this.client.config.getModel()
               : undefined;
           const timestamp = new Date().toISOString();
-          await this.memoryService.appendSessionTurn({
+          const session: SessionMemory = {
+            scope: "session",
             sessionId: this.sessionId,
-            role: "user",
-            content: userPrompt,
-            timestamp,
-            metadata: {
-              backend: backendProvider,
-              model,
-              source: "jarvis-main-response",
-            },
-          });
-          await this.memoryService.appendSessionTurn({
-            sessionId: this.sessionId,
-            role: "assistant",
-            content: finalAssistantText,
-            timestamp: new Date().toISOString(),
-            metadata: {
-              backend: backendProvider,
-              model,
-              source: "jarvis-main-response",
-              toolsCalled: [...allToolsCalled],
-            },
-          });
+            turns: [
+              {
+                role: "user",
+                content: userPrompt,
+                timestamp,
+                metadata: {
+                  backend: backendProvider,
+                  model,
+                  source: "jarvis-main-response",
+                },
+              },
+              {
+                role: "assistant",
+                content: finalAssistantText,
+                timestamp: new Date().toISOString(),
+                metadata: {
+                  backend: backendProvider,
+                  model,
+                  source: "jarvis-main-response",
+                  toolsCalled: [...allToolsCalled],
+                },
+              },
+            ],
+          };
+          await this.memoryService
+            .getRuntimeSqliteMemoryStore()
+            .upsertSession(session);
         } catch (error: any) {
           console.error(
             `⚠️ [SessionStore] Failed to append transcript turn: ${error?.message ?? String(error)}`,

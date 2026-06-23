@@ -189,31 +189,27 @@ describe("Jarvis memory store adapters", () => {
     );
   });
 
-  it("adapts runtime write operations to MemoryService writes", async () => {
-    const saveFact = vi.fn().mockResolvedValue(undefined);
-    const saveEntryMemory = vi.fn().mockImplementation(async (input) => ({
-      id: "entry-db-1",
-      scope: "entry",
-      kind: input.kind ?? "conversation",
-      content: input.content,
-      entities: input.entities ?? [],
-      timestamp: "2026-06-02T00:00:00.000Z",
-      sourceRefs: input.sourceRefs ?? [],
-      metadata: input.metadata,
-    }));
-    const appendSessionTurn = vi.fn().mockResolvedValue(undefined);
-    const deleteRuntimeMemory = vi.fn().mockResolvedValue(true);
+  it("adapts runtime write operations directly to the runtime write store", async () => {
+    const runtimeStore = {
+      upsertFact: vi.fn().mockImplementation(async (fact) => fact),
+      upsertEntry: vi.fn().mockImplementation(async (entry) => ({
+        ...entry,
+        id: "entry-db-1",
+      })),
+      upsertSession: vi.fn().mockImplementation(async (session) => session),
+      deleteMemory: vi.fn().mockResolvedValue(true),
+      listFacts: vi.fn().mockResolvedValue([]),
+      listEntries: vi.fn().mockResolvedValue([]),
+      listSessions: vi.fn().mockResolvedValue([]),
+    };
     const memoryService = {
-      saveFact,
-      saveEntryMemory,
-      appendSessionTurn,
-      deleteRuntimeMemory,
+      getRuntimeSqliteMemoryStore: () => runtimeStore,
       searchFacts: vi.fn(),
       searchWithScore: vi.fn(),
     };
-    const store = new JarvisMemoryWriteStore(memoryService);
+    const store = new JarvisMemoryWriteStore(runtimeStore);
 
-    await store.upsertFact({
+    const fact = {
       id: "fact-1",
       scope: "fact",
       subject: "preference",
@@ -222,8 +218,8 @@ describe("Jarvis memory store adapters", () => {
       sourceRefs: ["test"],
       createdAt: "2026-06-02T00:00:00.000Z",
       updatedAt: "2026-06-02T00:00:00.000Z",
-    });
-    await store.upsertEntry({
+    } as const;
+    const entry = {
       id: "entry-1",
       scope: "entry",
       kind: "conversation",
@@ -231,26 +227,22 @@ describe("Jarvis memory store adapters", () => {
       entities: ["memory"],
       timestamp: "2026-06-02T00:00:00.000Z",
       sourceRefs: ["session-1"],
-    });
-    await store.upsertSession({
+    } as const;
+    const session = {
       scope: "session",
       sessionId: "session-1",
       turns: [{ role: "user", content: "hello" }],
-    });
+    } as const;
+
+    await store.upsertFact(fact);
+    await store.upsertEntry(entry);
+    await store.upsertSession(session);
     await store.deleteMemory({ scope: "entry", id: "entry-db-1" });
 
-    expect(saveFact).toHaveBeenCalledWith(
-      "interaction_style",
-      "The user prefers concise Chinese replies.",
-      9,
-    );
-    expect(saveEntryMemory).toHaveBeenCalledWith(
-      expect.objectContaining({ content: "Discussed memory runtime." }),
-    );
-    expect(appendSessionTurn).toHaveBeenCalledWith(
-      expect.objectContaining({ sessionId: "session-1", content: "hello" }),
-    );
-    expect(deleteRuntimeMemory).toHaveBeenCalledWith({
+    expect(runtimeStore.upsertFact).toHaveBeenCalledWith(fact);
+    expect(runtimeStore.upsertEntry).toHaveBeenCalledWith(entry);
+    expect(runtimeStore.upsertSession).toHaveBeenCalledWith(session);
+    expect(runtimeStore.deleteMemory).toHaveBeenCalledWith({
       scope: "entry",
       id: "entry-db-1",
     });

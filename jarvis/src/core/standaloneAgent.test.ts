@@ -106,13 +106,13 @@ describe("StandaloneJarvisAgent OpenAI routing models", () => {
     });
   });
 
-  it("distills standalone turns into facts through MemoryService.saveFact", async () => {
-    const saveFact = vi.fn().mockResolvedValue(undefined);
+  it("distills standalone turns into facts through runtime memory writes", async () => {
+    const saveFactToRuntime = vi.fn().mockResolvedValue(undefined);
     const agent = new StandaloneJarvisAgent({
       sessionId: "session-1",
       cwd: process.cwd(),
       memoryService: {
-        saveFact,
+        saveFactToRuntime,
       } as any,
       distillGenerateText: vi.fn().mockResolvedValue(
         JSON.stringify({
@@ -133,10 +133,11 @@ describe("StandaloneJarvisAgent OpenAI routing models", () => {
       "好的，已记下。",
     );
 
-    expect(saveFact).toHaveBeenCalledWith(
+    expect(saveFactToRuntime).toHaveBeenCalledWith(
       "behavior",
       "用户有徒步这个爱好。",
       expect.any(Number),
+      "background_distiller",
     );
   });
 });

@@ -218,7 +218,7 @@ export class MemoryGovernancePolicy {
       };
     }
 
-    if (incoming.scope === "fact") {
+    if (incoming.scope === "fact" && incoming.subject === "user") {
       const sameSubject = candidates.find(
         (candidate) =>
           candidate.scope === "fact" &&

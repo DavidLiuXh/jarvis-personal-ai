@@ -16,10 +16,13 @@ import { EntityExtractor, type EntityLink } from "./entityExtractor.js";
 import { GeminiCliSessionStore } from "./geminiCliSessionStore.js";
 import {
   CompositeSessionStore,
+  DefaultMemoryWriterRuntime,
   type EntryMemory,
   type FactMemory,
   JarvisJsonlSessionStore,
   type MemoryItem,
+  type MemoryWriteEventItem,
+  type MemoryWriterRuntimeEvent,
   type SessionMemory,
   SqliteMemoryStore,
   type SessionStore,
@@ -41,6 +44,59 @@ function toLocalDateString(ms: number): string {
   const m = String(d.getMonth() + 1).padStart(2, "0");
   const day = String(d.getDate()).padStart(2, "0");
   return `${y}-${m}-${day}`;
+}
+
+function factSubjectFromCategory(category: string): FactMemory["subject"] {
+  if (category === "identity") return "user";
+  if (category === "interaction_style" || category === "preference") {
+    return "preference";
+  }
+  if (category === "specification" || category === "artifact") {
+    return "project";
+  }
+  if (category === "relationship") return "relationship";
+  return "profile";
+}
+
+function logRuntimeMemoryWriteEvent(event: MemoryWriterRuntimeEvent): void {
+  if (event.type === "memory_write_started") {
+    console.error(`[MemoryWrite] started count=${event.count}`);
+    return;
+  }
+  if (event.type === "memory_write_decision") {
+    const item = event.item;
+    console.error(
+      `[MemoryWrite] decision scope=${event.scope} id=${event.id} action=${event.action} reason=${event.reasonCode}${formatRuntimeMemoryWriteItem(item)}`,
+    );
+    return;
+  }
+  console.error(
+    `[MemoryWrite] finished written=${event.written} skipped=${event.skipped} deleted=${event.deleted}`,
+  );
+  for (const result of event.results) {
+    console.error(
+      `[MemoryWrite] upserted scope=${result.scope} id=${result.id} action=${result.action} reason=${result.reasonCode}${formatRuntimeMemoryWriteItem(result.item)}`,
+    );
+  }
+}
+
+function formatRuntimeMemoryWriteItem(item: MemoryWriteEventItem): string {
+  const fields: string[] = [];
+  if (item.subject) fields.push(`subject=${item.subject}`);
+  if (item.kind) fields.push(`kind=${item.kind}`);
+  if (typeof item.confidence === "number") {
+    fields.push(`confidence=${item.confidence.toFixed(2)}`);
+  }
+  if (item.metadata?.category)
+    fields.push(`category=${item.metadata.category}`);
+  if (item.metadata?.importance) {
+    fields.push(`importance=${item.metadata.importance}`);
+  }
+  if (item.metadata?.source) fields.push(`source=${item.metadata.source}`);
+  if (item.contentPreview) {
+    fields.push(`preview=${JSON.stringify(item.contentPreview)}`);
+  }
+  return fields.length > 0 ? ` ${fields.join(" ")}` : "";
 }
 
 function extractSessionMessageText(content: unknown): string {
@@ -188,6 +244,7 @@ export class MemoryService {
   private entityExtractor: EntityExtractor | null = null;
   private sessionStore: SessionStore;
   private sqliteMemoryStore: SqliteMemoryStore;
+  private memoryWriterRuntime: DefaultMemoryWriterRuntime;
 
   constructor(
     sourceRoot: string,
@@ -227,6 +284,14 @@ export class MemoryService {
           }
           throw new Error("Embedding client is not initialized.");
         },
+      },
+    });
+    this.memoryWriterRuntime = new DefaultMemoryWriterRuntime({
+      store: this.sqliteMemoryStore,
+      observer: (event) => {
+        if (this.jarvisConfig.memory.writeObservability !== false) {
+          logRuntimeMemoryWriteEvent(event);
+        }
       },
     });
     // WAL mode: allows concurrent readers while a write is in progress,
@@ -834,141 +899,82 @@ export class MemoryService {
     return prefix + content;
   }
 
-  /**
-   * Insert a fact into the facts table and sync its embedding to vec_facts
-   * within a single transaction to keep the two tables consistent.
-   */
-  private insertFactWithVec(
-    category: string,
-    content: string,
-    importance: number,
-    embedding: number[] | null,
-  ): bigint {
-    const insertFact = this.db.transaction(() => {
-      let rowid: bigint;
-      if (embedding) {
-        const info = this.db
-          .prepare(
-            "INSERT INTO facts (category, content, importance, timestamp, embedding) VALUES (?, ?, ?, ?, ?)",
-          )
-          .run(
-            category,
-            content,
-            importance,
-            Date.now(),
-            Buffer.from(new Float32Array(embedding).buffer),
-          );
-        rowid = info.lastInsertRowid as bigint;
-        try {
-          this.db
-            .prepare("INSERT INTO vec_facts (id, embedding) VALUES (?, ?)")
-            .run(BigInt(rowid), new Float32Array(embedding));
-        } catch (_vecErr) {
-          /* vec extension may be unavailable */
-        }
-      } else {
-        const info = this.db
-          .prepare(
-            "INSERT INTO facts (category, content, importance, timestamp) VALUES (?, ?, ?, ?)",
-          )
-          .run(category, content, importance, Date.now());
-        rowid = info.lastInsertRowid as bigint;
-      }
-      // Sync to FTS5 for BM25 search
-      try {
-        this.db
-          .prepare("INSERT INTO facts_fts (content, fact_id) VALUES (?, ?)")
-          .run(content, Number(rowid));
-      } catch (_) {}
-      return rowid;
-    });
-    return insertFact();
-  }
-
-  public async saveFact(
+  public async saveFactToRuntime(
     category: string,
     content: string,
     importance: number = 5,
-  ) {
-    if (!content?.trim()) return; // guard against null/empty content
-    const logMemoryWrite = (message: string) => {
-      if (this.jarvisConfig.memory.writeObservability !== false) {
-        console.error(message);
-      }
-    };
-    const logValue = (value: unknown) => JSON.stringify(value);
-    const preview = content.replace(/\s+/g, " ").trim().slice(0, 120);
-    logMemoryWrite(
-      `[MemoryWrite] started count=1 source=legacy_memory_service`,
-    );
-    try {
-      // Exact-string dedup (fast path)
-      const exists = this.db
+    source = "memory_service",
+    options: { skipDedup?: boolean } = {},
+  ): Promise<FactMemory | null> {
+    if (!content?.trim()) return null; // guard against null/empty content
+    const trimmedContent = content.trim();
+    if (!options.skipDedup) {
+      const duplicate = this.db
         .prepare("SELECT id FROM facts WHERE content = ?")
-        .get(content);
-      if (exists) {
-        logMemoryWrite(
-          `[MemoryWrite] decision scope=fact id=${(exists as { id: unknown }).id} action=skip reason=duplicate_exact category=${logValue(category)} importance=${importance} preview=${logValue(preview)}`,
-        );
-        logMemoryWrite(`[MemoryWrite] finished written=0 skipped=1 deleted=0`);
-        return;
+        .get(trimmedContent) as { id: number } | undefined;
+      if (duplicate) {
+        if (this.jarvisConfig.memory.writeObservability !== false) {
+          console.error(`[MemoryWrite] started count=1`);
+          console.error(
+            `[MemoryWrite] decision scope=fact id=${duplicate.id} action=skip reason=duplicate_exact category=${JSON.stringify(category)} importance=${importance} preview=${JSON.stringify(trimmedContent.slice(0, 120))}`,
+          );
+          console.error(`[MemoryWrite] finished written=0 skipped=1 deleted=0`);
+        }
+        return null;
       }
-
-      // Strategy-based semantic dedup
       const strategy = this.jarvisConfig.memory.dedupStrategy ?? "jaccard";
-      let rowid: bigint;
-      if (strategy === "embedding" && this.embedContentFn) {
-        if (await this.isDuplicateByEmbedding(content)) {
-          logMemoryWrite(
-            `[MemoryWrite] decision scope=fact id=pending action=skip reason=duplicate_embedding category=${logValue(category)} importance=${importance} preview=${logValue(preview)}`,
+      const semanticDuplicate =
+        strategy === "embedding" && this.embedContentFn
+          ? await this.isDuplicateByEmbedding(trimmedContent)
+          : this.isDuplicateByJaccard(trimmedContent);
+      if (semanticDuplicate) {
+        if (this.jarvisConfig.memory.writeObservability !== false) {
+          console.error(`[MemoryWrite] started count=1`);
+          console.error(
+            `[MemoryWrite] decision scope=fact id=pending action=skip reason=duplicate_semantic category=${JSON.stringify(category)} importance=${importance} preview=${JSON.stringify(trimmedContent.slice(0, 120))}`,
           );
-          logMemoryWrite(
-            `[MemoryWrite] finished written=0 skipped=1 deleted=0`,
-          );
-          return;
+          console.error(`[MemoryWrite] finished written=0 skipped=1 deleted=0`);
         }
-        const embText = MemoryService.buildEmbeddingText(category, content);
-        const newVec = await this.embedContentFn(embText).catch(() => null);
-        rowid = this.insertFactWithVec(category, content, importance, newVec);
-      } else {
-        if (this.isDuplicateByJaccard(content)) {
-          logMemoryWrite(
-            `[MemoryWrite] decision scope=fact id=pending action=skip reason=duplicate_jaccard category=${logValue(category)} importance=${importance} preview=${logValue(preview)}`,
-          );
-          logMemoryWrite(
-            `[MemoryWrite] finished written=0 skipped=1 deleted=0`,
-          );
-          return;
-        }
-        rowid = this.insertFactWithVec(category, content, importance, null);
+        return null;
       }
-
-      logMemoryWrite(
-        `[MemoryWrite] decision scope=fact id=${String(rowid)} action=insert reason=new_memory category=${logValue(category)} importance=${importance} preview=${logValue(preview)}`,
-      );
-      logMemoryWrite(
-        `[MemoryWrite] upserted scope=fact id=${String(rowid)} action=insert reason=new_memory category=${logValue(category)} importance=${importance} preview=${logValue(preview)}`,
-      );
-
+    }
+    const now = new Date().toISOString();
+    const confidence = Math.max(0.1, Math.min(1, importance / 10));
+    const fact: FactMemory = {
+      id: "",
+      scope: "fact",
+      subject: factSubjectFromCategory(category),
+      content: trimmedContent,
+      confidence,
+      sourceRefs: [source],
+      createdAt: now,
+      updatedAt: now,
+      metadata: { category, importance, source },
+    };
+    try {
+      const [result] = await this.memoryWriterRuntime.write([
+        { operation: "upsert", item: fact, source },
+      ]);
+      const written = result?.written as FactMemory | null;
+      if (!written) return null;
       const count = this.db
         .prepare("SELECT count(*) as c FROM facts")
         .get() as any;
       console.error(`🔥 [MemoryService] New fact distilled. Total: ${count.c}`);
-      logMemoryWrite(`[MemoryWrite] finished written=1 skipped=0 deleted=0`);
 
       // L1 realtime write
       if ((this.jarvisConfig.memory.l1WriteMode ?? "batch") === "realtime") {
-        this.appendToPhysicalLayer(category, content, importance);
+        this.appendToPhysicalLayer(category, written.content, importance);
       }
 
       // Async entity extraction for knowledge graph (non-blocking)
       if (this.entityExtractor) {
-        const factRow = this.db
-          .prepare("SELECT id FROM facts WHERE content = ? LIMIT 1")
-          .get(content) as { id: number } | undefined;
-        const factId = factRow?.id ?? null;
+        const factId = Number(written.id);
         setImmediate(() => {
-          void this.extractAndSaveEntities([{ category, content }], factId);
+          void this.extractAndSaveEntities(
+            [{ category, content: written.content }],
+            Number.isFinite(factId) ? factId : null,
+          );
         });
       }
 
@@ -980,10 +986,75 @@ export class MemoryService {
       ) {
         void this.consolidateFacts();
       }
+      return written;
     } catch (e: any) {
-      logMemoryWrite(`[MemoryWrite] finished written=0 skipped=0 deleted=0`);
-      console.error(`❌ [MemoryService] Fact save failed: ${e.message}`);
+      console.error(
+        `❌ [MemoryService] Runtime fact save failed: ${e.message}`,
+      );
+      return null;
     }
+  }
+
+  /**
+   * @deprecated Use saveFactToRuntime(). Kept only as a compatibility shim.
+   */
+  public async saveFact(
+    category: string,
+    content: string,
+    importance: number = 5,
+  ): Promise<void> {
+    await this.saveFactToRuntime(category, content, importance, "legacy_shim");
+  }
+
+  private async replaceFactsViaRuntime(
+    facts: Array<{ category: string; content: string; importance: number }>,
+    source: string,
+    accessMap = new Map<
+      string,
+      { last_accessed: number | null; access_count: number }
+    >(),
+  ): Promise<number> {
+    try {
+      this.db.prepare("DELETE FROM entity_links").run();
+    } catch (_) {}
+    try {
+      this.db.prepare("DELETE FROM entities").run();
+    } catch (_) {}
+
+    const existingFacts = await this.sqliteMemoryStore.listFacts();
+    for (const fact of existingFacts) {
+      await this.sqliteMemoryStore.deleteMemory({ scope: "fact", id: fact.id });
+    }
+
+    let written = 0;
+    for (const fact of facts) {
+      if (!fact.content?.trim()) {
+        console.error(
+          `⚠️ [MemoryService] replaceFactsViaRuntime: skipping fact with null/empty content (category=${fact.category}, importance=${fact.importance})`,
+        );
+        continue;
+      }
+      const saved = await this.saveFactToRuntime(
+        fact.category,
+        fact.content,
+        fact.importance || 5,
+        source,
+        { skipDedup: true },
+      );
+      if (!saved?.id) continue;
+      const access = accessMap.get(fact.content);
+      if (access) {
+        try {
+          this.db
+            .prepare(
+              "UPDATE facts SET last_accessed = ?, access_count = ? WHERE id = ?",
+            )
+            .run(access.last_accessed, access.access_count, Number(saved.id));
+        } catch (_) {}
+      }
+      written += 1;
+    }
+    return written;
   }
 
   public async consolidateFacts() {
@@ -1139,108 +1210,15 @@ ${factsText}
           });
         }
 
-        // Batch-generate embeddings before entering the transaction (async work outside sync tx)
-        const embeddings: Array<number[] | null> = [];
-        if (this.embedContentFn) {
-          for (const f of newFacts) {
-            const embText = MemoryService.buildEmbeddingText(
-              f.category,
-              f.content,
-            );
-            const vec = await this.embedContentFn(embText).catch(() => null);
-            embeddings.push(vec);
-          }
-        } else {
-          newFacts.forEach(() => embeddings.push(null));
-        }
-
-        // Atomically replace facts + vec_facts
-        const runUpdate = this.db.transaction(() => {
-          // Clear dependent tables first to avoid FK constraint failures
-          try {
-            this.db.prepare("DELETE FROM entity_links").run();
-          } catch (_) {}
-          try {
-            this.db.prepare("DELETE FROM entities").run();
-          } catch (_) {}
-          this.db.prepare("DELETE FROM facts").run();
-          try {
-            this.db.prepare("DELETE FROM vec_facts").run();
-          } catch (_) {}
-          try {
-            this.db.prepare("DELETE FROM facts_fts").run();
-          } catch (_) {}
-
-          for (let i = 0; i < newFacts.length; i++) {
-            const f = newFacts[i];
-            if (!f.content?.trim()) {
-              console.error(
-                `⚠️ [Jarvis Reflection] consolidateFacts: skipping fact with null/empty content (category=${f.category}, importance=${f.importance})`,
-              );
-              continue;
-            }
-            const emb = embeddings[i];
-            // Best-effort: restore access stats if content matches an old fact
-            const access = accessMap.get(f.content);
-            const lastAccessed = access?.last_accessed ?? null;
-            const accessCount = access?.access_count ?? 0;
-            if (emb) {
-              const info = this.db
-                .prepare(
-                  "INSERT INTO facts (category, content, importance, timestamp, embedding, last_accessed, access_count) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                )
-                .run(
-                  f.category,
-                  f.content,
-                  f.importance || 5,
-                  Date.now(),
-                  Buffer.from(new Float32Array(emb).buffer),
-                  lastAccessed,
-                  accessCount,
-                );
-              try {
-                this.db
-                  .prepare(
-                    "INSERT INTO vec_facts (id, embedding) VALUES (?, ?)",
-                  )
-                  .run(BigInt(info.lastInsertRowid), new Float32Array(emb));
-              } catch (_) {}
-              try {
-                this.db
-                  .prepare(
-                    "INSERT INTO facts_fts (content, fact_id) VALUES (?, ?)",
-                  )
-                  .run(f.content, Number(info.lastInsertRowid));
-              } catch (_) {}
-            } else {
-              const info2 = this.db
-                .prepare(
-                  "INSERT INTO facts (category, content, importance, timestamp, last_accessed, access_count) VALUES (?, ?, ?, ?, ?, ?)",
-                )
-                .run(
-                  f.category,
-                  f.content,
-                  f.importance || 5,
-                  Date.now(),
-                  lastAccessed,
-                  accessCount,
-                );
-              try {
-                this.db
-                  .prepare(
-                    "INSERT INTO facts_fts (content, fact_id) VALUES (?, ?)",
-                  )
-                  .run(f.content, Number(info2.lastInsertRowid));
-              } catch (_) {}
-            }
-          }
-        });
-
-        runUpdate();
-        this.lastConsolidatedCount = newFacts.length;
-        this.writeKvMeta("lastConsolidatedCount", newFacts.length);
+        const writtenFacts = await this.replaceFactsViaRuntime(
+          newFacts,
+          "consolidation",
+          accessMap,
+        );
+        this.lastConsolidatedCount = writtenFacts;
+        this.writeKvMeta("lastConsolidatedCount", writtenFacts);
         console.error(
-          `✨ [Jarvis Reflection] Consolidation complete. Condensed ${allFacts.length} fragments into ${newFacts.length} core insights.`,
+          `✨ [Jarvis Reflection] Consolidation complete. Condensed ${allFacts.length} fragments into ${writtenFacts} core insights.`,
         );
         // L1 batch flush after consolidation (always, regardless of l1WriteMode)
         this.flushToPhysicalLayer();
@@ -1455,20 +1433,20 @@ ${factsText}
     timestamp?: string | number;
     metadata?: Record<string, unknown>;
   }): Promise<void> {
-    if (
-      !this.sessionStore.capabilities.write ||
-      !this.sessionStore.appendTurn
-    ) {
-      return;
-    }
-    await this.sessionStore.appendTurn({
+    await this.sqliteMemoryStore.upsertSession({
+      scope: "session",
       sessionId: input.sessionId,
-      turn: {
-        role: input.role,
-        content: input.content,
-        timestamp: input.timestamp ?? new Date().toISOString(),
-        metadata: input.metadata,
-      },
+      turns: [
+        {
+          role: input.role,
+          content: input.content,
+          timestamp:
+            typeof input.timestamp === "number"
+              ? new Date(input.timestamp).toISOString()
+              : (input.timestamp ?? new Date().toISOString()),
+          metadata: input.metadata,
+        },
+      ],
     });
   }
 
@@ -1685,86 +1663,62 @@ ${insightsSection}</knowledge>
         return;
       }
 
-      // Atomically replace all old insights with new ones
-      const replaceInsights = this.db.transaction(() => {
-        // Clear dependent tables first to avoid FK constraint failures
+      const oldInsightMap = new Map(
+        existingInsights.map((i) => [
+          i.content.trim(),
+          { importance: i.importance, access_count: i.access_count },
+        ]),
+      );
+      const existingInsightFacts = (await this.sqliteMemoryStore.listFacts())
+        .filter((fact) => fact.metadata?.category === "insight")
+        .map((fact) => fact.id);
+      for (const id of existingInsightFacts) {
         try {
-          this.db
-            .prepare(
-              "DELETE FROM entity_links WHERE fact_id IN (SELECT id FROM facts WHERE category = 'insight')",
-            )
-            .run();
+          await this.sqliteMemoryStore.deleteMemory({ scope: "fact", id });
         } catch (_) {}
-        this.db.prepare("DELETE FROM facts WHERE category = 'insight'").run();
-        try {
-          this.db
-            .prepare(
-              "DELETE FROM vec_facts WHERE id NOT IN (SELECT id FROM facts)",
-            )
-            .run();
-        } catch (_) {}
-        try {
-          this.db
-            .prepare(
-              "DELETE FROM facts_fts WHERE fact_id NOT IN (SELECT id FROM facts)",
-            )
-            .run();
-        } catch (_) {}
-        // Build map of old insight text → {importance, access_count} for inheritance
-        const oldInsightMap = new Map(
-          existingInsights.map((i) => [
-            i.content.trim(),
-            { importance: i.importance, access_count: i.access_count },
-          ]),
+      }
+
+      for (const insight of validInsights) {
+        const trimmed = insight.content.trim();
+        const old = oldInsightMap.get(trimmed);
+
+        // New insights are capped at 6 regardless of model output — they must
+        // earn trust through repeated relevance before reaching the inject
+        // threshold (>= 7). Model importance is only used as a tiebreaker
+        // between new insights when all are below the cap.
+        const NEW_INSIGHT_CAP = 6;
+        let finalImportance = Math.min(
+          insight.importance ?? 6,
+          NEW_INSIGHT_CAP,
         );
 
-        for (const insight of validInsights) {
-          const trimmed = insight.content.trim();
-          const old = oldInsightMap.get(trimmed);
-
-          // New insights are capped at 6 regardless of model output — they must
-          // earn trust through repeated relevance before reaching the inject
-          // threshold (>= 7). Model importance is only used as a tiebreaker
-          // between new insights when all are below the cap.
-          const NEW_INSIGHT_CAP = 6;
-          let finalImportance = Math.min(
-            insight.importance ?? 6,
-            NEW_INSIGHT_CAP,
-          );
-          let inheritedAccessCount = 0;
-
-          if (old) {
-            // Exact text match: inherit access_count and apply boost if earned
-            inheritedAccessCount = old.access_count;
-            if (old.access_count >= 3) {
-              // Boost: this insight has been repeatedly relevant — allow it to
-              // exceed the new-insight cap and potentially reach inject threshold
-              finalImportance = Math.min(9, old.importance + 1);
-            } else {
-              // Not yet earned boost: keep the higher of old vs capped new
-              finalImportance = Math.max(finalImportance, old.importance);
-            }
+        if (old) {
+          if (old.access_count >= 3) {
+            // Boost: this insight has been repeatedly relevant — allow it to
+            // exceed the new-insight cap and potentially reach inject threshold
+            finalImportance = Math.min(9, old.importance + 1);
+          } else {
+            // Not yet earned boost: keep the higher of old vs capped new
+            finalImportance = Math.max(finalImportance, old.importance);
           }
+        }
 
-          const info = this.db
-            .prepare(
-              "INSERT INTO facts (category, content, importance, timestamp, access_count) VALUES (?, ?, ?, ?, ?)",
-            )
-            .run(
-              "insight",
-              insight.content,
-              finalImportance,
-              Date.now(),
-              inheritedAccessCount,
-            );
+        const writtenInsight = await this.saveFactToRuntime(
+          "insight",
+          insight.content,
+          finalImportance,
+          "reflection",
+        );
+        if (old && writtenInsight?.id) {
           try {
             this.db
-              .prepare("INSERT INTO facts_fts (content, fact_id) VALUES (?, ?)")
-              .run(insight.content, Number(info.lastInsertRowid));
+              .prepare(
+                "UPDATE facts SET access_count = ? WHERE id = ? AND category = 'insight'",
+              )
+              .run(old.access_count, Number(writtenInsight.id));
           } catch (_) {}
         }
-      });
-      replaceInsights();
+      }
 
       console.error(
         `💡 [MemoryService] Reflection complete: ${validInsights.length} insights (replaced ${existingInsights.length} old).`,
@@ -2719,7 +2673,7 @@ ${insightsSection}</knowledge>
     // Backfill facts_fts for any facts not yet indexed
     this.backfillFts();
     // L1→L2 sync: if MEMORIES.md was manually edited, rebuild facts from it
-    const synced = this.syncFromPhysicalLayerIfModified();
+    const synced = await this.syncFromPhysicalLayerIfModified();
     // Run both steps independently — a vec_facts failure should not block L1 rebuild
     try {
       await this.backfillVecFacts();
@@ -2911,7 +2865,7 @@ ${insightsSection}</knowledge>
    * rebuild the facts table from it (L1 → L2 sync).
    * Returns true if sync was performed.
    */
-  private syncFromPhysicalLayerIfModified(): boolean {
+  private async syncFromPhysicalLayerIfModified(): Promise<boolean> {
     try {
       if (!fs.existsSync(this.memoriesFilePath)) return false;
 
@@ -2938,48 +2892,16 @@ ${insightsSection}</knowledge>
         return false;
       }
 
-      // Full replacement: clear facts + vec_facts + facts_fts, reinsert from MEMORIES.md
-      const rebuild = this.db.transaction(() => {
-        // Clear dependent tables first to avoid FK constraint failures
-        try {
-          this.db.prepare("DELETE FROM entity_links").run();
-        } catch (_) {}
-        try {
-          this.db.prepare("DELETE FROM entities").run();
-        } catch (_) {}
-        this.db.prepare("DELETE FROM facts").run();
-        try {
-          this.db.prepare("DELETE FROM vec_facts").run();
-        } catch (_) {}
-        try {
-          this.db.prepare("DELETE FROM facts_fts").run();
-        } catch (_) {}
-        for (const f of parsedFacts) {
-          if (!f.content?.trim()) {
-            console.error(
-              `⚠️ [MemoryService] syncHistoricalSessions: skipping fact with null/empty content (category=${f.category}, importance=${f.importance})`,
-            );
-            continue;
-          }
-          const info = this.db
-            .prepare(
-              "INSERT INTO facts (category, content, importance, timestamp) VALUES (?, ?, ?, ?)",
-            )
-            .run(f.category, f.content, f.importance, Date.now());
-          try {
-            this.db
-              .prepare("INSERT INTO facts_fts (content, fact_id) VALUES (?, ?)")
-              .run(f.content, Number(info.lastInsertRowid));
-          } catch (_) {}
-        }
-      });
-      rebuild();
+      const written = await this.replaceFactsViaRuntime(
+        parsedFacts,
+        "memories_md_sync",
+      );
 
       // Update meta mtime to reflect the sync (treat current file as "our" version now)
       this.writeMeta({ lastFlushMtime: currentMtime });
 
       console.error(
-        `✅ [MemoryService] L1→L2 sync complete: rebuilt ${parsedFacts.length} facts from MEMORIES.md. Embeddings will be regenerated.`,
+        `✅ [MemoryService] L1→L2 sync complete: rebuilt ${written}/${parsedFacts.length} facts from MEMORIES.md.`,
       );
       return true;
     } catch (e: any) {
@@ -2991,7 +2913,7 @@ ${insightsSection}</knowledge>
   /**
    * Detects dimension mismatch between config and existing vec tables.
    * If mismatched, drops and recreates both vec_memories and vec_facts,
-   * and clears all embeddings in facts/memories so backfill regenerates them.
+   * and clears stored fact embeddings so backfill regenerates them.
    */
   private rebuildVecTablesIfDimensionMismatch(): void {
     const expectedDim = this.jarvisConfig.models.embeddingDimension;
@@ -3033,9 +2955,10 @@ ${insightsSection}</knowledge>
         );
       `);
 
-      // Clear stored embeddings so backfill regenerates them with the new dimension
+      // Clear stored fact embeddings so backfill regenerates them with the new dimension.
+      // Do not delete entry memories; vec_memories can be rebuilt lazily as entries
+      // are written through the runtime store.
       this.db.prepare("UPDATE facts SET embedding = NULL").run();
-      this.db.prepare("DELETE FROM memories").run();
 
       console.error(
         `✅ [MemoryService] Vec tables rebuilt at ${expectedDim} dimensions. Embeddings will be regenerated.`,

@@ -52,6 +52,7 @@ type EntryRow = {
   text: string;
   timestamp: number | null;
   source: string | null;
+  metadata?: string | null;
 };
 
 type SummaryChunkRow = {
@@ -91,6 +92,20 @@ function sourceToEntryKind(source: string | null): EntryMemory["kind"] {
   if (source === "event") return "event";
   if (source === "reflection") return "reflection";
   return "conversation";
+}
+
+function parseMetadata(
+  metadata: string | null | undefined,
+  fallback: Record<string, unknown>,
+): Record<string, unknown> {
+  if (!metadata) return fallback;
+  try {
+    const parsed = JSON.parse(metadata);
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      return { ...fallback, ...(parsed as Record<string, unknown>) };
+    }
+  } catch {}
+  return fallback;
 }
 
 function timestampMs(value?: string | number): number {
@@ -263,7 +278,7 @@ export class SqliteMemoryStore
       : [Math.max(limit * 8, 50)];
     const rows = this.db
       .prepare(
-        `SELECT id, sessionId, text, timestamp, source FROM memories ${where} ORDER BY timestamp DESC LIMIT ?`,
+        `SELECT id, sessionId, text, timestamp, source, metadata FROM memories ${where} ORDER BY timestamp DESC LIMIT ?`,
       )
       .all(...args) as EntryRow[];
     return rows
@@ -281,7 +296,10 @@ export class SqliteMemoryStore
           timestamp: iso(row.timestamp),
           sourceRefs: row.sessionId ? [row.sessionId] : [],
           entities: [],
-          metadata: { sessionId: row.sessionId, source: row.source },
+          metadata: parseMetadata(row.metadata, {
+            sessionId: row.sessionId,
+            source: row.source,
+          }),
         } satisfies EntryMemorySearchResult;
       })
       .filter((result) => (result.score ?? 0) > 0 || !query.trim())
@@ -380,21 +398,33 @@ export class SqliteMemoryStore
       typeof entry.metadata?.source === "string"
         ? entry.metadata.source
         : entryKindToSource(entry.kind);
+    const metadata = JSON.stringify({
+      ...entry.metadata,
+      sessionId,
+      source,
+    });
     const vector = await this.embedOptional(entry.content);
     let id: number;
     if (rowId) {
       this.db
         .prepare(
-          "UPDATE memories SET sessionId = ?, text = ?, timestamp = ?, source = ? WHERE id = ?",
+          "UPDATE memories SET sessionId = ?, text = ?, timestamp = ?, source = ?, metadata = ? WHERE id = ?",
         )
-        .run(String(sessionId), entry.content, timestamp, source, rowId);
+        .run(
+          String(sessionId),
+          entry.content,
+          timestamp,
+          source,
+          metadata,
+          rowId,
+        );
       id = rowId;
     } else {
       const info = this.db
         .prepare(
-          "INSERT INTO memories (sessionId, text, timestamp, source) VALUES (?, ?, ?, ?)",
+          "INSERT INTO memories (sessionId, text, timestamp, source, metadata) VALUES (?, ?, ?, ?, ?)",
         )
-        .run(String(sessionId), entry.content, timestamp, source);
+        .run(String(sessionId), entry.content, timestamp, source, metadata);
       id = Number(info.lastInsertRowid);
     }
     this.syncVector("vec_memories", id, vector);
@@ -430,6 +460,9 @@ export class SqliteMemoryStore
       const info = this.db.prepare("DELETE FROM facts WHERE id = ?").run(id);
       this.deleteVector("vec_facts", id);
       this.db.prepare("DELETE FROM facts_fts WHERE fact_id = ?").run(id);
+      try {
+        this.db.prepare("DELETE FROM entity_links WHERE fact_id = ?").run(id);
+      } catch (_) {}
       return info.changes > 0;
     }
     if (input.scope === "entry") {
@@ -466,7 +499,7 @@ export class SqliteMemoryStore
   async listEntries(): Promise<EntryMemory[]> {
     const rows = this.db
       .prepare(
-        "SELECT id, sessionId, text, timestamp, source FROM memories ORDER BY timestamp DESC",
+        "SELECT id, sessionId, text, timestamp, source, metadata FROM memories ORDER BY timestamp DESC",
       )
       .all() as EntryRow[];
     return rows.map((row) => ({
@@ -477,7 +510,10 @@ export class SqliteMemoryStore
       entities: [],
       timestamp: iso(row.timestamp),
       sourceRefs: row.sessionId ? [row.sessionId] : [],
-      metadata: { sessionId: row.sessionId, source: row.source },
+      metadata: parseMetadata(row.metadata, {
+        sessionId: row.sessionId,
+        source: row.source,
+      }),
     }));
   }
 
@@ -536,7 +572,8 @@ export class SqliteMemoryStore
         sessionId TEXT,
         text TEXT,
         timestamp INTEGER,
-        source TEXT DEFAULT 'conversation'
+        source TEXT DEFAULT 'conversation',
+        metadata TEXT
       );
       CREATE TABLE IF NOT EXISTS facts (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -565,6 +602,9 @@ export class SqliteMemoryStore
       this.db.exec(
         "ALTER TABLE memories ADD COLUMN source TEXT DEFAULT 'conversation'",
       );
+    } catch {}
+    try {
+      this.db.exec("ALTER TABLE memories ADD COLUMN metadata TEXT");
     } catch {}
     if (this.vectorEnabled && vectorDimension) {
       try {

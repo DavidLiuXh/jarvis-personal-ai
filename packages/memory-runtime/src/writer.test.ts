@@ -93,13 +93,13 @@ describe("DefaultMemoryWriterRuntime", () => {
     expect((await store.listFacts())[0].sourceRefs).toEqual(["old", "new"]);
   });
 
-  it("skips lower-confidence conflicting facts for the same subject", async () => {
+  it("skips lower-confidence identity facts for the same user subject", async () => {
     const store = new DefaultMemoryStore({
       facts: [
         fact({
           id: "profile",
-          subject: "profile",
-          content: "The user prefers detailed answers.",
+          subject: "user",
+          content: "The user is named David Liu.",
           confidence: 0.95,
         }),
       ],
@@ -111,8 +111,8 @@ describe("DefaultMemoryWriterRuntime", () => {
         operation: "upsert",
         item: fact({
           id: "conflict",
-          subject: "profile",
-          content: "The user prefers one-word answers.",
+          subject: "user",
+          content: "The user is named Alice.",
           confidence: 0.5,
         }),
       },
@@ -121,6 +121,36 @@ describe("DefaultMemoryWriterRuntime", () => {
     expect(result.decision.action).toBe("skip");
     expect(result.decision.reasonCode).toBe("lower_confidence_conflict");
     expect(await store.listFacts()).toHaveLength(1);
+  });
+
+  it("keeps distinct profile facts even when they share the profile subject", async () => {
+    const store = new DefaultMemoryStore({
+      facts: [
+        fact({
+          id: "cycling",
+          subject: "profile",
+          content: "The user enjoys cycling.",
+          confidence: 0.7,
+        }),
+      ],
+    });
+    const writer = new DefaultMemoryWriterRuntime({ store });
+
+    const [result] = await writer.write([
+      {
+        operation: "upsert",
+        item: fact({
+          id: "hiking",
+          subject: "profile",
+          content: "The user enjoys hiking.",
+          confidence: 0.8,
+        }),
+      },
+    ]);
+
+    expect(result.decision.action).toBe("insert");
+    expect(result.decision.reasonCode).toBe("new_memory");
+    expect(await store.listFacts()).toHaveLength(2);
   });
 
   it("upserts sessions and exposes the same store through retrieval adapters", async () => {
