@@ -589,6 +589,7 @@ export class MemoryService {
   }
 
   private _backfillPromise: Promise<void> | null = null;
+  private _factEmbeddingBackfillPromise: Promise<void> | null = null;
 
   /** Inject a CLI-auth embedContent function for semantic dedup. */
   public setEmbedContent(fn: (text: string) => Promise<number[]>) {
@@ -606,8 +607,22 @@ export class MemoryService {
    */
   public setEmbedContentOnly(fn: (text: string) => Promise<number[]>) {
     this.embedContentFn = fn;
+    this.scheduleFactEmbeddingBackfill("setEmbedContentOnly");
     // Drain any skill backfill queued while embedFn was unavailable
     this.drainPendingSkillBackfill();
+  }
+
+  private scheduleFactEmbeddingBackfill(reason: string): void {
+    if (!this.embedContentFn || this._factEmbeddingBackfillPromise) return;
+    this._factEmbeddingBackfillPromise = this.backfillVecFacts()
+      .catch((error: any) => {
+        console.error(
+          `⚠️ [MemoryService] Fact embedding backfill failed (${reason}): ${error?.message ?? String(error)}`,
+        );
+      })
+      .finally(() => {
+        this._factEmbeddingBackfillPromise = null;
+      });
   }
 
   private drainPendingSkillBackfill(): void {
@@ -625,6 +640,9 @@ export class MemoryService {
   public async waitForBackfill(): Promise<void> {
     if (this._backfillPromise) {
       await this._backfillPromise;
+    }
+    if (this._factEmbeddingBackfillPromise) {
+      await this._factEmbeddingBackfillPromise;
     }
   }
 
@@ -957,6 +975,7 @@ export class MemoryService {
       ]);
       const written = result?.written as FactMemory | null;
       if (!written) return null;
+      this.ensureFactEmbeddingBackfill(written);
       const count = this.db
         .prepare("SELECT count(*) as c FROM facts")
         .get() as any;
@@ -992,6 +1011,27 @@ export class MemoryService {
         `❌ [MemoryService] Runtime fact save failed: ${e.message}`,
       );
       return null;
+    }
+  }
+
+  private ensureFactEmbeddingBackfill(fact: FactMemory): void {
+    const id = Number(fact.id);
+    if (!Number.isFinite(id) || id <= 0) return;
+    try {
+      const row = this.db
+        .prepare(
+          "SELECT length(embedding) AS embedding_bytes FROM facts WHERE id = ?",
+        )
+        .get(id) as { embedding_bytes: number | null } | undefined;
+      if (row?.embedding_bytes) return;
+      console.error(
+        `[MemoryWrite] fact embedding missing id=${id} category=${JSON.stringify(fact.metadata?.category ?? "unknown")} source=${JSON.stringify(fact.metadata?.source ?? "unknown")} — scheduling fact embedding backfill`,
+      );
+      this.scheduleFactEmbeddingBackfill(`fact_write:${id}`);
+    } catch (error: any) {
+      console.error(
+        `⚠️ [MemoryService] Failed to inspect fact embedding id=${id}: ${error?.message ?? String(error)}`,
+      );
     }
   }
 
@@ -2994,10 +3034,16 @@ ${insightsSection}</knowledge>
       // Clear vec_facts so all facts get fresh embeddings below
       try {
         this.db.prepare("DELETE FROM vec_facts").run();
-        this.db.prepare("UPDATE facts SET embedding = NULL").run();
       } catch (e: any) {
         console.error(
           `⚠️ [MemoryService] Failed to clear vec_facts for re-embed: ${e.message}`,
+        );
+      }
+      try {
+        this.db.prepare("UPDATE facts SET embedding = NULL").run();
+      } catch (e: any) {
+        console.error(
+          `⚠️ [MemoryService] Failed to clear fact embeddings for re-embed: ${e.message}`,
         );
       }
     }
@@ -3006,31 +3052,48 @@ ${insightsSection}</knowledge>
     console.error(
       `[MemoryService] backfillVecFacts: checking for missing vec_facts entries...`,
     );
-    const missingInVec = this.db
-      .prepare(
-        `
+    let missingInVec: Array<{
+      id: number;
+      category: string;
+      content: string;
+      embedding: Buffer;
+    }> = [];
+    try {
+      missingInVec = this.db
+        .prepare(
+          `
       SELECT f.id, f.category, f.content, f.embedding
       FROM facts f
       WHERE f.embedding IS NOT NULL
         AND f.id NOT IN (SELECT id FROM vec_facts)
     `,
-      )
-      .all() as Array<{
-      id: number;
-      category: string;
-      content: string;
-      embedding: Buffer;
-    }>;
+        )
+        .all() as Array<{
+        id: number;
+        category: string;
+        content: string;
+        embedding: Buffer;
+      }>;
+    } catch (e: any) {
+      console.error(
+        `⚠️ [MemoryService] vec_facts missing-entry scan skipped: ${e.message}`,
+      );
+    }
 
+    let syncedExistingVecFacts = 0;
     for (const row of missingInVec) {
       try {
         const vec = Array.from(new Float32Array(row.embedding.buffer));
         this.db
+          .prepare("DELETE FROM vec_facts WHERE id = ?")
+          .run(BigInt(row.id));
+        this.db
           .prepare("INSERT INTO vec_facts (id, embedding) VALUES (?, ?)")
           .run(BigInt(row.id), new Float32Array(vec));
+        syncedExistingVecFacts += 1;
       } catch (e: any) {
         console.error(
-          `⚠️ [MemoryService] vec_facts insert (existing embedding) failed for id=${row.id}: ${e.message}`,
+          `⚠️ [MemoryService] vec_facts index skipped for existing embedding id=${row.id}: ${e.message}`,
         );
       }
     }
@@ -3064,26 +3127,40 @@ ${insightsSection}</knowledge>
       `[MemoryService] Auto-backfill: generating embeddings for ${noEmbedding.length} facts`,
     );
     const BATCH = 20;
+    let generatedFactEmbeddings = 0;
+    let syncedNewVecFacts = 0;
     for (let i = 0; i < noEmbedding.length; i += BATCH) {
       const batch = noEmbedding.slice(i, i + BATCH);
       for (const row of batch) {
+        let vec: number[];
         try {
           const embText = MemoryService.buildEmbeddingText(
             row.category,
             row.content,
           );
-          const vec = await embedFn(embText);
+          vec = await embedFn(embText);
           const buf = Buffer.from(new Float32Array(vec).buffer);
           this.db
             .prepare("UPDATE facts SET embedding = ? WHERE id = ?")
             .run(buf, row.id);
+          generatedFactEmbeddings += 1;
+        } catch (e: any) {
+          console.error(
+            `⚠️ [MemoryService] fact embedding generation failed for id=${row.id}: ${e?.message ?? String(e)}`,
+          );
+          continue;
+        }
+        try {
+          this.db
+            .prepare("DELETE FROM vec_facts WHERE id = ?")
+            .run(BigInt(row.id));
           this.db
             .prepare("INSERT INTO vec_facts (id, embedding) VALUES (?, ?)")
             .run(BigInt(row.id), new Float32Array(vec));
+          syncedNewVecFacts += 1;
         } catch (e: any) {
           console.error(
-            `⚠️ [MemoryService] vec_facts insert (new embedding) failed for id=${row.id}:`,
-            e,
+            `⚠️ [MemoryService] vec_facts index skipped for new embedding id=${row.id}: ${e?.message ?? String(e)}`,
           );
         }
       }
@@ -3091,7 +3168,7 @@ ${insightsSection}</knowledge>
 
     if (missingInVec.length > 0 || noEmbedding.length > 0) {
       console.error(
-        `✅ [MemoryService] Auto-backfill: synced ${missingInVec.length + noEmbedding.length} facts into vec_facts`,
+        `✅ [MemoryService] Auto-backfill: generated ${generatedFactEmbeddings}/${noEmbedding.length} fact embeddings; synced ${syncedExistingVecFacts + syncedNewVecFacts}/${missingInVec.length + generatedFactEmbeddings} into vec_facts`,
       );
     }
     if (needsFullReembed) {

@@ -1881,6 +1881,51 @@ describe("MemoryService — embedding prefix used during saveFact", () => {
     expect(identityEmbed).toBeDefined();
     expect(specEmbed).toBeDefined();
   });
+
+  it("backfills facts saved before setEmbedContentOnly injected embeddings", async () => {
+    vi.doMock("./configManager.js", () => ({
+      ConfigManager: {
+        getInstance: vi.fn().mockReturnValue({
+          get: vi.fn().mockReturnValue({
+            api: { key: "test-key", proxy: null },
+            models: {
+              embedding: "test-embedding-model",
+              embeddingDimension: 4,
+              distillation: "test-distillation-model",
+            },
+            memory: {
+              ingestionDelayMs: 0,
+              retrievalLimit: 5,
+              consolidationThreshold: 100,
+              dedupStrategy: "jaccard",
+            },
+          }),
+        }),
+      },
+    }));
+    const { MemoryService } = await import("./memory.js");
+    const tmpDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), "jarvis-late-embed-test-"),
+    );
+    const service = new (MemoryService as new (
+      root: string,
+      dbPath?: string,
+    ) => InstanceType<typeof MemoryService>)("", tmpDir);
+
+    await service.saveFact("behavior", "爱好骑自行车", 6);
+    const before = (service as any).db
+      .prepare("SELECT length(embedding) AS bytes FROM facts WHERE content = ?")
+      .get("爱好骑自行车") as { bytes: number | null };
+    expect(before.bytes).toBeNull();
+
+    service.setEmbedContentOnly(async () => [0.1, 0.2, 0.3, 0.4]);
+    await service.waitForBackfill();
+
+    const after = (service as any).db
+      .prepare("SELECT length(embedding) AS bytes FROM facts WHERE content = ?")
+      .get("爱好骑自行车") as { bytes: number | null };
+    expect(after.bytes).toBe(16);
+  });
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
