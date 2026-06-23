@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { DefaultLayeredMemoryRuntime } from "./layeredMemoryRuntime.js";
 import { SqliteMemoryStore } from "./sqliteMemoryStore.js";
 import type { EntryMemory, FactMemory, SessionMemory } from "./types.js";
@@ -14,6 +14,10 @@ function dbPath(): string {
 }
 
 describe("SqliteMemoryStore", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
   it("owns the facts, memories, and summary chunk schema", async () => {
     const store = new SqliteMemoryStore({ dbPath: dbPath() });
     const fact: FactMemory = {
@@ -62,6 +66,38 @@ describe("SqliteMemoryStore", () => {
     expect(tableNames.has("memories")).toBe(true);
     expect(tableNames.has("summary_chunks_index")).toBe(true);
     expect(tableNames.has("facts_fts")).toBe(true);
+    store.close();
+  });
+
+  it("logs retrieved fact item previews for diagnostics", async () => {
+    const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const store = new SqliteMemoryStore({ dbPath: dbPath() });
+    await store.upsertFact({
+      id: "fact-1",
+      scope: "fact",
+      subject: "profile",
+      content: "The user enjoys hiking as a personal hobby.",
+      confidence: 0.8,
+      sourceRefs: ["test"],
+      createdAt: now,
+      updatedAt: now,
+      metadata: { category: "behavior", importance: 8 },
+    });
+
+    const results = await store.searchFacts("hiking hobby", { limit: 1 });
+
+    expect(results).toHaveLength(1);
+    expect(consoleSpy).toHaveBeenCalledWith(
+      expect.stringContaining("[MemoryRetrieval] facts.search item"),
+    );
+    expect(consoleSpy).toHaveBeenCalledWith(
+      expect.stringContaining("category=behavior"),
+    );
+    expect(consoleSpy).toHaveBeenCalledWith(
+      expect.stringContaining(
+        'preview="The user enjoys hiking as a personal hobby."',
+      ),
+    );
     store.close();
   });
 

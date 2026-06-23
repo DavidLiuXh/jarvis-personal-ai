@@ -218,6 +218,20 @@ export class SqliteMemoryStore
       .filter((result) => (result.score ?? 0) > 0 || !query.trim())
       .sort(compareScore)
       .slice(0, limit);
+    for (const result of results) {
+      const category =
+        typeof result.metadata?.category === "string"
+          ? result.metadata.category
+          : result.subject;
+      const importance =
+        typeof result.metadata?.importance === "number"
+          ? result.metadata.importance
+          : "unknown";
+      const preview = result.content.replace(/\s+/g, " ").trim().slice(0, 120);
+      console.error(
+        `[MemoryRetrieval] facts.search item id=${result.id ?? "unknown"} category=${category} score=${(result.score ?? 0).toFixed(3)} importance=${importance} preview=${JSON.stringify(preview)}`,
+      );
+    }
     this.touchFacts(results.map((result) => Number(result.id)));
     return results;
   }
