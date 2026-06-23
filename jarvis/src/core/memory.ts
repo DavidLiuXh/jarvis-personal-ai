@@ -430,6 +430,10 @@ export class MemoryService {
       0;
   }
 
+  public getRuntimeSqliteMemoryStore(): SqliteMemoryStore {
+    return this.sqliteMemoryStore;
+  }
+
   private readKvMeta(key: string): number | null {
     try {
       const row = this.db

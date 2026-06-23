@@ -732,7 +732,6 @@ packages/intent-runtime/src/
   - `memory_write_decision`
   - `memory_write_finished`
 - package API smoke test 已覆盖 writer public exports。
-- `core/jarvisMemoryStores.ts` 新增 `JarvisMemoryWriteStore`，把 runtime 写入契约落到 Jarvis 现有 `MemoryService.saveFact()`、`saveEntryMemory()`、`appendSessionTurn()` 和 delete/list 方法；
 - 新增 `packages/memory-runtime/src/sqliteMemoryStore.ts`；
 - 新增 `SqliteMemoryStore`，把以下 schema 和读写能力迁入 runtime：
   - `facts`
@@ -743,13 +742,25 @@ packages/intent-runtime/src/
   - 可选 `vec_memories`
   - 可选 `vec_summary_chunks`
 - `SqliteMemoryStore` 同时实现 `FactMemoryStore`、`EntryMemoryStore`、`SessionMemoryStore` 和 `MemoryWriteStore`，可以直接接入 `DefaultLayeredMemoryRuntime`；
-- `MemoryService` 新增 runtime-facing entry 保存、fact/entry/session list 和 delete 方法，并开始委托 `SqliteMemoryStore` 处理 `memories`、`vec_memories`、`summary_chunks_index`、`vec_summary_chunks` 的写入和读取。
+- `jarvis/src/core/jarvisRuntimeMemoryLayer.ts` 已把 Jarvis 主响应 runtime 的 memory 通道切成：
+
+```text
+AgentRuntime
+  -> DefaultMemoryRuntime
+  -> DefaultLayeredMemoryRuntime
+  -> SqliteMemoryStore
+  -> SQLite
+```
+
+- `facts` / `entries` / `session summary` / runtime writes 默认直接消费 `SqliteMemoryStore`，不再通过 `MemoryService.searchFacts()`、`MemoryService.searchWithScore()` 或 `JarvisMemoryWriteStore` 绕回旧实现；
+- Jarvis 特有的 `conversation_history` 时间范围 lexical fallback 保留为 `EntryMemoryStore` decorator：底层先查 `SqliteMemoryStore`，当请求是 conversation-history recall 且有精确时间范围或结果不足时，再调用 `MemoryService.searchConversationHistoryLexical()`；
+- `MemoryService` 当前只作为应用层 lifecycle/provider 保留：负责持有同一个 `SqliteMemoryStore` 实例、提供 session transcript lexical fallback、技能索引、reflection/entity extraction/backfill 等尚未迁移的 Jarvis 专有副作用。
 
 仍需注意：
 
 - Jarvis 主响应路径当前仍保留异步 `BackgroundDistiller` 和 `enqueue()` 策略，以避免改变线上行为；
-- `saveFact()` / `searchFacts()` 仍保留 Jarvis 专有逻辑，包括 entity extraction、consolidation、artifact/style/insight gating 和 reranker 排序；底层 SQLite schema 已进入 runtime，后续可以继续把这些高阶策略拆成 runtime policy/extension。
-- 新的 `DefaultLayeredMemoryRuntime` 已经提供统一三层写入入口，后续可以逐步把 distill / event extraction / manual memory tool 全部切到该入口。
+- `saveFact()` / `searchFacts()` 仍保留在 legacy `MemoryService` 中，服务于 distill、manual memory tool、entity extraction、consolidation、artifact/style/insight gating 和 reranker 排序等未完全迁移路径；主响应 runtime 已不再依赖这些方法作为事实/entry/session 的标准读写通道；
+- 新的 `DefaultLayeredMemoryRuntime` 已经提供统一三层写入入口，后续可以继续把 distill / event extraction / manual memory tool 全部切到该入口。
 
 ### Phase 11：Memory Governance Policy
 
@@ -920,7 +931,7 @@ Jarvis 当前实现已经具备抽象出 Universal Memory Layer 的基础，并�
 
 - 作为参考实现：已经可用；
 - 作为 Jarvis 内部子系统：已经成型；
-- 作为其他 agent 项目的可复用库：意图、policy、contract、retrieval adapter、injection planner、writer runtime、governance policy、default store 和 runtime lifecycle 已具备复用基础；
+- 作为其他 agent 项目的可复用库：意图、policy、contract、retrieval adapter、injection planner、writer runtime、governance policy、default SQLite store 和 runtime lifecycle 已具备复用基础；
 - 作为通用开源 package：已具备发布前工程形态，仍需真实项目持续验证 memory quality 分布。
 
-当前最实际的下一步不是继续扩大 runtime 边界，而是把真实使用中的 memory failure 自动沉淀到 `memory:quality` 的候选集中，并通过 review workflow 晋升为稳定回归用例。
+当前最实际的下一步不是继续扩大主响应 runtime 边界，而是把 legacy `MemoryService` 中仍有价值的高阶策略逐步抽成 runtime policy/extension，并把真实使用中的 memory failure 自动沉淀到 `memory:quality` 的候选集中，通过 review workflow 晋升为稳定回归用例。

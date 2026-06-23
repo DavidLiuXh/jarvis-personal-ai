@@ -17,6 +17,7 @@ import {
 } from "../intent-runtime/index.js";
 import {
   DefaultMemoryRuntime,
+  DefaultLayeredMemoryRuntime,
   DefaultMemoryRetriever,
   type EntryMemorySearchResult,
   type MemoryContract,
@@ -33,7 +34,7 @@ import {
 } from "./intentAwareMemoryPolicy.js";
 import type { IntentFrame } from "./intentResolver.js";
 import { buildIntentPlanSection } from "./intentPlan.js";
-import { createJarvisMemoryStores } from "./jarvisMemoryStores.js";
+import { createJarvisRuntimeMemoryLayer } from "./jarvisRuntimeMemoryLayer.js";
 import type { LocalModelRouter } from "./localModelRouter.js";
 import type { MemoryService } from "./memory.js";
 import {
@@ -353,6 +354,10 @@ export async function runJarvisUnifiedRuntimeTurn(
   };
   let relevantSkills: SkillInfo[] = [];
   const defaultInstruction = buildJarvisPreamble();
+  const runtimeMemoryLayer = createJarvisRuntimeMemoryLayer({
+    memoryService: input.memoryService,
+    sessionId: input.sessionId,
+  });
 
   const memoryRuntime = new DefaultMemoryRuntime<IntentFrame | null>({
     understand: async () => runtimeIntent,
@@ -408,7 +413,7 @@ export async function runJarvisUnifiedRuntimeTurn(
       const queryRewriteEnabled =
         input.jarvisConfig.routing?.queryRewrite === true;
       const retriever = new DefaultMemoryRetriever({
-        stores: createJarvisMemoryStores(input.memoryService, input.sessionId),
+        stores: runtimeMemoryLayer.stores,
         factLimit: input.jarvisConfig.memory.factRelevanceLimit ?? 5,
         entryLimit: memoryPolicy.prewarmLimit,
         entryMaxDistance: memoryPolicy.prewarmMaxDistance,
@@ -498,7 +503,13 @@ export async function runJarvisUnifiedRuntimeTurn(
           },
         },
       });
-      return retriever.retrieve(contract);
+      const layeredRuntime = new DefaultLayeredMemoryRuntime({
+        stores: runtimeMemoryLayer.stores,
+        writeStore: runtimeMemoryLayer.writeStore,
+        sessionId: input.sessionId,
+        retriever,
+      });
+      return layeredRuntime.recall(contract);
     },
     inject: async ({ retrieval }) => {
       if (!memoryPolicy) {

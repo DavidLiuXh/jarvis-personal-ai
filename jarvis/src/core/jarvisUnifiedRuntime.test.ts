@@ -4,8 +4,15 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { describe, expect, it, vi } from "vitest";
-import type { IntentFrame, IntentStep } from "../memory-runtime/index.js";
+import { mkdtempSync, rmSync } from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import {
+  SqliteMemoryStore,
+  type IntentFrame,
+  type IntentStep,
+} from "../memory-runtime/index.js";
 import { SystemPromptBuilder } from "./systemPromptBuilder.js";
 import { MemoryInjectionPlanner } from "./memoryInjectionPlanner.js";
 import { runJarvisUnifiedRuntimeTurn } from "./jarvisUnifiedRuntime.js";
@@ -107,11 +114,23 @@ function intent(overrides: Partial<IntentFrame> = {}): IntentFrame {
   };
 }
 
+const tempDirs: string[] = [];
+
+function tempDbPath() {
+  const dir = mkdtempSync(path.join(os.tmpdir(), "jarvis-unified-runtime-"));
+  tempDirs.push(dir);
+  return path.join(dir, "memory.db");
+}
+
 function baseInput(overrides: Record<string, unknown> = {}) {
   const toolRouter = {
     setCurrentMemoryContract: vi.fn(),
     setCurrentStepMemoryDecisions: vi.fn(),
   };
+  const sqliteStore = new SqliteMemoryStore({
+    dbPath: tempDbPath(),
+    enableVectors: false,
+  });
   return {
     sessionId: "s1",
     userPrompt: "解释一下欧盟 AI Act",
@@ -124,7 +143,11 @@ function baseInput(overrides: Record<string, unknown> = {}) {
       memory: {},
       agentRuntime: { enabled: true, executionMode: "skip" },
     },
-    memoryService: { skillIndexBuilding: false },
+    memoryService: {
+      skillIndexBuilding: false,
+      getRuntimeSqliteMemoryStore: () => sqliteStore,
+      searchConversationHistoryLexical: vi.fn().mockResolvedValue([]),
+    },
     availableSkills: [],
     conversationSummary: "",
     localModelRouter: null,
@@ -142,6 +165,12 @@ function baseInput(overrides: Record<string, unknown> = {}) {
     ...overrides,
   } as any;
 }
+
+afterEach(() => {
+  while (tempDirs.length > 0) {
+    rmSync(tempDirs.pop()!, { recursive: true, force: true });
+  }
+});
 
 describe("runJarvisUnifiedRuntimeTurn", () => {
   it("produces one shared external memory contract and system instruction", async () => {
@@ -201,10 +230,15 @@ describe("runJarvisUnifiedRuntimeTurn", () => {
       from: Date.parse("2026-06-01T00:00:00+08:00"),
       to: Date.parse("2026-06-02T00:00:00+08:00"),
     };
-    const searchWithScore = vi.fn().mockResolvedValue([
+    const sqliteStore = new SqliteMemoryStore({
+      dbPath: tempDbPath(),
+      enableVectors: false,
+    });
+    const searchConversationHistoryLexical = vi.fn().mockResolvedValue([
       {
         text: "User: 昨天我们讨论了 Universal Memory Layer\nAssistant: 重点是三层记忆运行时。",
         score: 0.9,
+        timestamp: Date.parse("2026-06-01T10:00:00+08:00"),
       },
     ]);
 
@@ -279,19 +313,15 @@ describe("runJarvisUnifiedRuntimeTurn", () => {
         }),
         memoryService: {
           skillIndexBuilding: false,
-          searchFacts: vi.fn().mockResolvedValue([]),
-          searchWithScore,
-          searchSummaryChunks: vi.fn().mockResolvedValue([]),
+          getRuntimeSqliteMemoryStore: () => sqliteStore,
+          searchConversationHistoryLexical,
         },
       }),
     );
 
-    expect(searchWithScore).toHaveBeenCalledWith(
+    expect(searchConversationHistoryLexical).toHaveBeenCalledWith(
       expect.stringContaining("conversation_history"),
-      expect.any(Number),
-      null,
-      range,
-      expect.any(Number),
+      { limit: 8, dateRange: range },
     );
     expect(result.systemInstruction).toContain("<temporal_recall_boundary>");
     expect(result.systemInstruction).toContain(

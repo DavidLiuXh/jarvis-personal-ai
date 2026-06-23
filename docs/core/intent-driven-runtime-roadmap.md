@@ -12,8 +12,9 @@
 - runtime packages 基本没有反向依赖 `jarvis/src/core/*`，具备继续独立化的基础。
 - `agent.ts#runUnifiedRuntimeTurn()` 已通过 `AgentRuntime.handleTurn()` 执行主响应路径的 `intent -> memory -> skill -> response compose -> LLM/tool loop`。
 - `DefaultMemoryRetriever` 已支持 `session / fact / entry` 三层 store adapter，并通过 extension points 保留 Jarvis 的 query rewrite、recent conversation recall、summary fallback。
-- `DefaultLayeredMemoryRuntime` 已提供三层记忆统一 facade，覆盖 `save/search/delete/recall`；`JarvisMemoryWriteStore` 已把通用写入契约接到 Jarvis 现有 `MemoryService`。
+- `DefaultLayeredMemoryRuntime` 已提供三层记忆统一 facade，覆盖 `save/search/delete/recall`；Jarvis 主响应路径现在通过 `jarvisRuntimeMemoryLayer` 走 `AgentRuntime -> DefaultMemoryRuntime -> DefaultLayeredMemoryRuntime -> SqliteMemoryStore -> SQLite`。
 - `SqliteMemoryStore` 已进入 `memory-runtime`，拥有 `facts / memories / facts_fts / summary_chunks_index` 以及可选 `vec_facts / vec_memories / vec_summary_chunks` 的 schema、写入和检索。
+- `JarvisMemoryWriteStore` / `JarvisMemoryStores` 仍作为 legacy compatibility adapter 保留，但不再是 Jarvis 主响应 runtime 的标准 memory 通道；`conversation_history` lexical fallback 以 `EntryMemoryStore` decorator 保留在 Jarvis application adapter 层。
 - `SessionStore` 已抽象完整会话 transcript 的 list / read / search / optional write；`JarvisJsonlSessionStore` 定义标准 Jarvis Transcript JSONL v1，文件名带创建时间前缀以支持按时间查找；`GeminiCliSessionStore` 已迁入 `memory-runtime`，作为旧 Gemini/Jarvis chat 文件兼容 adapter。
 - `conversationRecall` 的 recent conversation recall term extraction / candidate generation 已迁入 `memory-runtime`，Jarvis core 仅保留兼容 re-export。
 - intent eval 已从单点回归 case 演进为 principle / invariant / semantic axis 矩阵。
@@ -726,7 +727,7 @@ Status: completed in this phase.
 - `AgentRuntime` 是 Jarvis 主响应路径的标准入口，`agent.ts` 只做应用层 adapter。
 - 所有 tool-backed action 都由 runtime executor 调度和验证，不能靠 LLM 自述完成。
 - tool、subagent、main response 共享同一份 `RuntimeContext`、`MemoryContract` 和 step-level memory decision。
-- `IntentResolver`、ToolRouter、MemoryService、channels、scheduler 都通过 adapter 接入，不被 package runtime 直接依赖。
+- `IntentResolver`、ToolRouter、legacy MemoryService、channels、scheduler 都通过 adapter 接入，不被 package runtime 直接依赖。
 - package runtime 没有 `jarvis/src/core/*` 反向 import，并由 boundary check 固化。
 - eval 覆盖 classification、memory policy、clarification、execution contract、tool failure、subagent delegation、runtime feedback promotion。
 - high-risk / tool-backed invariant 通过率必须 100%，external personal-memory leakage 必须 0。
