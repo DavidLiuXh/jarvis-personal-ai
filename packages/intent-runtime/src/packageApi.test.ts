@@ -4,6 +4,7 @@ import {
   IntentConfidenceGateError,
   IntentResolver,
   IntentStepRuntime,
+  InMemoryTaskGraphExecutionStore,
   OpenAICompatibleIntentModelClient,
   StaticIntentResolverAdapter,
   TaskGraphExecutor,
@@ -149,6 +150,7 @@ describe("@jarvis/intent-runtime package API", () => {
     const graph = buildTaskGraph(scheduleIntent());
     expect(graph.nodes.map((node) => node.kind)).toEqual(["schedule"]);
     expect(TaskGraphExecutor).toBeTypeOf("function");
+    expect(new InMemoryTaskGraphExecutionStore()).toBeTruthy();
   });
 
   it("exports a full intent runtime lifecycle", async () => {

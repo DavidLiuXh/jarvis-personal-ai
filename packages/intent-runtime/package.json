@@ -41,6 +41,10 @@
     "./taskGraphExecutor": {
       "types": "./dist/taskGraphExecutor.d.ts",
       "import": "./dist/taskGraphExecutor.js"
+    },
+    "./taskGraphState": {
+      "types": "./dist/taskGraphState.d.ts",
+      "import": "./dist/taskGraphState.js"
     }
   },
   "files": [

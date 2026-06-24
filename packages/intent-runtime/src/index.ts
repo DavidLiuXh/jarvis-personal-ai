@@ -12,3 +12,4 @@ export * from "./modelClient.js";
 export * from "./runtime.js";
 export * from "./taskGraph.js";
 export * from "./taskGraphExecutor.js";
+export * from "./taskGraphState.js";

@@ -26,6 +26,7 @@ export type TaskNodeExecutionStatus =
 export type TaskRuntimeArtifact = {
   id: string;
   nodeId: string;
+  sourceNodeId?: string;
   type: TaskArtifactSpec["type"] | "source";
   description?: string;
   path?: string;
@@ -33,6 +34,8 @@ export type TaskRuntimeArtifact = {
   taskId?: string;
   memoryItems?: unknown[];
   exists?: boolean;
+  createdAt?: string;
+  checksum?: string;
   metadata?: Record<string, unknown>;
 };
 
@@ -72,7 +75,25 @@ export type TaskGraphExecutorContext = {
   finalResponse?: string;
   userConfirmed?: boolean;
   confirmations?: string[];
+  resumeState?: TaskGraphResumeState;
   metadata?: Record<string, unknown>;
+};
+
+export type TaskGraphResumeState = {
+  nodes: Array<
+    Pick<
+      TaskNodeExecutionState,
+      | "status"
+      | "attempts"
+      | "output"
+      | "artifacts"
+      | "acceptanceResults"
+      | "lastError"
+    > & {
+      nodeId: string;
+    }
+  >;
+  artifacts: TaskRuntimeArtifact[];
 };
 
 export type AcceptanceValidationResult = {
@@ -197,6 +218,33 @@ function outputIndicatesFailure(output: unknown): boolean {
   return /(^|[^\w])(error|failed|denied|blocked|not available|requires|❌|失败|不可用|被拒绝)([^\w]|$)/i.test(
     text,
   );
+}
+
+function checksumText(text: string): string {
+  let hash = 2166136261;
+  for (let index = 0; index < text.length; index += 1) {
+    hash ^= text.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return `fnv1a-${(hash >>> 0).toString(16).padStart(8, "0")}`;
+}
+
+function normalizeArtifact(
+  artifact: TaskRuntimeArtifact,
+  nodeId: string,
+): TaskRuntimeArtifact {
+  const sourceNodeId = artifact.sourceNodeId ?? artifact.nodeId ?? nodeId;
+  return {
+    ...artifact,
+    nodeId: artifact.nodeId || nodeId,
+    sourceNodeId,
+    createdAt: artifact.createdAt ?? new Date().toISOString(),
+    checksum:
+      artifact.checksum ??
+      (artifact.content !== undefined
+        ? checksumText(artifact.content)
+        : undefined),
+  };
 }
 
 function getOutputRecord(output: unknown): Record<string, unknown> | null {
@@ -378,11 +426,26 @@ export function validateAcceptanceCriterion(
   };
 }
 
-function makeInitialState(node: TaskNode): TaskNodeExecutionState {
+function makeInitialState(
+  node: TaskNode,
+  resumeState?: TaskGraphResumeState,
+): TaskNodeExecutionState {
+  const persisted = resumeState?.nodes.find((item) => item.nodeId === node.id);
+  if (persisted?.status === "succeeded") {
+    return {
+      node,
+      status: "succeeded",
+      attempts: persisted.attempts,
+      output: persisted.output,
+      artifacts: persisted.artifacts,
+      acceptanceResults: persisted.acceptanceResults,
+      lastError: null,
+    };
+  }
   return {
     node,
     status: "pending",
-    attempts: 0,
+    attempts: persisted?.attempts ?? 0,
     output: null,
     artifacts: [],
     acceptanceResults: [],
@@ -495,8 +558,12 @@ export class TaskGraphExecutor {
     context: TaskGraphExecutorContext,
     signal: AbortSignal = new AbortController().signal,
   ): Promise<TaskGraphExecutionResult> {
-    const states = graph.nodes.map(makeInitialState);
-    const artifacts: TaskRuntimeArtifact[] = [];
+    const states = graph.nodes.map((node) =>
+      makeInitialState(node, context.resumeState),
+    );
+    const artifacts: TaskRuntimeArtifact[] = [
+      ...(context.resumeState?.artifacts ?? []),
+    ];
     await this.emit({
       type: "task_graph_started",
       graphId: graph.id,
@@ -619,10 +686,9 @@ export class TaskGraphExecutor {
       signal,
     );
     state.output = result.output ?? null;
-    const nodeArtifacts = (result.artifacts ?? []).map((artifact) => ({
-      ...artifact,
-      nodeId: artifact.nodeId || state.node.id,
-    }));
+    const nodeArtifacts = (result.artifacts ?? []).map((artifact) =>
+      normalizeArtifact(artifact, state.node.id),
+    );
     state.artifacts.push(...nodeArtifacts);
     artifacts.push(...nodeArtifacts);
     await this.emit({
