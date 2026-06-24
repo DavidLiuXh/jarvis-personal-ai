@@ -6,7 +6,9 @@ import {
   IntentStepRuntime,
   OpenAICompatibleIntentModelClient,
   StaticIntentResolverAdapter,
+  TaskGraphExecutor,
   buildIntentExecutionPlan,
+  buildTaskGraph,
   evaluateIntentConfidence,
 } from "./index.js";
 import type { IntentModelClient } from "./index.js";
@@ -141,6 +143,12 @@ describe("@jarvis/intent-runtime package API", () => {
         },
       },
     ]);
+  });
+
+  it("exports task graph planning and execution primitives", () => {
+    const graph = buildTaskGraph(scheduleIntent());
+    expect(graph.nodes.map((node) => node.kind)).toEqual(["schedule"]);
+    expect(TaskGraphExecutor).toBeTypeOf("function");
   });
 
   it("exports a full intent runtime lifecycle", async () => {

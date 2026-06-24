@@ -33,6 +33,14 @@
     "./runtime": {
       "types": "./dist/runtime.d.ts",
       "import": "./dist/runtime.js"
+    },
+    "./taskGraph": {
+      "types": "./dist/taskGraph.d.ts",
+      "import": "./dist/taskGraph.js"
+    },
+    "./taskGraphExecutor": {
+      "types": "./dist/taskGraphExecutor.d.ts",
+      "import": "./dist/taskGraphExecutor.js"
     }
   },
   "files": [
