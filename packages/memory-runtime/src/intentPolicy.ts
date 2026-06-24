@@ -239,6 +239,10 @@ const POLICY_REASON_METADATA: Record<
     category: "topic_boundary",
     severity: "warning",
   },
+  TOPIC_DOMAIN_BOUNDARY_MISMATCH: {
+    category: "topic_boundary",
+    severity: "warning",
+  },
   PERSONAL_STANDALONE_UNRELATED_RECENT_HISTORY: {
     category: "topic_boundary",
     severity: "warning",

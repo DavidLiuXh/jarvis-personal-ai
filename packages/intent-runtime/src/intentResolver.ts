@@ -649,6 +649,14 @@ function hasBroadTopicalHistory(
 }
 
 type StrongTopicDomain = "ai_technology" | "financial_markets";
+type TopicBoundaryDomain =
+  | "system_command"
+  | "personal_memory"
+  | "conversation_history"
+  | "external_ai_technology"
+  | "external_finance"
+  | "schedule"
+  | "workspace_action";
 
 function strongTopicDomains(text: string): Set<StrongTopicDomain> {
   const domains = new Set<StrongTopicDomain>();
@@ -667,6 +675,130 @@ function strongTopicDomains(text: string): Set<StrongTopicDomain> {
     domains.add("financial_markets");
   }
   return domains;
+}
+
+function boundaryDomainForStrongTopicDomain(
+  domain: StrongTopicDomain,
+): TopicBoundaryDomain {
+  return domain === "ai_technology"
+    ? "external_ai_technology"
+    : "external_finance";
+}
+
+function topicAnalysisText(args: {
+  prompt?: string;
+  recentTurns?: ConversationTurn[];
+  parsedTopicAnalysis: Record<string, unknown>;
+  side: "history" | "current";
+}): string {
+  const topic = asRecord(args.parsedTopicAnalysis[args.side]);
+  const text = [
+    args.prompt ?? "",
+    normalizeOptionalString(topic.label) ?? "",
+    ...normalizeStringArray(topic.evidence),
+    ...(args.side === "history"
+      ? (args.recentTurns ?? []).map((turn) => turn.content.slice(0, 240))
+      : []),
+  ];
+  return text.join("\n");
+}
+
+function topicBoundaryDomainsFromText(text: string): Set<TopicBoundaryDomain> {
+  const domains = new Set<TopicBoundaryDomain>();
+  if (/^\s*!(?:task|skill|memory|config)\b/im.test(text)) {
+    domains.add("system_command");
+  }
+  if (hasConversationHistoryRecallCue(text)) {
+    domains.add("conversation_history");
+  }
+  if (
+    USER_MEMORY_RECALL_CUE_RE.test(text) ||
+    PERSONAL_PROFILE_DESCRIPTION_CUE_RE.test(text) ||
+    /(我的|我有|我喜欢|我偏好|我习惯|适合我|按我|用户).{0,24}(爱好|偏好|习惯|风格|目标|身份|名字|风险偏好|画像|兴趣)|(?:爱好|偏好|习惯|风格|目标|身份|名字|风险偏好|画像|兴趣).{0,24}(我的|我有|用户)/i.test(
+      text,
+    )
+  ) {
+    domains.add("personal_memory");
+  }
+  if (SCHEDULE_CUE_RE.test(text)) {
+    domains.add("schedule");
+  }
+  if (ACTION_CUE_RE.test(text) || OUTPUT_ARTIFACT_CUE_RE.test(text)) {
+    domains.add("workspace_action");
+  }
+  if (INVESTMENT_ANALYSIS_CUE_RE.test(text)) {
+    domains.add("external_finance");
+  }
+  strongTopicDomains(text).forEach((domain) =>
+    domains.add(boundaryDomainForStrongTopicDomain(domain)),
+  );
+  return domains;
+}
+
+function currentTopicBoundaryDomains(args: {
+  prompt: string;
+  subject: QuerySubject;
+  taskType: IntentTaskType;
+  memoryRecallTarget: MemoryRecallTarget;
+  semanticEvidence: IntentEvidence;
+  parsedTopicAnalysis: Record<string, unknown>;
+  personalFactAssertionCue: boolean;
+  investmentAnalysisCue: boolean;
+}): Set<TopicBoundaryDomain> {
+  const domains = topicBoundaryDomainsFromText(
+    topicAnalysisText({
+      prompt: args.prompt,
+      parsedTopicAnalysis: args.parsedTopicAnalysis,
+      side: "current",
+    }),
+  );
+  if (
+    args.personalFactAssertionCue ||
+    isStandalonePersonalMemoryTopicRequest(args)
+  ) {
+    domains.add("personal_memory");
+  }
+  if (args.memoryRecallTarget === "conversation_history") {
+    domains.add("conversation_history");
+  }
+  if (args.taskType === "schedule") {
+    domains.add("schedule");
+  }
+  if (args.taskType === "execute" || args.taskType === "delegate") {
+    domains.add("workspace_action");
+  }
+  if (args.investmentAnalysisCue) {
+    domains.add("external_finance");
+  }
+  if (args.subject === "personal") {
+    domains.delete("external_ai_technology");
+    domains.delete("external_finance");
+  }
+  return domains;
+}
+
+function historyTopicBoundaryDomains(args: {
+  recentTurns: ConversationTurn[];
+  parsedTopicAnalysis: Record<string, unknown>;
+}): Set<TopicBoundaryDomain> {
+  return topicBoundaryDomainsFromText(
+    topicAnalysisText({
+      recentTurns: args.recentTurns,
+      parsedTopicAnalysis: args.parsedTopicAnalysis,
+      side: "history",
+    }),
+  );
+}
+
+function hasDisjointTopicBoundaryDomains(args: {
+  current: Set<TopicBoundaryDomain>;
+  history: Set<TopicBoundaryDomain>;
+}): boolean {
+  if (args.current.size === 0 || args.history.size === 0) return false;
+  for (const domain of args.current) {
+    if (args.history.has(domain)) return false;
+  }
+  return true;
 }
 
 function hasBroadTopicEntityContinuity(args: {
@@ -3224,6 +3356,59 @@ export class IntentResolver {
         `🧭 [IntentResolver] Broad-topic entity drilldown; topic_shifted forced false`,
       );
     }
+    const currentBoundaryDomains = currentTopicBoundaryDomains({
+      prompt,
+      subject,
+      taskType,
+      memoryRecallTarget,
+      semanticEvidence,
+      parsedTopicAnalysis,
+      personalFactAssertionCue,
+      investmentAnalysisCue,
+    });
+    const historyBoundaryDomains = historyTopicBoundaryDomains({
+      recentTurns,
+      parsedTopicAnalysis,
+    });
+    const domainBoundaryTopicShift =
+      !topicShifted &&
+      recentTurns.length > 0 &&
+      !referencesRecentHistory &&
+      !currentContextReferenceCue &&
+      memoryRecallTarget !== "current_context_reference" &&
+      hasDisjointTopicBoundaryDomains({
+        current: currentBoundaryDomains,
+        history: historyBoundaryDomains,
+      });
+    if (domainBoundaryTopicShift) {
+      const beforeTopicShifted = topicShifted;
+      topicShifted = true;
+      policyTrace.push({
+        ruleId: "topic.domain_boundary_mismatch",
+        stage: "guardrail",
+        priority: 422,
+        reasonCode: "TOPIC_DOMAIN_BOUNDARY_MISMATCH",
+        reason: normalizeIntentPolicyReason("TOPIC_DOMAIN_BOUNDARY_MISMATCH"),
+        applied: true,
+        before: {
+          topicShifted: beforeTopicShifted,
+          relation: topicRelation,
+          referencesRecentHistory,
+          currentDomains: [...currentBoundaryDomains],
+          historyDomains: [...historyBoundaryDomains],
+        },
+        after: {
+          topicShifted,
+          relation: "new_topic",
+          referencesRecentHistory,
+          currentDomains: [...currentBoundaryDomains],
+          historyDomains: [...historyBoundaryDomains],
+        },
+      });
+      console.error(
+        `🧭 [IntentResolver] Topic boundary domains diverged current=${[...currentBoundaryDomains].join(",") || "-"} history=${[...historyBoundaryDomains].join(",") || "-"}; topic_shifted forced true`,
+      );
+    }
     const externalStandaloneUnrelatedTopicShift =
       !topicShifted &&
       recentTurns.length > 0 &&
@@ -3462,6 +3647,14 @@ export class IntentResolver {
         relationReason:
           "current request drills into a specific entity after a broad topical roundup",
         confidence: Math.max(topicAnalysis.confidence, 0.85),
+        lowGrounding: false,
+      };
+    } else if (domainBoundaryTopicShift) {
+      topicAnalysis = {
+        ...topicAnalysis,
+        relation: "new_topic",
+        relationReason: `topic boundary domains diverged: current=${[...currentBoundaryDomains].join(",") || "-"} history=${[...historyBoundaryDomains].join(",") || "-"}`,
+        confidence: Math.max(topicAnalysis.confidence, 0.9),
         lowGrounding: false,
       };
     } else if (externalStandaloneUnrelatedTopicShift) {

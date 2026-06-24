@@ -2189,9 +2189,14 @@ ${modelResponse({
     expect(intent.topicAnalysis).toMatchObject({
       relation: "new_topic",
       relationReason:
-        "memory recall target changed from conversation_history to user_memory",
+        "topic boundary domains diverged: current=personal_memory history=conversation_history",
     });
-    expect(policyReasonCodes(intent)).toContain("MEMORY_TARGET_TOPIC_SHIFT");
+    expect(policyReasonCodes(intent)).toEqual(
+      expect.arrayContaining([
+        "TOPIC_DOMAIN_BOUNDARY_MISMATCH",
+        "MEMORY_TARGET_TOPIC_SHIFT",
+      ]),
+    );
   });
 
   it("forces topic shift for user-memory recall after unrelated external execution history", async () => {
@@ -2264,7 +2269,7 @@ ${modelResponse({
       relation: "new_topic",
     });
     expect(policyReasonCodes(intent)).toContain(
-      "USER_MEMORY_RECALL_UNRELATED_RECENT_HISTORY",
+      "TOPIC_DOMAIN_BOUNDARY_MISMATCH",
     );
   });
 
@@ -2338,10 +2343,10 @@ ${modelResponse({
     expect(intent.topicAnalysis).toMatchObject({
       relation: "new_topic",
       relationReason:
-        "standalone personal request is unrelated to recent non-profile history",
+        "topic boundary domains diverged: current=personal_memory history=external_finance",
     });
     expect(policyReasonCodes(intent)).toContain(
-      "PERSONAL_STANDALONE_UNRELATED_RECENT_HISTORY",
+      "TOPIC_DOMAIN_BOUNDARY_MISMATCH",
     );
   });
 
@@ -2412,7 +2417,7 @@ ${modelResponse({
     expect(intent.referencesRecentHistory).toBe(false);
     expect(intent.topicShifted).toBe(true);
     expect(policyReasonCodes(intent)).toContain(
-      "PERSONAL_STANDALONE_UNRELATED_RECENT_HISTORY",
+      "TOPIC_DOMAIN_BOUNDARY_MISMATCH",
     );
   });
 
@@ -2560,10 +2565,87 @@ ${modelResponse({
     expect(intent.topicAnalysis).toMatchObject({
       relation: "new_topic",
       relationReason:
-        "conversation-history recall targets an explicit prior artifact or topic rather than the current recent context",
+        "topic boundary domains diverged: current=conversation_history history=workspace_action",
     });
     expect(policyReasonCodes(intent)).toContain(
-      "CONVERSATION_HISTORY_ARTIFACT_TOPIC_SHIFT",
+      "TOPIC_DOMAIN_BOUNDARY_MISMATCH",
+    );
+  });
+
+  it("forces topic shift when a system command history is followed by an unrelated external domain request", async () => {
+    const resolver = makeResolver();
+    mockGenerate.mockResolvedValueOnce(
+      modelResponse({
+        query_subject: "external",
+        task_type: "analyze",
+        needs_external_knowledge: true,
+        semantic_evidence: {
+          personalContext: {
+            present: false,
+            reason: "",
+            span: "",
+          },
+          memoryRecall: {
+            present: false,
+            target: "none",
+            reason: "",
+            span: "",
+          },
+          actionRequest: { present: false, action: "none", object: "" },
+          entityHints: {
+            tickers: ["NVDA"],
+            technicalTerms: [],
+            peopleOrCompanies: ["NVIDIA"],
+          },
+        },
+        topic_analysis: {
+          history: {
+            label: "Manual scheduled task run",
+            evidence: ["!task run summarize-today-s-top-ai-0p2k"],
+            source_turns: [-2],
+            confidence: 0.9,
+          },
+          current: {
+            label: "NVIDIA earnings analysis",
+            evidence: ["分析一下 NVDA 最新财报"],
+            source_turns: [0],
+            confidence: 0.9,
+          },
+          relation: "subtopic",
+          relation_reason:
+            "model incorrectly links both to assistant operations",
+          confidence: 0.9,
+        },
+        references_recent_history: false,
+        topic_shifted: false,
+      }),
+    );
+
+    const intent = await resolver.resolve({
+      userPrompt: "分析一下 NVDA 最新财报",
+      history: [
+        {
+          role: "user",
+          content: "!task run summarize-today-s-top-ai-0p2k",
+        },
+        {
+          role: "assistant",
+          content: "已手动触发任务 summarize-today-s-top-ai-0p2k。",
+        },
+      ],
+    });
+
+    expect(intent.subject).toBe("external");
+    expect(intent.referencesRecentHistory).toBe(false);
+    expect(intent.topicShifted).toBe(true);
+    expect(intent.topicAnalysis).toMatchObject({
+      relation: "new_topic",
+      relationReason: expect.stringContaining(
+        "topic boundary domains diverged: current=external_finance history=system_command",
+      ),
+    });
+    expect(policyReasonCodes(intent)).toContain(
+      "TOPIC_DOMAIN_BOUNDARY_MISMATCH",
     );
   });
 
