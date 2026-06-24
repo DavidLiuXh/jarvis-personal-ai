@@ -38,6 +38,7 @@ const DEFAULT_MAX_READ_LINES = 2_000;
 const DEFAULT_MAX_SEARCH_RESULTS = 200;
 const DEFAULT_SHELL_TIMEOUT_MS = 30_000;
 const DEFAULT_SHELL_MAX_OUTPUT_CHARS = 40_000;
+const DEFAULT_ALLOW_NETWORK_FETCH_COMMANDS = true;
 const DEFAULT_NETWORK_FETCH_COMMANDS = ["curl", "wget"];
 
 const SENSITIVE_BASENAMES = new Set([
@@ -118,7 +119,10 @@ function truncateText(
 }
 
 function isDangerousShellCommand(command: string): boolean {
-  const normalized = command.trim().toLowerCase();
+  const normalized = command
+    .trim()
+    .toLowerCase()
+    .replace(/(?:^|\s)(?:\d?>|&>)\s*\/dev\/null\b/g, " ");
   return [
     /\brm\s+(-[^\s]*r[^\s]*|-rf|-[^\s]*f[^\s]*r)\b/,
     /\bsudo\b/,
@@ -170,7 +174,8 @@ export class WorkspaceTools {
     this.shellTimeoutMs = options.shellTimeoutMs ?? DEFAULT_SHELL_TIMEOUT_MS;
     this.shellMaxOutputChars =
       options.shellMaxOutputChars ?? DEFAULT_SHELL_MAX_OUTPUT_CHARS;
-    this.allowNetworkFetchCommands = options.allowNetworkFetchCommands ?? false;
+    this.allowNetworkFetchCommands =
+      options.allowNetworkFetchCommands ?? DEFAULT_ALLOW_NETWORK_FETCH_COMMANDS;
     this.networkFetchCommands =
       options.networkFetchCommands ?? DEFAULT_NETWORK_FETCH_COMMANDS;
   }

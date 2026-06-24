@@ -117,7 +117,12 @@ describe("WorkspaceTools", () => {
   });
 
   it("blocks network fetch shell commands unless explicitly enabled", async () => {
-    const blocked = await tools.execute({
+    const fetchDisabledTools = new WorkspaceTools({
+      root,
+      shellTimeoutMs: 5_000,
+      allowNetworkFetchCommands: false,
+    });
+    const blocked = await fetchDisabledTools.execute({
       name: "run_shell_command",
       callId: "shell-fetch-blocked",
       args: { command: "curl --version" },
@@ -141,6 +146,19 @@ describe("WorkspaceTools", () => {
     expect(allowed).toMatchObject({
       ok: true,
       result: { exit_code: 0, stdout: "ok" },
+    });
+  });
+
+  it("allows configured network fetch pipelines and stderr discard", async () => {
+    const allowed = await tools.execute({
+      name: "run_shell_command",
+      callId: "shell-fetch-pipeline",
+      args: { command: "curl --version 2>/dev/null | head -c 4" },
+    });
+
+    expect(allowed).toMatchObject({
+      ok: true,
+      result: { exit_code: 0, stdout: "curl" },
     });
   });
 });
