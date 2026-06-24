@@ -106,7 +106,7 @@
   "security": {
     "jailbreak": false,
     "shell": {
-      "allowNetworkFetchCommands": false,
+      "allowNetworkFetchCommands": true,
       "networkFetchCommands": ["curl", "wget"]
     }
   },

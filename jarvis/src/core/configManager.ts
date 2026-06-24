@@ -432,7 +432,7 @@ export interface JarvisConfig {
     shell: {
       /**
        * Allow shell-based network fetch commands such as curl/wget.
-       * Default: false. When enabled, Jarvis maps these commands into the
+       * Default: true. When enabled, Jarvis maps these commands into the
        * Gemini CLI shell allowlist and also permits them in native workspace
        * tools. Destructive/system commands remain blocked.
        */
@@ -581,7 +581,7 @@ export class ConfigManager {
       security: {
         jailbreak: false,
         shell: {
-          allowNetworkFetchCommands: false,
+          allowNetworkFetchCommands: true,
           networkFetchCommands: ["curl", "wget"],
         },
       },

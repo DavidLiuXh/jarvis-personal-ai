@@ -618,8 +618,8 @@ Gemini 模式使用 Gemini CLI 的认证、模型和兼容工具链。首次安�
     "shell": {
       // 允许基于 shell 的网络抓取命令，例如 curl/wget。
       // 该配置会同时映射到 Gemini CLI shell allow 规则和 Jarvis-native workspace tools。
-      // 破坏性/系统级命令仍会被拦截。默认：false
-      "allowNetworkFetchCommands": false,
+      // 破坏性/系统级命令仍会被拦截。默认：true
+      "allowNetworkFetchCommands": true,
 
       // allowNetworkFetchCommands=true 时允许的命令前缀。
       // 默认：["curl", "wget"]

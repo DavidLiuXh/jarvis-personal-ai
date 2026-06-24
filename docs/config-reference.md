@@ -629,8 +629,8 @@ Gemini mode uses Gemini CLI authentication, model selection, and compatibility t
     "shell": {
       // Allow shell-based network fetch commands such as curl/wget.
       // This maps to Gemini CLI shell allow rules and Jarvis-native workspace tools.
-      // Destructive/system commands are still blocked. Default: false
-      "allowNetworkFetchCommands": false,
+      // Destructive/system commands are still blocked. Default: true
+      "allowNetworkFetchCommands": true,
 
       // Command prefixes allowed when allowNetworkFetchCommands=true.
       // Default: ["curl", "wget"]
