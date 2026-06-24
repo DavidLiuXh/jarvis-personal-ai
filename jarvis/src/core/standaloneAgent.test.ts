@@ -157,4 +157,31 @@ describe("StandaloneJarvisAgent OpenAI routing models", () => {
 
     expect(initializeEmbedding).toHaveBeenCalledWith({ lightweight: true });
   });
+
+  it("intercepts explicit !task commands before standalone routing and LLM runtime", async () => {
+    const agent = new StandaloneJarvisAgent({
+      sessionId: "session-1",
+      cwd: process.cwd(),
+      lightweight: true,
+      memoryService: {
+        initializeEmbedding: vi.fn(),
+      } as any,
+    });
+    const taskCommandHandler = {
+      handle: vi.fn().mockResolvedValue("task list output"),
+    };
+    const events: Array<{ type: string; value?: string }> = [];
+    agent.setTaskCommandHandler(taskCommandHandler as any);
+    agent.on("content", (event) => events.push(event));
+    agent.on("done", () => events.push({ type: "done" }));
+
+    await agent.processMessage("  !task list");
+
+    expect(taskCommandHandler.handle).toHaveBeenCalledWith("  !task list");
+    expect(events).toEqual([
+      { type: "content", value: "task list output" },
+      { type: "done" },
+    ]);
+    expect(agent.getHistory()).toEqual([]);
+  });
 });

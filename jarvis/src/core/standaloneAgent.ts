@@ -348,6 +348,19 @@ export class StandaloneJarvisAgent
 
   async processMessage(userPrompt: string): Promise<void> {
     await this.initialize();
+
+    // Explicit system commands are deterministic and should not enter
+    // routing, memory injection, or the LLM/tool loop.
+    if (userPrompt.trimStart().startsWith("!task") && this.taskCommandHandler) {
+      const result = await this.taskCommandHandler.handle(userPrompt);
+      this.emit(JarvisEventType.CONTENT, {
+        type: JarvisEventType.CONTENT,
+        value: result,
+      });
+      this.emit(JarvisEventType.DONE);
+      return;
+    }
+
     this.toolRouter.setCurrentUserPrompt(userPrompt);
 
     let querySubject: "personal" | "external" | "mixed" = "mixed";
