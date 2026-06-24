@@ -10,3 +10,4 @@ export * from "./executor.js";
 export * from "./intentResolver.js";
 export * from "./modelClient.js";
 export * from "./runtime.js";
+export * from "./taskGraph.js";
