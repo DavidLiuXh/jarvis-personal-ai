@@ -286,7 +286,13 @@ export class StandaloneJarvisAgent
       this.channelRegistry,
       undefined,
       undefined,
-      new WorkspaceTools({ root: options.cwd }),
+      new WorkspaceTools({
+        root: options.cwd,
+        allowNetworkFetchCommands:
+          this.jarvisConfig.security?.shell?.allowNetworkFetchCommands,
+        networkFetchCommands:
+          this.jarvisConfig.security?.shell?.networkFetchCommands,
+      }),
     );
   }
 

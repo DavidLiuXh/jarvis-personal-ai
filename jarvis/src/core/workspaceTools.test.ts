@@ -115,4 +115,32 @@ describe("WorkspaceTools", () => {
     expect(blocked.ok).toBe(false);
     expect(blocked.error).toContain("blocked");
   });
+
+  it("blocks network fetch shell commands unless explicitly enabled", async () => {
+    const blocked = await tools.execute({
+      name: "run_shell_command",
+      callId: "shell-fetch-blocked",
+      args: { command: "curl --version" },
+    });
+
+    expect(blocked.ok).toBe(false);
+    expect(blocked.error).toContain("allowNetworkFetchCommands=true");
+
+    const fetchEnabledTools = new WorkspaceTools({
+      root,
+      shellTimeoutMs: 5_000,
+      allowNetworkFetchCommands: true,
+      networkFetchCommands: ["printf"],
+    });
+    const allowed = await fetchEnabledTools.execute({
+      name: "run_shell_command",
+      callId: "shell-fetch-allowed",
+      args: { command: "printf ok" },
+    });
+
+    expect(allowed).toMatchObject({
+      ok: true,
+      result: { exit_code: 0, stdout: "ok" },
+    });
+  });
 });

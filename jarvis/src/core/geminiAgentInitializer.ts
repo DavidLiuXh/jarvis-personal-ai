@@ -125,6 +125,22 @@ export class AgentInitializer {
       settings.merged.tools.codebaseInvestigator = { enabled: true };
       settings.merged.tools.generalist = { enabled: true };
       settings.merged.tools.saveMemory = { enabled: true };
+      const shellSecurity = this.jarvisConfig.security?.shell;
+      if (shellSecurity?.allowNetworkFetchCommands) {
+        const fetchAllows = (shellSecurity.networkFetchCommands ?? [])
+          .map((command) => command.trim())
+          .filter(Boolean)
+          .map((command) => `run_shell_command(${command})`);
+        if (fetchAllows.length > 0) {
+          settings.merged.tools.allowed = [
+            ...(settings.merged.tools.allowed ?? []),
+            ...fetchAllows,
+          ];
+          console.error(
+            `🔓 [Jarvis] Shell network fetch commands allowed: ${fetchAllows.join(", ")}`,
+          );
+        }
+      }
     }
 
     if (!settings.merged.context) {

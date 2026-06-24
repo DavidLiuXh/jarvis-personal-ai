@@ -232,7 +232,13 @@ export class JarvisAgent extends EventEmitter {
       this.channelRegistry,
       createGeminiToolInteractionRecorder(),
       undefined,
-      new WorkspaceTools({ root: this.cwd }),
+      new WorkspaceTools({
+        root: this.cwd,
+        allowNetworkFetchCommands:
+          this.jarvisConfig.security?.shell?.allowNetworkFetchCommands,
+        networkFetchCommands:
+          this.jarvisConfig.security?.shell?.networkFetchCommands,
+      }),
     );
     // If setAskUserHandler was called before initialize(), apply it now.
     if (this.pendingAskUserWs !== null) {
@@ -594,7 +600,13 @@ export class JarvisAgent extends EventEmitter {
         this.channelRegistry,
         createGeminiToolInteractionRecorder(),
         undefined,
-        new WorkspaceTools({ root: this.cwd }),
+        new WorkspaceTools({
+          root: this.cwd,
+          allowNetworkFetchCommands:
+            this.jarvisConfig.security?.shell?.allowNetworkFetchCommands,
+          networkFetchCommands:
+            this.jarvisConfig.security?.shell?.networkFetchCommands,
+        }),
       );
     }
   }

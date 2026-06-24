@@ -28,6 +28,8 @@ type WorkspaceToolOptions = {
   maxSearchResults?: number;
   shellTimeoutMs?: number;
   shellMaxOutputChars?: number;
+  allowNetworkFetchCommands?: boolean;
+  networkFetchCommands?: string[];
 };
 
 const TEXT_DECODER = new TextDecoder("utf-8", { fatal: false });
@@ -36,6 +38,7 @@ const DEFAULT_MAX_READ_LINES = 2_000;
 const DEFAULT_MAX_SEARCH_RESULTS = 200;
 const DEFAULT_SHELL_TIMEOUT_MS = 30_000;
 const DEFAULT_SHELL_MAX_OUTPUT_CHARS = 40_000;
+const DEFAULT_NETWORK_FETCH_COMMANDS = ["curl", "wget"];
 
 const SENSITIVE_BASENAMES = new Set([
   ".env",
@@ -131,6 +134,23 @@ function isDangerousShellCommand(command: string): boolean {
   ].some((re) => re.test(normalized));
 }
 
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function containsNetworkFetchCommand(
+  command: string,
+  networkFetchCommands: string[],
+): boolean {
+  const names = networkFetchCommands
+    .map((item) => item.trim())
+    .filter(Boolean)
+    .map(escapeRegExp);
+  if (names.length === 0) return false;
+  const re = new RegExp(`(^|[\\s;&|()])(?:${names.join("|")})(?=\\s|$)`, "i");
+  return re.test(command);
+}
+
 export class WorkspaceTools {
   private readonly root: string;
   private readonly maxReadBytes: number;
@@ -138,6 +158,8 @@ export class WorkspaceTools {
   private readonly maxSearchResults: number;
   private readonly shellTimeoutMs: number;
   private readonly shellMaxOutputChars: number;
+  private readonly allowNetworkFetchCommands: boolean;
+  private readonly networkFetchCommands: string[];
 
   constructor(options: WorkspaceToolOptions) {
     this.root = path.resolve(options.root);
@@ -148,6 +170,9 @@ export class WorkspaceTools {
     this.shellTimeoutMs = options.shellTimeoutMs ?? DEFAULT_SHELL_TIMEOUT_MS;
     this.shellMaxOutputChars =
       options.shellMaxOutputChars ?? DEFAULT_SHELL_MAX_OUTPUT_CHARS;
+    this.allowNetworkFetchCommands = options.allowNetworkFetchCommands ?? false;
+    this.networkFetchCommands =
+      options.networkFetchCommands ?? DEFAULT_NETWORK_FETCH_COMMANDS;
   }
 
   canHandle(name: string): boolean {
@@ -364,6 +389,14 @@ export class WorkspaceTools {
   ): Promise<WorkspaceToolResult> {
     const command = asString(request.args.command);
     if (!command) throw new Error("command is required.");
+    if (
+      !this.allowNetworkFetchCommands &&
+      containsNetworkFetchCommand(command, this.networkFetchCommands)
+    ) {
+      throw new Error(
+        `Command blocked by Jarvis workspace policy: network fetch commands require security.shell.allowNetworkFetchCommands=true`,
+      );
+    }
     if (isDangerousShellCommand(command)) {
       throw new Error(`Command blocked by Jarvis workspace policy: ${command}`);
     }

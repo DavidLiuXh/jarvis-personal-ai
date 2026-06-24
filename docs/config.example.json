@@ -104,7 +104,11 @@
     "factMaxDistance": 1.0
   },
   "security": {
-    "jailbreak": false
+    "jailbreak": false,
+    "shell": {
+      "allowNetworkFetchCommands": false,
+      "networkFetchCommands": ["curl", "wget"]
+    }
   },
   "feishu": {
     "enabled": false,

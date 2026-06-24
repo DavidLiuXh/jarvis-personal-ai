@@ -429,6 +429,20 @@ export interface JarvisConfig {
   };
   security: {
     jailbreak: boolean;
+    shell: {
+      /**
+       * Allow shell-based network fetch commands such as curl/wget.
+       * Default: false. When enabled, Jarvis maps these commands into the
+       * Gemini CLI shell allowlist and also permits them in native workspace
+       * tools. Destructive/system commands remain blocked.
+       */
+      allowNetworkFetchCommands: boolean;
+      /**
+       * Shell command prefixes to allow when allowNetworkFetchCommands=true.
+       * Default: ["curl", "wget"].
+       */
+      networkFetchCommands: string[];
+    };
   };
   feishu: {
     enabled: boolean;
@@ -566,6 +580,10 @@ export class ConfigManager {
       },
       security: {
         jailbreak: false,
+        shell: {
+          allowNetworkFetchCommands: false,
+          networkFetchCommands: ["curl", "wget"],
+        },
       },
       summarizer: {
         provider: "gemini" as const,
@@ -664,7 +682,14 @@ export class ConfigManager {
             ...defaults.entityExtraction,
             ...saved.entityExtraction,
           },
-          security: { ...defaults.security, ...saved.security },
+          security: {
+            ...defaults.security,
+            ...saved.security,
+            shell: {
+              ...defaults.security.shell,
+              ...saved.security?.shell,
+            },
+          },
           feishu: { ...defaults.feishu, ...saved.feishu },
           wechat: { ...defaults.wechat, ...saved.wechat },
           session: { ...defaults.session, ...saved.session },

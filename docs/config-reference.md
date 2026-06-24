@@ -625,6 +625,17 @@ Gemini mode uses Gemini CLI authentication, model selection, and compatibility t
     // Bypass Gemini CLI policy engine (allow all tool calls without confirmation).
     // WARNING: disables safety guardrails. Default: false
     "jailbreak": false,
+
+    "shell": {
+      // Allow shell-based network fetch commands such as curl/wget.
+      // This maps to Gemini CLI shell allow rules and Jarvis-native workspace tools.
+      // Destructive/system commands are still blocked. Default: false
+      "allowNetworkFetchCommands": false,
+
+      // Command prefixes allowed when allowNetworkFetchCommands=true.
+      // Default: ["curl", "wget"]
+      "networkFetchCommands": ["curl", "wget"],
+    },
   },
 
   // ─────────────────────────────────────────────
