@@ -60,6 +60,7 @@ import { ChannelRegistry } from "./core/channelRegistry.js";
 import { ProactiveTaskRunner } from "./core/proactiveTaskRunner.js";
 import { TaskCommandHandler } from "./core/taskCommandHandler.js";
 import { SkillCommandHandler } from "./core/skillCommandHandler.js";
+import { JarvisNativeSkillRuntime } from "./core/skillRuntime.js";
 import { AgentManager } from "./core/agentManager.js";
 import { loadAgentRegistry } from "./core/agentRegistry.js";
 import type { AgentTaskEvent } from "./core/externalAgent.js";
@@ -467,40 +468,7 @@ class JarvisServer {
   private async loadAvailableSkills(
     cwd: string = process.cwd(),
   ): Promise<Array<{ name: string; description: string }>> {
-    const JARVIS_HOME = path.join(os.homedir(), ".gemini-jarvis");
-    const skillDirs = [
-      path.join(os.homedir(), ".gemini", "skills"),
-      path.join(os.homedir(), ".agents", "skills"),
-      path.join(JARVIS_HOME, "skills"),
-      path.join(JARVIS_HOME, ".gemini", "skills"),
-      path.join(JARVIS_HOME, ".agents", "skills"),
-      path.join(cwd, ".gemini", "skills"),
-    ];
-    const skills: Array<{ name: string; description: string }> = [];
-    for (const dir of skillDirs) {
-      if (!fs.existsSync(dir)) continue;
-      for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-        if (!entry.isDirectory()) continue;
-        const skillFile = path.join(dir, entry.name, "SKILL.md");
-        if (!fs.existsSync(skillFile)) continue;
-        try {
-          const content = fs.readFileSync(skillFile, "utf8");
-          const nameMatch = content.match(/^name:\s*(.+)$/m);
-          const descMatch = content.match(
-            /^description:\s*["']?(.+?)["']?\s*$/m,
-          );
-          if (nameMatch && descMatch) {
-            skills.push({
-              name: nameMatch[1].trim(),
-              description: descMatch[1].trim(),
-            });
-          }
-        } catch {
-          /* skip unreadable skill file */
-        }
-      }
-    }
-    return skills;
+    return new JarvisNativeSkillRuntime({ cwd }).listSkills();
   }
 
   private async initializeMemorySync() {

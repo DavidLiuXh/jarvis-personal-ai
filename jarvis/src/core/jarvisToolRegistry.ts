@@ -43,6 +43,7 @@ export class DefaultRuntimeToolRegistry implements RuntimeToolRegistry {
 }
 
 const WORKSPACE_TOOL_NAMES = new Set([
+  "activate_skill",
   "read_file",
   "write_file",
   "read_many_files",
@@ -245,6 +246,26 @@ export function createJarvisNativeToolSchemas(): JarvisToolSchema[] {
     tags: ["channel", "write"],
   };
 
+  const activateSkillTool: JarvisToolSchema = {
+    name: "activate_skill",
+    description:
+      "Activate a Jarvis skill by name and return its SKILL.md instructions and available resources. " +
+      "Call this before applying a skill listed in the system prompt, such as dmii, docs-writer, or other available skills.",
+    parameters: {
+      type: "object",
+      properties: {
+        name: {
+          type: "string",
+          description: "Skill name exactly as listed in the system prompt.",
+        },
+      },
+      required: ["name"],
+    },
+    parallelizable: false,
+    riskLevel: "low",
+    tags: ["skill"],
+  };
+
   const workspaceTools: JarvisToolSchema[] = [
     {
       name: "read_file",
@@ -393,7 +414,13 @@ export function createJarvisNativeToolSchemas(): JarvisToolSchema[] {
     },
   ];
 
-  return [recallMemoryTool, pushToChannelTool, ...taskTools, ...workspaceTools];
+  return [
+    recallMemoryTool,
+    activateSkillTool,
+    pushToChannelTool,
+    ...taskTools,
+    ...workspaceTools,
+  ];
 }
 
 export function createDefaultRuntimeToolRegistry(

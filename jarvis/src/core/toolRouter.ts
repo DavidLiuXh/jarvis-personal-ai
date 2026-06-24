@@ -21,6 +21,7 @@ import type {
 } from "../intent-runtime/index.js";
 import { getCategoryBaseScore, clampScore } from "./backgroundDistiller.js";
 import { WorkspaceTools } from "./workspaceTools.js";
+import { formatActivatedSkill, type SkillRuntime } from "./skillRuntime.js";
 
 export type ToolCallRequest = {
   name: string;
@@ -129,6 +130,7 @@ export type ToolInteractionRecorder = {
 const JARVIS_NATIVE_TOOLS = new Set([
   "save_memory",
   "recall_memory",
+  "activate_skill",
   "ask_user",
   "push_to_channel",
   "read_file",
@@ -585,6 +587,7 @@ export class ToolRouter implements ToolExecutorAdapter {
     private toolInteractionRecorder?: ToolInteractionRecorder,
     private safetyPolicy: SafetyPolicyEngine = new JarvisSafetyPolicyEngine(),
     private workspaceTools?: WorkspaceTools,
+    private skillRuntime?: SkillRuntime,
   ) {}
 
   public setTaskCommandHandler(handler?: TaskCommandHandlerHandle): void {
@@ -1058,6 +1061,15 @@ export class ToolRouter implements ToolExecutorAdapter {
             memories.length > 0
               ? `LONG-TERM MEMORIES FOUND:\n${memories.map((m) => `- ${m}`).join("\n")}\n\nINSTRUCTION: Now synthesize this history into your final answer.`
               : `NO SPECIFIC MEMORIES FOUND for "${effectiveQuery}". Proceed with current knowledge.`;
+        }
+      } else if (req.name === "activate_skill") {
+        if (!this.skillRuntime) {
+          throw new Error("Jarvis-native skill runtime is not configured.");
+        } else {
+          const name = String(req.args.name ?? "").trim();
+          const skill = await this.skillRuntime.activateSkill(name);
+          output = formatActivatedSkill(skill);
+          console.error(`📚 [Jarvis] Skill activated: ${skill.name}`);
         }
       } else if (req.name.startsWith("task_")) {
         const action = req.name.slice("task_".length);

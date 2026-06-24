@@ -11,6 +11,7 @@ describe("Jarvis runtime tool registry", () => {
     const names = registry.listTools().map((tool) => tool.name);
 
     expect(names).toContain("recall_memory");
+    expect(names).toContain("activate_skill");
     expect(names).toContain("task_add");
     expect(names).toContain("push_to_channel");
     expect(names).toContain("read_file");
@@ -36,6 +37,7 @@ describe("Jarvis runtime tool registry", () => {
     expect(added).toContain("recall_memory");
     expect(added).toContain("task_add");
     expect(added).toContain("push_to_channel");
+    expect(added).not.toContain("activate_skill");
     expect(added).not.toContain("read_file");
     expect(added).not.toContain("run_shell_command");
   });

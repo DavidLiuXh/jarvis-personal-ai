@@ -34,6 +34,7 @@ describe("ToolRouter", () => {
       schedule?: ReturnType<typeof vi.fn>;
       pushSafe?: ReturnType<typeof vi.fn>;
       handleTool?: ReturnType<typeof vi.fn>;
+      activateSkill?: ReturnType<typeof vi.fn>;
       workspaceRoot?: string;
     } = {},
   ) => {
@@ -51,6 +52,9 @@ describe("ToolRouter", () => {
     const config = { api: { apiVersion: "v1alpha" } };
     const pushSafe = overrides.pushSafe ?? vi.fn().mockResolvedValue(true);
     const handleTool = overrides.handleTool ?? vi.fn().mockResolvedValue("ok");
+    const activateSkill =
+      overrides.activateSkill ??
+      vi.fn().mockRejectedValue(new Error("Skill runtime not configured"));
 
     const router = new ToolRouter(
       { saveFactToRuntime, search, searchFacts },
@@ -64,6 +68,7 @@ describe("ToolRouter", () => {
       overrides.workspaceRoot
         ? new WorkspaceTools({ root: overrides.workspaceRoot })
         : undefined,
+      { activateSkill, listSkills: vi.fn().mockResolvedValue([]) },
     );
     return {
       router,
@@ -73,6 +78,7 @@ describe("ToolRouter", () => {
       schedule,
       pushSafe,
       handleTool,
+      activateSkill,
     };
   };
 
@@ -331,6 +337,47 @@ describe("ToolRouter", () => {
       input: "test",
     });
     expect(parts).toHaveLength(1);
+  });
+
+  it("routes activate_skill through Jarvis-native skill runtime", async () => {
+    const activateSkill = vi.fn().mockResolvedValue({
+      name: "dmii",
+      description: "DMII analysis framework",
+      path: "/tmp/dmii/SKILL.md",
+      instructions:
+        "---\nname: dmii\ndescription: DMII analysis framework\n---\n# DMII\nUse the DMII framework.",
+      resources: ["/tmp/dmii/SKILL.md", "/tmp/dmii/references/example.md"],
+    });
+    const { router, schedule } = makeRouter({ activateSkill });
+
+    const parts = await router.route(
+      [makeReq("activate_skill", { name: "dmii" })],
+      new AbortController().signal,
+      vi.fn(),
+    );
+
+    expect(schedule).not.toHaveBeenCalled();
+    expect(activateSkill).toHaveBeenCalledWith("dmii");
+    const response = (parts[0] as any).functionResponse.response.result;
+    expect(response).toContain('<activated_skill name="dmii">');
+    expect(response).toContain("Use the DMII framework.");
+    expect(response).toContain("/tmp/dmii/references/example.md");
+  });
+
+  it("activate_skill returns a clear tool error when skill is missing", async () => {
+    const activateSkill = vi
+      .fn()
+      .mockRejectedValue(new Error('Skill "missing" not found.'));
+    const { router } = makeRouter({ activateSkill });
+
+    const parts = await router.route(
+      [makeReq("activate_skill", { name: "missing" })],
+      new AbortController().signal,
+      vi.fn(),
+    );
+
+    const response = (parts[0] as any).functionResponse.response;
+    expect(response.error).toBe('Skill "missing" not found.');
   });
 
   it("delegates standard tool calls to scheduler", async () => {

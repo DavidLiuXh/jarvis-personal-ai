@@ -55,6 +55,7 @@ import {
 import { JarvisEventType, type JarvisAgentLike } from "./types.js";
 import { createDefaultRuntimeToolRegistry } from "./jarvisToolRegistry.js";
 import { WorkspaceTools } from "./workspaceTools.js";
+import { JarvisNativeSkillRuntime } from "./skillRuntime.js";
 import type { SessionMemory } from "../memory-runtime/index.js";
 
 export type StandaloneRoutingTargetModels = {
@@ -293,6 +294,7 @@ export class StandaloneJarvisAgent
         networkFetchCommands:
           this.jarvisConfig.security?.shell?.networkFetchCommands,
       }),
+      new JarvisNativeSkillRuntime({ cwd: options.cwd }),
     );
   }
 

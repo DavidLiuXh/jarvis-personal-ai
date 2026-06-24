@@ -73,6 +73,7 @@ import {
 } from "./jarvisUnifiedRuntime.js";
 import { createGeminiToolInteractionRecorder } from "./geminiToolInteractionRecorder.js";
 import { WorkspaceTools } from "./workspaceTools.js";
+import { JarvisNativeSkillRuntime } from "./skillRuntime.js";
 import type {
   RuntimeContentPart,
   RuntimeConversationContent,
@@ -239,6 +240,7 @@ export class JarvisAgent extends EventEmitter {
         networkFetchCommands:
           this.jarvisConfig.security?.shell?.networkFetchCommands,
       }),
+      new JarvisNativeSkillRuntime({ cwd: this.cwd }),
     );
     // If setAskUserHandler was called before initialize(), apply it now.
     if (this.pendingAskUserWs !== null) {
@@ -607,6 +609,7 @@ export class JarvisAgent extends EventEmitter {
           networkFetchCommands:
             this.jarvisConfig.security?.shell?.networkFetchCommands,
         }),
+        new JarvisNativeSkillRuntime({ cwd: this.cwd }),
       );
     }
   }
