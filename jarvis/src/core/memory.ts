@@ -526,6 +526,37 @@ export class MemoryService {
     if (apiKey) this.startWithApiKey(apiKey);
   }
 
+  /**
+   * Initializes the embedding function before any fact write path can run.
+   * Full agents also trigger global auto-backfill; lightweight agents only run
+   * the cheap fact-embedding backfill so they do not rescan sessions/events.
+   */
+  public async initializeEmbedding(
+    options: { lightweight?: boolean } = {},
+  ): Promise<void> {
+    const provider = this.jarvisConfig.embeddingService?.provider ?? "google";
+    if (provider === "google" && !this.client) {
+      const apiKey =
+        this.jarvisConfig.api.key ||
+        this.config?.apiKey ||
+        process.env.GOOGLE_API_KEY;
+      if (apiKey) {
+        await this.initializeGoogleClient(apiKey);
+      } else {
+        throw new Error(
+          "Google embedding provider configured but no API key is available before fact writes.",
+        );
+      }
+    }
+    const embedContent = (text: string): Promise<number[]> =>
+      this.embedWithApiKey(text);
+    if (options.lightweight) {
+      this.setEmbedContentOnly(embedContent);
+    } else {
+      this.setEmbedContent(embedContent);
+    }
+  }
+
   /** Inject a CLI-auth generateText function to replace the API-key-based client for LLM calls. */
   public setGenerateText(fn: (prompt: string) => Promise<string>) {
     this.generateTextFn = fn;

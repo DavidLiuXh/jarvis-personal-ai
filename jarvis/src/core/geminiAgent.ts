@@ -195,6 +195,11 @@ export class JarvisAgent extends EventEmitter {
       return response.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
     };
 
+    // Embedding must be available before any tool/background path can save facts.
+    await this.memoryService.initializeEmbedding({
+      lightweight: this.lightweight,
+    });
+
     if (!this.lightweight) {
       // Route distillation through reflection.provider so local Ollama models
       // can be used for fact extraction. Falls back to Gemini if reflection.model
@@ -216,19 +221,6 @@ export class JarvisAgent extends EventEmitter {
 
       // setGenerateText triggers EntityExtractor initialization inside MemoryService
       this.memoryService.setGenerateText(generateText);
-    }
-
-    // Always use the API key path for embedding — Code Assist mode does not
-    // support embedContent, and the direct GoogleGenAI client is more reliable.
-    const embedContent = (text: string): Promise<number[]> =>
-      this.memoryService.embedWithApiKey(text);
-    // Lightweight agents use setEmbedContentOnly to avoid re-triggering the
-    // global autoBackfill (vec rebuild, entity backfill, session events LLM scan)
-    // on every background task start.
-    if (this.lightweight) {
-      this.memoryService.setEmbedContentOnly(embedContent);
-    } else {
-      this.memoryService.setEmbedContent(embedContent);
     }
 
     this.toolRouter = new ToolRouter(

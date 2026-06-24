@@ -292,6 +292,9 @@ export class StandaloneJarvisAgent
 
   async initialize(): Promise<void> {
     if (this.initialized) return;
+    await this.options.memoryService.initializeEmbedding({
+      lightweight: this.options.lightweight,
+    });
     const routingCfg = this.jarvisConfig.routing;
     if (routingCfg?.enabled && routingCfg.model) {
       const routingModels = resolveStandaloneRoutingTargetModels(

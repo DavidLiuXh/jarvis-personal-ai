@@ -112,6 +112,7 @@ describe("StandaloneJarvisAgent OpenAI routing models", () => {
       sessionId: "session-1",
       cwd: process.cwd(),
       memoryService: {
+        initializeEmbedding: vi.fn(),
         saveFactToRuntime,
       } as any,
       distillGenerateText: vi.fn().mockResolvedValue(
@@ -139,5 +140,21 @@ describe("StandaloneJarvisAgent OpenAI routing models", () => {
       expect.any(Number),
       "background_distiller",
     );
+  });
+
+  it("initializes embeddings before standalone runtime can process turns", async () => {
+    const initializeEmbedding = vi.fn();
+    const agent = new StandaloneJarvisAgent({
+      sessionId: "session-1",
+      cwd: process.cwd(),
+      lightweight: true,
+      memoryService: {
+        initializeEmbedding,
+      } as any,
+    });
+
+    await agent.initialize();
+
+    expect(initializeEmbedding).toHaveBeenCalledWith({ lightweight: true });
   });
 });
