@@ -475,6 +475,32 @@ export class IntentStepRuntime {
     return this.entries.length > 0;
   }
 
+  describeSkipReason(): string {
+    if (this.active) return "active";
+    if (!this.intent) return "no_intent";
+    if (this.intent.intentSteps.length === 0) return "no_steps";
+    const steps = this.intent.intentSteps;
+    const executionSteps = steps.map((step) =>
+      executionForStep(this.intent as IntentFrame, step),
+    );
+    const requiredTools = executionSteps.filter(
+      (step) => step.requiredTool !== null,
+    );
+    const hasOrchestrationMode = executionSteps.some(
+      (step) =>
+        step.mode === "tool" ||
+        step.mode === "agent" ||
+        step.mode === "confirm",
+    );
+    if (steps.length === 1 && !hasOrchestrationMode) {
+      return "single_llm_step";
+    }
+    if (!hasOrchestrationMode && requiredTools.length === 0) {
+      return "llm_only_steps";
+    }
+    return "no_execution_plan";
+  }
+
   snapshot(): Array<
     Pick<
       IntentStepRuntimeEntry,

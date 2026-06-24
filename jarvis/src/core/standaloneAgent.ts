@@ -393,6 +393,10 @@ export class StandaloneJarvisAgent
           .map((line) => `  ${line}`)
           .join("\n")}`,
       );
+    } else {
+      console.error(
+        `🧭 [Jarvis] Multi-intent runtime skipped: reason=${stepRuntime.describeSkipReason()}`,
+      );
     }
     const runtimeTurn = await this.runUnifiedRuntimeTurn(
       userPrompt,

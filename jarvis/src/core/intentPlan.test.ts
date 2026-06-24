@@ -429,6 +429,52 @@ describe("buildIntentPlanSection", () => {
     expect(runtime.describePlan()).not.toContain("step-1: status=succeeded");
   });
 
+  it("describes why multi-intent runtime is skipped", () => {
+    expect(new IntentStepRuntime(null).describeSkipReason()).toBe("no_intent");
+    expect(new IntentStepRuntime(intent([])).describeSkipReason()).toBe(
+      "no_steps",
+    );
+    expect(
+      new IntentStepRuntime(
+        intent([
+          {
+            id: "step-1",
+            type: "analyze",
+            action: "answer directly",
+            target: "文昌帝君",
+            dependsOn: [],
+            requiresConfirmation: false,
+            riskLevel: "low",
+          },
+        ]),
+      ).describeSkipReason(),
+    ).toBe("single_llm_step");
+    expect(
+      new IntentStepRuntime(
+        intent([
+          {
+            id: "step-1",
+            type: "recall",
+            action: "recall context",
+            target: "recent discussion",
+            dependsOn: [],
+            requiresConfirmation: false,
+            riskLevel: "low",
+          },
+          {
+            id: "step-2",
+            type: "analyze",
+            action: "answer directly",
+            target: "current question",
+            dependsOn: ["step-1"],
+            requiresConfirmation: false,
+            riskLevel: "low",
+          },
+        ]),
+      ).describeSkipReason(),
+    ).toBe("active");
+  });
+
   it("suppresses dependent tool calls until prerequisite steps succeed", () => {
     const runtime = new IntentStepRuntime(
       intent([

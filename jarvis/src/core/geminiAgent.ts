@@ -1070,6 +1070,10 @@ export class JarvisAgent extends EventEmitter {
               .map((line) => `  ${line}`)
               .join("\n")}`,
           );
+        } else {
+          console.error(
+            `🧭 [Jarvis] Multi-intent runtime skipped: reason=${stepRuntime.describeSkipReason()}`,
+          );
         }
 
         const networkConfig = this.jarvisConfig.network;
