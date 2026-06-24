@@ -10,6 +10,10 @@
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
     },
+    "./autonomousTaskRuntime": {
+      "types": "./dist/autonomousTaskRuntime.d.ts",
+      "import": "./dist/autonomousTaskRuntime.js"
+    },
     "./dateRange": {
       "types": "./dist/dateRange.d.ts",
       "import": "./dist/dateRange.js"
@@ -41,6 +45,10 @@
     "./taskGraphExecutor": {
       "types": "./dist/taskGraphExecutor.d.ts",
       "import": "./dist/taskGraphExecutor.js"
+    },
+    "./taskGraphRecovery": {
+      "types": "./dist/taskGraphRecovery.d.ts",
+      "import": "./dist/taskGraphRecovery.js"
     },
     "./taskGraphState": {
       "types": "./dist/taskGraphState.d.ts",

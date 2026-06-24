@@ -571,7 +571,10 @@ export class TaskGraphExecutor {
     });
 
     const graphGateFailures = validateTaskGraph(graph).filter(
-      (gate) => !gate.ok && gate.blocking,
+      (gate) =>
+        !gate.ok &&
+        gate.blocking &&
+        gate.code !== "task_graph_capabilities_available",
     );
     if (graphGateFailures.length > 0) {
       for (const state of states) {

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   DefaultIntentRuntime,
+  AutonomousTaskRuntime,
   IntentConfidenceGateError,
   IntentResolver,
   IntentStepRuntime,
@@ -10,6 +11,7 @@ import {
   TaskGraphExecutor,
   buildIntentExecutionPlan,
   buildTaskGraph,
+  decideTaskGraphRecovery,
   evaluateIntentConfidence,
 } from "./index.js";
 import type { IntentModelClient } from "./index.js";
@@ -150,6 +152,8 @@ describe("@jarvis/intent-runtime package API", () => {
     const graph = buildTaskGraph(scheduleIntent());
     expect(graph.nodes.map((node) => node.kind)).toEqual(["schedule"]);
     expect(TaskGraphExecutor).toBeTypeOf("function");
+    expect(AutonomousTaskRuntime).toBeTypeOf("function");
+    expect(decideTaskGraphRecovery).toBeTypeOf("function");
     expect(new InMemoryTaskGraphExecutionStore()).toBeTruthy();
   });
 

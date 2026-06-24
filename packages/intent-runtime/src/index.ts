@@ -5,6 +5,7 @@
  */
 
 export * from "./dateRange.js";
+export * from "./autonomousTaskRuntime.js";
 export * from "./executionPlan.js";
 export * from "./executor.js";
 export * from "./intentResolver.js";
@@ -12,4 +13,5 @@ export * from "./modelClient.js";
 export * from "./runtime.js";
 export * from "./taskGraph.js";
 export * from "./taskGraphExecutor.js";
+export * from "./taskGraphRecovery.js";
 export * from "./taskGraphState.js";
