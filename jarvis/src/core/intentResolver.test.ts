@@ -2654,4 +2654,86 @@ ${modelResponse({
       ]),
     );
   });
+
+  it("treats name/call-me preference assertions after task commands as standalone personal facts", async () => {
+    const resolver = makeResolver();
+    mockGenerate.mockResolvedValueOnce(
+      modelResponse({
+        query_subject: "mixed",
+        task_type: "recall",
+        needs_external_knowledge: true,
+        semantic_evidence: {
+          personalContext: {
+            present: true,
+            reason: "the user states a preferred name for future address",
+            span: "以后你可以称呼我David Liu",
+          },
+          memoryRecall: {
+            present: true,
+            target: "conversation_history",
+            reason: "model incorrectly linked to previous task command",
+            span: "以后你可以称呼我David Liu",
+          },
+          actionRequest: { present: false, action: "none", object: "" },
+          entityHints: {
+            tickers: [],
+            technicalTerms: [],
+            peopleOrCompanies: ["David Liu"],
+          },
+        },
+        topic_analysis: {
+          history: {
+            label: "Manual scheduled task run",
+            evidence: ["!task run summarize-today-s-top-ai-0p2k"],
+            source_turns: [-2],
+            confidence: 0.9,
+          },
+          current: {
+            label: "Task follow-up",
+            evidence: ["Hi Jarvis，以后你可以称呼我David Liu"],
+            source_turns: [0],
+            confidence: 0.9,
+          },
+          relation: "subtopic",
+          relation_reason: "incorrectly carried over the previous task command",
+          confidence: 0.9,
+        },
+        references_recent_history: false,
+        topic_shifted: false,
+      }),
+    );
+
+    const intent = await resolver.resolve({
+      userPrompt: "Hi Jarvis，以后你可以称呼我David Liu",
+      history: [
+        {
+          role: "user",
+          content: "!task run summarize-today-s-top-ai-0p2k",
+        },
+        {
+          role: "assistant",
+          content: "已手动触发任务 summarize-today-s-top-ai-0p2k。",
+        },
+      ],
+    });
+
+    expect(intent.subject).toBe("personal");
+    expect(intent.taskType).toBe("chat");
+    expect(intent.needsMemory).toBe(false);
+    expect(intent.referencesRecentHistory).toBe(false);
+    expect(intent.topicShifted).toBe(true);
+    expect(intent.topicAnalysis).toMatchObject({
+      relation: "new_topic",
+      current: {
+        label: "Personal identity assertion",
+        evidence: ["Hi Jarvis，以后你可以称呼我David Liu"],
+      },
+    });
+    expect(policyReasonCodes(intent)).toEqual(
+      expect.arrayContaining([
+        "PERSONAL_FACT_ASSERTION_NOT_RECALL",
+        "PERSONAL_FACT_ASSERTION_TASK_NOT_RECALL",
+      ]),
+    );
+  });
 });

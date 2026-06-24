@@ -221,6 +221,8 @@ const ANALYSIS_TASK_CUE_RE =
   /系统分析|帮我分析|分析.*(原因|问题|效果|表现|策略|差异|优劣|是否|为什么)|判断.*(原因|是否|问题)|诊断|复盘|对比|比较|评估|推荐|建议|为什么|原因|是.*问题还是|analy[sz]e|diagnose|evaluate|compare|recommend|why|root cause/i;
 
 const ASSISTANT_ADDRESS_RE = /^(?:jarvis|javis|贾维斯)[，,：:\s]+/i;
+const GREETING_ASSISTANT_ADDRESS_RE =
+  /^(?:hi|hello|hey)\s+(?:jarvis|javis|贾维斯)[，,：:\s]+/i;
 
 const ENTITY_REFINEMENT_CUE_RE =
   /\b[A-Z]{2,5}\b|React|Vue|TypeScript|JavaScript|Node\.?js|英伟达|苹果|微软|特斯拉|谷歌|亚马逊|Nvidia|Apple|Microsoft|Tesla|Google|Amazon/;
@@ -277,7 +279,11 @@ function hasUserPreferenceCue(prompt: string): boolean {
 }
 
 function stripAssistantAddress(prompt: string): string {
-  return prompt.trim().replace(ASSISTANT_ADDRESS_RE, "").trim();
+  return prompt
+    .trim()
+    .replace(GREETING_ASSISTANT_ADDRESS_RE, "")
+    .replace(ASSISTANT_ADDRESS_RE, "")
+    .trim();
 }
 
 function hasPersonalIdentityAssertionCue(prompt: string): boolean {
@@ -287,11 +293,19 @@ function hasPersonalIdentityAssertionCue(prompt: string): boolean {
     /^(?:我是|我叫|我的名字是|我的姓名是|本人是)(?!希望|想|准备|打算|要|来|为了|不是|否|觉得|认为)[\s\S]{1,80}[。.!！]?$/.test(
       text,
     );
+  const zhNamePreference =
+    /^(?:以后|今后|之后)?(?:你可以|可以|请|麻烦你)?(?:叫我|称呼我|喊我|称我为)\s*[\s\S]{1,80}[。.!！]?$/.test(
+      text,
+    );
   const enIdentity =
     /^(?:i am|i'm|my name is|this is)(?!\s+(?:hoping|looking|trying|going|planning|asking)\b)\s+[a-z][a-z0-9 .'-]{1,80}[.!]?$/i.test(
       text,
     );
-  return zhIdentity || enIdentity;
+  const enNamePreference =
+    /^(?:please\s+)?(?:call|address)\s+me\s+(?:as\s+)?[a-z][a-z0-9 .'-]{1,80}[.!]?$/i.test(
+      text,
+    );
+  return zhIdentity || zhNamePreference || enIdentity || enNamePreference;
 }
 
 function hasPersonalPreferenceAssertionCue(prompt: string): boolean {
