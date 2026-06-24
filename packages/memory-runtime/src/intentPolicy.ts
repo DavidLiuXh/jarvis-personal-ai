@@ -239,6 +239,10 @@ const POLICY_REASON_METADATA: Record<
     category: "topic_boundary",
     severity: "warning",
   },
+  PERSONAL_PROFILE_UNRELATED_RECENT_HISTORY: {
+    category: "topic_boundary",
+    severity: "warning",
+  },
   CONVERSATION_HISTORY_ARTIFACT_TOPIC_SHIFT: {
     category: "topic_boundary",
     severity: "warning",

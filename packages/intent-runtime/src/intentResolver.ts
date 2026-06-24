@@ -196,6 +196,9 @@ const DATE_HISTORY_RECALL_CUE_RE =
 const USER_MEMORY_RECALL_CUE_RE =
   /(还记得|记得|remember).*(我|我的|偏好|习惯|风格|喜好|爱好|名字|身份|目标|风险偏好)|我有哪些(爱好|偏好|习惯)|我的(爱好|偏好|习惯|风格|目标|风险偏好)|my .*(hobbies|preferences|habits|style|goals|risk profile)/i;
 
+const PERSONAL_PROFILE_DESCRIPTION_CUE_RE =
+  /(?:请)?(?:描述|介绍|评价|分析|总结)(?:一下|下)?我(?:这个人)?(?:$|[？?。!！,，\s])|我(?:是|算是|属于)?什么样的人|我的(?:画像|特点|优势|短板|性格|风格|偏好)|给我(?:做|生成|整理)(?:一个|下)?(?:个人)?画像|describe me\b|profile me\b|what kind of person am i\b/i;
+
 const REMEMBER_TO_ACTION_CUE_RE =
   /记得(保存|提交|运行|创建|打开|关闭|下载|上传|备份|删除|发送|检查|更新|修改|写|做)|remember to (save|commit|run|create|open|close|download|upload|delete|send|check|update|modify|write|do)/i;
 
@@ -359,6 +362,12 @@ function hasRecentUserProfileTopic(turns: ConversationTurn[]): boolean {
     /(我的|我有|我喜欢|我偏好|我习惯|适合我|按我|用户).{0,24}(爱好|偏好|习惯|风格|目标|身份|名字|风险偏好|画像|兴趣)|(?:爱好|偏好|习惯|风格|目标|身份|名字|风险偏好|画像|兴趣).{0,24}(我的|我有|用户)/i.test(
       recentText,
     )
+  );
+}
+
+function hasPersonalProfileDescriptionCue(prompt: string): boolean {
+  return PERSONAL_PROFILE_DESCRIPTION_CUE_RE.test(
+    stripAssistantAddress(prompt),
   );
 }
 
@@ -3296,6 +3305,44 @@ export class IntentResolver {
         `🧭 [IntentResolver] User-memory recall unrelated to recent history; topic_shifted forced true`,
       );
     }
+    const personalProfileUnrelatedRecentHistoryShift =
+      !topicShifted &&
+      !referencesRecentHistory &&
+      recentTurns.length > 0 &&
+      subject === "personal" &&
+      hasPersonalProfileDescriptionCue(prompt) &&
+      !hasRecentUserProfileTopic(recentTurns);
+    if (personalProfileUnrelatedRecentHistoryShift) {
+      const beforeTopicShifted = topicShifted;
+      topicShifted = true;
+      policyTrace.push({
+        ruleId: "topic.personal_profile_unrelated_recent_history",
+        stage: "guardrail",
+        priority: 417,
+        reasonCode: "PERSONAL_PROFILE_UNRELATED_RECENT_HISTORY",
+        reason: normalizeIntentPolicyReason(
+          "PERSONAL_PROFILE_UNRELATED_RECENT_HISTORY",
+        ),
+        applied: true,
+        before: {
+          topicShifted: beforeTopicShifted,
+          relation: topicRelation,
+          memoryTarget: memoryRecallTarget,
+          referencesRecentHistory,
+          subject,
+        },
+        after: {
+          topicShifted,
+          relation: "new_topic",
+          memoryTarget: memoryRecallTarget,
+          referencesRecentHistory,
+          subject,
+        },
+      });
+      console.error(
+        `🧭 [IntentResolver] Personal profile request unrelated to recent history; topic_shifted forced true`,
+      );
+    }
     const conversationHistoryArtifactTopicShift =
       !topicShifted &&
       !referencesRecentHistory &&
@@ -3403,6 +3450,15 @@ export class IntentResolver {
         relation: "new_topic",
         relationReason:
           "user-memory recall is unrelated to recent non-profile history",
+        confidence: Math.max(topicAnalysis.confidence, 0.9),
+        lowGrounding: false,
+      };
+    } else if (personalProfileUnrelatedRecentHistoryShift) {
+      topicAnalysis = {
+        ...topicAnalysis,
+        relation: "new_topic",
+        relationReason:
+          "personal profile request is unrelated to recent non-profile history",
         confidence: Math.max(topicAnalysis.confidence, 0.9),
         lowGrounding: false,
       };
