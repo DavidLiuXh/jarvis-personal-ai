@@ -228,6 +228,47 @@ describe("buildIntentAwareMemoryPolicy", () => {
     expect(policy.contract.query.entities).toContain("NVDA");
   });
 
+  it("does not carry previous-topic memory target or entities into fact query after topic shift", () => {
+    const policy = buildIntentAwareMemoryPolicy({
+      userPrompt: "介绍下文昌帝君",
+      querySubject: "personal",
+      config: CONFIG,
+      intent: intent({
+        taskType: "analyze",
+        topicShifted: true,
+        referencesRecentHistory: false,
+        semanticEvidence: {
+          ...intent().semanticEvidence,
+          memoryRecall: {
+            present: true,
+            target: "conversation_history",
+            reason: "stale previous-topic signal",
+            span: "",
+          },
+          entityHints: {
+            tickers: [],
+            technicalTerms: ["DMII framework"],
+            peopleOrCompanies: [],
+          },
+        },
+        richIntent: {
+          ...intent().richIntent,
+          primaryAction: "analyze",
+          targets: [{ type: "memory", value: "conversation_history" }],
+        },
+      }),
+    });
+
+    expect(policy.factQuery).toBe(
+      "PRIVATE_USER_DATA: User Query - 介绍下文昌帝君",
+    );
+    expect(policy.factQuery).not.toContain("conversation_history");
+    expect(policy.factQuery).not.toContain("DMII");
+    expect(policy.prewarmQuery).toBe("介绍下文昌帝君");
+    expect(policy.contract.query.rewritten).toBeUndefined();
+    expect(policy.contract.query.entities).toEqual([]);
+  });
+
   it("disables prewarm when subject or memory confidence is low", () => {
     const policy = buildIntentAwareMemoryPolicy({
       userPrompt: "我之前说过什么",

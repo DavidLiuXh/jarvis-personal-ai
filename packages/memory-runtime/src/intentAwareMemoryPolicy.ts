@@ -38,7 +38,18 @@ export type IntentAwareMemoryPolicyConfig = {
 
 const LOW_CONFIDENCE_THRESHOLD = 0.55;
 
+function shouldUseIntentQueryExpansion(intent: IntentFrame): boolean {
+  return !(
+    intent.topicShifted &&
+    !intent.referencesRecentHistory &&
+    intent.taskType !== "recall"
+  );
+}
+
 function buildTargetQuery(userPrompt: string, intent: IntentFrame): string {
+  if (!shouldUseIntentQueryExpansion(intent)) {
+    return userPrompt;
+  }
   const targetText = intent.richIntent.targets
     .map((target) => target.value)
     .filter(Boolean)
@@ -255,6 +266,17 @@ export function buildIntentAwareMemoryPolicy(args: {
   const targetQuery = intent
     ? buildTargetQuery(args.userPrompt, intent)
     : args.userPrompt;
+  const queryEntities =
+    intent && shouldUseIntentQueryExpansion(intent)
+      ? Array.from(
+          new Set([
+            ...intent.richIntent.targets.map((target) => target.value),
+            ...intent.semanticEvidence.entityHints.tickers,
+            ...intent.semanticEvidence.entityHints.technicalTerms,
+            ...intent.semanticEvidence.entityHints.peopleOrCompanies,
+          ]),
+        ).filter(Boolean)
+      : [];
   const factQuery =
     allowFacts && (querySubject === "personal" || querySubject === "mixed")
       ? "PRIVATE_USER_DATA: User Query - " + targetQuery
@@ -291,16 +313,7 @@ export function buildIntentAwareMemoryPolicy(args: {
     query: {
       raw: args.userPrompt,
       rewritten: targetQuery !== args.userPrompt ? targetQuery : undefined,
-      entities: intent
-        ? Array.from(
-            new Set([
-              ...intent.richIntent.targets.map((target) => target.value),
-              ...intent.semanticEvidence.entityHints.tickers,
-              ...intent.semanticEvidence.entityHints.technicalTerms,
-              ...intent.semanticEvidence.entityHints.peopleOrCompanies,
-            ]),
-          ).filter(Boolean)
-        : [],
+      entities: queryEntities,
       timeRange: intent?.resolvedDateRange ?? undefined,
     },
     confidence: {
