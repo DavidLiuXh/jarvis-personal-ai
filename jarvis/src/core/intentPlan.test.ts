@@ -340,6 +340,11 @@ describe("buildIntentPlanSection", () => {
     expect(runtime.describePlan()).toContain("step-1:");
     expect(runtime.describePlan()).toContain("tool=task_add");
     expect(runtime.describePlan()).toContain("deps=step-1");
+    expect(runtime.describePlan()).toContain("initial_state=pending_execution");
+    expect(runtime.describePlan()).not.toContain("status=succeeded");
+    expect(runtime.describeInitialStateSummary()).toContain(
+      "step-1:pending_execution",
+    );
 
     runtime.observeToolResults(
       [
@@ -388,6 +393,40 @@ describe("buildIntentPlanSection", () => {
     expect(runtime.describeFailures()[1]).toContain(
       "next=waiting_for_dependency",
     );
+  });
+
+  it("labels non-tool initial steps as auto_satisfied in pre-execution plan logs", () => {
+    const runtime = new IntentStepRuntime(
+      intent([
+        {
+          id: "step-1",
+          type: "recall",
+          action: "recall current context",
+          target: "recent discussion",
+          dependsOn: [],
+          requiresConfirmation: false,
+          riskLevel: "low",
+        },
+        {
+          id: "step-2",
+          type: "schedule",
+          action: "schedule follow-up",
+          target: "明天早上9点提醒我复盘",
+          dependsOn: ["step-1"],
+          requiresConfirmation: false,
+          riskLevel: "medium",
+        },
+      ]),
+    );
+
+    expect(runtime.describeInitialStateSummary()).toContain(
+      "step-1:auto_satisfied",
+    );
+    expect(runtime.describeInitialStateSummary()).toContain(
+      "step-2:pending_execution",
+    );
+    expect(runtime.describePlan()).toContain("initial_state=auto_satisfied");
+    expect(runtime.describePlan()).not.toContain("step-1: status=succeeded");
   });
 
   it("suppresses dependent tool calls until prerequisite steps succeed", () => {

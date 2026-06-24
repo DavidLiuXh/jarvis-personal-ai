@@ -1061,10 +1061,7 @@ export class JarvisAgent extends EventEmitter {
         const stepRuntime = new IntentStepRuntime(intentFrame);
         if (stepRuntime.active) {
           console.error(
-            `🧭 [Jarvis] Multi-intent runtime initialized: ${stepRuntime
-              .snapshot()
-              .map((entry) => `${entry.step.id}:${entry.status}`)
-              .join(", ")}`,
+            `🧭 [Jarvis] Multi-intent runtime initialized: ${stepRuntime.describeInitialStateSummary()}`,
           );
           console.error(
             `🧭 [Jarvis] Multi-intent execution plan:\n${stepRuntime

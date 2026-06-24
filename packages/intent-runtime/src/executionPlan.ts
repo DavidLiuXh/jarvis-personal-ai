@@ -491,6 +491,38 @@ export class IntentStepRuntime {
     }));
   }
 
+  private initialPlanState(entry: IntentStepRuntimeEntry): string {
+    if (
+      entry.attempts === 0 &&
+      entry.status === "succeeded" &&
+      (entry.mode === "context" ||
+        entry.mode === "llm" ||
+        entry.mode === "agent" ||
+        (entry.requiredTool !== null &&
+          !ENFORCEABLE_STEP_TOOLS.has(entry.requiredTool)))
+    ) {
+      return "auto_satisfied";
+    }
+    if (
+      entry.attempts === 0 &&
+      entry.status === "blocked" &&
+      entry.mode === "confirm"
+    ) {
+      return "requires_confirmation";
+    }
+    if (entry.attempts === 0 && entry.status === "pending") {
+      return "pending_execution";
+    }
+    return entry.status;
+  }
+
+  describeInitialStateSummary(): string {
+    if (!this.active) return "(no multi-intent plan)";
+    return this.entries
+      .map((entry) => `${entry.step.id}:${this.initialPlanState(entry)}`)
+      .join(", ");
+  }
+
   describePlan(): string {
     if (!this.active) return "(no multi-intent plan)";
     return this.entries
@@ -510,7 +542,7 @@ export class IntentStepRuntime {
           `${entry.step.id}:`,
           `type=${entry.step.type}`,
           `mode=${entry.mode}`,
-          `status=${entry.status}`,
+          `initial_state=${this.initialPlanState(entry)}`,
           `tool=${tool}`,
           `deps=${deps}`,
           `risk=${entry.step.riskLevel}`,
