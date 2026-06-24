@@ -371,6 +371,25 @@ function hasPersonalProfileDescriptionCue(prompt: string): boolean {
   );
 }
 
+function isStandalonePersonalMemoryTopicRequest(args: {
+  prompt: string;
+  subject: QuerySubject;
+  memoryRecallTarget: MemoryRecallTarget;
+  semanticEvidence: IntentEvidence;
+}): boolean {
+  if (args.subject !== "personal") return false;
+  if (args.memoryRecallTarget === "user_memory") return true;
+  if (hasPersonalProfileDescriptionCue(args.prompt)) return true;
+  if (!args.semanticEvidence.personalContext.present) return false;
+  if (
+    collectSpecificEntityTerms(args.prompt, args.semanticEvidence).length > 0
+  ) {
+    return false;
+  }
+  const action = args.semanticEvidence.actionRequest.action;
+  return action === "none" || action === "read";
+}
+
 function isRecallBoundaryTarget(target: MemoryRecallTarget): boolean {
   return target === "conversation_history" || target === "user_memory";
 }
@@ -3305,23 +3324,27 @@ export class IntentResolver {
         `🧭 [IntentResolver] User-memory recall unrelated to recent history; topic_shifted forced true`,
       );
     }
-    const personalProfileUnrelatedRecentHistoryShift =
+    const personalStandaloneUnrelatedRecentHistoryShift =
       !topicShifted &&
       !referencesRecentHistory &&
       recentTurns.length > 0 &&
-      subject === "personal" &&
-      hasPersonalProfileDescriptionCue(prompt) &&
+      isStandalonePersonalMemoryTopicRequest({
+        prompt,
+        subject,
+        memoryRecallTarget,
+        semanticEvidence,
+      }) &&
       !hasRecentUserProfileTopic(recentTurns);
-    if (personalProfileUnrelatedRecentHistoryShift) {
+    if (personalStandaloneUnrelatedRecentHistoryShift) {
       const beforeTopicShifted = topicShifted;
       topicShifted = true;
       policyTrace.push({
-        ruleId: "topic.personal_profile_unrelated_recent_history",
+        ruleId: "topic.personal_standalone_unrelated_recent_history",
         stage: "guardrail",
         priority: 417,
-        reasonCode: "PERSONAL_PROFILE_UNRELATED_RECENT_HISTORY",
+        reasonCode: "PERSONAL_STANDALONE_UNRELATED_RECENT_HISTORY",
         reason: normalizeIntentPolicyReason(
-          "PERSONAL_PROFILE_UNRELATED_RECENT_HISTORY",
+          "PERSONAL_STANDALONE_UNRELATED_RECENT_HISTORY",
         ),
         applied: true,
         before: {
@@ -3340,7 +3363,7 @@ export class IntentResolver {
         },
       });
       console.error(
-        `🧭 [IntentResolver] Personal profile request unrelated to recent history; topic_shifted forced true`,
+        `🧭 [IntentResolver] Standalone personal request unrelated to recent history; topic_shifted forced true`,
       );
     }
     const conversationHistoryArtifactTopicShift =
@@ -3453,12 +3476,12 @@ export class IntentResolver {
         confidence: Math.max(topicAnalysis.confidence, 0.9),
         lowGrounding: false,
       };
-    } else if (personalProfileUnrelatedRecentHistoryShift) {
+    } else if (personalStandaloneUnrelatedRecentHistoryShift) {
       topicAnalysis = {
         ...topicAnalysis,
         relation: "new_topic",
         relationReason:
-          "personal profile request is unrelated to recent non-profile history",
+          "standalone personal request is unrelated to recent non-profile history",
         confidence: Math.max(topicAnalysis.confidence, 0.9),
         lowGrounding: false,
       };

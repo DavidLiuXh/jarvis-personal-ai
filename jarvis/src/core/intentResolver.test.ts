@@ -2268,7 +2268,7 @@ ${modelResponse({
     );
   });
 
-  it("forces topic shift for personal profile description after unrelated fund analysis history", async () => {
+  it("forces topic shift for standalone personal requests after unrelated fund analysis history", async () => {
     const resolver = makeResolver();
     mockGenerate.mockResolvedValueOnce(
       modelResponse({
@@ -2338,10 +2338,81 @@ ${modelResponse({
     expect(intent.topicAnalysis).toMatchObject({
       relation: "new_topic",
       relationReason:
-        "personal profile request is unrelated to recent non-profile history",
+        "standalone personal request is unrelated to recent non-profile history",
     });
     expect(policyReasonCodes(intent)).toContain(
-      "PERSONAL_PROFILE_UNRELATED_RECENT_HISTORY",
+      "PERSONAL_STANDALONE_UNRELATED_RECENT_HISTORY",
+    );
+  });
+
+  it("uses semantic personal context, not only lexical profile phrases, for standalone personal topic boundaries", async () => {
+    const resolver = makeResolver();
+    mockGenerate.mockResolvedValueOnce(
+      modelResponse({
+        query_subject: "personal",
+        task_type: "chat",
+        needs_external_knowledge: false,
+        semantic_evidence: {
+          personalContext: {
+            present: true,
+            reason: "asks for guidance about the user's own work style",
+            span: "我适合什么样的工作方式？",
+          },
+          memoryRecall: {
+            present: false,
+            target: "none",
+            reason: "",
+            span: "",
+          },
+          actionRequest: { present: false, action: "none", object: "" },
+          entityHints: {
+            tickers: [],
+            technicalTerms: [],
+            peopleOrCompanies: [],
+          },
+        },
+        topic_analysis: {
+          history: {
+            label: "Fund outlook and investment advice",
+            evidence: ["富国沪深300指数增强", "国联安科技动力"],
+            source_turns: [-2],
+            confidence: 1,
+          },
+          current: {
+            label: "Personal work style guidance",
+            evidence: ["我适合什么样的工作方式？"],
+            source_turns: [0],
+            confidence: 1,
+          },
+          relation: "adjacent_topic",
+          relation_reason: "model incorrectly treats both as advice requests",
+          confidence: 0.9,
+        },
+        references_recent_history: false,
+        topic_shifted: false,
+      }),
+    );
+
+    const intent = await resolver.resolve({
+      userPrompt: "我适合什么样的工作方式？",
+      history: [
+        {
+          role: "user",
+          content:
+            "对于“富国沪深300指数增强”和“国联安科技动力”这两支基金，分析下它们的前景走势，以及投资建议。",
+        },
+        {
+          role: "assistant",
+          content:
+            "我会从指数增强策略、科技主题波动、基金经理风格和风险收益比几个方面分析。",
+        },
+      ],
+    });
+
+    expect(intent.referencesRecentHistory).toBe(false);
+    expect(intent.topicShifted).toBe(true);
+    expect(policyReasonCodes(intent)).toContain(
+      "PERSONAL_STANDALONE_UNRELATED_RECENT_HISTORY",
     );
   });
 

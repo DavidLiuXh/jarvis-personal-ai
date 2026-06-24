@@ -239,7 +239,7 @@ const POLICY_REASON_METADATA: Record<
     category: "topic_boundary",
     severity: "warning",
   },
-  PERSONAL_PROFILE_UNRELATED_RECENT_HISTORY: {
+  PERSONAL_STANDALONE_UNRELATED_RECENT_HISTORY: {
     category: "topic_boundary",
     severity: "warning",
   },
