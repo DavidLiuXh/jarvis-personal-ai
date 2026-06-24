@@ -1066,6 +1066,13 @@ export class JarvisAgent extends EventEmitter {
               .map((entry) => `${entry.step.id}:${entry.status}`)
               .join(", ")}`,
           );
+          console.error(
+            `🧭 [Jarvis] Multi-intent execution plan:\n${stepRuntime
+              .describePlan()
+              .split("\n")
+              .map((line) => `  ${line}`)
+              .join("\n")}`,
+          );
         }
 
         const networkConfig = this.jarvisConfig.network;

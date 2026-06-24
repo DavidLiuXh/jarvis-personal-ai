@@ -491,6 +491,68 @@ export class IntentStepRuntime {
     }));
   }
 
+  describePlan(): string {
+    if (!this.active) return "(no multi-intent plan)";
+    return this.entries
+      .map((entry) => {
+        const deps = entry.step.dependsOn.length
+          ? entry.step.dependsOn.join(",")
+          : "-";
+        const tool = entry.requiredTool ?? "-";
+        const operation = [
+          entry.step.operation.domain,
+          entry.step.operation.action,
+          entry.step.operation.targetType,
+        ]
+          .filter(Boolean)
+          .join("/");
+        return [
+          `${entry.step.id}:`,
+          `type=${entry.step.type}`,
+          `mode=${entry.mode}`,
+          `status=${entry.status}`,
+          `tool=${tool}`,
+          `deps=${deps}`,
+          `risk=${entry.step.riskLevel}`,
+          `operation=${operation || "-"}`,
+          `action="${entry.step.action}"`,
+          `target="${entry.step.target}"`,
+        ].join(" ");
+      })
+      .join("\n");
+  }
+
+  describeFailures(): string[] {
+    return this.entries
+      .filter((entry) => {
+        const dependencyReason = this.dependencyBlockReason(entry);
+        return (
+          entry.status === "failed" ||
+          entry.status === "blocked" ||
+          Boolean(entry.lastError) ||
+          Boolean(dependencyReason)
+        );
+      })
+      .map((entry) => {
+        const dependencyReason = this.dependencyBlockReason(entry);
+        const reason =
+          entry.lastError ??
+          dependencyReason ??
+          (entry.status === "blocked" ? "blocked" : "failed");
+        const next =
+          entry.status === "failed"
+            ? entry.attempts >= this.maxAttemptsPerStep
+              ? "will_block"
+              : "will_retry_if_prompted"
+            : entry.status === "blocked"
+              ? "request_blocked"
+              : dependencyReason
+                ? "waiting_for_dependency"
+                : "continue";
+        return `${entry.step.id}: status=${entry.status} attempts=${entry.attempts}/${this.maxAttemptsPerStep} reason="${reason}" next=${next}`;
+      });
+  }
+
   private entryById(stepId: string): IntentStepRuntimeEntry | null {
     return this.entries.find((entry) => entry.step.id === stepId) ?? null;
   }

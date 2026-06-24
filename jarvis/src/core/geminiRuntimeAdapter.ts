@@ -124,6 +124,14 @@ export function createJarvisToolLoopPlanner(input: {
             )
             .join(", ")}`,
         );
+        const failures = stepRuntime.describeFailures();
+        if (failures.length > 0) {
+          log(
+            `⚠️ [Jarvis] Multi-intent step issue(s):\n${failures
+              .map((line) => `  ${line}`)
+              .join("\n")}`,
+          );
+        }
       }
     },
     buildPostContentToolRequest: (text, toolsCalled) => {
@@ -141,7 +149,10 @@ export function createJarvisToolLoopPlanner(input: {
       if (requests.length > 0) {
         log(
           `🧭 [Jarvis] Executing deterministic multi-intent step(s): ${requests
-            .map((request) => request.name)
+            .map((request) => {
+              const args = JSON.stringify(request.args ?? {});
+              return `${request.name}(${args.slice(0, 160)})`;
+            })
             .join(", ")}`,
         );
       }

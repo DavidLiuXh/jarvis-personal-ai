@@ -196,14 +196,34 @@ function createStandaloneToolLoopPlanner(input: {
             )
             .join(", ")}`,
         );
+        const failures = stepRuntime.describeFailures();
+        if (failures.length > 0) {
+          log(
+            `⚠️ [Jarvis] Multi-intent step issue(s):\n${failures
+              .map((line) => `  ${line}`)
+              .join("\n")}`,
+          );
+        }
       }
     },
     buildPostContentToolRequest: (text, toolsCalled) => {
       if (toolsCalled.has("push_to_channel")) return null;
       return toolRouter.buildPushToChannelRequestFromContent(text);
     },
-    buildDeterministicToolRequests: () =>
-      stepRuntime.buildDeterministicToolRequests().map(toRuntimeToolRequest),
+    buildDeterministicToolRequests: () => {
+      const requests = stepRuntime.buildDeterministicToolRequests();
+      if (requests.length > 0) {
+        log(
+          `🧭 [Jarvis] Executing deterministic multi-intent step(s): ${requests
+            .map((request) => {
+              const args = JSON.stringify(request.args ?? {});
+              return `${request.name}(${args.slice(0, 160)})`;
+            })
+            .join(", ")}`,
+        );
+      }
+      return requests.map(toRuntimeToolRequest);
+    },
     buildMissingStepPrompt: () => stepRuntime.buildMissingStepPrompt(),
     buildStatePrompt: () => stepRuntime.buildStatePrompt(),
   };
@@ -362,6 +382,21 @@ export class StandaloneJarvisAgent
 
     const abortController = new AbortController();
     const stepRuntime = new IntentStepRuntime(intentFrame);
+    if (stepRuntime.active) {
+      console.error(
+        `🧭 [Jarvis] Multi-intent runtime initialized: ${stepRuntime
+          .snapshot()
+          .map((entry) => `${entry.step.id}:${entry.status}`)
+          .join(", ")}`,
+      );
+      console.error(
+        `🧭 [Jarvis] Multi-intent execution plan:\n${stepRuntime
+          .describePlan()
+          .split("\n")
+          .map((line) => `  ${line}`)
+          .join("\n")}`,
+      );
+    }
     const runtimeTurn = await this.runUnifiedRuntimeTurn(
       userPrompt,
       querySubject,

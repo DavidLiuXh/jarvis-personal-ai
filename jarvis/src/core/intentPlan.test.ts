@@ -312,6 +312,84 @@ describe("buildIntentPlanSection", () => {
     expect(runtime.buildMissingStepPrompt()).not.toContain("step-1");
   });
 
+  it("describes multi-intent plan and failed step reasons for observability", () => {
+    const runtime = new IntentStepRuntime(
+      intent([
+        {
+          id: "step-1",
+          type: "schedule",
+          action: "schedule first follow-up",
+          target: "明天早上9点提醒我复盘",
+          dependsOn: [],
+          requiresConfirmation: false,
+          riskLevel: "medium",
+        },
+        {
+          id: "step-2",
+          type: "schedule",
+          action: "schedule second follow-up",
+          target: "后天早上9点提醒我检查",
+          dependsOn: ["step-1"],
+          requiresConfirmation: false,
+          riskLevel: "medium",
+        },
+      ]),
+      { maxAttemptsPerStep: 2 },
+    );
+
+    expect(runtime.describePlan()).toContain("step-1:");
+    expect(runtime.describePlan()).toContain("tool=task_add");
+    expect(runtime.describePlan()).toContain("deps=step-1");
+
+    runtime.observeToolResults(
+      [
+        {
+          name: "task_add",
+          args: { cron: "明天早上9点", prompt: "提醒我复盘" },
+        },
+      ],
+      [
+        {
+          functionResponse: {
+            name: "task_add",
+            response: { error: "scheduler unavailable" },
+          },
+        },
+      ],
+    );
+
+    expect(runtime.describeFailures()).toEqual([
+      'step-1: status=failed attempts=1/2 reason="scheduler unavailable" next=will_retry_if_prompted',
+      'step-2: status=pending attempts=0/2 reason="waiting for dependent step(s): step-1" next=waiting_for_dependency',
+    ]);
+
+    runtime.observeToolResults(
+      [
+        {
+          name: "task_add",
+          args: { cron: "明天早上9点", prompt: "提醒我复盘" },
+        },
+      ],
+      [
+        {
+          functionResponse: {
+            name: "task_add",
+            response: { error: "scheduler still unavailable" },
+          },
+        },
+      ],
+    );
+
+    expect(runtime.describeFailures()[0]).toContain("status=blocked");
+    expect(runtime.describeFailures()[0]).toContain(
+      'reason="scheduler still unavailable"',
+    );
+    expect(runtime.describeFailures()[0]).toContain("next=request_blocked");
+    expect(runtime.describeFailures()[1]).toContain(
+      "next=waiting_for_dependency",
+    );
+  });
+
   it("suppresses dependent tool calls until prerequisite steps succeed", () => {
     const runtime = new IntentStepRuntime(
       intent([

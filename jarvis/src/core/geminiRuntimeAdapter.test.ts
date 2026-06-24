@@ -191,6 +191,37 @@ describe("Jarvis runtime adapter", () => {
     });
   });
 
+  it("logs deterministic step args and failed step reasons", () => {
+    const stepRuntime = new IntentStepRuntime(intent());
+    const logs: string[] = [];
+    const planner = createJarvisToolLoopPlanner({
+      stepRuntime,
+      toolRouter: {
+        buildPushToChannelRequestFromContent: () => null,
+      } as any,
+      log: (message) => logs.push(message),
+    });
+
+    const requests = planner.buildDeterministicToolRequests?.() ?? [];
+    expect(logs.join("\n")).toContain(
+      "Executing deterministic multi-intent step(s): task_add",
+    );
+    expect(logs.join("\n")).toContain("北京时间每周五下午2点");
+
+    planner.observeToolResults?.(requests, [
+      {
+        name: "task_add",
+        callId: "intent-step-1-task_add",
+        status: "failed",
+        output: { error: "scheduler unavailable" },
+      },
+    ]);
+
+    expect(logs.join("\n")).toContain("Multi-intent step issue(s)");
+    expect(logs.join("\n")).toContain("scheduler unavailable");
+    expect(logs.join("\n")).toContain("next=will_retry_if_prompted");
+  });
+
   it("assembles ToolLoopRuntime options without exposing Gemini-specific loop wiring to agent.ts", () => {
     const emitted: unknown[] = [];
     const options = createJarvisToolLoopOptions({
