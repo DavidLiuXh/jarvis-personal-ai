@@ -113,6 +113,62 @@ function toOpenAiMessage(message: LlmMessage): Record<string, unknown> {
   };
 }
 
+function normalizeOpenAiProtocolMessages(messages: LlmMessage[]): LlmMessage[] {
+  const normalized: LlmMessage[] = [];
+  let pendingToolCallIds: Set<string> | null = null;
+  let pendingAssistantIndex = -1;
+
+  const dropIncompletePendingExchange = () => {
+    if (pendingToolCallIds && pendingAssistantIndex >= 0) {
+      normalized.splice(pendingAssistantIndex);
+    }
+    pendingToolCallIds = null;
+    pendingAssistantIndex = -1;
+  };
+
+  for (const message of messages) {
+    if (message.role === "tool") {
+      if (!pendingToolCallIds || pendingToolCallIds.size === 0) {
+        continue;
+      }
+      for (const block of message.blocks) {
+        if (block.type !== "tool_result") continue;
+        if (!pendingToolCallIds.has(block.callId)) continue;
+        normalized.push({
+          role: "tool",
+          blocks: [block],
+          ...(message.metadata ? { metadata: message.metadata } : {}),
+        });
+        pendingToolCallIds.delete(block.callId);
+      }
+      if (pendingToolCallIds.size === 0) {
+        pendingToolCallIds = null;
+        pendingAssistantIndex = -1;
+      }
+      continue;
+    }
+
+    if (pendingToolCallIds && pendingToolCallIds.size > 0) {
+      dropIncompletePendingExchange();
+    }
+
+    const toolCallIds = message.blocks
+      .filter((block) => block.type === "tool_call")
+      .map((block) => block.callId);
+    normalized.push(message);
+    if (message.role === "assistant" && toolCallIds.length > 0) {
+      pendingToolCallIds = new Set(toolCallIds);
+      pendingAssistantIndex = normalized.length - 1;
+    }
+  }
+
+  if (pendingToolCallIds && pendingToolCallIds.size > 0) {
+    dropIncompletePendingExchange();
+  }
+
+  return normalized;
+}
+
 function makeUniqueCallId(
   callId: string,
   index: number,
@@ -365,7 +421,9 @@ export class OpenAiChatCompletionsBackend implements LlmBackend {
         body: JSON.stringify({
           model: this.options.model,
           stream: true,
-          messages: input.messages.map(toOpenAiMessage),
+          messages: normalizeOpenAiProtocolMessages(input.messages).map(
+            toOpenAiMessage,
+          ),
           ...(this.options.extraBody ?? {}),
           ...(tools.length > 0
             ? {

@@ -99,6 +99,135 @@ describe("OpenAiChatCompletionsBackend", () => {
     ]);
   });
 
+  it("drops orphan tool messages before sending OpenAI-compatible requests", async () => {
+    let requestBody: any = null;
+    const fetchFn = vi.fn(async (_url, init) => {
+      requestBody = JSON.parse(String(init?.body));
+      return new Response(sse({ choices: [{ delta: { content: "ok" } }] }), {
+        status: 200,
+      });
+    }) as unknown as typeof fetch;
+    const backend = new OpenAiChatCompletionsBackend({
+      apiKey: "test-key",
+      model: "gpt-test",
+      fetchFn,
+    });
+
+    for await (const _event of backend.sendTurn(
+      {
+        messages: [
+          { role: "user", blocks: [{ type: "text", text: "previous" }] },
+          {
+            role: "tool",
+            blocks: [
+              {
+                type: "tool_result",
+                name: "recall_memory",
+                callId: "orphan-call",
+                result: "orphan result",
+              },
+            ],
+          },
+          { role: "user", blocks: [{ type: "text", text: "next" }] },
+        ],
+      },
+      new AbortController().signal,
+    )) {
+      // consume stream
+    }
+
+    expect(requestBody.messages).toEqual([
+      { role: "user", content: "previous" },
+      { role: "user", content: "next" },
+    ]);
+  });
+
+  it("keeps complete tool-call exchanges and drops incomplete ones", async () => {
+    let requestBody: any = null;
+    const fetchFn = vi.fn(async (_url, init) => {
+      requestBody = JSON.parse(String(init?.body));
+      return new Response(sse({ choices: [{ delta: { content: "ok" } }] }), {
+        status: 200,
+      });
+    }) as unknown as typeof fetch;
+    const backend = new OpenAiChatCompletionsBackend({
+      apiKey: "test-key",
+      model: "gpt-test",
+      fetchFn,
+    });
+
+    for await (const _event of backend.sendTurn(
+      {
+        messages: [
+          { role: "user", blocks: [{ type: "text", text: "complete" }] },
+          {
+            role: "assistant",
+            blocks: [
+              {
+                type: "tool_call",
+                name: "recall_memory",
+                callId: "call-1",
+                args: { query: "model" },
+              },
+            ],
+          },
+          {
+            role: "tool",
+            blocks: [
+              {
+                type: "tool_result",
+                name: "recall_memory",
+                callId: "call-1",
+                result: "memory result",
+              },
+            ],
+          },
+          { role: "user", blocks: [{ type: "text", text: "incomplete" }] },
+          {
+            role: "assistant",
+            blocks: [
+              {
+                type: "tool_call",
+                name: "grep",
+                callId: "missing-result",
+                args: { pattern: "x" },
+              },
+            ],
+          },
+          { role: "user", blocks: [{ type: "text", text: "next" }] },
+        ],
+      },
+      new AbortController().signal,
+    )) {
+      // consume stream
+    }
+
+    expect(requestBody.messages).toEqual([
+      { role: "user", content: "complete" },
+      {
+        role: "assistant",
+        content: null,
+        tool_calls: [
+          {
+            id: "call-1",
+            type: "function",
+            function: {
+              name: "recall_memory",
+              arguments: '{"query":"model"}',
+            },
+          },
+        ],
+      },
+      {
+        role: "tool",
+        tool_call_id: "call-1",
+        content: "memory result",
+      },
+      { role: "user", content: "incomplete" },
+      { role: "user", content: "next" },
+    ]);
+  });
+
   it("preserves reasoning_content for thinking-mode tool result resume", async () => {
     const backend = new OpenAiChatCompletionsBackend({
       apiKey: "test-key",
