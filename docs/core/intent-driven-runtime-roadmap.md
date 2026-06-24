@@ -34,6 +34,8 @@
 
 这个 100% 表示当前文档定义的架构、实现、测试、质量门禁、外部包化和文档验收已经闭环；不表示线上真实样本分布已经穷尽。后续质量提升应通过 P7 feedback loop 继续运营，而不是继续扩展本 roadmap 的完成范围。
 
+下一阶段的能力目标已经拆分到 `docs/core/autonomous-task-runtime-roadmap.md`。该文档覆盖从当前 Multi-intent / IntentSteps 演进到自动任务评估、TaskGraph 拆解、runtime 执行、验收、持久化和 replanning 的路线，不计入本 roadmap 已完成定义。
+
 ## Target Architecture
 
 长期目标不是把所有 Jarvis 代码都塞进 `memory-runtime`，而是拆出三层边界：
