@@ -183,11 +183,11 @@ function createStandaloneToolLoopPlanner(input: {
       };
     },
     observeToolResults: (requests, results) => {
-      stepRuntime.observeToolResults(
+      const changed = stepRuntime.observeToolResults(
         requests,
         results.map(toolResultToRuntimeFunctionResponse),
       );
-      if (stepRuntime.active) {
+      if (stepRuntime.active && changed) {
         log(
           `🧭 [Jarvis] Multi-intent runtime state: ${stepRuntime
             .snapshot()

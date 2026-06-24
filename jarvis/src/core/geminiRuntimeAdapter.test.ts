@@ -222,6 +222,38 @@ describe("Jarvis runtime adapter", () => {
     expect(logs.join("\n")).toContain("next=will_retry_if_prompted");
   });
 
+  it("does not log multi-intent runtime state for unrelated tool results", () => {
+    const stepRuntime = new IntentStepRuntime(intent());
+    const logs: string[] = [];
+    const planner = createJarvisToolLoopPlanner({
+      stepRuntime,
+      toolRouter: {
+        buildPushToChannelRequestFromContent: () => null,
+      } as any,
+      log: (message) => logs.push(message),
+    });
+
+    planner.observeToolResults?.(
+      [
+        {
+          name: "recall_memory",
+          callId: "unrelated",
+          args: { query: "history" },
+        },
+      ],
+      [
+        {
+          name: "recall_memory",
+          callId: "unrelated",
+          status: "success",
+          output: "memory",
+        },
+      ],
+    );
+
+    expect(logs.join("\n")).not.toContain("Multi-intent runtime state");
+  });
+
   it("assembles ToolLoopRuntime options without exposing Gemini-specific loop wiring to agent.ts", () => {
     const emitted: unknown[] = [];
     const options = createJarvisToolLoopOptions({

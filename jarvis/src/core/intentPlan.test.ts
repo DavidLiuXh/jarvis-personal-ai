@@ -489,6 +489,54 @@ describe("buildIntentPlanSection", () => {
     expect(unblocked.executableRequests).toEqual([second]);
   });
 
+  it("does not report runtime changes for unrelated tool results", () => {
+    const runtime = new IntentStepRuntime(
+      intent([
+        {
+          id: "step-1",
+          type: "recall",
+          action: "recall current context",
+          target: "recent discussion",
+          dependsOn: [],
+          requiresConfirmation: false,
+          riskLevel: "low",
+        },
+        {
+          id: "step-2",
+          type: "analyze",
+          action: "answer from current context",
+          target: "current question",
+          dependsOn: ["step-1"],
+          requiresConfirmation: false,
+          riskLevel: "low",
+        },
+      ]),
+    );
+
+    const changed = runtime.observeToolResults(
+      [
+        {
+          name: "recall_memory",
+          callId: "unrelated",
+          args: { query: "anything" },
+        },
+      ],
+      [
+        {
+          functionResponse: {
+            name: "recall_memory",
+            response: { result: "memory result" },
+          },
+        },
+      ],
+    );
+
+    expect(changed).toBe(false);
+    expect(
+      runtime.snapshot().map((entry) => `${entry.status}/${entry.attempts}`),
+    ).toEqual(["succeeded/0", "succeeded/0"]);
+  });
+
   it("suppresses duplicate tool calls for a completed step", () => {
     const runtime = new IntentStepRuntime(
       intent([

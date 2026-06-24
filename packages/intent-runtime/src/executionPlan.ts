@@ -746,10 +746,12 @@ export class IntentStepRuntime {
   observeToolResults(
     requests: ToolCallLike[],
     responseParts: FunctionResponseLike[],
-  ): void {
+  ): boolean {
+    let changed = false;
     for (const request of requests) {
       const step = this.matchRequestToStep(request);
       if (!step) continue;
+      changed = true;
       const signature = toolSignature(request);
       const responsePart = responseParts.find(
         (part) => part.functionResponse?.name === request.name,
@@ -774,6 +776,7 @@ export class IntentStepRuntime {
         this.signatureToStepId.set(signature, step.step.id);
       }
     }
+    return changed;
   }
 
   buildMissingStepPrompt(): string | null {
