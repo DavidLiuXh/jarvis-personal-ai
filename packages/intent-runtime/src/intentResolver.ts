@@ -349,6 +349,19 @@ function inferRecentRecallTarget(
   return null;
 }
 
+function hasRecentUserProfileTopic(turns: ConversationTurn[]): boolean {
+  const recentText = turns
+    .slice(-4)
+    .map((turn) => turn.content)
+    .join("\n");
+  return (
+    USER_MEMORY_RECALL_CUE_RE.test(recentText) ||
+    /(我的|我有|我喜欢|我偏好|我习惯|适合我|按我|用户).{0,24}(爱好|偏好|习惯|风格|目标|身份|名字|风险偏好|画像|兴趣)|(?:爱好|偏好|习惯|风格|目标|身份|名字|风险偏好|画像|兴趣).{0,24}(我的|我有|用户)/i.test(
+      recentText,
+    )
+  );
+}
+
 function isRecallBoundaryTarget(target: MemoryRecallTarget): boolean {
   return target === "conversation_history" || target === "user_memory";
 }
@@ -3248,6 +3261,41 @@ export class IntentResolver {
         `🧭 [IntentResolver] Memory target changed ${previousRecallTarget} → ${memoryRecallTarget}; topic_shifted forced true`,
       );
     }
+    const userMemoryRecallUnrelatedRecentHistoryShift =
+      !topicShifted &&
+      !referencesRecentHistory &&
+      recentTurns.length > 0 &&
+      memoryRecallTarget === "user_memory" &&
+      !hasRecentUserProfileTopic(recentTurns);
+    if (userMemoryRecallUnrelatedRecentHistoryShift) {
+      const beforeTopicShifted = topicShifted;
+      topicShifted = true;
+      policyTrace.push({
+        ruleId: "topic.user_memory_recall_unrelated_recent_history",
+        stage: "guardrail",
+        priority: 418,
+        reasonCode: "USER_MEMORY_RECALL_UNRELATED_RECENT_HISTORY",
+        reason: normalizeIntentPolicyReason(
+          "USER_MEMORY_RECALL_UNRELATED_RECENT_HISTORY",
+        ),
+        applied: true,
+        before: {
+          topicShifted: beforeTopicShifted,
+          relation: topicRelation,
+          memoryTarget: memoryRecallTarget,
+          referencesRecentHistory,
+        },
+        after: {
+          topicShifted,
+          relation: "new_topic",
+          memoryTarget: memoryRecallTarget,
+          referencesRecentHistory,
+        },
+      });
+      console.error(
+        `🧭 [IntentResolver] User-memory recall unrelated to recent history; topic_shifted forced true`,
+      );
+    }
     const conversationHistoryArtifactTopicShift =
       !topicShifted &&
       !referencesRecentHistory &&
@@ -3346,6 +3394,15 @@ export class IntentResolver {
         ...topicAnalysis,
         relation: "new_topic",
         relationReason: `memory recall target changed from ${previousRecallTarget} to ${memoryRecallTarget}`,
+        confidence: Math.max(topicAnalysis.confidence, 0.9),
+        lowGrounding: false,
+      };
+    } else if (userMemoryRecallUnrelatedRecentHistoryShift) {
+      topicAnalysis = {
+        ...topicAnalysis,
+        relation: "new_topic",
+        relationReason:
+          "user-memory recall is unrelated to recent non-profile history",
         confidence: Math.max(topicAnalysis.confidence, 0.9),
         lowGrounding: false,
       };

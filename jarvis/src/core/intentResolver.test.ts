@@ -2194,6 +2194,80 @@ ${modelResponse({
     expect(policyReasonCodes(intent)).toContain("MEMORY_TARGET_TOPIC_SHIFT");
   });
 
+  it("forces topic shift for user-memory recall after unrelated external execution history", async () => {
+    const resolver = makeResolver();
+    mockGenerate.mockResolvedValueOnce(
+      modelResponse({
+        query_subject: "personal",
+        task_type: "recall",
+        needs_external_knowledge: false,
+        semantic_evidence: {
+          personalContext: {
+            present: true,
+            reason: "asks about user's stored hobbies",
+            span: "我有哪些爱好？",
+          },
+          memoryRecall: {
+            present: true,
+            target: "user_memory",
+            reason: "asks for remembered user hobbies",
+            span: "我有哪些爱好？",
+          },
+          actionRequest: { present: false, action: "none", object: "" },
+          entityHints: {
+            tickers: [],
+            technicalTerms: [],
+            peopleOrCompanies: [],
+          },
+        },
+        topic_analysis: {
+          history: {
+            label: "AI news website crawling",
+            evidence: ["curl抓取AI相关新闻", "格式化处理"],
+            source_turns: [-2],
+            confidence: 1,
+          },
+          current: {
+            label: "Personal hobbies recall",
+            evidence: ["我有哪些爱好？"],
+            source_turns: [0],
+            confidence: 1,
+          },
+          relation: "adjacent_topic",
+          relation_reason: "model incorrectly treats both as assistant tasks",
+          confidence: 0.9,
+        },
+        references_recent_history: false,
+        topic_shifted: false,
+      }),
+    );
+
+    const intent = await resolver.resolve({
+      userPrompt: "我有哪些爱好？",
+      history: [
+        {
+          role: "user",
+          content:
+            "你可以锁定几个你知道的AI相关新闻比较权威的网站，然后运行curl命令来抓取信息，对抓取到的内容作格式化处理，最后将结果展现给我",
+        },
+        {
+          role: "assistant",
+          content: "我会通过 curl 抓取权威 AI 新闻来源，并整理成结构化摘要。",
+        },
+      ],
+    });
+
+    expect(intent.referencesRecentHistory).toBe(false);
+    expect(intent.semanticEvidence.memoryRecall.target).toBe("user_memory");
+    expect(intent.topicShifted).toBe(true);
+    expect(intent.topicAnalysis).toMatchObject({
+      relation: "new_topic",
+    });
+    expect(policyReasonCodes(intent)).toContain(
+      "USER_MEMORY_RECALL_UNRELATED_RECENT_HISTORY",
+    );
+  });
+
   it("forces topic shift when recall memory target changes from user memory to conversation history", async () => {
     const resolver = makeResolver();
     mockGenerate.mockResolvedValueOnce(
