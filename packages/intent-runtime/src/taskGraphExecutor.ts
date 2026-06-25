@@ -73,6 +73,8 @@ export type TaskGraphCapabilityRegistry = {
 export type TaskGraphExecutorContext = {
   userPrompt: string;
   finalResponse?: string;
+  currentContent?: string;
+  artifacts?: Record<string, string>;
   userConfirmed?: boolean;
   confirmations?: string[];
   resumeState?: TaskGraphResumeState;

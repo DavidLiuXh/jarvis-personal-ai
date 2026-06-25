@@ -394,7 +394,17 @@ export class StandaloneJarvisAgent
     );
 
     const abortController = new AbortController();
-    const stepRuntime = new IntentStepRuntime(intentFrame);
+    const taskGraphExecutionEnabled =
+      this.jarvisConfig.agentRuntime?.autonomousTaskRuntime?.enabled === true &&
+      this.jarvisConfig.agentRuntime.autonomousTaskRuntime.mode === "execute";
+    const stepRuntime = new IntentStepRuntime(
+      taskGraphExecutionEnabled ? null : intentFrame,
+    );
+    if (taskGraphExecutionEnabled) {
+      console.error(
+        "🧭 [Jarvis] Legacy multi-intent tool-loop enforcement disabled: TaskGraph runtime execution is enabled.",
+      );
+    }
     if (stepRuntime.active) {
       console.error(
         `🧭 [Jarvis] Multi-intent runtime initialized: ${stepRuntime.describeInitialStateSummary()}`,

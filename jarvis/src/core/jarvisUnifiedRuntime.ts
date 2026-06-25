@@ -14,6 +14,8 @@ import {
   DefaultIntentRuntime,
   IntentExecutor,
   StaticIntentResolverAdapter,
+  type AutonomousTaskRuntimeResult,
+  type TaskGraph,
 } from "../intent-runtime/index.js";
 import {
   DefaultMemoryRuntime,
@@ -35,6 +37,7 @@ import {
 import type { IntentFrame } from "./intentResolver.js";
 import { buildIntentPlanSection } from "./intentPlan.js";
 import { createJarvisRuntimeMemoryLayer } from "./jarvisRuntimeMemoryLayer.js";
+import { createJarvisTaskRuntime } from "./jarvisTaskGraphRuntime.js";
 import type { LocalModelRouter } from "./localModelRouter.js";
 import type { MemoryService } from "./memory.js";
 import {
@@ -84,6 +87,8 @@ export type JarvisUnifiedRuntimeTurnResult = {
   stepMemoryDecisions: StepMemoryDecision[];
   llmLoop: ToolLoopRunResult | null;
   systemInstruction: string;
+  taskGraph: TaskGraph | null;
+  taskGraphExecution: AutonomousTaskRuntimeResult | null;
 };
 
 function buildFallbackRuntimeIntent(args: {
@@ -592,7 +597,7 @@ export async function runJarvisUnifiedRuntimeTurn(
     ),
     memoryRuntime as unknown as DefaultMemoryRuntime<IntentFrame>,
     input.jarvisConfig.agentRuntime?.executionMode === "execute"
-      ? new IntentExecutor(input.toolRouter)
+      ? (new IntentExecutor(input.toolRouter) as any)
       : undefined,
     {
       executionMode: input.jarvisConfig.agentRuntime?.executionMode ?? "skip",
@@ -634,8 +639,31 @@ export async function runJarvisUnifiedRuntimeTurn(
               "Memory runtime did not produce an injection plan before response composition",
             );
           }
+          const taskGraphInstruction =
+            context.taskGraphExecution?.execution.finalResponseContract
+              .instruction ?? "";
           const executionInstruction =
-            context.execution?.finalResponseContract.instruction ?? "";
+            taskGraphInstruction ||
+            (context.execution?.finalResponseContract.instruction ?? "");
+          const taskGraphSection = context.taskGraph
+            ? [
+                "<runtime_task_graph>",
+                `id: ${context.taskGraph.id}`,
+                `status: ${context.taskGraphExecution?.status ?? context.taskGraph.status}`,
+                `nodes: ${context.taskGraph.nodes
+                  .map((node) => `${node.id}:${node.kind}`)
+                  .join(",")}`,
+                context.taskGraphExecution
+                  ? `blocked: ${context.taskGraphExecution.execution.blockedReasons.join(";") || "none"}`
+                  : "execution: not_run",
+                context.taskGraphExecution
+                  ? `failed: ${context.taskGraphExecution.execution.failedReasons.join(";") || "none"}`
+                  : "",
+                "</runtime_task_graph>",
+              ]
+                .filter(Boolean)
+                .join("\n")
+            : "";
           const memoryDecision = contract
             ? [
                 "<runtime_memory_context>",
@@ -679,6 +707,7 @@ export async function runJarvisUnifiedRuntimeTurn(
               intentPlanSection,
               memoryDecision,
               stepMemory,
+              taskGraphSection,
               executionContract,
               temporalRecallBoundary,
               injectionPlan.relevantSummarySection,
@@ -688,11 +717,19 @@ export async function runJarvisUnifiedRuntimeTurn(
               .join("\n\n"),
             instructions: [executionInstruction].filter(Boolean),
             canClaimSuccess:
-              context.execution?.finalResponseContract.canClaimSuccess ?? true,
+              context.taskGraphExecution?.execution.finalResponseContract
+                .canClaimSuccess ??
+              context.execution?.finalResponseContract.canClaimSuccess ??
+              true,
             metadata: { source: "jarvis_agent_runtime" },
           };
         },
       },
+      taskRuntime: createJarvisTaskRuntime({
+        config: input.jarvisConfig,
+        toolRouter: input.toolRouter,
+        sessionId: input.sessionId,
+      }),
       observer: (event) => {
         if (input.jarvisConfig.agentRuntime?.observability === true) {
           console.error(`[AgentRuntime] ${event.type}`);
@@ -760,6 +797,8 @@ export async function runJarvisUnifiedRuntimeTurn(
     memoryContract: runtimeResult.context.memoryContract!,
     stepMemoryDecisions: runtimeResult.context.stepMemoryDecisions,
     llmLoop: runtimeResult.context.llmLoop,
+    taskGraph: runtimeResult.context.taskGraph,
+    taskGraphExecution: runtimeResult.context.taskGraphExecution,
     systemInstruction:
       runtimeResult.response.systemContext || fallbackSystemInstruction,
   };

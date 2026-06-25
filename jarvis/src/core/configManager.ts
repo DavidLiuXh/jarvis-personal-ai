@@ -131,6 +131,26 @@ export interface JarvisConfig {
     enabled?: boolean;
     executionMode?: "execute" | "plan_only" | "skip";
     observability?: boolean;
+    autonomousTaskRuntime?: {
+      /**
+       * Enable TaskGraph planning/execution inside the unified AgentRuntime.
+       * Default: false. When disabled, Jarvis keeps the legacy multi-intent
+       * tool-loop planner behavior.
+       */
+      enabled?: boolean;
+      /**
+       * plan_only: build and log TaskGraph without executing deterministic nodes.
+       * execute: run deterministic Jarvis-native capability nodes before the LLM loop.
+       * skip: do not build a TaskGraph.
+       */
+      mode?: "execute" | "plan_only" | "skip";
+      /** Emit TaskGraph node transition and acceptance logs. Default: false. */
+      observability?: boolean;
+      /** Directory for durable TaskGraph execution snapshots. */
+      stateDir?: string;
+      /** Recovery/replan attempts before returning a blocked result. Default: 2. */
+      maxRecoveryAttempts?: number;
+    };
   };
   /**
    * Browser UI diagnostics and rendering controls.
@@ -629,6 +649,12 @@ export class ConfigManager {
         enabled: true,
         executionMode: "skip",
         observability: false,
+        autonomousTaskRuntime: {
+          enabled: false,
+          mode: "plan_only",
+          observability: false,
+          maxRecoveryAttempts: 2,
+        },
       },
       ui: {
         markdownDiagnostics: false,
@@ -701,6 +727,10 @@ export class ConfigManager {
           agentRuntime: {
             ...defaults.agentRuntime,
             ...saved.agentRuntime,
+            autonomousTaskRuntime: {
+              ...defaults.agentRuntime.autonomousTaskRuntime,
+              ...saved.agentRuntime?.autonomousTaskRuntime,
+            },
           },
           ui: {
             ...defaults.ui,

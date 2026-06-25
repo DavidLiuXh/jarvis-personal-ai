@@ -1156,6 +1156,12 @@ export class ToolRouter implements ToolExecutorAdapter {
       };
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
+      onToolResponse({
+        name: req.name,
+        status: "failed",
+        output: msg,
+        callId: req.callId,
+      });
       return {
         functionResponse: {
           id: req.callId,

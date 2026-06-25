@@ -5,10 +5,12 @@
  */
 
 import type {
+  AutonomousTaskRuntimeResult,
   IntentRuntime,
   IntentRuntimeEvent,
   IntentRuntimeInput,
   IntentRuntimeResult,
+  TaskGraph,
 } from "@jarvis/intent-runtime";
 import type {
   IntentExecutionResult,
@@ -38,6 +40,8 @@ export type RuntimeContext = {
   sessionId: string;
   userPrompt: string;
   history: ConversationTurn[];
+  currentContent?: string;
+  artifacts?: Record<string, string>;
   now: Date;
   executionContext: IntentRuntimeInput["executionContext"];
   interactiveChannel: boolean;
@@ -50,8 +54,34 @@ export type RuntimeContext = {
   memoryInjection: MemoryInjectionResult | null;
   skills: RuntimeSkill[];
   execution: IntentExecutionResult | null;
+  taskGraph: TaskGraph | null;
+  taskGraphExecution: AutonomousTaskRuntimeResult | null;
   llmLoop: ToolLoopRunResult | null;
   response: RuntimeResponse | null;
+};
+
+export type TaskRuntimeMode = "execute" | "plan_only" | "skip";
+
+export type TaskRuntimePlanInput = {
+  context: RuntimeContext;
+  intent: IntentFrame;
+  memoryContract: MemoryContract;
+  stepMemoryDecisions: StepMemoryDecision[];
+  skills: RuntimeSkill[];
+};
+
+export type TaskRuntimeExecuteInput = TaskRuntimePlanInput & {
+  graph: TaskGraph;
+  signal?: AbortSignal;
+};
+
+export type TaskRuntime = {
+  mode?: TaskRuntimeMode;
+  plan(input: TaskRuntimePlanInput): Promise<TaskGraph | null>;
+  shouldExecute?(input: TaskRuntimeExecuteInput): boolean | Promise<boolean>;
+  execute(
+    input: TaskRuntimeExecuteInput,
+  ): Promise<AutonomousTaskRuntimeResult | null>;
 };
 
 export type RuntimeSkill = {
@@ -111,6 +141,11 @@ export type AgentRuntimeEvent =
   | { type: "memory_event"; event: MemoryRuntimeEvent }
   | { type: "memory_completed"; contract: MemoryContract }
   | { type: "skills_completed"; skills: RuntimeSkill[] }
+  | { type: "task_graph_planned"; graph: TaskGraph | null }
+  | {
+      type: "task_graph_completed";
+      result: AutonomousTaskRuntimeResult | null;
+    }
   | { type: "execution_event"; event: IntentExecutorEvent }
   | { type: "execution_completed"; result: IntentExecutionResult | null }
   | { type: "response_composed"; response: RuntimeResponse }
@@ -128,6 +163,7 @@ export type AgentRuntimeOptions = {
   skillMaxDistance?: number;
   observer?: AgentRuntimeObserver;
   llmLoop?: ToolLoopRuntimeOptions;
+  taskRuntime?: TaskRuntime;
 };
 
 export type AgentRuntimeInput = {
@@ -224,10 +260,17 @@ export class DefaultResponseComposer implements ResponseComposer {
     const stepMemory = formatStepMemoryDecisions(context.stepMemoryDecisions);
     const skills = formatSkills(context.skills);
     const memoryText = context.memoryInjection?.text ?? "";
+    const taskGraphInstruction =
+      context.taskGraphExecution?.execution.finalResponseContract.instruction ??
+      "";
     const executionInstruction =
-      context.execution?.finalResponseContract.instruction ?? "";
+      taskGraphInstruction ||
+      (context.execution?.finalResponseContract.instruction ?? "");
     const canClaimSuccess =
-      context.execution?.finalResponseContract.canClaimSuccess ?? true;
+      context.taskGraphExecution?.execution.finalResponseContract
+        .canClaimSuccess ??
+      context.execution?.finalResponseContract.canClaimSuccess ??
+      true;
     const instructions = [
       context.memoryContract?.subjectBoundary === "external"
         ? "Treat this as an external request. Do not use or infer personal memory unless explicitly provided by runtime context."
@@ -254,6 +297,9 @@ export class DefaultResponseComposer implements ResponseComposer {
       metadata: {
         memoryChars: memoryText.length,
         skills: context.skills.map((skill) => skill.name),
+        taskGraphStatus:
+          context.taskGraphExecution?.status ??
+          (context.taskGraph ? "planned" : "not_required"),
         executionStatus: context.execution?.status ?? "not_required",
       },
     };
@@ -298,6 +344,8 @@ export class AgentRuntime {
       sessionId: input.sessionId,
       userPrompt: input.userPrompt,
       history: input.history ?? [],
+      currentContent: input.currentContent,
+      artifacts: input.artifacts,
       now: input.now ?? new Date(),
       executionContext: input.executionContext ?? "interactive",
       interactiveChannel: input.interactiveChannel ?? true,
@@ -310,6 +358,8 @@ export class AgentRuntime {
       memoryInjection: null,
       skills: [],
       execution: null,
+      taskGraph: null,
+      taskGraphExecution: null,
       llmLoop: null,
       response: null,
     };
@@ -365,6 +415,45 @@ export class AgentRuntime {
         maxDistance: this.options.skillMaxDistance,
       });
       await this.emit({ type: "skills_completed", skills: context.skills });
+
+      if (
+        this.options.taskRuntime &&
+        (this.options.taskRuntime.mode ?? "skip") !== "skip"
+      ) {
+        const taskRuntimeInput: TaskRuntimePlanInput = {
+          context,
+          intent: intentResult.intent,
+          memoryContract,
+          stepMemoryDecisions: context.stepMemoryDecisions,
+          skills: context.skills,
+        };
+        context.taskGraph =
+          await this.options.taskRuntime.plan(taskRuntimeInput);
+        await this.emit({
+          type: "task_graph_planned",
+          graph: context.taskGraph,
+        });
+        if (
+          context.taskGraph &&
+          (this.options.taskRuntime.mode ?? "skip") === "execute"
+        ) {
+          const executeInput: TaskRuntimeExecuteInput = {
+            ...taskRuntimeInput,
+            graph: context.taskGraph,
+            signal: input.signal,
+          };
+          const shouldExecute =
+            (await this.options.taskRuntime.shouldExecute?.(executeInput)) ??
+            true;
+          context.taskGraphExecution = shouldExecute
+            ? await this.options.taskRuntime.execute(executeInput)
+            : null;
+          await this.emit({
+            type: "task_graph_completed",
+            result: context.taskGraphExecution,
+          });
+        }
+      }
 
       if (this.executionMode === "execute" && this.executor) {
         const executorContext: IntentExecutorContext = {

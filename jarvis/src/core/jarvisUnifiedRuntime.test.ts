@@ -39,6 +39,26 @@ function step(overrides: Partial<IntentStep> = {}): IntentStep {
   };
 }
 
+function scheduleStep(overrides: Partial<IntentStep> = {}): IntentStep {
+  return step({
+    id: "step-1",
+    type: "schedule",
+    action: "添加定时任务",
+    target: "每周五下午2点分析市场",
+    operation: {
+      domain: "task_management",
+      action: "create",
+      targetType: "task",
+      target: "每周五下午2点分析市场",
+      selector: "每周五下午2点分析市场",
+      scope: "scheduled_tasks",
+      riskLevel: "medium",
+    },
+    riskLevel: "medium",
+    ...overrides,
+  });
+}
+
 function intent(overrides: Partial<IntentFrame> = {}): IntentFrame {
   return {
     subject: "external",
@@ -126,6 +146,7 @@ function baseInput(overrides: Record<string, unknown> = {}) {
   const toolRouter = {
     setCurrentMemoryContract: vi.fn(),
     setCurrentStepMemoryDecisions: vi.fn(),
+    executeTools: vi.fn(async () => []),
   };
   const sqliteStore = new SqliteMemoryStore({
     dbPath: tempDbPath(),
@@ -329,6 +350,122 @@ describe("runJarvisUnifiedRuntimeTurn", () => {
     );
     expect(result.systemInstruction).toContain(
       "Do not answer from the current/recent chat history",
+    );
+  });
+
+  it("plans TaskGraph in the unified runtime when autonomous task runtime is plan_only", async () => {
+    const result = await runJarvisUnifiedRuntimeTurn(
+      baseInput({
+        jarvisConfig: {
+          memory: {},
+          agentRuntime: {
+            enabled: true,
+            executionMode: "skip",
+            autonomousTaskRuntime: {
+              enabled: true,
+              mode: "plan_only",
+              stateDir: path.dirname(tempDbPath()),
+            },
+          },
+        },
+      }),
+    );
+
+    expect(result.taskGraph?.nodes.map((node) => node.kind)).toEqual([
+      "analyze",
+    ]);
+    expect(result.taskGraphExecution).toBeNull();
+    expect(result.systemInstruction).toContain("<runtime_task_graph>");
+    expect(result.systemInstruction).toContain("execution: not_run");
+  });
+
+  it("executes deterministic TaskGraph nodes and injects the final response contract", async () => {
+    const executeTools = vi.fn(async (requests) =>
+      requests.map((request: any) => ({
+        name: request.name,
+        callId: request.callId,
+        status: "success",
+        output:
+          "✅ Jarvis internal task added and scheduled:\n  scheduler: Jarvis TaskScheduler (not system crontab)\n  id: market-weekly\n  cron: 0 14 * * 5\n  prompt: 分析市场",
+      })),
+    );
+    const toolRouter = {
+      setCurrentMemoryContract: vi.fn(),
+      setCurrentStepMemoryDecisions: vi.fn(),
+      executeTools,
+    };
+    const scheduleIntent = intent({
+      subject: "personal",
+      taskType: "schedule",
+      needsMemory: true,
+      needsExternalKnowledge: false,
+      needsTool: true,
+      needsScheduling: true,
+      reason: "schedule task",
+      evidence: ["添加一个定时任务：每周五下午2点分析市场"],
+      semanticEvidence: {
+        personalContext: { present: true, reason: "personal", span: "" },
+        memoryRecall: { present: false, target: "none", reason: "", span: "" },
+        actionRequest: {
+          present: true,
+          action: "schedule",
+          object: "每周五下午2点分析市场",
+        },
+        entityHints: { tickers: [], technicalTerms: [], peopleOrCompanies: [] },
+      },
+      richIntent: {
+        userGoal: "添加一个定时任务：每周五下午2点分析市场",
+        domain: "task_management",
+        action: "create",
+        primaryAction: "schedule",
+        targets: [{ type: "task", value: "分析市场" }],
+        contextDependency: {
+          recentConversation: false,
+          longTermMemory: false,
+          externalWorld: false,
+          localWorkspace: false,
+        },
+        ambiguity: [],
+        riskLevel: "medium",
+      },
+      intentSteps: [scheduleStep()],
+    });
+
+    const result = await runJarvisUnifiedRuntimeTurn(
+      baseInput({
+        userPrompt: "添加一个定时任务：每周五下午2点分析市场",
+        querySubject: "personal",
+        intent: scheduleIntent,
+        toolRouter,
+        jarvisConfig: {
+          memory: {},
+          agentRuntime: {
+            enabled: true,
+            executionMode: "skip",
+            autonomousTaskRuntime: {
+              enabled: true,
+              mode: "execute",
+              stateDir: path.dirname(tempDbPath()),
+            },
+          },
+        },
+      }),
+    );
+
+    expect(result.taskGraphExecution?.status).toBe("succeeded");
+    expect(executeTools).toHaveBeenCalledWith(
+      [
+        expect.objectContaining({
+          name: "task_add",
+          callId: "taskgraph-step-1-task_add",
+        }),
+      ],
+      expect.any(Object),
+    );
+    expect(result.systemInstruction).toContain("<runtime_task_graph>");
+    expect(result.systemInstruction).toContain("status: succeeded");
+    expect(result.systemInstruction).toContain(
+      "All required task graph nodes passed acceptance",
     );
   });
 });
