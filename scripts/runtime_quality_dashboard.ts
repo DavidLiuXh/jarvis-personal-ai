@@ -26,6 +26,7 @@ function parseArgs(argv: string[]) {
     matrixJson: "",
     llmBackendJson: "",
     memoryQualityJson: "",
+    taskGraphQualityJson: "",
     gate: false,
     highRiskConfidenceFloor: 0.8,
   };
@@ -46,6 +47,9 @@ function parseArgs(argv: string[]) {
       i += 1;
     } else if (arg === "--memory-quality-json" && next) {
       args.memoryQualityJson = path.resolve(next);
+      i += 1;
+    } else if (arg === "--task-graph-quality-json" && next) {
+      args.taskGraphQualityJson = path.resolve(next);
       i += 1;
     } else if (arg === "--gate") {
       args.gate = true;
@@ -133,6 +137,7 @@ function buildGates(input: {
   matrix: any;
   llmBackend: any;
   memoryQuality: any;
+  taskGraphQuality: any;
   highRiskConfidenceFloor: number;
 }): GateResult[] {
   const highRiskViolations = highRiskConfidenceViolations(
@@ -193,6 +198,18 @@ function buildGates(input: {
       actual: `${input.memoryQuality?.passed ?? 0}/${input.memoryQuality?.total ?? 0}`,
       expected: "passed=total",
     },
+    {
+      id: "task_graph_quality_eval_pass",
+      passed:
+        input.taskGraphQuality !== null &&
+        (input.taskGraphQuality.total ?? 0) > 0 &&
+        input.taskGraphQuality.passed === input.taskGraphQuality.total,
+      severity: "blocker",
+      message:
+        "TaskGraph planning/execution/acceptance/replanning quality evals must pass.",
+      actual: `${input.taskGraphQuality?.passed ?? 0}/${input.taskGraphQuality?.total ?? 0}`,
+      expected: "passed=total",
+    },
   ];
 }
 
@@ -248,6 +265,7 @@ function renderMarkdown(payload: any): string {
     `- Matrix: ${payload.summary.matrix.passed}/${payload.summary.matrix.total}`,
     `- LLM backend: ${payload.summary.llmBackend.passed}/${payload.summary.llmBackend.total}`,
     `- Memory quality: ${payload.summary.memoryQuality.passed}/${payload.summary.memoryQuality.total}`,
+    `- TaskGraph quality: ${payload.summary.taskGraphQuality.passed}/${payload.summary.taskGraphQuality.total}`,
     "",
     "## Quality Gates",
     "",
@@ -289,9 +307,17 @@ function main() {
   const memoryQualityPath =
     args.memoryQualityJson ||
     findLatest(args.logsDir, "memory-quality-latest.json", "memory-quality-");
+  const taskGraphQualityPath =
+    args.taskGraphQualityJson ||
+    findLatest(
+      args.logsDir,
+      "task-graph-quality-latest.json",
+      "task-graph-quality-",
+    );
   const matrix = readJson<any>(matrixPath);
   const llmBackend = readJson<any>(llmBackendPath);
   const memoryQuality = readJson<any>(memoryQualityPath);
+  const taskGraphQuality = readJson<any>(taskGraphQualityPath);
   if (!matrix) throw new Error(`Matrix report not found: ${matrixPath}`);
   if (!llmBackend) {
     throw new Error(`LLM backend report not found: ${llmBackendPath}`);
@@ -299,11 +325,17 @@ function main() {
   if (!memoryQuality) {
     throw new Error(`Memory quality report not found: ${memoryQualityPath}`);
   }
+  if (!taskGraphQuality) {
+    throw new Error(
+      `TaskGraph quality report not found: ${taskGraphQualityPath}`,
+    );
+  }
 
   const gates = buildGates({
     matrix,
     llmBackend,
     memoryQuality,
+    taskGraphQuality,
     highRiskConfidenceFloor: args.highRiskConfidenceFloor,
   });
   const verdict = gates.every((gate) => gate.passed) ? "pass" : "fail";
@@ -314,6 +346,7 @@ function main() {
       matrix: path.relative(repoRoot, matrixPath),
       llmBackend: path.relative(repoRoot, llmBackendPath),
       memoryQuality: path.relative(repoRoot, memoryQualityPath),
+      taskGraphQuality: path.relative(repoRoot, taskGraphQualityPath),
     },
     summary: {
       matrix: {
@@ -333,6 +366,15 @@ function main() {
         passed: memoryQuality.passed ?? 0,
         failed: (memoryQuality.total ?? 0) - (memoryQuality.passed ?? 0),
         passRate: passRate(memoryQuality.passed ?? 0, memoryQuality.total ?? 0),
+      },
+      taskGraphQuality: {
+        total: taskGraphQuality.total ?? 0,
+        passed: taskGraphQuality.passed ?? 0,
+        failed: (taskGraphQuality.total ?? 0) - (taskGraphQuality.passed ?? 0),
+        passRate: passRate(
+          taskGraphQuality.passed ?? 0,
+          taskGraphQuality.total ?? 0,
+        ),
       },
     },
     trend: matrix.trend,

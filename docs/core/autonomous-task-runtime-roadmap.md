@@ -454,6 +454,8 @@ type TaskNode = {
 
 ### Phase A: Spec And Planner Foundation
 
+Status: completed.
+
 范围：
 
 - `TaskSpec`
@@ -469,7 +471,21 @@ type TaskNode = {
 - 无 capability / missing acceptance 会 blocked；
 - 不接执行器也能看出完整任务计划。
 
+实现说明：
+
+- `packages/intent-runtime/src/taskGraph.ts` 提供 `TaskSpec`、`AcceptanceCriteria`、`TaskGraph`、`TaskNode` 以及规划/校验函数。
+- `buildTaskSpec(intent)` 将 `IntentFrame` 升级为任务规格，明确 goal、kind、constraints、artifacts、acceptance。
+- `buildTaskGraph(intent, spec, runtimeContext)` 将 `IntentSteps` 转成可执行 DAG，并基于 runtime context 处理 capability、memory boundary、channel、shell policy。
+- planner 层不执行任何 side effect，只负责生成结构化计划和阻塞原因。
+
+已通过门控：
+
+- `npx vitest run packages/intent-runtime/src/taskGraph.test.ts packages/intent-runtime/src/packageApi.test.ts`
+- `npm run runtime:build`
+
 ### Phase B: Executor And Validators
+
+Status: completed.
 
 范围：
 
@@ -484,7 +500,22 @@ type TaskNode = {
 - validator failed 阻止 success claim；
 - execution trace 完整。
 
+实现说明：
+
+- `packages/intent-runtime/src/taskGraphExecutor.ts` 提供 `TaskGraphExecutor`、`DefaultTaskGraphCapabilityRegistry`、`TaskGraphCapabilityAdapter` 和 step-level validators。
+- executor 按 DAG ready node 调度，required upstream 失败会阻塞 downstream。
+- validator 覆盖 `tool_result`、`file_exists`、`file_contains`、`response_contains`、`source_count`、`memory_retrieved`、`task_scheduled`、`user_confirmed`。
+- `finalResponseContract` 明确是否允许最终回答声称完成，避免 LLM 对未执行节点“自述成功”。
+- execution observer 输出 graph/node start/result/acceptance/finish 事件，可用于日志和 dashboard。
+
+已通过门控：
+
+- `npx vitest run packages/intent-runtime/src/taskGraph.test.ts packages/intent-runtime/src/taskGraphExecutor.test.ts packages/intent-runtime/src/packageApi.test.ts`
+- `npm run runtime:build`
+
 ### Phase C: Durable State And Replanning
+
+Status: completed for package-level durable state, resume, artifact registry, and bounded recovery runtime.
 
 范围：
 
@@ -499,7 +530,24 @@ type TaskNode = {
 - 用户补参后继续原任务图；
 - 防止无限循环。
 
+实现说明：
+
+- `packages/intent-runtime/src/taskGraphState.ts` 提供 `TaskGraphExecutionSnapshot`、`TaskGraphExecutionStore`、`InMemoryTaskGraphExecutionStore`、`JsonFileTaskGraphExecutionStore` 和 `TaskArtifactRegistry`。
+- snapshot 持久化 graph、node status、attempts、artifacts、validation results、events、clarification answers 和 failure root cause。
+- `resumeStateFromSnapshot()` 支持跨 turn/后台任务恢复，已成功节点不会重复执行。
+- artifact registry 显式管理产物，artifact 包含 `type/path/nodeId/sourceNodeId/createdAt/checksum` 等元数据。
+- `packages/intent-runtime/src/taskGraphRecovery.ts` 提供 `ReplanDecision`、`decideTaskGraphRecovery()`、`applyReplanDecision()` 和 recovery resume state。
+- `packages/intent-runtime/src/autonomousTaskRuntime.ts` 将 build graph、execute、snapshot、replan、resume 串成 `AutonomousTaskRuntime.run()`。
+- recovery 支持 `retry_same`、`switch_capability`、`ask_user`、`skip_optional`、`abort`，并由 `maxRecoveryAttempts` 防止循环。
+
+已通过门控：
+
+- `npx vitest run packages/intent-runtime/src/taskGraphExecutor.test.ts packages/intent-runtime/src/taskGraphState.test.ts packages/intent-runtime/src/taskGraphRecovery.test.ts packages/intent-runtime/src/packageApi.test.ts`
+- `npm run runtime:build`
+
 ### Phase D: Full Quality Gate
+
+Status: completed for local package gate and runtime dashboard integration.
 
 范围：
 
@@ -513,6 +561,33 @@ type TaskNode = {
 - `runtime:quality` 包含 task graph gate；
 - dashboard 能回答 task graph planning / execution / acceptance 是否退化；
 - reviewed real-world failures 能进入 task graph eval。
+
+实现说明：
+
+- `scripts/run_task_graph_quality.ts` 输出 `evals/logs/task-graph-quality-latest.json/md`。
+- 当前 quality dimensions 覆盖：
+  - `taskEvaluation`
+  - `taskGraphPlanning`
+  - `capabilitySelection`
+  - `executionOrdering`
+  - `acceptanceValidation`
+  - `replanning`
+  - `durableState`
+- `package.json` 新增 `task-graph:quality`，并已纳入 `runtime:quality`。
+- `scripts/runtime_quality_dashboard.ts` 已读取 task graph quality report，并新增 `task_graph_quality_eval_pass` gate。
+
+已通过门控：
+
+- `npm run task-graph:quality`
+- `npx tsx scripts/runtime_quality_dashboard.ts --gate`
+- `npx vitest run packages/intent-runtime/src/taskGraph.test.ts packages/intent-runtime/src/taskGraphExecutor.test.ts packages/intent-runtime/src/taskGraphState.test.ts packages/intent-runtime/src/taskGraphRecovery.test.ts packages/intent-runtime/src/packageApi.test.ts`
+- `npm run runtime:build`
+
+当前边界：
+
+- 已完成 package-level autonomous task runtime 闭环；Jarvis 主请求路径尚未默认切到 `AutonomousTaskRuntime` 执行所有复杂任务。
+- `JsonFileTaskGraphExecutionStore` 已提供通用持久化 adapter；Jarvis 后续可选择将其落盘目录接到自身 runtime state 目录。
+- 当前 task graph quality 是 deterministic local gate；真实使用失败样本自动沉淀到 reviewed task graph eval 仍需要后续接入反馈采集流程。
 
 ## 13. Definition Of Done
 
