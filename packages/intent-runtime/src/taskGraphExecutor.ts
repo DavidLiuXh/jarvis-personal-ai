@@ -147,6 +147,8 @@ export type TaskGraphExecutorEvent =
       nodeId: string;
       kind: TaskNode["kind"];
       attempt: number;
+      adapterId: string;
+      requiredCapabilities: string[];
     }
   | {
       type: "task_node_result";
@@ -154,6 +156,8 @@ export type TaskGraphExecutorEvent =
       nodeId: string;
       status: TaskNodeExecutionResult["status"];
       artifactCount: number;
+      artifactTypes: TaskRuntimeArtifact["type"][];
+      error?: string;
     }
   | {
       type: "task_node_acceptance";
@@ -174,6 +178,9 @@ export type TaskGraphExecutorEvent =
       status: TaskGraphExecutionStatus;
       blocked: number;
       failed: number;
+      blockedReasons?: string[];
+      failedReasons?: string[];
+      finalResponseCanClaimSuccess?: boolean;
     };
 
 export type TaskGraphExecutionObserver = (
@@ -677,6 +684,8 @@ export class TaskGraphExecutor {
       nodeId: state.node.id,
       kind: state.node.kind,
       attempt: state.attempts,
+      adapterId: adapter.id,
+      requiredCapabilities: [...state.node.requiredCapabilities],
     });
 
     const result = await adapter.execute(
@@ -702,6 +711,8 @@ export class TaskGraphExecutor {
       nodeId: state.node.id,
       status: result.status,
       artifactCount: nodeArtifacts.length,
+      artifactTypes: nodeArtifacts.map((artifact) => artifact.type),
+      error: result.error,
     });
 
     const acceptanceResults = state.node.acceptanceCriteria.map((criterion) =>
@@ -772,6 +783,10 @@ export class TaskGraphExecutor {
       status,
       blocked: blockedReasons.length,
       failed: failedReasons.length,
+      blockedReasons,
+      failedReasons,
+      finalResponseCanClaimSuccess:
+        result.finalResponseContract.canClaimSuccess,
     });
     return result;
   }

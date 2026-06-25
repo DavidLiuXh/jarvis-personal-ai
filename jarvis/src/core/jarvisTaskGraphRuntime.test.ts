@@ -280,6 +280,64 @@ describe("createJarvisTaskRuntime", () => {
     expect(executeTools).toHaveBeenCalledTimes(1);
   });
 
+  it("emits actionable autonomous task runtime logs when observability is enabled", async () => {
+    const logSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const stateDir = tempStateDir();
+      const executeTools = vi.fn(async (requests) =>
+        requests.map((request: any) => ({
+          name: request.name,
+          callId: request.callId,
+          status: "success",
+          output:
+            "✅ Jarvis internal task added and scheduled:\n  scheduler: Jarvis TaskScheduler (not system crontab)\n  id: market-weekly\n  cron: 0 14 * * 5\n  prompt: 分析市场",
+        })),
+      );
+      const taskRuntime = createJarvisTaskRuntime({
+        sessionId: "s1",
+        toolRouter: { executeTools } as any,
+        config: {
+          agentRuntime: {
+            autonomousTaskRuntime: {
+              enabled: true,
+              mode: "execute",
+              stateDir,
+              observability: true,
+              maxRecoveryAttempts: 3,
+            },
+          },
+        } as any,
+      })!;
+      const input = planInput(intent());
+      const graph = await taskRuntime.plan(input);
+      const shouldExecute = await taskRuntime.shouldExecute?.({
+        ...input,
+        graph: graph!,
+      });
+      const result = await taskRuntime.execute({ ...input, graph: graph! });
+      const logs = logSpy.mock.calls.map((call) => String(call[0])).join("\n");
+
+      expect(shouldExecute).toBe(true);
+      expect(result?.status).toBe("succeeded");
+      expect(logs).toContain("[TaskGraph] runtime config mode=execute");
+      expect(logs).toContain("maxRecoveryAttempts=3");
+      expect(logs).toContain("[TaskGraph] context subject=personal");
+      expect(logs).toContain("[TaskGraph] acceptance plan:");
+      expect(logs).toContain("[TaskGraph] execution decision");
+      expect(logs).toContain("execute=true");
+      expect(logs).toContain("adapter=jarvis-task-schedule");
+      expect(logs).toContain("caps=task.schedule");
+      expect(logs).toContain("node acceptance id=step-1");
+      expect(logs).toContain("task-scheduled:pass");
+      expect(logs).toContain("artifacts:");
+      expect(logs).toContain("taskId=market-weekly");
+      expect(logs).toContain("snapshotStatus=succeeded");
+      expect(logs).toContain("canClaimSuccess=true");
+    } finally {
+      logSpy.mockRestore();
+    }
+  });
+
   it("does not pass schedule acceptance when task_add output has no observable task id", async () => {
     const stateDir = tempStateDir();
     const executeTools = vi.fn(async (requests) =>
@@ -406,82 +464,91 @@ describe("createJarvisTaskRuntime", () => {
   });
 
   it("does not pre-execute graphs that require LLM-generated content before deterministic writes", async () => {
+    const logSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     const stateDir = tempStateDir();
     const executeTools = vi.fn(async () => []);
-    const taskRuntime = createJarvisTaskRuntime({
-      sessionId: "s1",
-      toolRouter: { executeTools } as any,
-      config: {
-        agentRuntime: {
-          autonomousTaskRuntime: {
-            enabled: true,
-            mode: "execute",
-            stateDir,
+    try {
+      const taskRuntime = createJarvisTaskRuntime({
+        sessionId: "s1",
+        toolRouter: { executeTools } as any,
+        config: {
+          agentRuntime: {
+            autonomousTaskRuntime: {
+              enabled: true,
+              mode: "execute",
+              stateDir,
+            },
+          },
+        } as any,
+      })!;
+      const analyze = step({
+        id: "step-1",
+        type: "analyze",
+        action: "分析",
+        target: "市场走势",
+        operation: {
+          domain: "general_chat",
+          action: "analyze",
+          targetType: "external_entity",
+          target: "市场走势",
+          selector: "市场走势",
+          scope: "external",
+          riskLevel: "medium",
+        },
+        riskLevel: "medium",
+      });
+      const write = step({
+        id: "step-2",
+        type: "execute",
+        action: "保存",
+        target: "market.md",
+        operation: {
+          domain: "general_chat",
+          action: "create",
+          targetType: "file",
+          target: "market.md",
+          selector: "market.md",
+          scope: "workspace",
+          riskLevel: "low",
+        },
+        dependsOn: ["step-1"],
+        riskLevel: "low",
+      });
+      const frame = intent({
+        taskType: "execute",
+        needsScheduling: false,
+        richIntent: {
+          ...intent().richIntent,
+          userGoal: "分析市场走势并保存到 market.md",
+          action: "create",
+          primaryAction: "create",
+          contextDependency: {
+            recentConversation: false,
+            longTermMemory: false,
+            externalWorld: true,
+            localWorkspace: true,
           },
         },
-      } as any,
-    })!;
-    const analyze = step({
-      id: "step-1",
-      type: "analyze",
-      action: "分析",
-      target: "市场走势",
-      operation: {
-        domain: "general_chat",
-        action: "analyze",
-        targetType: "external_entity",
-        target: "市场走势",
-        selector: "市场走势",
-        scope: "external",
-        riskLevel: "medium",
-      },
-      riskLevel: "medium",
-    });
-    const write = step({
-      id: "step-2",
-      type: "execute",
-      action: "保存",
-      target: "market.md",
-      operation: {
-        domain: "general_chat",
-        action: "create",
-        targetType: "file",
-        target: "market.md",
-        selector: "market.md",
-        scope: "workspace",
-        riskLevel: "low",
-      },
-      dependsOn: ["step-1"],
-      riskLevel: "low",
-    });
-    const frame = intent({
-      taskType: "execute",
-      needsScheduling: false,
-      richIntent: {
-        ...intent().richIntent,
-        userGoal: "分析市场走势并保存到 market.md",
-        action: "create",
-        primaryAction: "create",
-        contextDependency: {
-          recentConversation: false,
-          longTermMemory: false,
-          externalWorld: true,
-          localWorkspace: true,
-        },
-      },
-      intentSteps: [analyze, write],
-    });
-    const input = planInput(frame, runtimeContext({ currentContent: "" }));
-    const graph = await taskRuntime.plan(input);
+        intentSteps: [analyze, write],
+      });
+      const input = planInput(frame, runtimeContext({ currentContent: "" }));
+      const graph = await taskRuntime.plan(input);
 
-    expect(graph?.nodes.map((node) => node.kind)).toEqual([
-      "analyze",
-      "write_file",
-    ]);
-    expect(await taskRuntime.shouldExecute?.({ ...input, graph: graph! })).toBe(
-      false,
-    );
-    expect(await taskRuntime.execute({ ...input, graph: graph! })).toBeNull();
-    expect(executeTools).not.toHaveBeenCalled();
+      expect(graph?.nodes.map((node) => node.kind)).toEqual([
+        "analyze",
+        "write_file",
+      ]);
+      expect(
+        await taskRuntime.shouldExecute?.({ ...input, graph: graph! }),
+      ).toBe(false);
+      expect(await taskRuntime.execute({ ...input, graph: graph! })).toBeNull();
+      expect(executeTools).not.toHaveBeenCalled();
+      const logs = logSpy.mock.calls.map((call) => String(call[0])).join("\n");
+      expect(logs).toContain("execute=false");
+      expect(logs).toContain("requires_llm_node_first=step-1");
+      expect(logs).toContain("llmBlocking=step-1");
+    } finally {
+      logSpy.mockRestore();
+    }
   });
 });

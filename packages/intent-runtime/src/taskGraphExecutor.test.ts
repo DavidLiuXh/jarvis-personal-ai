@@ -11,6 +11,7 @@ import {
   DefaultTaskGraphCapabilityRegistry,
   TaskGraphExecutor,
   type TaskGraphCapabilityAdapter,
+  type TaskGraphExecutorEvent,
   type TaskNodeExecutionRequest,
   type TaskNodeExecutionResult,
 } from "./taskGraphExecutor.js";
@@ -304,7 +305,7 @@ describe("TaskGraphExecutor", () => {
 
   it("emits observable execution and acceptance events", async () => {
     const graph = buildTaskGraph(recallAndWriteIntent());
-    const events: string[] = [];
+    const events: TaskGraphExecutorEvent[] = [];
     const executor = new TaskGraphExecutor(
       new DefaultTaskGraphCapabilityRegistry([
         adapter(["memory.recall"], (request) => ({
@@ -335,7 +336,7 @@ describe("TaskGraphExecutor", () => {
       ]),
       {
         observer: (event) => {
-          events.push(event.type);
+          events.push(event);
         },
       },
     );
@@ -345,7 +346,7 @@ describe("TaskGraphExecutor", () => {
     });
 
     expect(result.status).toBe("succeeded");
-    expect(events).toEqual(
+    expect(events.map((event) => event.type)).toEqual(
       expect.arrayContaining([
         "task_graph_started",
         "task_node_started",
@@ -355,5 +356,30 @@ describe("TaskGraphExecutor", () => {
         "task_graph_finished",
       ]),
     );
+    expect(
+      events.find((event) => event.type === "task_node_started"),
+    ).toMatchObject({
+      type: "task_node_started",
+      nodeId: "step-1",
+      adapterId: "memory.recall",
+      requiredCapabilities: ["memory.recall"],
+    });
+    expect(
+      events.find((event) => event.type === "task_node_result"),
+    ).toMatchObject({
+      type: "task_node_result",
+      nodeId: "step-1",
+      artifactCount: 1,
+      artifactTypes: ["memory"],
+    });
+    expect(
+      events.find((event) => event.type === "task_graph_finished"),
+    ).toMatchObject({
+      type: "task_graph_finished",
+      status: "succeeded",
+      blockedReasons: [],
+      failedReasons: [],
+      finalResponseCanClaimSuccess: true,
+    });
   });
 });

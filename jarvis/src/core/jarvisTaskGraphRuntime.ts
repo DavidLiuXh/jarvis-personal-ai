@@ -87,15 +87,69 @@ function formatNode(node: TaskGraph["nodes"][number]): string {
   return `${node.id}: kind=${node.kind} caps=${caps} deps=${deps} title="${node.title}"${blocked}`;
 }
 
-function logTaskGraphPlan(graph: TaskGraph): void {
+function compactLogText(value: unknown, max = 180): string {
+  const text = stringifyOutput(value).replace(/\s+/g, " ").trim();
+  if (text.length <= max) return text;
+  return `${text.slice(0, max)}...`;
+}
+
+function formatCriteria(node: TaskGraph["nodes"][number]): string {
+  return (
+    node.acceptanceCriteria
+      .map(
+        (criterion) =>
+          `${criterion.id}:${criterion.type}${criterion.required ? ":required" : ""}`,
+      )
+      .join(",") || "none"
+  );
+}
+
+function formatArtifact(artifact: TaskRuntimeArtifact): string {
+  const parts = [`${artifact.id}:${artifact.type}`];
+  if (artifact.path) parts.push(`path=${artifact.path}`);
+  if (artifact.taskId) parts.push(`taskId=${artifact.taskId}`);
+  if (artifact.exists !== undefined) parts.push(`exists=${artifact.exists}`);
+  if (artifact.memoryItems) parts.push(`items=${artifact.memoryItems.length}`);
+  if (artifact.checksum) parts.push(`checksum=${artifact.checksum}`);
+  return parts.join(" ");
+}
+
+function logTaskGraphPlan(
+  graph: TaskGraph,
+  input: TaskRuntimePlanInput,
+  options: {
+    mode: string;
+    observability: boolean;
+    stateDir: string;
+    maxRecoveryAttempts: number;
+  },
+): void {
   console.error(
-    `🧭 [TaskGraph] planned id=${graph.id} status=${graph.status} nodes=${graph.nodes.length}`,
+    `🧭 [TaskGraph] runtime config mode=${options.mode} observability=${options.observability} ` +
+      `stateDir=${options.stateDir} maxRecoveryAttempts=${options.maxRecoveryAttempts}`,
+  );
+  console.error(
+    `🧭 [TaskGraph] context subject=${input.intent.subject} taskType=${input.intent.taskType} ` +
+      `memoryBoundary=${input.memoryContract.subjectBoundary} memoryTarget=${input.memoryContract.memoryTarget} ` +
+      `interactiveChannel=${input.context.interactiveChannel} currentContent=${
+        input.context.currentContent?.trim() ? "yes" : "no"
+      } artifacts=${Object.keys(input.context.artifacts ?? {}).length} skills=${input.skills.length}`,
+  );
+  console.error(
+    `🧭 [TaskGraph] planned id=${graph.id} status=${graph.status} nodes=${graph.nodes.length} edges=${graph.edges.length}`,
   );
   console.error(
     `🧭 [TaskGraph] execution plan:\n${graph.nodes
       .map((node) => `  ${formatNode(node)}`)
       .join("\n")}`,
   );
+  if (options.observability) {
+    console.error(
+      `🧭 [TaskGraph] acceptance plan:\n${graph.nodes
+        .map((node) => `  ${node.id}: ${formatCriteria(node)}`)
+        .join("\n")}`,
+    );
+  }
   if (graph.blockedReasons.length > 0) {
     console.error(
       `🧭 [TaskGraph] planning blockers: ${graph.blockedReasons.join("; ")}`,
@@ -112,11 +166,14 @@ function observer(enabled: boolean): TaskGraphExecutionObserver {
       );
     } else if (event.type === "task_node_started") {
       console.error(
-        `🧭 [TaskGraph] node started id=${event.nodeId} kind=${event.kind} attempt=${event.attempt}`,
+        `🧭 [TaskGraph] node started id=${event.nodeId} kind=${event.kind} attempt=${event.attempt} ` +
+          `adapter=${event.adapterId} caps=${event.requiredCapabilities.join(",") || "none"}`,
       );
     } else if (event.type === "task_node_result") {
       console.error(
-        `🧭 [TaskGraph] node result id=${event.nodeId} status=${event.status} artifacts=${event.artifactCount}`,
+        `🧭 [TaskGraph] node result id=${event.nodeId} status=${event.status} ` +
+          `artifacts=${event.artifactCount} artifactTypes=${event.artifactTypes.join(",") || "none"}` +
+          (event.error ? ` error="${compactLogText(event.error)}"` : ""),
       );
     } else if (event.type === "task_node_acceptance") {
       console.error(
@@ -124,7 +181,8 @@ function observer(enabled: boolean): TaskGraphExecutionObserver {
           event.results
             .map(
               (result) =>
-                `${result.criterionId}:${result.ok ? "pass" : "fail"}${result.blocking ? ":blocking" : ""}`,
+                `${result.criterionId}:${result.ok ? "pass" : "fail"}${result.blocking ? ":blocking" : ""}` +
+                (result.ok ? "" : ` reason="${compactLogText(result.reason)}"`),
             )
             .join(","),
       );
@@ -135,8 +193,25 @@ function observer(enabled: boolean): TaskGraphExecutionObserver {
       );
     } else if (event.type === "task_graph_finished") {
       console.error(
-        `🧭 [TaskGraph] finished id=${event.graphId} status=${event.status} blocked=${event.blocked} failed=${event.failed}`,
+        `🧭 [TaskGraph] finished id=${event.graphId} status=${event.status} blocked=${event.blocked} failed=${event.failed} ` +
+          `canClaimSuccess=${event.finalResponseCanClaimSuccess ?? false}`,
       );
+      const blockedReasons = event.blockedReasons ?? [];
+      const failedReasons = event.failedReasons ?? [];
+      if (blockedReasons.length > 0) {
+        console.error(
+          `🧭 [TaskGraph] blocked reasons:\n${blockedReasons
+            .map((reason) => `  - ${reason}`)
+            .join("\n")}`,
+        );
+      }
+      if (failedReasons.length > 0) {
+        console.error(
+          `🧭 [TaskGraph] failed reasons:\n${failedReasons
+            .map((reason) => `  - ${reason}`)
+            .join("\n")}`,
+        );
+      }
     }
   };
 }
@@ -599,17 +674,130 @@ function createAdapters(toolRouter: ToolRouter): TaskGraphCapabilityAdapter[] {
   ];
 }
 
-function shouldExecuteGraph(input: TaskRuntimeExecuteInput): boolean {
+type TaskGraphExecutionDecision = {
+  execute: boolean;
+  reasons: string[];
+  executableNodeIds: string[];
+  deterministicNodeIds: string[];
+  llmBlockingNodeIds: string[];
+};
+
+function evaluateExecutionDecision(
+  input: TaskRuntimeExecuteInput,
+): TaskGraphExecutionDecision {
   const graph = input.graph;
-  if (graph.nodes.length === 0) return false;
-  if (graph.nodes.some((node) => PRE_LLM_BLOCKING_NODE_KINDS.has(node.kind))) {
-    return false;
+  const reasons: string[] = [];
+  if (graph.nodes.length === 0) {
+    return {
+      execute: false,
+      reasons: ["no_nodes"],
+      executableNodeIds: [],
+      deterministicNodeIds: [],
+      llmBlockingNodeIds: [],
+    };
   }
-  return graph.nodes.some((node) => {
-    if (!DETERMINISTIC_NODE_KINDS.has(node.kind)) return false;
-    if (node.kind === "recall" && graph.nodes.length === 1) return false;
-    return true;
-  });
+  if (graph.blockedReasons.length > 0) {
+    reasons.push(`planning_blockers=${graph.blockedReasons.length}`);
+  }
+  const llmBlockingNodeIds = graph.nodes
+    .filter((node) => PRE_LLM_BLOCKING_NODE_KINDS.has(node.kind))
+    .map((node) => node.id);
+  if (llmBlockingNodeIds.length > 0) {
+    reasons.push(`requires_llm_node_first=${llmBlockingNodeIds.join(",")}`);
+    return {
+      execute: false,
+      reasons,
+      executableNodeIds: [],
+      deterministicNodeIds: graph.nodes
+        .filter((node) => DETERMINISTIC_NODE_KINDS.has(node.kind))
+        .map((node) => node.id),
+      llmBlockingNodeIds,
+    };
+  }
+  const deterministicNodeIds = graph.nodes
+    .filter((node) => DETERMINISTIC_NODE_KINDS.has(node.kind))
+    .map((node) => node.id);
+  const executableNodeIds = graph.nodes
+    .filter((node) => {
+      if (!DETERMINISTIC_NODE_KINDS.has(node.kind)) return false;
+      if (node.kind === "recall" && graph.nodes.length === 1) return false;
+      return true;
+    })
+    .map((node) => node.id);
+  if (deterministicNodeIds.length === 0) {
+    reasons.push("no_deterministic_nodes");
+  }
+  if (
+    deterministicNodeIds.length > 0 &&
+    executableNodeIds.length === 0 &&
+    graph.nodes.every((node) => node.kind === "recall")
+  ) {
+    reasons.push("recall_only_delegated_to_llm_active_recall");
+  }
+  if (executableNodeIds.length > 0) {
+    reasons.push("deterministic_nodes_available");
+  }
+  return {
+    execute: executableNodeIds.length > 0,
+    reasons,
+    executableNodeIds,
+    deterministicNodeIds,
+    llmBlockingNodeIds,
+  };
+}
+
+function logExecutionDecision(
+  input: TaskRuntimeExecuteInput,
+  decision: TaskGraphExecutionDecision,
+): void {
+  console.error(
+    `🧭 [TaskGraph] execution decision graph=${input.graph.id} execute=${decision.execute} ` +
+      `reasons=${decision.reasons.join(",") || "none"} executable=${decision.executableNodeIds.join(",") || "-"} ` +
+      `deterministic=${decision.deterministicNodeIds.join(",") || "-"} llmBlocking=${decision.llmBlockingNodeIds.join(",") || "-"}`,
+  );
+}
+
+function logExecutionSummary(
+  result: Awaited<ReturnType<AutonomousTaskRuntime["run"]>>,
+  observability: boolean,
+): void {
+  console.error(
+    `🧭 [TaskGraph] execution result status=${result.status} snapshot=${result.snapshot.id} ` +
+      `snapshotStatus=${result.snapshot.status} nodes=${result.execution.nodes.length} artifacts=${result.execution.artifacts.length} ` +
+      `replan=${result.replanDecisions.map((decision) => `${decision.action}:${decision.reasonCode}`).join(",") || "none"}`,
+  );
+  if (!observability) return;
+  if (result.execution.artifacts.length > 0) {
+    console.error(
+      `🧭 [TaskGraph] artifacts:\n${result.execution.artifacts
+        .map((artifact) => `  - ${formatArtifact(artifact)}`)
+        .join("\n")}`,
+    );
+  }
+  if (result.replanDecisions.length > 0) {
+    console.error(
+      `🧭 [TaskGraph] replan decisions:\n${result.replanDecisions
+        .map(
+          (decision) =>
+            `  - action=${decision.action} node=${decision.nodeId ?? "-"} reason=${decision.reasonCode}`,
+        )
+        .join("\n")}`,
+    );
+  }
+  if (result.execution.blockedReasons.length > 0) {
+    console.error(
+      `🧭 [TaskGraph] execution blocked reasons:\n${result.execution.blockedReasons
+        .map((reason) => `  - ${reason}`)
+        .join("\n")}`,
+    );
+  }
+  if (result.execution.failedReasons.length > 0) {
+    console.error(
+      `🧭 [TaskGraph] execution failed reasons:\n${result.execution.failedReasons
+        .map((reason) => `  - ${reason}`)
+        .join("\n")}`,
+    );
+  }
 }
 
 export function createJarvisTaskRuntime(
@@ -621,15 +809,20 @@ export function createJarvisTaskRuntime(
   const mode = cfg.mode ?? "plan_only";
   const observability =
     cfg.observability ?? options.config.agentRuntime?.observability === true;
-  const store = new JsonFileTaskGraphExecutionStore(
-    taskGraphStateDir(options.config),
-  );
+  const stateDir = taskGraphStateDir(options.config);
+  const maxRecoveryAttempts = cfg.maxRecoveryAttempts ?? 2;
+  if (mode === "skip") {
+    console.error(
+      `🧭 [TaskGraph] runtime config mode=skip observability=${observability} stateDir=${stateDir}; planning disabled`,
+    );
+  }
+  const store = new JsonFileTaskGraphExecutionStore(stateDir);
   const runtime = new AutonomousTaskRuntime(
     new DefaultTaskGraphCapabilityRegistry(adapters),
     {
       store,
       observer: observer(observability),
-      maxRecoveryAttempts: cfg.maxRecoveryAttempts ?? 2,
+      maxRecoveryAttempts,
       availableCapabilities: IMPLEMENTED_CAPABILITIES as unknown as string[],
     },
   );
@@ -642,16 +835,27 @@ export function createJarvisTaskRuntime(
         channelAvailable: input.context.interactiveChannel,
         memoryBoundary: input.memoryContract.subjectBoundary,
       });
-      logTaskGraphPlan(graph);
+      logTaskGraphPlan(graph, input, {
+        mode,
+        observability,
+        stateDir,
+        maxRecoveryAttempts,
+      });
       return graph;
     },
     shouldExecute(input) {
-      return shouldExecuteGraph(input);
+      const decision = evaluateExecutionDecision(input);
+      logExecutionDecision(input, decision);
+      return decision.execute;
     },
     async execute(input) {
-      if (!shouldExecuteGraph(input)) return null;
+      const decision = evaluateExecutionDecision(input);
+      if (!decision.execute) {
+        logExecutionDecision(input, decision);
+        return null;
+      }
       console.error(
-        `🧭 [TaskGraph] executing deterministic nodes for graph=${input.graph.id}`,
+        `🧭 [TaskGraph] executing deterministic nodes for graph=${input.graph.id} nodes=${decision.executableNodeIds.join(",")}`,
       );
       const result = await runtime.run({
         intent: input.intent,
@@ -671,12 +875,7 @@ export function createJarvisTaskRuntime(
         },
         signal: input.signal,
       });
-      console.error(
-        `🧭 [TaskGraph] execution result status=${result.status} snapshot=${result.snapshot.id} replan=${
-          result.replanDecisions.map((decision) => decision.action).join(",") ||
-          "none"
-        }`,
-      );
+      logExecutionSummary(result, observability);
       return result;
     },
   };
