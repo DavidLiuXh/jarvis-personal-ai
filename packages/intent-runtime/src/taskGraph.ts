@@ -38,7 +38,7 @@ export type TaskRequirement = {
 
 export type TaskArtifactSpec = {
   id: string;
-  type: "file" | "message" | "report" | "memory" | "scheduled_task";
+  type: "file" | "message" | "report" | "memory" | "scheduled_task" | "source";
   description: string;
   required: boolean;
 };
@@ -188,6 +188,20 @@ function hasAny(text: string, pattern: RegExp): boolean {
   return pattern.test(text);
 }
 
+const SOURCE_ACQUISITION_RE =
+  /\b(?:collect|search|fetch|crawl|scrape|source|sources|sites|news|authoritative|websites?|articles?|references?)\b|资料|素材|来源|信源|网站|网页|新闻|权威|收集|检索|搜索|抓取|爬取|查找|整理来源/i;
+
+const EXPLICIT_FILE_WRITE_RE =
+  /\b(?:write|save|export|persist|create|update)\b.*\b(?:file|document|report|markdown|md|html|txt|json|csv)\b|保存|写入|写成|保存成|导出|输出到|落地|本地(?:文件|文档)|(?:markdown|md|html|txt|json|csv)\s*(?:文件|文档|报告)|\.(?:md|markdown|txt|json|html|csv|ts|tsx|js|py|yaml|yml)\b/i;
+
+function isSourceAcquisitionText(text: string): boolean {
+  return hasAny(text, SOURCE_ACQUISITION_RE);
+}
+
+function isExplicitFileWriteText(text: string): boolean {
+  return hasAny(text, EXPLICIT_FILE_WRITE_RE);
+}
+
 function taskKindFromIntent(intent: IntentFrame): TaskKind {
   if (intent.intentSteps.length > 1) return "mixed";
   if (intent.taskType === "schedule") return "schedule";
@@ -244,9 +258,10 @@ function artifactSpecsForKind(
   if (kind === "research") {
     return [
       {
-        id: "artifact-report-1",
-        type: "report",
-        description: "Research or analysis report in final response.",
+        id: "artifact-source-collection-1",
+        type: "source",
+        description:
+          "Source collection or evidence gathered for downstream analysis.",
         required: true,
       },
     ];
@@ -459,23 +474,34 @@ function nodeKindForStep(
   if (step.type === "recall") return "recall";
   if (step.type === "schedule") return "schedule";
   if (step.type === "delegate") return "delegate";
-  const text = `${step.action} ${step.target} ${step.operation.action} ${step.operation.targetType}`;
-  if (/push|send|发送|推送|微信|飞书|wechat|feishu/i.test(text)) return "push";
-  if (/read|读取|打开/i.test(text) || step.operation.action === "read") {
+  const surfaceText =
+    `${step.action} ${step.target} ${step.operation.target} ${step.operation.selector}`.trim();
+  const semanticText =
+    `${surfaceText} ${step.operation.action} ${step.operation.targetType}`.trim();
+  if (/push|send|发送|推送|微信|飞书|wechat|feishu/i.test(semanticText)) {
+    return "push";
+  }
+  if (
+    /read|读取|打开/i.test(semanticText) ||
+    step.operation.action === "read"
+  ) {
     return "read_file";
   }
   if (
-    /write|保存|写入|生成|markdown|md|file|document/i.test(text) ||
-    step.operation.action === "create" ||
-    step.operation.action === "update"
-  ) {
-    return "write_file";
-  }
-  if (
-    /shell|command|terminal|curl|命令|终端/i.test(text) ||
+    /shell|command|terminal|curl|wget|命令|终端/i.test(semanticText) ||
     intent.semanticEvidence.actionRequest.action === "run"
   ) {
     return "run_shell";
+  }
+  if (
+    step.type !== "analyze" &&
+    isSourceAcquisitionText(semanticText) &&
+    !isExplicitFileWriteText(surfaceText)
+  ) {
+    return "research";
+  }
+  if (isExplicitFileWriteText(surfaceText)) {
+    return "write_file";
   }
   if (step.type === "analyze") return "analyze";
   return "respond";
@@ -540,6 +566,17 @@ function outputForNode(
       },
     ];
   }
+  if (kind === "research") {
+    return [
+      {
+        id: `${nodeId}-sources`,
+        type: "source",
+        description:
+          "Source collection gathered for downstream analysis or response.",
+        required: true,
+      },
+    ];
+  }
   return [
     {
       id: `${nodeId}-message`,
@@ -594,6 +631,17 @@ function acceptanceForNode(
         "tool_result",
         "The push tool returned success.",
         { nodeId, tool: "push_to_channel" },
+        "step",
+      ),
+    ];
+  }
+  if (kind === "research") {
+    return [
+      criteria(
+        `${nodeId}-source-count`,
+        "source_count",
+        "The node gathered source evidence for downstream analysis.",
+        { nodeId, minSources: 1 },
         "step",
       ),
     ];

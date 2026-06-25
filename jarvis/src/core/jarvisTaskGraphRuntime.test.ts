@@ -607,7 +607,7 @@ describe("createJarvisTaskRuntime", () => {
     }
   });
 
-  it("does not pre-execute write_file nodes without concrete upstream or current-context content", async () => {
+  it("plans source acquisition as deferred research rather than workspace file writing", async () => {
     const logSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     const stateDir = tempStateDir();
     const executeTools = vi.fn(async () => []);
@@ -625,7 +625,7 @@ describe("createJarvisTaskRuntime", () => {
           },
         } as any,
       })!;
-      const collectAsWrite = step({
+      const collectSources = step({
         id: "step-1",
         type: "execute",
         action: "execute",
@@ -675,7 +675,7 @@ describe("createJarvisTaskRuntime", () => {
             localWorkspace: true,
           },
         },
-        intentSteps: [collectAsWrite, analyze],
+        intentSteps: [collectSources, analyze],
       });
       const input = planInput(
         frame,
@@ -688,16 +688,25 @@ describe("createJarvisTaskRuntime", () => {
       const graph = await taskRuntime.plan(input);
 
       expect(graph?.nodes.map((node) => node.kind)).toEqual([
-        "write_file",
+        "research",
         "analyze",
       ]);
+      expect(graph?.nodes[0].outputs).toEqual(
+        expect.arrayContaining([expect.objectContaining({ type: "source" })]),
+      );
+      expect(graph?.nodes[0].acceptanceCriteria).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ type: "source_count" }),
+        ]),
+      );
       expect(
         await taskRuntime.shouldExecute?.({ ...input, graph: graph! }),
       ).toBe(false);
       expect(await taskRuntime.execute({ ...input, graph: graph! })).toBeNull();
       expect(executeTools).not.toHaveBeenCalled();
       const logs = logSpy.mock.calls.map((call) => String(call[0])).join("\n");
-      expect(logs).toContain("step-1:no_concrete_write_content");
+      expect(logs).toContain("llm_nodes_deferred=step-1,step-2");
+      expect(logs).toContain("step-1:non_deterministic:research");
       expect(logs).toContain("step-2:non_deterministic:analyze");
     } finally {
       logSpy.mockRestore();

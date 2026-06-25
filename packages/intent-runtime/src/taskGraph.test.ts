@@ -193,6 +193,92 @@ describe("task graph runtime planning", () => {
     expect(validateTaskGraph(graph).every((gate) => gate.ok)).toBe(true);
   });
 
+  it("classifies source acquisition as research rather than file writing", () => {
+    const collect = makeStep({
+      id: "step-1",
+      type: "execute",
+      action: "execute",
+      target: "collect authoritative websites on AI Agent development trends",
+      operation: {
+        domain: "external_knowledge",
+        action: "create",
+        targetType: "external_entity",
+        target: "collect authoritative websites on AI Agent development trends",
+        riskLevel: "medium",
+      },
+      riskLevel: "medium",
+    });
+    const analyze = makeStep({
+      id: "step-2",
+      type: "analyze",
+      action: "analyze",
+      target: "collected data",
+      operation: {
+        domain: "external_knowledge",
+        action: "analyze",
+        targetType: "external_entity",
+        target: "collected data",
+        riskLevel: "medium",
+      },
+      dependsOn: ["step-1"],
+      riskLevel: "medium",
+    });
+    const write = makeStep({
+      id: "step-3",
+      type: "execute",
+      action: "save",
+      target: "agent_trend.md",
+      operation: {
+        domain: "code_modification",
+        action: "create",
+        targetType: "file",
+        target: "agent_trend.md",
+        riskLevel: "low",
+      },
+      dependsOn: ["step-2"],
+    });
+    const intent = makeIntent({
+      taskType: "execute",
+      needsExternalKnowledge: true,
+      needsTool: true,
+      richIntent: {
+        ...makeIntent().richIntent,
+        userGoal:
+          "collect authoritative sites, analyze AI Agent trends, and save agent_trend.md",
+        contextDependency: {
+          recentConversation: false,
+          longTermMemory: false,
+          localWorkspace: true,
+          externalWorld: true,
+        },
+      },
+      intentSteps: [collect, analyze, write],
+    });
+
+    const graph = buildTaskGraph(intent);
+
+    expect(graph.nodes.map((node) => node.kind)).toEqual([
+      "research",
+      "analyze",
+      "write_file",
+    ]);
+    expect(graph.nodes[0].outputs).toEqual(
+      expect.arrayContaining([expect.objectContaining({ type: "source" })]),
+    );
+    expect(graph.nodes[0].acceptanceCriteria).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ type: "source_count" }),
+      ]),
+    );
+    expect(graph.nodes[0].requiredCapabilities).toEqual(["web.search"]);
+    expect(graph.nodes[2].acceptanceCriteria).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ type: "file_exists" }),
+      ]),
+    );
+    expect(validateTaskGraph(graph).every((gate) => gate.ok)).toBe(true);
+  });
+
   it("blocks executable nodes when a required capability is unavailable", () => {
     const intent = makeIntent({
       taskType: "schedule",

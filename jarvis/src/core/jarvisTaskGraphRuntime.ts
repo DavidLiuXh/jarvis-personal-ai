@@ -39,6 +39,7 @@ const IMPLEMENTED_CAPABILITIES = [
   "file.read",
   "file.write",
   "shell.run",
+  "web.search",
   "task.schedule",
   "channel.push",
   "skill.activate",

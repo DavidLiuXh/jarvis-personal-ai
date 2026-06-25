@@ -725,6 +725,56 @@ async function planningCases(): Promise<TaskGraphQualityCaseResult[]> {
       graph.nodes[0].requiredCapabilities.includes("shell.run"),
   );
   add(
+    "source_acquisition_not_file_write",
+    "boundary",
+    buildTaskGraph(
+      intent({
+        taskType: "execute",
+        needsExternalKnowledge: true,
+        richIntent: {
+          ...intent().richIntent,
+          userGoal:
+            "collect authoritative websites on AI Agent development trends",
+          domain: "external_knowledge",
+          action: "create",
+          primaryAction: "analyze",
+          contextDependency: {
+            recentConversation: false,
+            longTermMemory: false,
+            localWorkspace: false,
+            externalWorld: true,
+          },
+        },
+        intentSteps: [
+          step({
+            id: "step-1",
+            type: "execute",
+            action: "execute",
+            target:
+              "collect authoritative websites on AI Agent development trends",
+            operation: {
+              domain: "external_knowledge",
+              action: "create",
+              targetType: "external_entity",
+              target:
+                "collect authoritative websites on AI Agent development trends",
+              riskLevel: "medium",
+            },
+          }),
+        ],
+      }),
+    ),
+    (graph) =>
+      graph.nodes[0].kind === "research" &&
+      graph.nodes[0].outputs.some((item) => item.type === "source") &&
+      graph.nodes[0].acceptanceCriteria.some(
+        (item) => item.type === "source_count",
+      ) &&
+      !graph.nodes[0].acceptanceCriteria.some(
+        (item) => item.type === "file_exists",
+      ),
+  );
+  add(
     "missing_capability_blocks",
     "negative",
     buildTaskGraph(intent(), undefined, {
