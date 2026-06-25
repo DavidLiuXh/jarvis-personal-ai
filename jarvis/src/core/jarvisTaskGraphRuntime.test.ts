@@ -758,6 +758,119 @@ describe("createJarvisTaskRuntime", () => {
     }
   });
 
+  it("fails open when optional research pre-execution times out", async () => {
+    const logSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const stateDir = tempStateDir();
+    const executeTools = vi.fn(async (requests) =>
+      requests.map((request) => ({
+        name: request.name,
+        callId: request.callId,
+        status: "failed",
+        output: "curl: (28) Connection timed out after 20005 milliseconds",
+      })),
+    );
+    try {
+      const taskRuntime = createJarvisTaskRuntime({
+        sessionId: "s1",
+        toolRouter: { executeTools } as any,
+        config: {
+          agentRuntime: {
+            autonomousTaskRuntime: {
+              enabled: true,
+              mode: "execute",
+              stateDir,
+            },
+          },
+        } as any,
+      })!;
+      const collectSources = step({
+        id: "step-1",
+        type: "execute",
+        action: "execute",
+        target: "collect authoritative websites on AI Agent development trends",
+        operation: {
+          domain: "external_knowledge",
+          action: "create",
+          targetType: "external_entity",
+          target:
+            "collect authoritative websites on AI Agent development trends",
+          selector: "AI Agent development trends",
+          scope: "external",
+          riskLevel: "medium",
+        },
+        riskLevel: "medium",
+      });
+      const analyze = step({
+        id: "step-2",
+        type: "analyze",
+        action: "analyze",
+        target: "collected data",
+        operation: {
+          domain: "external_knowledge",
+          action: "analyze",
+          targetType: "external_entity",
+          target: "collected data",
+          selector: "collected data",
+          scope: "external",
+          riskLevel: "medium",
+        },
+        dependsOn: ["step-1"],
+        riskLevel: "medium",
+      });
+      const input = planInput(
+        intent({
+          taskType: "execute",
+          needsScheduling: false,
+          richIntent: {
+            ...intent().richIntent,
+            userGoal:
+              "collect authoritative websites and analyze AI Agent development trends",
+            contextDependency: {
+              recentConversation: false,
+              longTermMemory: false,
+              externalWorld: true,
+              localWorkspace: false,
+            },
+          },
+          intentSteps: [collectSources, analyze],
+        }),
+        runtimeContext({
+          userPrompt:
+            "collect authoritative websites and analyze AI Agent development trends",
+        }),
+      );
+      const graph = await taskRuntime.plan(input);
+
+      const result = await taskRuntime.execute({ ...input, graph: graph! });
+
+      expect(result?.status).toBe("succeeded");
+      expect(result?.replanDecisions).toEqual([]);
+      expect(result?.execution.graph.nodes).toHaveLength(1);
+      expect(result?.execution.graph.nodes[0].optional).toBe(true);
+      expect(result?.execution.failedReasons).toEqual([
+        "step-1: curl: (28) Connection timed out after 20005 milliseconds",
+      ]);
+      expect(result?.execution.finalResponseContract.incompleteNodes).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            nodeId: "step-1",
+            status: "failed",
+            reason: "curl: (28) Connection timed out after 20005 milliseconds",
+          }),
+          expect.objectContaining({
+            nodeId: "step-2",
+            status: "pending",
+          }),
+        ]),
+      );
+      const logs = logSpy.mock.calls.map((call) => String(call[0])).join("\n");
+      expect(logs).not.toContain("source-repair");
+      expect(logs).not.toContain("recovery_attempts_exhausted");
+    } finally {
+      logSpy.mockRestore();
+    }
+  });
+
   it("does not pre-execute graphs that require LLM-generated content before deterministic writes", async () => {
     const logSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     const stateDir = tempStateDir();

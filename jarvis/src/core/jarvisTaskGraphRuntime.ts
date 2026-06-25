@@ -26,6 +26,7 @@ import {
   type TaskGraphExecutionObserver,
   type TaskNodeExecutionRequest,
   type TaskNodeExecutionResult,
+  type TaskNodeExecutionStatus,
   type TaskRuntimeArtifact,
 } from "../intent-runtime/index.js";
 import type { JarvisConfig } from "./configManager.js";
@@ -1097,10 +1098,23 @@ function buildExecutableSubgraph(
 ): TaskGraph {
   const executableNodeIds = new Set(decision.executableNodeIds);
   if (executableNodeIds.size === graph.nodes.length) return graph;
+  const partial = executableNodeIds.size < graph.nodes.length;
   return {
     ...graph,
     id: `${graph.id}-preexec-${decision.executableNodeIds.join("-")}`,
-    nodes: graph.nodes.filter((node) => executableNodeIds.has(node.id)),
+    nodes: graph.nodes
+      .filter((node) => executableNodeIds.has(node.id))
+      .map((node) =>
+        partial && node.kind === "research"
+          ? {
+              ...node,
+              // Research pre-execution is an optimization. If source fetch
+              // times out, the main LLM/tool loop can still complete the step.
+              optional: true,
+              retryPolicy: { ...node.retryPolicy, maxAttempts: 1 },
+            }
+          : node,
+      ),
     edges: graph.edges.filter(
       (edge) =>
         executableNodeIds.has(edge.from) && executableNodeIds.has(edge.to),
@@ -1112,24 +1126,34 @@ function buildExecutableSubgraph(
 
 function partialExecutionContract(
   fullGraph: TaskGraph,
-  executedGraph: TaskGraph,
+  completedNodeIds: Set<string>,
+  attemptedStates: Array<{
+    node: TaskGraph["nodes"][number];
+    status: TaskNodeExecutionStatus;
+    lastError: string | null;
+  }>,
 ): TaskFinalResponseContract {
-  const executedNodeIds = new Set(executedGraph.nodes.map((node) => node.id));
   const remainingNodes = fullGraph.nodes.filter(
-    (node) => !executedNodeIds.has(node.id),
+    (node) => !completedNodeIds.has(node.id),
   );
+  const attemptedById = new Map(
+    attemptedStates.map((state) => [state.node.id, state]),
+  );
+  const completedLabel = [...completedNodeIds].join(",") || "none";
   return {
     canClaimSuccess: false,
     incompleteNodes: remainingNodes.map((node) => ({
       nodeId: node.id,
-      status: "pending",
-      reason: PRE_LLM_BLOCKING_NODE_KINDS.has(node.kind)
-        ? "requires LLM generation or reasoning after pre-executed artifacts are available"
-        : "depends on a node that was deferred to the LLM/tool loop",
+      status: attemptedById.get(node.id)?.status ?? "pending",
+      reason:
+        attemptedById.get(node.id)?.lastError ??
+        (PRE_LLM_BLOCKING_NODE_KINDS.has(node.kind)
+          ? "requires LLM generation or reasoning after pre-executed artifacts are available"
+          : "depends on a node that was deferred to the LLM/tool loop"),
     })),
     instruction:
       `Only the deterministic pre-LLM TaskGraph nodes were executed: ${
-        executedGraph.nodes.map((node) => node.id).join(",") || "none"
+        completedLabel
       }. ` +
       `Remaining nodes still need completion in the LLM/tool loop or final response: ${
         remainingNodes.map((node) => `${node.id}:${node.kind}`).join(",") ||
@@ -1142,9 +1166,17 @@ function applyPartialExecutionContract(
   fullGraph: TaskGraph,
   result: Awaited<ReturnType<AutonomousTaskRuntime["run"]>>,
 ): Awaited<ReturnType<AutonomousTaskRuntime["run"]>> {
-  const executedNodeIds = new Set(result.graph.nodes.map((node) => node.id));
-  if (executedNodeIds.size === fullGraph.nodes.length) return result;
-  const contract = partialExecutionContract(fullGraph, result.graph);
+  const completedNodeIds = new Set(
+    result.execution.nodes
+      .filter((state) => state.status === "succeeded")
+      .map((state) => state.node.id),
+  );
+  if (completedNodeIds.size === fullGraph.nodes.length) return result;
+  const contract = partialExecutionContract(
+    fullGraph,
+    completedNodeIds,
+    result.execution.nodes,
+  );
   return {
     ...result,
     execution: {
