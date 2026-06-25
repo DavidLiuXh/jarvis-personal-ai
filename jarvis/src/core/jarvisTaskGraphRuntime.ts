@@ -867,12 +867,6 @@ function deterministicNodeInputReady(
   if (node.blockedReason) {
     return { ok: false, reason: `blocked:${node.blockedReason}` };
   }
-  if (node.kind === "recall" && input.graph.nodes.length === 1) {
-    return {
-      ok: false,
-      reason: "recall_only_delegated_to_llm_active_recall",
-    };
-  }
   if (node.kind === "write_file") {
     if (hasSafeDependency(node, safeNodeIds)) {
       return { ok: true, reason: "dependency_artifact_available" };
@@ -1005,13 +999,6 @@ function evaluateExecutionDecision(
     .map((node) => node.id);
   if (deterministicNodeIds.length === 0) {
     reasons.push("no_deterministic_nodes");
-  }
-  if (
-    deterministicNodeIds.length > 0 &&
-    executableNodeIds.length === 0 &&
-    graph.nodes.every((node) => node.kind === "recall")
-  ) {
-    reasons.push("recall_only_delegated_to_llm_active_recall");
   }
   if (executableNodeIds.length > 0) {
     reasons.push("deterministic_nodes_available");

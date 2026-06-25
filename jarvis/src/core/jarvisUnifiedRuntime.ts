@@ -243,6 +243,47 @@ function buildTaskGraphArtifactSection(
   ].join("\n");
 }
 
+function hasCompletedTaskGraphMemoryRecall(
+  execution: AutonomousTaskRuntimeResult | null,
+): boolean {
+  const result = execution?.execution;
+  if (!result) return false;
+  const succeededRecallNodeIds = new Set(
+    result.nodes
+      .filter(
+        (state) => state.node.kind === "recall" && state.status === "succeeded",
+      )
+      .map((state) => state.node.id),
+  );
+  if (succeededRecallNodeIds.size === 0) return false;
+  return result.artifacts.some(
+    (artifact) =>
+      artifact.type === "memory" && succeededRecallNodeIds.has(artifact.nodeId),
+  );
+}
+
+function hasTaskGraphRecallNode(
+  execution: AutonomousTaskRuntimeResult | null,
+): boolean {
+  return execution?.graph.nodes.some((node) => node.kind === "recall") === true;
+}
+
+function buildTaskGraphToolPolicySection(
+  execution: AutonomousTaskRuntimeResult | null,
+): string {
+  if (!hasTaskGraphRecallNode(execution)) return "";
+  const completed = hasCompletedTaskGraphMemoryRecall(execution);
+  return [
+    "<runtime_tool_policy>",
+    "recall_memory: disabled_for_this_turn",
+    `reason: ${completed ? "task_graph_memory_recall_completed" : "task_graph_owns_memory_recall"}`,
+    completed
+      ? "Use the memory artifacts in runtime_task_artifacts. Do not request another memory recall unless the user asks for a new recall scope."
+      : "Honor the TaskGraph execution contract. Do not request memory recall outside the planned recall step.",
+    "</runtime_tool_policy>",
+  ].join("\n");
+}
+
 function extractSummaryCandidatesFromSection(
   section: string,
 ): SummaryCandidate[] {
@@ -753,6 +794,9 @@ export async function runJarvisUnifiedRuntimeTurn(
           const taskArtifactSection = buildTaskGraphArtifactSection(
             context.taskGraphExecution,
           );
+          const taskGraphToolPolicy = buildTaskGraphToolPolicySection(
+            context.taskGraphExecution,
+          );
           const temporalRecallBoundary = buildTemporalRecallBoundary(contract);
           const protocol = input.promptBuilder.buildFromFacts(
             injectionPlan.facts,
@@ -770,6 +814,7 @@ export async function runJarvisUnifiedRuntimeTurn(
               stepMemory,
               taskGraphSection,
               taskArtifactSection,
+              taskGraphToolPolicy,
               executionContract,
               temporalRecallBoundary,
               injectionPlan.relevantSummarySection,
@@ -792,6 +837,7 @@ export async function runJarvisUnifiedRuntimeTurn(
         toolRouter: input.toolRouter,
         sessionId: input.sessionId,
       }),
+      deferMemoryRetrievalForTaskGraph: taskGraphExecutionEnabled,
       observer: (event) => {
         if (input.jarvisConfig.agentRuntime?.observability === true) {
           console.error(`[AgentRuntime] ${event.type}`);

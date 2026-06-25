@@ -3356,6 +3356,44 @@ export class IntentResolver {
         `🧭 [IntentResolver] Broad-topic entity drilldown; topic_shifted forced false`,
       );
     }
+    const conversationHistoryArtifactTopicShift =
+      !topicShifted &&
+      !referencesRecentHistory &&
+      memoryRecallTarget === "conversation_history" &&
+      hasExplicitConversationHistoryArtifactOrTopic(
+        prompt,
+        semanticEvidence,
+        parsedTopicAnalysis,
+      );
+    if (conversationHistoryArtifactTopicShift) {
+      const beforeTopicShifted = topicShifted;
+      topicShifted = true;
+      policyTrace.push({
+        ruleId: "topic.conversation_history_artifact_topic_shift",
+        stage: "guardrail",
+        priority: 415,
+        reasonCode: "CONVERSATION_HISTORY_ARTIFACT_TOPIC_SHIFT",
+        reason: normalizeIntentPolicyReason(
+          "CONVERSATION_HISTORY_ARTIFACT_TOPIC_SHIFT",
+        ),
+        applied: true,
+        before: {
+          topicShifted: beforeTopicShifted,
+          relation: topicRelation,
+          memoryTarget: memoryRecallTarget,
+          referencesRecentHistory,
+        },
+        after: {
+          topicShifted,
+          relation: "new_topic",
+          memoryTarget: memoryRecallTarget,
+          referencesRecentHistory,
+        },
+      });
+      console.error(
+        `🧭 [IntentResolver] Explicit conversation-history artifact/topic recall; topic_shifted forced true`,
+      );
+    }
     const currentBoundaryDomains = currentTopicBoundaryDomains({
       prompt,
       subject,
@@ -3563,44 +3601,6 @@ export class IntentResolver {
       });
       console.error(
         `🧭 [IntentResolver] Standalone personal request unrelated to recent history; topic_shifted forced true`,
-      );
-    }
-    const conversationHistoryArtifactTopicShift =
-      !topicShifted &&
-      !referencesRecentHistory &&
-      memoryRecallTarget === "conversation_history" &&
-      hasExplicitConversationHistoryArtifactOrTopic(
-        prompt,
-        semanticEvidence,
-        parsedTopicAnalysis,
-      );
-    if (conversationHistoryArtifactTopicShift) {
-      const beforeTopicShifted = topicShifted;
-      topicShifted = true;
-      policyTrace.push({
-        ruleId: "topic.conversation_history_artifact_topic_shift",
-        stage: "guardrail",
-        priority: 415,
-        reasonCode: "CONVERSATION_HISTORY_ARTIFACT_TOPIC_SHIFT",
-        reason: normalizeIntentPolicyReason(
-          "CONVERSATION_HISTORY_ARTIFACT_TOPIC_SHIFT",
-        ),
-        applied: true,
-        before: {
-          topicShifted: beforeTopicShifted,
-          relation: topicRelation,
-          memoryTarget: memoryRecallTarget,
-          referencesRecentHistory,
-        },
-        after: {
-          topicShifted,
-          relation: "new_topic",
-          memoryTarget: memoryRecallTarget,
-          referencesRecentHistory,
-        },
-      });
-      console.error(
-        `🧭 [IntentResolver] Explicit conversation-history artifact/topic recall; topic_shifted forced true`,
       );
     }
     let topicAnalysis = normalizeTopicAnalysis({

@@ -93,6 +93,7 @@ async function runConflictGovernanceCase(): Promise<MemoryQualityCaseResult> {
     facts: [
       fact({
         id: "profile",
+        subject: "user",
         content: "The user prefers detailed explanations.",
         confidence: 0.96,
       }),
@@ -104,6 +105,7 @@ async function runConflictGovernanceCase(): Promise<MemoryQualityCaseResult> {
       operation: "upsert",
       item: fact({
         id: "conflict",
+        subject: "user",
         content: "The user prefers one-word answers.",
         confidence: 0.4,
       }),

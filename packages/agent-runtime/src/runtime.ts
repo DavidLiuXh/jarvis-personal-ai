@@ -164,6 +164,12 @@ export type AgentRuntimeOptions = {
   observer?: AgentRuntimeObserver;
   llmLoop?: ToolLoopRuntimeOptions;
   taskRuntime?: TaskRuntime;
+  /**
+   * When an executable TaskRuntime is enabled, keep memory retrieval behind the
+   * task graph. This lets explicit recall/search steps own memory access instead
+   * of doing generic prewarm before the graph has been planned.
+   */
+  deferMemoryRetrievalForTaskGraph?: boolean;
 };
 
 export type AgentRuntimeInput = {
@@ -283,6 +289,87 @@ function formatTaskGraphArtifacts(context: RuntimeContext): string {
   ].join("\n");
 }
 
+function hasCompletedTaskGraphMemoryRecall(context: RuntimeContext): boolean {
+  const execution = context.taskGraphExecution?.execution;
+  if (!execution) return false;
+  const succeededRecallNodeIds = new Set(
+    execution.nodes
+      .filter(
+        (state) => state.node.kind === "recall" && state.status === "succeeded",
+      )
+      .map((state) => state.node.id),
+  );
+  if (succeededRecallNodeIds.size === 0) return false;
+  return execution.artifacts.some(
+    (artifact) =>
+      artifact.type === "memory" && succeededRecallNodeIds.has(artifact.nodeId),
+  );
+}
+
+function hasTaskGraphRecallNode(context: RuntimeContext): boolean {
+  return (
+    context.taskGraph?.nodes.some((node) => node.kind === "recall") === true
+  );
+}
+
+function formatTaskGraphToolPolicy(context: RuntimeContext): string {
+  if (!hasTaskGraphRecallNode(context)) return "";
+  const completed = hasCompletedTaskGraphMemoryRecall(context);
+  return [
+    "<runtime_tool_policy>",
+    "recall_memory: disabled_for_this_turn",
+    `reason: ${completed ? "task_graph_memory_recall_completed" : "task_graph_owns_memory_recall"}`,
+    completed
+      ? "Use the memory artifacts in runtime_task_artifacts. Do not request another memory recall unless the user asks for a new recall scope."
+      : "Honor the TaskGraph execution contract. Do not request memory recall outside the planned recall step.",
+    "</runtime_tool_policy>",
+  ].join("\n");
+}
+
+function withSuppressedTool(
+  options: ToolLoopRuntimeOptions,
+  toolName: string,
+  reason: string,
+): ToolLoopRuntimeOptions {
+  return {
+    ...options,
+    tools: options.tools?.filter((tool) => tool.name !== toolName),
+    toolExecutor: {
+      executeTools: async (requests, signal) => {
+        const allowed = requests.filter((request) => request.name !== toolName);
+        const allowedResults =
+          allowed.length > 0
+            ? await options.toolExecutor.executeTools(allowed, signal)
+            : [];
+        const allowedByCallId = new Map(
+          allowedResults.map((result) => [result.callId, result]),
+        );
+        return requests.map((request) => {
+          if (request.name !== toolName) {
+            return (
+              allowedByCallId.get(request.callId) ?? {
+                name: request.name,
+                callId: request.callId,
+                status: "failed" as const,
+                output: {
+                  ok: false,
+                  error: "tool result missing after suppression filter",
+                },
+              }
+            );
+          }
+          return {
+            name: request.name,
+            callId: request.callId,
+            status: "failed" as const,
+            output: { ok: false, error: reason },
+          };
+        });
+      },
+    },
+  };
+}
+
 export class DefaultResponseComposer implements ResponseComposer {
   async compose({ context }: ResponseComposerInput): Promise<RuntimeResponse> {
     const memoryDecision = formatMemoryDecision(context.memoryContract);
@@ -290,6 +377,7 @@ export class DefaultResponseComposer implements ResponseComposer {
     const skills = formatSkills(context.skills);
     const memoryText = context.memoryInjection?.text ?? "";
     const taskArtifacts = formatTaskGraphArtifacts(context);
+    const taskToolPolicy = formatTaskGraphToolPolicy(context);
     const taskGraphInstruction =
       context.taskGraphExecution?.execution.finalResponseContract.instruction ??
       "";
@@ -313,6 +401,7 @@ export class DefaultResponseComposer implements ResponseComposer {
       skills,
       memoryText,
       taskArtifacts,
+      taskToolPolicy,
       executionInstruction
         ? `<execution_contract>\n${executionInstruction}\n</execution_contract>`
         : "",
@@ -426,9 +515,14 @@ export class AgentRuntime {
         memoryContract,
         intentResult.intent,
       );
-      const retrieval = memoryContract.needMemory
-        ? await this.memoryRuntime.retrieve(memoryContract)
-        : emptyRetrieval(memoryContract);
+      const deferMemoryRetrieval =
+        this.options.deferMemoryRetrievalForTaskGraph === true &&
+        Boolean(this.options.taskRuntime) &&
+        (this.options.taskRuntime?.mode ?? "skip") === "execute";
+      const retrieval =
+        memoryContract.needMemory && !deferMemoryRetrieval
+          ? await this.memoryRuntime.retrieve(memoryContract)
+          : emptyRetrieval(memoryContract);
       context.memoryRetrieval = retrieval;
       context.memoryInjection = await this.memoryRuntime.inject({
         prompt: context.userPrompt,
@@ -513,7 +607,16 @@ export class AgentRuntime {
 
       context.response = await this.responseComposer.compose({ context });
       if (this.options.llmLoop && input.llmInitialMessages) {
-        context.llmLoop = await new ToolLoopRuntime(this.options.llmLoop).run({
+        const shouldSuppressRecallMemoryTool =
+          deferMemoryRetrieval && hasTaskGraphRecallNode(context);
+        const llmLoopOptions = shouldSuppressRecallMemoryTool
+          ? withSuppressedTool(
+              this.options.llmLoop,
+              "recall_memory",
+              "TaskGraph owns memory recall for this turn.",
+            )
+          : this.options.llmLoop;
+        context.llmLoop = await new ToolLoopRuntime(llmLoopOptions).run({
           userPrompt: context.userPrompt,
           systemContext:
             input.llmSystemContext ?? context.response.systemContext,

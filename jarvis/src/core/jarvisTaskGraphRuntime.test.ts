@@ -245,6 +245,108 @@ describe("createJarvisTaskRuntime", () => {
     expect(result?.snapshot.id).toBe(graph?.id);
   });
 
+  it("executes recall-only graphs through Jarvis memory recall instead of delegating to LLM active recall", async () => {
+    const stateDir = tempStateDir();
+    const executeTools = vi.fn(async (requests) =>
+      requests.map((request: any) => ({
+        name: request.name,
+        callId: request.callId,
+        status: "success",
+        output: "- user likes tea\n- user likes hiking",
+      })),
+    );
+    const taskRuntime = createJarvisTaskRuntime({
+      sessionId: "s1",
+      toolRouter: { executeTools } as any,
+      config: {
+        agentRuntime: {
+          autonomousTaskRuntime: {
+            enabled: true,
+            mode: "execute",
+            stateDir,
+            observability: false,
+          },
+        },
+      } as any,
+    })!;
+    const recallStep = step({
+      type: "recall",
+      action: "recall",
+      target: "user hobbies",
+      operation: {
+        domain: "memory",
+        action: "recall",
+        targetType: "memory",
+        target: "user hobbies",
+        selector: "user hobbies",
+        scope: "user_memory",
+        riskLevel: "low",
+      },
+      riskLevel: "low",
+    });
+    const frame = intent({
+      taskType: "recall",
+      needsScheduling: false,
+      semanticEvidence: {
+        personalContext: { present: true, reason: "personal", span: "" },
+        memoryRecall: {
+          present: true,
+          target: "user_memory",
+          reason: "explicit recall",
+          span: "还记得我的爱好吗",
+        },
+        actionRequest: {
+          present: true,
+          action: "recall",
+          object: "user hobbies",
+        },
+        entityHints: { tickers: [], technicalTerms: [], peopleOrCompanies: [] },
+      },
+      richIntent: {
+        ...intent().richIntent,
+        userGoal: "还记得我的爱好吗？",
+        domain: "memory",
+        action: "recall",
+        primaryAction: "recall",
+        contextDependency: {
+          recentConversation: false,
+          longTermMemory: true,
+          externalWorld: false,
+          localWorkspace: false,
+        },
+        riskLevel: "low",
+      },
+      intentSteps: [recallStep],
+    });
+    const input = planInput(
+      frame,
+      runtimeContext({ userPrompt: "还记得我的爱好吗？" }),
+    );
+    const graph = await taskRuntime.plan(input);
+
+    expect(graph?.nodes.map((node) => node.kind)).toEqual(["recall"]);
+    expect(await taskRuntime.shouldExecute?.({ ...input, graph: graph! })).toBe(
+      true,
+    );
+
+    const result = await taskRuntime.execute({ ...input, graph: graph! });
+
+    expect(executeTools).toHaveBeenCalledWith(
+      [
+        expect.objectContaining({
+          name: "recall_memory",
+          args: expect.objectContaining({ query: expect.any(String) }),
+        }),
+      ],
+      expect.any(Object),
+    );
+    expect(result?.status).toBe("succeeded");
+    expect(result?.execution.artifacts[0]).toMatchObject({
+      type: "memory",
+      memoryItems: ["user likes tea", "user likes hiking"],
+    });
+  });
+
   it("resumes persisted successful nodes without repeating deterministic tools", async () => {
     const stateDir = tempStateDir();
     const executeTools = vi.fn(async (requests) =>

@@ -8,8 +8,10 @@ import {
   DefaultIntentRuntime,
   IntentExecutor,
   StaticIntentResolverAdapter,
+  type AutonomousTaskRuntimeResult,
   type RuntimeToolRequest,
   type RuntimeToolResult,
+  type TaskGraph,
   type ToolExecutorAdapter,
 } from "../../intent-runtime/src/index.js";
 import {
@@ -156,15 +158,130 @@ function memoryRuntime(contract = memoryContract()) {
     rejected: [],
     trace: [],
   };
+  const planMemory = vi.fn(async () => contract);
+  const retrieve = vi.fn(async () => retrieval);
+  const inject = vi.fn(async () => injection);
   return {
     runtime: new DefaultMemoryRuntime<IntentFrame>({
       understand: async () => intent(),
-      planMemory: vi.fn(async () => contract),
-      retrieve: vi.fn(async () => retrieval),
-      inject: vi.fn(async () => injection),
+      planMemory,
+      retrieve,
+      inject,
     }),
     retrieval,
     injection,
+    planMemory,
+    retrieve,
+    inject,
+  };
+}
+
+function recallTaskGraph(): TaskGraph {
+  return {
+    id: "graph-recall",
+    rootTaskId: "task-recall",
+    nodes: [
+      {
+        id: "step-1",
+        title: "recall user memory",
+        kind: "recall",
+        requiredCapabilities: ["memory.recall"],
+        inputs: [],
+        outputs: [
+          {
+            id: "step-1-memory",
+            type: "memory",
+            description: "retrieved memory",
+            required: true,
+          },
+        ],
+        acceptanceCriteria: [
+          {
+            id: "step-1-memory-retrieved",
+            scope: "step",
+            type: "memory_retrieved",
+            description: "memory retrieved",
+            required: true,
+            validator: "memory_retrieved",
+            params: { minItems: 1 },
+          },
+        ],
+        retryPolicy: { maxAttempts: 1, strategy: "none" },
+        optional: false,
+      },
+    ],
+    edges: [],
+    globalConstraints: [],
+    acceptanceCriteria: [
+      {
+        id: "final-memory-retrieved",
+        scope: "final_response",
+        type: "memory_retrieved",
+        description: "memory retrieved",
+        required: true,
+        validator: "memory_retrieved",
+        params: { minItems: 1 },
+      },
+    ],
+    status: "planned",
+    blockedReasons: [],
+  };
+}
+
+function recallTaskGraphResult(
+  graph = recallTaskGraph(),
+): AutonomousTaskRuntimeResult {
+  return {
+    status: "succeeded",
+    graph,
+    execution: {
+      status: "succeeded",
+      graph,
+      nodes: [
+        {
+          node: graph.nodes[0],
+          status: "succeeded",
+          attempts: 1,
+          output: { ok: true },
+          artifacts: [
+            {
+              id: "step-1-memory",
+              nodeId: "step-1",
+              type: "memory",
+              content: "user likes tea and hiking",
+              memoryItems: [{ text: "user likes tea and hiking" }],
+            },
+          ],
+          acceptanceResults: [
+            {
+              criterionId: "step-1-memory-retrieved",
+              ok: true,
+              blocking: true,
+              reason: "memory retrieved",
+            },
+          ],
+          lastError: null,
+        },
+      ],
+      artifacts: [
+        {
+          id: "step-1-memory",
+          nodeId: "step-1",
+          type: "memory",
+          content: "user likes tea and hiking",
+          memoryItems: [{ text: "user likes tea and hiking" }],
+        },
+      ],
+      blockedReasons: [],
+      failedReasons: [],
+      finalResponseContract: {
+        canClaimSuccess: true,
+        incompleteNodes: [],
+        instruction: "Use the retrieved memory artifact.",
+      },
+    },
+    snapshot: {} as AutonomousTaskRuntimeResult["snapshot"],
+    replanDecisions: [],
   };
 }
 
@@ -377,5 +494,176 @@ describe("AgentRuntime", () => {
 
     expect(result.context.llmLoop?.toolsCalled.has("task_add")).toBe(true);
     expect(toolAdapter.executeTools).toHaveBeenCalledOnce();
+  });
+
+  it("defers memory retrieval when executable TaskGraph runtime owns memory access", async () => {
+    const frame = intent({
+      taskType: "recall",
+      needsMemory: true,
+      intentSteps: [
+        step({
+          type: "recall",
+          action: "recall",
+          target: "user hobbies",
+          operation: {
+            domain: "memory",
+            action: "recall",
+            targetType: "memory",
+            target: "user hobbies",
+            selector: "user hobbies",
+            scope: "user_memory",
+            riskLevel: "low",
+          },
+          riskLevel: "low",
+        }),
+      ],
+    });
+    const graph = recallTaskGraph();
+    const intentRuntime = new DefaultIntentRuntime(
+      new StaticIntentResolverAdapter(async () => frame),
+    );
+    const memory = memoryRuntime();
+    const plan = vi.fn(async () => {
+      expect(memory.retrieve).not.toHaveBeenCalled();
+      return graph;
+    });
+    const execute = vi.fn(async () => {
+      expect(memory.retrieve).not.toHaveBeenCalled();
+      return recallTaskGraphResult(graph);
+    });
+    const runtime = new AgentRuntime(intentRuntime, memory.runtime, undefined, {
+      taskRuntime: { mode: "execute", plan, execute },
+      deferMemoryRetrievalForTaskGraph: true,
+    });
+
+    const result = await runtime.handleTurn({
+      sessionId: "s1",
+      userPrompt: "还记得我的爱好吗？",
+    });
+
+    expect(plan).toHaveBeenCalledOnce();
+    expect(execute).toHaveBeenCalledOnce();
+    expect(memory.retrieve).not.toHaveBeenCalled();
+    expect(memory.inject).toHaveBeenCalledWith(
+      expect.objectContaining({
+        retrieval: expect.objectContaining({
+          session: [],
+          facts: [],
+          entries: [],
+        }),
+      }),
+    );
+    expect(result.response.systemContext).toContain(
+      "task_graph_memory_recall_completed",
+    );
+  });
+
+  it("suppresses recall_memory in the LLM loop after TaskGraph memory recall succeeds", async () => {
+    const frame = intent({
+      taskType: "recall",
+      needsMemory: true,
+      intentSteps: [
+        step({
+          type: "recall",
+          action: "recall",
+          target: "user hobbies",
+          operation: {
+            domain: "memory",
+            action: "recall",
+            targetType: "memory",
+            target: "user hobbies",
+            selector: "user hobbies",
+            scope: "user_memory",
+            riskLevel: "low",
+          },
+          riskLevel: "low",
+        }),
+      ],
+    });
+    const graph = recallTaskGraph();
+    const intentRuntime = new DefaultIntentRuntime(
+      new StaticIntentResolverAdapter(async () => frame),
+    );
+    const memory = memoryRuntime();
+    const toolAdapter = toolExecutor((request) => ({
+      name: request.name,
+      callId: request.callId,
+      status: "success",
+      output: { ok: true },
+    }));
+    const observedTools: string[][] = [];
+    let backendTurns = 0;
+    const runtime = new AgentRuntime(intentRuntime, memory.runtime, undefined, {
+      taskRuntime: {
+        mode: "execute",
+        plan: vi.fn(async () => graph),
+        execute: vi.fn(async () => recallTaskGraphResult(graph)),
+      },
+      deferMemoryRetrievalForTaskGraph: true,
+      llmLoop: {
+        backend: {
+          getModel: () => "mock",
+          getCapabilities: () => ({
+            streaming: true,
+            nativeToolCalling: true,
+            jsonMode: false,
+            multimodalInput: false,
+            maxContextTokens: 4096,
+            modes: ["native_tool_calling"],
+          }),
+          async *sendTurn(input) {
+            observedTools.push(input.tools?.map((tool) => tool.name) ?? []);
+            backendTurns++;
+            if (backendTurns === 1) {
+              yield {
+                type: "tool_call",
+                request: {
+                  name: "recall_memory",
+                  callId: "recall-1",
+                  args: { query: "hobbies" },
+                },
+              };
+            } else {
+              yield { type: "content", text: "done" };
+            }
+          },
+        },
+        promptCompiler: {
+          compileInitialTurn: ({ initialMessages }) => initialMessages,
+          compileToolResults: () => [
+            {
+              role: "tool",
+              blocks: [
+                {
+                  type: "tool_result",
+                  name: "recall_memory",
+                  callId: "recall-1",
+                  result: { ok: false },
+                },
+              ],
+            },
+          ],
+          compileRetryPrompt: () => [],
+        },
+        toolExecutor: toolAdapter,
+        tools: [{ name: "recall_memory" }, { name: "task_add" }],
+      },
+    });
+
+    const result = await runtime.handleTurn({
+      sessionId: "s1",
+      userPrompt: "还记得我的爱好吗？",
+      llmInitialMessages: [
+        {
+          role: "user",
+          blocks: [{ type: "text", text: "还记得我的爱好吗？" }],
+        },
+      ],
+      signal: new AbortController().signal,
+    });
+
+    expect(observedTools[0]).toEqual(["task_add"]);
+    expect(toolAdapter.executeTools).not.toHaveBeenCalled();
+    expect(result.context.llmLoop?.finalText).toBe("done");
   });
 });
