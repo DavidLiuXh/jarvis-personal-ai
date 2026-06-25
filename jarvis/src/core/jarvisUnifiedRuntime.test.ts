@@ -316,89 +316,102 @@ describe("runJarvisUnifiedRuntimeTurn", () => {
       intentSteps: [recallStep],
     });
     let backendSystemContext = "";
-    const result = await runJarvisUnifiedRuntimeTurn(
-      baseInput({
-        userPrompt: "还记得我的爱好吗？",
-        querySubject: "personal",
-        intent: recallIntent,
-        toolRouter,
-        jarvisConfig: {
-          memory: {},
-          agentRuntime: {
-            enabled: true,
-            executionMode: "execute",
-            autonomousTaskRuntime: {
+    const logSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const result = await runJarvisUnifiedRuntimeTurn(
+        baseInput({
+          userPrompt: "还记得我的爱好吗？",
+          querySubject: "personal",
+          intent: recallIntent,
+          toolRouter,
+          jarvisConfig: {
+            memory: { writeObservability: true },
+            agentRuntime: {
               enabled: true,
-              mode: "execute",
-              stateDir: path.dirname(tempDbPath()),
-            },
-          },
-        },
-        llmRuntime: {
-          options: {
-            backend: {
-              getModel: () => "mock",
-              getCapabilities: () => ({
-                streaming: true,
-                nativeToolCalling: true,
-                jsonMode: false,
-                multimodalInput: false,
-                maxContextTokens: 4096,
-                modes: ["native_tool_calling"],
-              }),
-              async *sendTurn(input: any) {
-                backendSystemContext =
-                  input.messages.find(
-                    (message: any) => message.role === "system",
-                  )?.blocks?.[0]?.text ?? "";
-                yield {
-                  type: "content" as const,
-                  text: "你喜欢骑自行车和逛胡同。",
-                };
+              executionMode: "execute",
+              autonomousTaskRuntime: {
+                enabled: true,
+                mode: "execute",
+                stateDir: path.dirname(tempDbPath()),
               },
             },
-            promptCompiler: {
-              compileInitialTurn: ({ systemContext, initialMessages }: any) => [
-                ...(systemContext?.trim()
-                  ? [
-                      {
-                        role: "system",
-                        blocks: [{ type: "text", text: systemContext }],
-                      },
-                    ]
-                  : []),
-                ...initialMessages,
-              ],
-              compileToolResults: () => [],
-              compileRetryPrompt: () => [],
-            },
-            toolExecutor: { executeTools: vi.fn(async () => []) },
-            tools: [{ name: "recall_memory" }],
           },
-          initialMessages: [
-            {
-              role: "user",
-              blocks: [{ type: "text", text: "还记得我的爱好吗？" }],
+          llmRuntime: {
+            options: {
+              backend: {
+                getModel: () => "mock",
+                getCapabilities: () => ({
+                  streaming: true,
+                  nativeToolCalling: true,
+                  jsonMode: false,
+                  multimodalInput: false,
+                  maxContextTokens: 4096,
+                  modes: ["native_tool_calling"],
+                }),
+                async *sendTurn(input: any) {
+                  backendSystemContext =
+                    input.messages.find(
+                      (message: any) => message.role === "system",
+                    )?.blocks?.[0]?.text ?? "";
+                  yield {
+                    type: "content" as const,
+                    text: "你喜欢骑自行车和逛胡同。",
+                  };
+                },
+              },
+              promptCompiler: {
+                compileInitialTurn: ({
+                  systemContext,
+                  initialMessages,
+                }: any) => [
+                  ...(systemContext?.trim()
+                    ? [
+                        {
+                          role: "system",
+                          blocks: [{ type: "text", text: systemContext }],
+                        },
+                      ]
+                    : []),
+                  ...initialMessages,
+                ],
+                compileToolResults: () => [],
+                compileRetryPrompt: () => [],
+              },
+              toolExecutor: { executeTools: vi.fn(async () => []) },
+              tools: [{ name: "recall_memory" }],
             },
-          ],
-          signal: new AbortController().signal,
-        },
-      }),
-    );
+            initialMessages: [
+              {
+                role: "user",
+                blocks: [{ type: "text", text: "还记得我的爱好吗？" }],
+              },
+            ],
+            signal: new AbortController().signal,
+          },
+        }),
+      );
 
-    expect(result.taskGraphExecution?.status).toBe("succeeded");
-    expect(executeTools).toHaveBeenCalledWith(
-      [expect.objectContaining({ name: "recall_memory" })],
-      expect.any(Object),
-    );
-    expect(result.llmLoop?.finalText).toBe("你喜欢骑自行车和逛胡同。");
-    expect(backendSystemContext).toContain("<runtime_task_artifacts>");
-    expect(backendSystemContext).toContain("memory_items:");
-    expect(backendSystemContext).toContain("爱好骑自行车");
-    expect(backendSystemContext).toContain("爱好逛胡同");
-    expect(backendSystemContext).toContain(
-      "recall_memory: disabled_for_this_turn",
-    );
+      expect(result.taskGraphExecution?.status).toBe("succeeded");
+      expect(executeTools).toHaveBeenCalledWith(
+        [expect.objectContaining({ name: "recall_memory" })],
+        expect.any(Object),
+      );
+      expect(result.llmLoop?.finalText).toBe("你喜欢骑自行车和逛胡同。");
+      expect(backendSystemContext).toContain("<runtime_task_artifacts>");
+      expect(backendSystemContext).toContain("memory_items:");
+      expect(backendSystemContext).toContain("爱好骑自行车");
+      expect(backendSystemContext).toContain("爱好逛胡同");
+      expect(backendSystemContext).toContain(
+        "recall_memory: disabled_for_this_turn",
+      );
+      const logs = logSpy.mock.calls.map((call) => call.join(" ")).join("\n");
+      expect(logs).toContain("🧭 [TaskGraph] artifact content:");
+      expect(logs).toContain("memory_items:");
+      expect(logs).toContain("爱好骑自行车");
+      expect(logs).toContain("爱好逛胡同");
+    } finally {
+      logSpy.mockRestore();
+    }
   });
 
   it("adds a temporal recall boundary and passes the exact date range for time-scoped conversation recall", async () => {

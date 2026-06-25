@@ -16,6 +16,7 @@ import {
   StaticIntentResolverAdapter,
   type AutonomousTaskRuntimeResult,
   type TaskGraph,
+  type TaskRuntimeArtifact,
 } from "../intent-runtime/index.js";
 import {
   DefaultMemoryRuntime,
@@ -271,6 +272,47 @@ function buildTaskGraphArtifactSection(
         .join("\n"),
     ),
     "</runtime_task_artifacts>",
+  ].join("\n");
+}
+
+function shouldLogTaskGraphArtifactContent(config: JarvisConfig): boolean {
+  return (
+    config.memory?.writeObservability === true ||
+    config.agentRuntime?.observability === true ||
+    config.agentRuntime?.autonomousTaskRuntime?.observability === true
+  );
+}
+
+function formatTaskGraphArtifactContentLog(
+  artifacts: TaskRuntimeArtifact[],
+): string {
+  if (artifacts.length === 0) return "";
+  return [
+    "🧭 [TaskGraph] artifact content:",
+    ...artifacts.map((artifact) =>
+      [
+        `  - ${artifact.id}:${artifact.type} node=${artifact.nodeId}` +
+          (artifact.path ? ` path=${artifact.path}` : "") +
+          (artifact.checksum ? ` checksum=${artifact.checksum}` : "") +
+          (artifact.memoryItems
+            ? ` memoryItems=${artifact.memoryItems.length}`
+            : ""),
+        artifact.type === "memory"
+          ? formatRuntimeArtifactMemoryItems(artifact.memoryItems)
+              .split("\n")
+              .map((line) => `    ${line}`)
+              .join("\n")
+          : "",
+        artifact.content
+          ? `    ${artifact.type === "memory" ? "raw_content" : "content"}: ${compactRuntimeArtifactContent(
+              artifact.content,
+              2000,
+            )}`
+          : "",
+      ]
+        .filter(Boolean)
+        .join("\n"),
+    ),
   ].join("\n");
 }
 
@@ -934,6 +976,14 @@ export async function runJarvisUnifiedRuntimeTurn(
     (count, artifact) => count + (artifact.memoryItems?.length ?? 0),
     0,
   );
+  const taskArtifactContentLog = shouldLogTaskGraphArtifactContent(
+    input.jarvisConfig,
+  )
+    ? formatTaskGraphArtifactContentLog(taskArtifacts)
+    : "";
+  if (taskArtifactContentLog) {
+    console.error(taskArtifactContentLog);
+  }
   const fallbackSystemInstruction =
     defaultInstruction +
     "\n" +
