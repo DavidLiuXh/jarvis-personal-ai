@@ -594,6 +594,83 @@ function memoryContractAllowsHistoryRecall(
   );
 }
 
+function uniqueRecallQueryText(parts: string[]): string {
+  return Array.from(
+    new Set(
+      parts
+        .join(" ")
+        .split(/\s+/)
+        .map((part) => part.trim())
+        .filter(Boolean),
+    ),
+  ).join(" ");
+}
+
+function buildRecallFactQuery(
+  effectiveQuery: string,
+  contract: MemoryContract | null,
+): string {
+  if (contract === null) return effectiveQuery;
+  const query = uniqueRecallQueryText([
+    contract.query.raw,
+    contract.query.rewritten ?? "",
+    effectiveQuery,
+    ...contract.query.entities,
+    contract.memoryTarget,
+  ]);
+  if (
+    contract.subjectBoundary === "personal" ||
+    contract.subjectBoundary === "mixed"
+  ) {
+    return `PRIVATE_USER_DATA: User Query - ${query}`;
+  }
+  return query;
+}
+
+function recallFactLimit(
+  limit: number,
+  contract: MemoryContract | null,
+): number {
+  if (contract?.memoryTarget === "user_memory") {
+    return Math.max(limit, 8);
+  }
+  return limit;
+}
+
+function recallHistoryLimit(
+  limit: number,
+  contract: MemoryContract | null,
+): number {
+  if (contract?.memoryTarget === "user_memory") {
+    return Math.min(limit, 3);
+  }
+  return limit;
+}
+
+function normalizeRecallMemoryText(text: string): string {
+  return text.replace(/\s+/g, " ").trim().toLowerCase();
+}
+
+function filterRecallHistoryMemories(
+  memories: string[],
+  userPrompt: string,
+  effectiveQuery: string,
+): string[] {
+  const blockedUserLines = new Set(
+    [userPrompt, effectiveQuery].map(normalizeRecallMemoryText).filter(Boolean),
+  );
+  const seen = new Set<string>();
+  return memories.filter((memory) => {
+    const normalized = normalizeRecallMemoryText(memory);
+    if (!normalized || seen.has(normalized)) return false;
+    seen.add(normalized);
+
+    const userOnly = normalized.match(/^user[:：]\s*(.+)$/)?.[1]?.trim();
+    if (userOnly && blockedUserLines.has(userOnly)) return false;
+    return true;
+  });
+}
+
 /**
  * Routes tool call requests to either Jarvis-native handlers or the active
  * scheduler adapter, then assembles the response parts for the next LLM turn.
@@ -1098,22 +1175,36 @@ export class ToolRouter implements ToolExecutorAdapter {
           const shouldSearchHistory = memoryContractAllowsHistoryRecall(
             this.currentMemoryContract,
           );
-          const [facts, memories] = await Promise.all([
+          const factQuery = buildRecallFactQuery(
+            effectiveQuery,
+            this.currentMemoryContract,
+          );
+          const factLimit = recallFactLimit(limit, this.currentMemoryContract);
+          const historyLimit = recallHistoryLimit(
+            limit,
+            this.currentMemoryContract,
+          );
+          const [facts, rawMemories] = await Promise.all([
             shouldSearchFacts
-              ? this.memoryService.searchFacts(effectiveQuery, limit)
+              ? this.memoryService.searchFacts(factQuery, factLimit)
               : Promise.resolve([]),
             shouldSearchHistory
               ? this.memoryService.search(
                   effectiveQuery,
-                  limit,
+                  historyLimit,
                   timeWindowDays,
                   dateRange,
                 )
               : Promise.resolve([]),
           ]);
+          const memories = filterRecallHistoryMemories(
+            rawMemories,
+            this.currentUserPrompt,
+            effectiveQuery,
+          );
           if (this.currentMemoryContract !== null) {
             console.error(
-              `🧠 [Jarvis] Active Recall scopes target=${this.currentMemoryContract.memoryTarget} facts=${shouldSearchFacts ? "on" : "off"} history=${shouldSearchHistory ? "on" : "off"}`,
+              `🧠 [Jarvis] Active Recall scopes target=${this.currentMemoryContract.memoryTarget} facts=${shouldSearchFacts ? "on" : "off"} history=${shouldSearchHistory ? "on" : "off"} factLimit=${factLimit} historyLimit=${historyLimit} factQuery="${factQuery.slice(0, 120)}"`,
             );
           }
           const sections: string[] = [];

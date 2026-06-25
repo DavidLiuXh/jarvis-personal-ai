@@ -277,8 +277,15 @@ describe("ToolRouter", () => {
       .mockResolvedValue([
         { category: "behavior", content: "user likes hiking" },
       ]);
-    const search = vi.fn().mockResolvedValue(["previous hiking discussion"]);
+    const search = vi
+      .fn()
+      .mockResolvedValue([
+        "user: 还记得我的爱好吗？",
+        "previous hiking discussion",
+        "previous hiking discussion",
+      ]);
     const { router } = makeRouter({ searchFacts, search });
+    router.setCurrentUserPrompt("还记得我的爱好吗？");
     router.setCurrentMemoryContract(
       memoryContract({
         targetScopes: ["fact", "entry"],
@@ -297,14 +304,18 @@ describe("ToolRouter", () => {
       vi.fn(),
     );
 
-    expect(searchFacts).toHaveBeenCalledWith("爱好 hobbies", 5);
-    expect(search).toHaveBeenCalledWith("爱好 hobbies", 5, null, null);
+    expect(searchFacts).toHaveBeenCalledWith(
+      "PRIVATE_USER_DATA: User Query - 你记录了我有哪些爱好？ 爱好 hobbies user_memory",
+      8,
+    );
+    expect(search).toHaveBeenCalledWith("爱好 hobbies", 3, null, null);
     const response = JSON.stringify(
       (parts[0] as any).functionResponse.response,
     );
     expect(response).toContain("STRUCTURED FACTS FOUND");
     expect(response).toContain("[behavior] user likes hiking");
     expect(response).toContain("previous hiking discussion");
+    expect(response).not.toContain("user: 还记得我的爱好吗？");
   });
 
   it("recall_memory is denied when the MemoryContract forbids personal memory", async () => {
