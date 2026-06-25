@@ -212,6 +212,37 @@ function buildTemporalRecallBoundary(contract: MemoryContract | null): string {
   ].join("\n");
 }
 
+function compactRuntimeArtifactContent(content: string, max = 6000): string {
+  const normalized = content.replace(/\s+/g, " ").trim();
+  if (normalized.length <= max) return normalized;
+  return `${normalized.slice(0, max)}...`;
+}
+
+function buildTaskGraphArtifactSection(
+  execution: AutonomousTaskRuntimeResult | null,
+): string {
+  const artifacts = execution?.execution.artifacts ?? [];
+  if (artifacts.length === 0) return "";
+  return [
+    "<runtime_task_artifacts>",
+    ...artifacts.map((artifact) =>
+      [
+        `id: ${artifact.id}`,
+        `node: ${artifact.nodeId}`,
+        `type: ${artifact.type}`,
+        artifact.path ? `path: ${artifact.path}` : "",
+        artifact.taskId ? `task_id: ${artifact.taskId}` : "",
+        artifact.content
+          ? `content: ${compactRuntimeArtifactContent(artifact.content)}`
+          : "",
+      ]
+        .filter(Boolean)
+        .join("\n"),
+    ),
+    "</runtime_task_artifacts>",
+  ].join("\n");
+}
+
 function extractSummaryCandidatesFromSection(
   section: string,
 ): SummaryCandidate[] {
@@ -719,6 +750,9 @@ export async function runJarvisUnifiedRuntimeTurn(
           const executionContract = executionInstruction
             ? `<runtime_execution_contract>\n${executionInstruction}\n</runtime_execution_contract>`
             : "";
+          const taskArtifactSection = buildTaskGraphArtifactSection(
+            context.taskGraphExecution,
+          );
           const temporalRecallBoundary = buildTemporalRecallBoundary(contract);
           const protocol = input.promptBuilder.buildFromFacts(
             injectionPlan.facts,
@@ -735,6 +769,7 @@ export async function runJarvisUnifiedRuntimeTurn(
               memoryDecision,
               stepMemory,
               taskGraphSection,
+              taskArtifactSection,
               executionContract,
               temporalRecallBoundary,
               injectionPlan.relevantSummarySection,

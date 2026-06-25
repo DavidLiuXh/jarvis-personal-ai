@@ -607,10 +607,28 @@ describe("createJarvisTaskRuntime", () => {
     }
   });
 
-  it("plans source acquisition as deferred research rather than workspace file writing", async () => {
+  it("pre-executes source acquisition as research rather than workspace file writing", async () => {
     const logSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     const stateDir = tempStateDir();
-    const executeTools = vi.fn(async () => []);
+    const executeTools = vi.fn(async (requests) =>
+      requests.map((request) => ({
+        name: request.name,
+        callId: request.callId,
+        status: "success",
+        output: JSON.stringify({
+          ok: true,
+          tool: request.name,
+          result: {
+            command: request.args.command,
+            stdout:
+              "Title: AI Agent development trends\nURL Source: https://example.com/ai-agent-trends\nSummary: authoritative source data",
+            stderr: "",
+            exit_code: 0,
+            timed_out: false,
+          },
+        }),
+      })),
+    );
     try {
       const taskRuntime = createJarvisTaskRuntime({
         sessionId: "s1",
@@ -701,12 +719,39 @@ describe("createJarvisTaskRuntime", () => {
       );
       expect(
         await taskRuntime.shouldExecute?.({ ...input, graph: graph! }),
-      ).toBe(false);
-      expect(await taskRuntime.execute({ ...input, graph: graph! })).toBeNull();
-      expect(executeTools).not.toHaveBeenCalled();
+      ).toBe(true);
+      const result = await taskRuntime.execute({ ...input, graph: graph! });
+      expect(result?.status).toBe("succeeded");
+      expect(result?.execution.finalResponseContract.canClaimSuccess).toBe(
+        false,
+      );
+      expect(result?.execution.artifacts).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            nodeId: "step-1",
+            type: "source",
+            content: expect.stringContaining("AI Agent development trends"),
+          }),
+        ]),
+      );
+      expect(executeTools).toHaveBeenCalledTimes(1);
+      expect(executeTools).toHaveBeenCalledWith(
+        [
+          expect.objectContaining({
+            name: "run_shell_command",
+            callId: "taskgraph-step-1-web_search",
+            args: expect.objectContaining({
+              command: expect.stringContaining("https://s.jina.ai/"),
+            }),
+          }),
+        ],
+        expect.any(AbortSignal),
+      );
+      const command = executeTools.mock.calls[0][0][0].args.command;
+      expect(command).toContain("AI%20Agent%20development%20trends");
       const logs = logSpy.mock.calls.map((call) => String(call[0])).join("\n");
-      expect(logs).toContain("llm_nodes_deferred=step-1,step-2");
-      expect(logs).toContain("step-1:non_deterministic:research");
+      expect(logs).toContain("executable=step-1");
+      expect(logs).toContain("llmBlocking=step-2");
       expect(logs).toContain("step-2:non_deterministic:analyze");
     } finally {
       logSpy.mockRestore();

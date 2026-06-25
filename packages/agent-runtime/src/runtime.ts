@@ -254,12 +254,42 @@ function formatSkills(skills: RuntimeSkill[]): string {
   ].join("\n");
 }
 
+function compactArtifactContent(content: string, max = 4000): string {
+  const normalized = content.replace(/\s+/g, " ").trim();
+  if (normalized.length <= max) return normalized;
+  return `${normalized.slice(0, max)}...`;
+}
+
+function formatTaskGraphArtifacts(context: RuntimeContext): string {
+  const artifacts = context.taskGraphExecution?.execution.artifacts ?? [];
+  if (artifacts.length === 0) return "";
+  return [
+    "<runtime_task_artifacts>",
+    ...artifacts.map((artifact) =>
+      [
+        `id: ${artifact.id}`,
+        `node: ${artifact.nodeId}`,
+        `type: ${artifact.type}`,
+        artifact.path ? `path: ${artifact.path}` : "",
+        artifact.taskId ? `task_id: ${artifact.taskId}` : "",
+        artifact.content
+          ? `content: ${compactArtifactContent(artifact.content)}`
+          : "",
+      ]
+        .filter(Boolean)
+        .join("\n"),
+    ),
+    "</runtime_task_artifacts>",
+  ].join("\n");
+}
+
 export class DefaultResponseComposer implements ResponseComposer {
   async compose({ context }: ResponseComposerInput): Promise<RuntimeResponse> {
     const memoryDecision = formatMemoryDecision(context.memoryContract);
     const stepMemory = formatStepMemoryDecisions(context.stepMemoryDecisions);
     const skills = formatSkills(context.skills);
     const memoryText = context.memoryInjection?.text ?? "";
+    const taskArtifacts = formatTaskGraphArtifacts(context);
     const taskGraphInstruction =
       context.taskGraphExecution?.execution.finalResponseContract.instruction ??
       "";
@@ -282,6 +312,7 @@ export class DefaultResponseComposer implements ResponseComposer {
       stepMemory,
       skills,
       memoryText,
+      taskArtifacts,
       executionInstruction
         ? `<execution_contract>\n${executionInstruction}\n</execution_contract>`
         : "",

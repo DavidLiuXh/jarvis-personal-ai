@@ -10,6 +10,7 @@ import { buildTaskGraph } from "./taskGraph.js";
 import {
   DefaultTaskGraphCapabilityRegistry,
   TaskGraphExecutor,
+  validateAcceptanceCriterion,
   type TaskGraphCapabilityAdapter,
   type TaskGraphExecutorEvent,
   type TaskNodeExecutionRequest,
@@ -164,6 +165,27 @@ function recallAndWriteIntent(): IntentFrame {
 }
 
 describe("TaskGraphExecutor", () => {
+  it("does not pass source_count for empty source artifacts", () => {
+    const result = validateAcceptanceCriterion(
+      {
+        id: "source-count",
+        scope: "step",
+        type: "source_count",
+        description: "requires real source evidence",
+        required: true,
+        params: { minSources: 1 },
+      },
+      {
+        result: { status: "succeeded", output: {}, artifacts: [] },
+        artifacts: [{ id: "empty", nodeId: "n", type: "source" }],
+        context: { userPrompt: "research" },
+      },
+    );
+
+    expect(result.ok).toBe(false);
+    expect(result.reason).toContain("source count 0 < 1");
+  });
+
   it("executes a dependency-ordered graph and validates node acceptance", async () => {
     const executionOrder: string[] = [];
     const graph = buildTaskGraph(recallAndWriteIntent());

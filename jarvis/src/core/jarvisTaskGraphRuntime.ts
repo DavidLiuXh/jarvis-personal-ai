@@ -47,6 +47,7 @@ const IMPLEMENTED_CAPABILITIES = [
 
 const DETERMINISTIC_NODE_KINDS = new Set([
   "recall",
+  "research",
   "write_file",
   "read_file",
   "run_shell",
@@ -54,12 +55,7 @@ const DETERMINISTIC_NODE_KINDS = new Set([
   "push",
 ]);
 
-const PRE_LLM_BLOCKING_NODE_KINDS = new Set([
-  "analyze",
-  "respond",
-  "research",
-  "delegate",
-]);
+const PRE_LLM_BLOCKING_NODE_KINDS = new Set(["analyze", "respond", "delegate"]);
 
 type JarvisTaskGraphRuntimeOptions = {
   config: JarvisConfig;
@@ -545,6 +541,160 @@ function shellRequest(
   };
 }
 
+function shellSingleQuote(value: string): string {
+  return `'${value.replace(/'/g, "'\\''")}'`;
+}
+
+const RESEARCH_QUERY_FILLER_RE =
+  /\b(?:execute|collect|search|fetch|crawl|scrape|gather|find|source|sources|sites|authoritative|websites?|references?)\b|资料|素材|来源|信源|网站|网页|权威|收集|检索|搜索|抓取|爬取|查找|整理/gim;
+
+function deriveResearchQueryText(
+  node: TaskGraph["nodes"][number],
+  userPrompt: string,
+): string {
+  const title = node.title.trim();
+  const strippedTitle = title
+    .replace(RESEARCH_QUERY_FILLER_RE, " ")
+    .replace(/^\s*(?:on|about|for|regarding|around|关于|有关|围绕)\s+/i, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (strippedTitle.length >= 3) return strippedTitle;
+  return [title, userPrompt]
+    .filter(Boolean)
+    .join(" ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function webSearchRequest(
+  request: TaskNodeExecutionRequest,
+): RuntimeToolRequest | null {
+  const query = deriveResearchQueryText(
+    request.node,
+    request.context.userPrompt,
+  );
+  if (!query) return null;
+  const url = `https://s.jina.ai/${encodeURIComponent(query)}`;
+  return {
+    name: "run_shell_command",
+    callId: makeCallId(request.node.id, "web_search"),
+    args: {
+      command: `curl -L --silent --show-error --max-time 20 ${shellSingleQuote(url)}`,
+      timeout_ms: 25_000,
+    },
+    metadata: {
+      capability: "web.search",
+      query,
+      provider: "jina-search",
+      url,
+    },
+  };
+}
+
+function shellOutputPayload(output: unknown): Record<string, unknown> | null {
+  const parsed = parseJsonObject(output);
+  const result = parsed?.result;
+  return result && typeof result === "object" && !Array.isArray(result)
+    ? (result as Record<string, unknown>)
+    : parsed;
+}
+
+function extractSourceUrls(content: string): string[] {
+  const seen = new Set<string>();
+  const urls: string[] = [];
+  for (const match of content.matchAll(/https?:\/\/[^\s)\]}>"']+/g)) {
+    const url = match[0].replace(/[.,;:]+$/, "");
+    if (seen.has(url)) continue;
+    seen.add(url);
+    urls.push(url);
+    if (urls.length >= 20) break;
+  }
+  return urls;
+}
+
+function sourceArtifacts(
+  request: TaskNodeExecutionRequest,
+  result: RuntimeToolResult,
+): TaskRuntimeArtifact[] {
+  const payload = shellOutputPayload(result.output);
+  const stdout = typeof payload?.stdout === "string" ? payload.stdout : "";
+  const stderr = typeof payload?.stderr === "string" ? payload.stderr : "";
+  const content = stdout.trim() || stringifyOutput(result.output);
+  const query =
+    (result as RuntimeToolResult & { metadata?: Record<string, unknown> })
+      .metadata?.query ??
+    deriveResearchQueryText(request.node, request.context.userPrompt);
+  const sources = extractSourceUrls(content);
+  return [
+    {
+      id: `${request.node.id}-sources`,
+      nodeId: request.node.id,
+      type: "source",
+      content,
+      metadata: {
+        tool: result.name,
+        query,
+        sources,
+        stderr: stderr || undefined,
+      },
+    },
+  ];
+}
+
+async function executeWebSearch(
+  toolRouter: ToolRouter,
+  request: TaskNodeExecutionRequest,
+  signal: AbortSignal,
+): Promise<TaskNodeExecutionResult> {
+  const toolRequest = webSearchRequest(request);
+  if (!toolRequest) {
+    return {
+      status: "blocked",
+      error: `No deterministic web search query could be built for ${request.node.id}.`,
+    };
+  }
+  const [result] = await toolRouter.executeTools([toolRequest], signal);
+  if (!result) {
+    return {
+      status: "failed",
+      error: `${toolRequest.name} returned no result.`,
+    };
+  }
+  const parsed = parseJsonObject(result.output);
+  const payload = shellOutputPayload(result.output);
+  const exitCode =
+    typeof payload?.exit_code === "number" ? payload.exit_code : undefined;
+  const timedOut = payload?.timed_out === true;
+  const ok =
+    result.status === "success" &&
+    parsed?.ok !== false &&
+    exitCode !== null &&
+    exitCode !== undefined &&
+    exitCode === 0 &&
+    !timedOut;
+  const stdout = typeof payload?.stdout === "string" ? payload.stdout : "";
+  const stderr = typeof payload?.stderr === "string" ? payload.stderr : "";
+  const artifacts = ok ? sourceArtifacts(request, result) : [];
+  const query = String(toolRequest.metadata?.query ?? "");
+  return {
+    status: ok ? "succeeded" : "failed",
+    output: {
+      query,
+      sources: artifacts[0]?.metadata?.sources ?? [],
+      content: stdout.trim(),
+      stderr: stderr || undefined,
+    },
+    artifacts,
+    error: ok ? undefined : stderr || stringifyOutput(result.output),
+    metadata: {
+      tool: toolRequest.name,
+      callId: toolRequest.callId,
+      capability: "web.search",
+      provider: toolRequest.metadata?.provider,
+    },
+  };
+}
+
 function pushRequest(
   request: TaskNodeExecutionRequest,
 ): RuntimeToolRequest | null {
@@ -650,6 +800,12 @@ function createAdapters(toolRouter: ToolRouter): TaskGraphCapabilityAdapter[] {
         executeOneTool(toolRouter, request, signal, shellRequest(request)),
     },
     {
+      id: "jarvis-web-search",
+      capabilities: ["web.search"],
+      execute: (request, signal) =>
+        executeWebSearch(toolRouter, request, signal),
+    },
+    {
       id: "jarvis-task-schedule",
       capabilities: ["task.schedule"],
       execute: (request, signal) =>
@@ -730,6 +886,11 @@ function deterministicNodeInputReady(
       ok: false,
       reason: "no_concrete_write_content",
     };
+  }
+  if (node.kind === "research") {
+    return deriveResearchQueryText(node, input.context.userPrompt)
+      ? { ok: true, reason: "research_query_available" }
+      : { ok: false, reason: "missing_research_query" };
   }
   if (node.kind === "read_file") {
     return extractPath(`${node.title} ${input.context.userPrompt}`)

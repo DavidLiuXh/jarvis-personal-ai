@@ -292,11 +292,14 @@ function countSources(
   output: unknown,
 ): number {
   const artifactSources = artifacts.reduce((count, artifact) => {
-    if (artifact.type === "source") return count + 1;
     const metadataSources = artifact.metadata?.sources;
-    return (
-      count + (Array.isArray(metadataSources) ? metadataSources.length : 0)
-    );
+    if (Array.isArray(metadataSources) && metadataSources.length > 0) {
+      return count + metadataSources.length;
+    }
+    if (artifact.type === "source" && artifact.content?.trim()) {
+      return count + 1;
+    }
+    return count;
   }, 0);
   const record = getOutputRecord(output);
   const outputSources = Array.isArray(record?.sources)
