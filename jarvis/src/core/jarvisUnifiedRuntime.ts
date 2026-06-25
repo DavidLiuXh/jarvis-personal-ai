@@ -70,6 +70,8 @@ export type JarvisUnifiedRuntimeTurnInput = {
     >[0]["llmInitialMessages"];
     signal: AbortSignal;
   };
+  currentContent?: string;
+  artifacts?: Record<string, string>;
   jarvisConfig: JarvisConfig;
   memoryService: MemoryService;
   availableSkills: SkillInfo[];
@@ -365,6 +367,9 @@ export async function runJarvisUnifiedRuntimeTurn(
     config: input.jarvisConfig,
     runtimeIntentFeedbackCollector: input.runtimeIntentFeedbackCollector,
   });
+  const taskGraphExecutionEnabled =
+    input.jarvisConfig.agentRuntime?.autonomousTaskRuntime?.enabled === true &&
+    input.jarvisConfig.agentRuntime.autonomousTaskRuntime.mode === "execute";
 
   const memoryRuntime = new DefaultMemoryRuntime<IntentFrame | null>({
     understand: async () => runtimeIntent,
@@ -596,7 +601,8 @@ export async function runJarvisUnifiedRuntimeTurn(
       new StaticIntentResolverAdapter(async () => runtimeIntent, "jarvis"),
     ),
     memoryRuntime as unknown as DefaultMemoryRuntime<IntentFrame>,
-    input.jarvisConfig.agentRuntime?.executionMode === "execute"
+    input.jarvisConfig.agentRuntime?.executionMode === "execute" &&
+    !taskGraphExecutionEnabled
       ? (new IntentExecutor(input.toolRouter) as any)
       : undefined,
     {
@@ -748,6 +754,8 @@ export async function runJarvisUnifiedRuntimeTurn(
     history: input.conversationHistory,
     executionContext: "interactive",
     interactiveChannel: input.interactiveChannel,
+    currentContent: input.currentContent,
+    artifacts: input.artifacts,
     llmInitialMessages: input.llmRuntime?.initialMessages,
     llmSystemContext: undefined,
     signal: input.llmRuntime?.signal,

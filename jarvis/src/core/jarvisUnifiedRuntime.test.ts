@@ -441,7 +441,7 @@ describe("runJarvisUnifiedRuntimeTurn", () => {
           memory: {},
           agentRuntime: {
             enabled: true,
-            executionMode: "skip",
+            executionMode: "execute",
             autonomousTaskRuntime: {
               enabled: true,
               mode: "execute",
@@ -453,6 +453,7 @@ describe("runJarvisUnifiedRuntimeTurn", () => {
     );
 
     expect(result.taskGraphExecution?.status).toBe("succeeded");
+    expect(executeTools).toHaveBeenCalledTimes(1);
     expect(executeTools).toHaveBeenCalledWith(
       [
         expect.objectContaining({

@@ -50,6 +50,12 @@ const DETERMINISTIC_NODE_KINDS = new Set([
   "run_shell",
   "schedule",
   "push",
+]);
+
+const PRE_LLM_BLOCKING_NODE_KINDS = new Set([
+  "analyze",
+  "respond",
+  "research",
   "delegate",
 ]);
 
@@ -330,13 +336,21 @@ function taskArtifacts(
   result: RuntimeToolResult,
 ): TaskRuntimeArtifact[] {
   const text = stringifyOutput(result.output);
-  const idMatch = text.match(/\bid:\s*([^\s]+)/i);
+  const parsed = parseJsonObject(result.output);
+  const payload =
+    parsed?.result && typeof parsed.result === "object"
+      ? (parsed.result as Record<string, unknown>)
+      : parsed;
+  const taskId =
+    (typeof payload?.taskId === "string" ? payload.taskId : undefined) ??
+    (typeof payload?.id === "string" ? payload.id : undefined) ??
+    text.match(/\bid:\s*([^\s]+)/i)?.[1];
   return [
     {
       id: `${request.node.id}-scheduled-task`,
       nodeId: request.node.id,
       type: "scheduled_task",
-      taskId: idMatch?.[1] ?? `${request.node.id}-scheduled`,
+      taskId,
       content: text,
       metadata: { tool: result.name },
     },
@@ -588,6 +602,9 @@ function createAdapters(toolRouter: ToolRouter): TaskGraphCapabilityAdapter[] {
 function shouldExecuteGraph(input: TaskRuntimeExecuteInput): boolean {
   const graph = input.graph;
   if (graph.nodes.length === 0) return false;
+  if (graph.nodes.some((node) => PRE_LLM_BLOCKING_NODE_KINDS.has(node.kind))) {
+    return false;
+  }
   return graph.nodes.some((node) => {
     if (!DETERMINISTIC_NODE_KINDS.has(node.kind)) return false;
     if (node.kind === "recall" && graph.nodes.length === 1) return false;

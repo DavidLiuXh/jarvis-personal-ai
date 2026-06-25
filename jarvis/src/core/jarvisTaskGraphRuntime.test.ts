@@ -280,6 +280,40 @@ describe("createJarvisTaskRuntime", () => {
     expect(executeTools).toHaveBeenCalledTimes(1);
   });
 
+  it("does not pass schedule acceptance when task_add output has no observable task id", async () => {
+    const stateDir = tempStateDir();
+    const executeTools = vi.fn(async (requests) =>
+      requests.map((request: any) => ({
+        name: request.name,
+        callId: request.callId,
+        status: "success",
+        output: "✅ Task was accepted by the scheduler.",
+      })),
+    );
+    const taskRuntime = createJarvisTaskRuntime({
+      sessionId: "s1",
+      toolRouter: { executeTools } as any,
+      config: {
+        agentRuntime: {
+          autonomousTaskRuntime: {
+            enabled: true,
+            mode: "execute",
+            stateDir,
+          },
+        },
+      } as any,
+    })!;
+    const input = planInput(intent());
+    const graph = await taskRuntime.plan(input);
+
+    const result = await taskRuntime.execute({ ...input, graph: graph! });
+
+    expect(result?.status).toBe("failed");
+    expect(result?.execution.failedReasons.join("\n")).toContain(
+      "no scheduled task id observed",
+    );
+  });
+
   it("executes file write nodes only when concrete content is available", async () => {
     const stateDir = tempStateDir();
     const executeTools = vi.fn(async (requests) =>
@@ -369,5 +403,85 @@ describe("createJarvisTaskRuntime", () => {
       exists: true,
       content: "hello world",
     });
+  });
+
+  it("does not pre-execute graphs that require LLM-generated content before deterministic writes", async () => {
+    const stateDir = tempStateDir();
+    const executeTools = vi.fn(async () => []);
+    const taskRuntime = createJarvisTaskRuntime({
+      sessionId: "s1",
+      toolRouter: { executeTools } as any,
+      config: {
+        agentRuntime: {
+          autonomousTaskRuntime: {
+            enabled: true,
+            mode: "execute",
+            stateDir,
+          },
+        },
+      } as any,
+    })!;
+    const analyze = step({
+      id: "step-1",
+      type: "analyze",
+      action: "分析",
+      target: "市场走势",
+      operation: {
+        domain: "general_chat",
+        action: "analyze",
+        targetType: "external_entity",
+        target: "市场走势",
+        selector: "市场走势",
+        scope: "external",
+        riskLevel: "medium",
+      },
+      riskLevel: "medium",
+    });
+    const write = step({
+      id: "step-2",
+      type: "execute",
+      action: "保存",
+      target: "market.md",
+      operation: {
+        domain: "general_chat",
+        action: "create",
+        targetType: "file",
+        target: "market.md",
+        selector: "market.md",
+        scope: "workspace",
+        riskLevel: "low",
+      },
+      dependsOn: ["step-1"],
+      riskLevel: "low",
+    });
+    const frame = intent({
+      taskType: "execute",
+      needsScheduling: false,
+      richIntent: {
+        ...intent().richIntent,
+        userGoal: "分析市场走势并保存到 market.md",
+        action: "create",
+        primaryAction: "create",
+        contextDependency: {
+          recentConversation: false,
+          longTermMemory: false,
+          externalWorld: true,
+          localWorkspace: true,
+        },
+      },
+      intentSteps: [analyze, write],
+    });
+    const input = planInput(frame, runtimeContext({ currentContent: "" }));
+    const graph = await taskRuntime.plan(input);
+
+    expect(graph?.nodes.map((node) => node.kind)).toEqual([
+      "analyze",
+      "write_file",
+    ]);
+    expect(await taskRuntime.shouldExecute?.({ ...input, graph: graph! })).toBe(
+      false,
+    );
+    expect(await taskRuntime.execute({ ...input, graph: graph! })).toBeNull();
+    expect(executeTools).not.toHaveBeenCalled();
   });
 });

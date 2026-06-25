@@ -251,6 +251,18 @@ function conversationHistoryToLlmMessages(
   }));
 }
 
+function lastAssistantContent(
+  history: Array<{ role: "user" | "assistant"; content: string }>,
+): string {
+  for (let index = history.length - 1; index >= 0; index -= 1) {
+    const turn = history[index];
+    if (turn.role === "assistant" && turn.content.trim()) {
+      return turn.content;
+    }
+  }
+  return "";
+}
+
 export class StandaloneJarvisAgent
   extends EventEmitter
   implements JarvisAgentLike
@@ -443,6 +455,7 @@ export class StandaloneJarvisAgent
         ],
         signal: abortController.signal,
       },
+      lastAssistantContent(conversationHistory),
     );
 
     const assistantText = runtimeTurn.llmLoop?.finalText ?? "";
@@ -579,6 +592,7 @@ export class StandaloneJarvisAgent
       initialMessages: LlmMessage[];
       signal: AbortSignal;
     },
+    currentContent: string,
   ): Promise<JarvisUnifiedRuntimeTurnResult> {
     return runJarvisUnifiedRuntimeTurn({
       sessionId: this.options.sessionId,
@@ -589,6 +603,7 @@ export class StandaloneJarvisAgent
       conversationHistory,
       intent: intentFrame,
       llmRuntime,
+      currentContent,
       jarvisConfig: this.jarvisConfig,
       memoryService: this.options.memoryService,
       availableSkills: this.availableSkills,
