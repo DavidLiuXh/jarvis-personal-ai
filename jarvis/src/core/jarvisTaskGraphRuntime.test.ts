@@ -463,6 +463,247 @@ describe("createJarvisTaskRuntime", () => {
     });
   });
 
+  it("pre-executes only deterministic upstream nodes before LLM-dependent nodes", async () => {
+    const logSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const stateDir = tempStateDir();
+    const executeTools = vi.fn(async (requests) =>
+      requests.map((request: any) => ({
+        name: request.name,
+        callId: request.callId,
+        status: "success",
+        output: "source: authoritative AI Agent trend data",
+      })),
+    );
+    try {
+      const taskRuntime = createJarvisTaskRuntime({
+        sessionId: "s1",
+        toolRouter: { executeTools } as any,
+        config: {
+          agentRuntime: {
+            autonomousTaskRuntime: {
+              enabled: true,
+              mode: "execute",
+              stateDir,
+              observability: true,
+            },
+          },
+        } as any,
+      })!;
+      const collect = step({
+        id: "step-1",
+        type: "execute",
+        action: "运行",
+        target: "curl -s https://example.com/ai-agent-trends",
+        operation: {
+          domain: "general_chat",
+          action: "run",
+          targetType: "command",
+          target: "curl -s https://example.com/ai-agent-trends",
+          selector: "curl -s https://example.com/ai-agent-trends",
+          scope: "workspace",
+          riskLevel: "medium",
+        },
+        riskLevel: "medium",
+      });
+      const analyze = step({
+        id: "step-2",
+        type: "analyze",
+        action: "分析",
+        target: "AI Agent trend data",
+        operation: {
+          domain: "general_chat",
+          action: "analyze",
+          targetType: "external_entity",
+          target: "AI Agent trend data",
+          selector: "AI Agent trend data",
+          scope: "external",
+          riskLevel: "medium",
+        },
+        dependsOn: ["step-1"],
+        riskLevel: "medium",
+      });
+      const write = step({
+        id: "step-3",
+        type: "execute",
+        action: "保存",
+        target: "agent_trend.md",
+        operation: {
+          domain: "general_chat",
+          action: "create",
+          targetType: "file",
+          target: "agent_trend.md",
+          selector: "agent_trend.md",
+          scope: "workspace",
+          riskLevel: "low",
+        },
+        dependsOn: ["step-2"],
+        riskLevel: "low",
+      });
+      const frame = intent({
+        taskType: "execute",
+        needsScheduling: false,
+        richIntent: {
+          ...intent().richIntent,
+          userGoal: "收集 AI Agent 趋势资料，分析后保存到 agent_trend.md",
+          action: "create",
+          primaryAction: "create",
+          contextDependency: {
+            recentConversation: false,
+            longTermMemory: false,
+            externalWorld: true,
+            localWorkspace: true,
+          },
+        },
+        intentSteps: [collect, analyze, write],
+      });
+      const input = planInput(
+        frame,
+        runtimeContext({
+          userPrompt:
+            "运行 curl -s https://example.com/ai-agent-trends，分析后保存到 agent_trend.md",
+        }),
+      );
+      const graph = await taskRuntime.plan(input);
+
+      expect(graph?.nodes.map((node) => node.kind)).toEqual([
+        "run_shell",
+        "analyze",
+        "write_file",
+      ]);
+      expect(
+        await taskRuntime.shouldExecute?.({ ...input, graph: graph! }),
+      ).toBe(true);
+      const result = await taskRuntime.execute({ ...input, graph: graph! });
+
+      expect(result?.status).toBe("succeeded");
+      expect(result?.graph.nodes.map((node) => node.id)).toEqual(["step-1"]);
+      expect(executeTools).toHaveBeenCalledTimes(1);
+      expect(executeTools).toHaveBeenCalledWith(
+        [
+          expect.objectContaining({
+            name: "run_shell_command",
+            callId: "taskgraph-step-1-run_shell_command",
+          }),
+        ],
+        expect.any(Object),
+      );
+      expect(result?.execution.finalResponseContract.canClaimSuccess).toBe(
+        false,
+      );
+      expect(
+        result?.execution.finalResponseContract.incompleteNodes.map(
+          (node) => node.nodeId,
+        ),
+      ).toEqual(["step-2", "step-3"]);
+      const logs = logSpy.mock.calls.map((call) => String(call[0])).join("\n");
+      expect(logs).toContain("execute=true");
+      expect(logs).toContain("executable=step-1");
+      expect(logs).toContain("llmBlocking=step-2");
+      expect(logs).toContain("deferred=step-2,step-3");
+      expect(logs).toContain("executedGraph=");
+      expect(logs).toContain("canClaimSuccess=false");
+    } finally {
+      logSpy.mockRestore();
+    }
+  });
+
+  it("does not pre-execute write_file nodes without concrete upstream or current-context content", async () => {
+    const logSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const stateDir = tempStateDir();
+    const executeTools = vi.fn(async () => []);
+    try {
+      const taskRuntime = createJarvisTaskRuntime({
+        sessionId: "s1",
+        toolRouter: { executeTools } as any,
+        config: {
+          agentRuntime: {
+            autonomousTaskRuntime: {
+              enabled: true,
+              mode: "execute",
+              stateDir,
+            },
+          },
+        } as any,
+      })!;
+      const collectAsWrite = step({
+        id: "step-1",
+        type: "execute",
+        action: "execute",
+        target: "collect authoritative websites on AI Agent development trends",
+        operation: {
+          domain: "general_chat",
+          action: "create",
+          targetType: "file",
+          target:
+            "collect authoritative websites on AI Agent development trends",
+          selector: "AI Agent development trends",
+          scope: "workspace",
+          riskLevel: "medium",
+        },
+        riskLevel: "medium",
+      });
+      const analyze = step({
+        id: "step-2",
+        type: "analyze",
+        action: "analyze",
+        target: "collected data",
+        operation: {
+          domain: "general_chat",
+          action: "analyze",
+          targetType: "external_entity",
+          target: "collected data",
+          selector: "collected data",
+          scope: "external",
+          riskLevel: "medium",
+        },
+        dependsOn: ["step-1"],
+        riskLevel: "medium",
+      });
+      const frame = intent({
+        taskType: "execute",
+        needsScheduling: false,
+        richIntent: {
+          ...intent().richIntent,
+          userGoal:
+            "collect authoritative websites and analyze AI Agent development trends",
+          action: "create",
+          primaryAction: "create",
+          contextDependency: {
+            recentConversation: false,
+            longTermMemory: false,
+            externalWorld: true,
+            localWorkspace: true,
+          },
+        },
+        intentSteps: [collectAsWrite, analyze],
+      });
+      const input = planInput(
+        frame,
+        runtimeContext({
+          userPrompt:
+            "collect authoritative websites and analyze AI Agent development trends",
+          currentContent: "",
+        }),
+      );
+      const graph = await taskRuntime.plan(input);
+
+      expect(graph?.nodes.map((node) => node.kind)).toEqual([
+        "write_file",
+        "analyze",
+      ]);
+      expect(
+        await taskRuntime.shouldExecute?.({ ...input, graph: graph! }),
+      ).toBe(false);
+      expect(await taskRuntime.execute({ ...input, graph: graph! })).toBeNull();
+      expect(executeTools).not.toHaveBeenCalled();
+      const logs = logSpy.mock.calls.map((call) => String(call[0])).join("\n");
+      expect(logs).toContain("step-1:no_concrete_write_content");
+      expect(logs).toContain("step-2:non_deterministic:analyze");
+    } finally {
+      logSpy.mockRestore();
+    }
+  });
+
   it("does not pre-execute graphs that require LLM-generated content before deterministic writes", async () => {
     const logSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     const stateDir = tempStateDir();
@@ -545,8 +786,9 @@ describe("createJarvisTaskRuntime", () => {
       expect(executeTools).not.toHaveBeenCalled();
       const logs = logSpy.mock.calls.map((call) => String(call[0])).join("\n");
       expect(logs).toContain("execute=false");
-      expect(logs).toContain("requires_llm_node_first=step-1");
+      expect(logs).toContain("llm_nodes_deferred=step-1");
       expect(logs).toContain("llmBlocking=step-1");
+      expect(logs).toContain("step-2:waiting_for_unexecuted_dependency:step-1");
     } finally {
       logSpy.mockRestore();
     }

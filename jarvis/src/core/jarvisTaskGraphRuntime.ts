@@ -20,6 +20,7 @@ import {
   JsonFileTaskGraphExecutionStore,
   type RuntimeToolRequest,
   type RuntimeToolResult,
+  type TaskFinalResponseContract,
   type TaskGraph,
   type TaskGraphCapabilityAdapter,
   type TaskGraphExecutionObserver,
@@ -674,12 +675,101 @@ function createAdapters(toolRouter: ToolRouter): TaskGraphCapabilityAdapter[] {
   ];
 }
 
+function hasCurrentContextWriteSource(input: TaskRuntimeExecuteInput): boolean {
+  return (
+    input.intent.referencesRecentHistory === true ||
+    input.intent.memoryTarget === "current_context_reference" ||
+    input.intent.richIntent.contextDependency.recentConversation === true
+  );
+}
+
+function hasConcreteContextContent(input: TaskRuntimeExecuteInput): boolean {
+  return Boolean(
+    input.context.currentContent?.trim() ||
+      Object.values(input.context.artifacts ?? {}).some((value) =>
+        value.trim(),
+      ),
+  );
+}
+
+function hasSafeDependency(
+  node: TaskGraph["nodes"][number],
+  safeNodeIds: Set<string>,
+): boolean {
+  return node.inputs.some(
+    (item) => item.sourceNodeId && safeNodeIds.has(item.sourceNodeId),
+  );
+}
+
+function deterministicNodeInputReady(
+  input: TaskRuntimeExecuteInput,
+  node: TaskGraph["nodes"][number],
+  safeNodeIds: Set<string>,
+): { ok: boolean; reason: string } {
+  if (node.blockedReason) {
+    return { ok: false, reason: `blocked:${node.blockedReason}` };
+  }
+  if (node.kind === "recall" && input.graph.nodes.length === 1) {
+    return {
+      ok: false,
+      reason: "recall_only_delegated_to_llm_active_recall",
+    };
+  }
+  if (node.kind === "write_file") {
+    if (hasSafeDependency(node, safeNodeIds)) {
+      return { ok: true, reason: "dependency_artifact_available" };
+    }
+    if (
+      hasConcreteContextContent(input) &&
+      hasCurrentContextWriteSource(input)
+    ) {
+      return { ok: true, reason: "current_context_content_available" };
+    }
+    return {
+      ok: false,
+      reason: "no_concrete_write_content",
+    };
+  }
+  if (node.kind === "read_file") {
+    return extractPath(`${node.title} ${input.context.userPrompt}`)
+      ? { ok: true, reason: "file_path_available" }
+      : { ok: false, reason: "missing_file_path" };
+  }
+  if (node.kind === "run_shell") {
+    return deriveCommand({
+      graph: input.graph,
+      node,
+      attempt: 1,
+      dependencyOutputs: {},
+      artifacts: [],
+      context: {
+        userPrompt: input.context.userPrompt,
+        currentContent: input.context.currentContent,
+        artifacts: input.context.artifacts,
+      },
+    })
+      ? { ok: true, reason: "command_available" }
+      : { ok: false, reason: "missing_command" };
+  }
+  if (node.kind === "push") {
+    const channel = deriveChannel(`${node.title} ${input.context.userPrompt}`);
+    const hasContent =
+      hasSafeDependency(node, safeNodeIds) || hasConcreteContextContent(input);
+    if (!channel) return { ok: false, reason: "missing_channel" };
+    if (!hasContent) return { ok: false, reason: "missing_push_content" };
+    return { ok: true, reason: "channel_and_content_available" };
+  }
+  return { ok: true, reason: "deterministic_input_available" };
+}
+
 type TaskGraphExecutionDecision = {
   execute: boolean;
   reasons: string[];
   executableNodeIds: string[];
   deterministicNodeIds: string[];
   llmBlockingNodeIds: string[];
+  deferredNodeIds: string[];
+  skippedNodeReasons: string[];
 };
 
 function evaluateExecutionDecision(
@@ -694,6 +784,8 @@ function evaluateExecutionDecision(
       executableNodeIds: [],
       deterministicNodeIds: [],
       llmBlockingNodeIds: [],
+      deferredNodeIds: [],
+      skippedNodeReasons: [],
     };
   }
   if (graph.blockedReasons.length > 0) {
@@ -703,26 +795,50 @@ function evaluateExecutionDecision(
     .filter((node) => PRE_LLM_BLOCKING_NODE_KINDS.has(node.kind))
     .map((node) => node.id);
   if (llmBlockingNodeIds.length > 0) {
-    reasons.push(`requires_llm_node_first=${llmBlockingNodeIds.join(",")}`);
-    return {
-      execute: false,
-      reasons,
-      executableNodeIds: [],
-      deterministicNodeIds: graph.nodes
-        .filter((node) => DETERMINISTIC_NODE_KINDS.has(node.kind))
-        .map((node) => node.id),
-      llmBlockingNodeIds,
-    };
+    reasons.push(`llm_nodes_deferred=${llmBlockingNodeIds.join(",")}`);
   }
   const deterministicNodeIds = graph.nodes
     .filter((node) => DETERMINISTIC_NODE_KINDS.has(node.kind))
     .map((node) => node.id);
+  const safeNodeIds = new Set<string>();
+  const skippedNodeReasons = new Map<string, string>();
+  let progressed = true;
+  while (progressed) {
+    progressed = false;
+    for (const node of graph.nodes) {
+      if (safeNodeIds.has(node.id)) continue;
+      if (!DETERMINISTIC_NODE_KINDS.has(node.kind)) {
+        skippedNodeReasons.set(node.id, `non_deterministic:${node.kind}`);
+        continue;
+      }
+      const dependencyIds = node.inputs
+        .filter((item) => item.required && item.sourceNodeId)
+        .map((item) => item.sourceNodeId!);
+      const unmetDependency = dependencyIds.find(
+        (dependencyId) => !safeNodeIds.has(dependencyId),
+      );
+      if (unmetDependency) {
+        skippedNodeReasons.set(
+          node.id,
+          `waiting_for_unexecuted_dependency:${unmetDependency}`,
+        );
+        continue;
+      }
+      const readiness = deterministicNodeInputReady(input, node, safeNodeIds);
+      if (!readiness.ok) {
+        skippedNodeReasons.set(node.id, readiness.reason);
+        continue;
+      }
+      safeNodeIds.add(node.id);
+      skippedNodeReasons.delete(node.id);
+      progressed = true;
+    }
+  }
   const executableNodeIds = graph.nodes
-    .filter((node) => {
-      if (!DETERMINISTIC_NODE_KINDS.has(node.kind)) return false;
-      if (node.kind === "recall" && graph.nodes.length === 1) return false;
-      return true;
-    })
+    .filter((node) => safeNodeIds.has(node.id))
+    .map((node) => node.id);
+  const deferredNodeIds = graph.nodes
+    .filter((node) => !safeNodeIds.has(node.id))
     .map((node) => node.id);
   if (deterministicNodeIds.length === 0) {
     reasons.push("no_deterministic_nodes");
@@ -743,6 +859,10 @@ function evaluateExecutionDecision(
     executableNodeIds,
     deterministicNodeIds,
     llmBlockingNodeIds,
+    deferredNodeIds,
+    skippedNodeReasons: [...skippedNodeReasons.entries()].map(
+      ([nodeId, reason]) => `${nodeId}:${reason}`,
+    ),
   };
 }
 
@@ -753,8 +873,16 @@ function logExecutionDecision(
   console.error(
     `🧭 [TaskGraph] execution decision graph=${input.graph.id} execute=${decision.execute} ` +
       `reasons=${decision.reasons.join(",") || "none"} executable=${decision.executableNodeIds.join(",") || "-"} ` +
-      `deterministic=${decision.deterministicNodeIds.join(",") || "-"} llmBlocking=${decision.llmBlockingNodeIds.join(",") || "-"}`,
+      `deterministic=${decision.deterministicNodeIds.join(",") || "-"} llmBlocking=${decision.llmBlockingNodeIds.join(",") || "-"} ` +
+      `deferred=${decision.deferredNodeIds.join(",") || "-"}`,
   );
+  if (decision.skippedNodeReasons.length > 0) {
+    console.error(
+      `🧭 [TaskGraph] execution skip reasons:\n${decision.skippedNodeReasons
+        .map((reason) => `  - ${reason}`)
+        .join("\n")}`,
+    );
+  }
 }
 
 function logExecutionSummary(
@@ -764,7 +892,8 @@ function logExecutionSummary(
   console.error(
     `🧭 [TaskGraph] execution result status=${result.status} snapshot=${result.snapshot.id} ` +
       `snapshotStatus=${result.snapshot.status} nodes=${result.execution.nodes.length} artifacts=${result.execution.artifacts.length} ` +
-      `replan=${result.replanDecisions.map((decision) => `${decision.action}:${decision.reasonCode}`).join(",") || "none"}`,
+      `replan=${result.replanDecisions.map((decision) => `${decision.action}:${decision.reasonCode}`).join(",") || "none"} ` +
+      `canClaimSuccess=${result.execution.finalResponseContract.canClaimSuccess}`,
   );
   if (!observability) return;
   if (result.execution.artifacts.length > 0) {
@@ -798,6 +927,69 @@ function logExecutionSummary(
         .join("\n")}`,
     );
   }
+}
+
+function buildExecutableSubgraph(
+  graph: TaskGraph,
+  decision: TaskGraphExecutionDecision,
+): TaskGraph {
+  const executableNodeIds = new Set(decision.executableNodeIds);
+  if (executableNodeIds.size === graph.nodes.length) return graph;
+  return {
+    ...graph,
+    id: `${graph.id}-preexec-${decision.executableNodeIds.join("-")}`,
+    nodes: graph.nodes.filter((node) => executableNodeIds.has(node.id)),
+    edges: graph.edges.filter(
+      (edge) =>
+        executableNodeIds.has(edge.from) && executableNodeIds.has(edge.to),
+    ),
+    status: "planned",
+    blockedReasons: [],
+  };
+}
+
+function partialExecutionContract(
+  fullGraph: TaskGraph,
+  executedGraph: TaskGraph,
+): TaskFinalResponseContract {
+  const executedNodeIds = new Set(executedGraph.nodes.map((node) => node.id));
+  const remainingNodes = fullGraph.nodes.filter(
+    (node) => !executedNodeIds.has(node.id),
+  );
+  return {
+    canClaimSuccess: false,
+    incompleteNodes: remainingNodes.map((node) => ({
+      nodeId: node.id,
+      status: "pending",
+      reason: PRE_LLM_BLOCKING_NODE_KINDS.has(node.kind)
+        ? "requires LLM generation or reasoning after pre-executed artifacts are available"
+        : "depends on a node that was deferred to the LLM/tool loop",
+    })),
+    instruction:
+      `Only the deterministic pre-LLM TaskGraph nodes were executed: ${
+        executedGraph.nodes.map((node) => node.id).join(",") || "none"
+      }. ` +
+      `Remaining nodes still need completion in the LLM/tool loop or final response: ${
+        remainingNodes.map((node) => `${node.id}:${node.kind}`).join(",") ||
+        "none"
+      }. Use pre-executed artifacts as inputs. Do not claim that deferred file, schedule, push, analysis, or delegate nodes completed unless they are actually completed later in this turn.`,
+  };
+}
+
+function applyPartialExecutionContract(
+  fullGraph: TaskGraph,
+  result: Awaited<ReturnType<AutonomousTaskRuntime["run"]>>,
+): Awaited<ReturnType<AutonomousTaskRuntime["run"]>> {
+  const executedNodeIds = new Set(result.graph.nodes.map((node) => node.id));
+  if (executedNodeIds.size === fullGraph.nodes.length) return result;
+  const contract = partialExecutionContract(fullGraph, result.graph);
+  return {
+    ...result,
+    execution: {
+      ...result.execution,
+      finalResponseContract: contract,
+    },
+  };
 }
 
 export function createJarvisTaskRuntime(
@@ -854,12 +1046,13 @@ export function createJarvisTaskRuntime(
         logExecutionDecision(input, decision);
         return null;
       }
+      const executableGraph = buildExecutableSubgraph(input.graph, decision);
       console.error(
-        `🧭 [TaskGraph] executing deterministic nodes for graph=${input.graph.id} nodes=${decision.executableNodeIds.join(",")}`,
+        `🧭 [TaskGraph] executing deterministic nodes for graph=${input.graph.id} executedGraph=${executableGraph.id} nodes=${decision.executableNodeIds.join(",")}`,
       );
       const result = await runtime.run({
         intent: input.intent,
-        graph: input.graph,
+        graph: executableGraph,
         context: {
           userPrompt: input.context.userPrompt,
           finalResponse: input.context.response?.text,
@@ -875,8 +1068,12 @@ export function createJarvisTaskRuntime(
         },
         signal: input.signal,
       });
-      logExecutionSummary(result, observability);
-      return result;
+      const normalizedResult = applyPartialExecutionContract(
+        input.graph,
+        result,
+      );
+      logExecutionSummary(normalizedResult, observability);
+      return normalizedResult;
     },
   };
 }

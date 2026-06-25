@@ -655,10 +655,31 @@ export async function runJarvisUnifiedRuntimeTurn(
             ? [
                 "<runtime_task_graph>",
                 `id: ${context.taskGraph.id}`,
-                `status: ${context.taskGraphExecution?.status ?? context.taskGraph.status}`,
+                `status: ${context.taskGraph.status}`,
+                context.taskGraphExecution
+                  ? `pre_execution_status: ${context.taskGraphExecution.status}`
+                  : "pre_execution_status: not_run",
                 `nodes: ${context.taskGraph.nodes
                   .map((node) => `${node.id}:${node.kind}`)
                   .join(",")}`,
+                context.taskGraphExecution
+                  ? `executed_nodes: ${context.taskGraphExecution.execution.nodes
+                      .map((state) => `${state.node.id}:${state.status}`)
+                      .join(",")}`
+                  : "",
+                context.taskGraphExecution
+                  ? `remaining_nodes: ${
+                      context.taskGraph.nodes
+                        .filter(
+                          (node) =>
+                            !context.taskGraphExecution?.execution.nodes.some(
+                              (state) => state.node.id === node.id,
+                            ),
+                        )
+                        .map((node) => `${node.id}:${node.kind}`)
+                        .join(",") || "none"
+                    }`
+                  : "",
                 context.taskGraphExecution
                   ? `blocked: ${context.taskGraphExecution.execution.blockedReasons.join(";") || "none"}`
                   : "execution: not_run",
