@@ -218,6 +218,34 @@ function compactRuntimeArtifactContent(content: string, max = 6000): string {
   return `${normalized.slice(0, max)}...`;
 }
 
+function stringifyRuntimeArtifactItem(item: unknown): string {
+  if (typeof item === "string") return item;
+  if (item === null || item === undefined) return "";
+  try {
+    return JSON.stringify(item);
+  } catch {
+    return String(item);
+  }
+}
+
+function formatRuntimeArtifactMemoryItems(
+  items: unknown[] | undefined,
+): string {
+  if (!items || items.length === 0) return "";
+  return [
+    "memory_items:",
+    ...items
+      .slice(0, 20)
+      .map(
+        (item, index) =>
+          `  ${index + 1}. ${compactRuntimeArtifactContent(
+            stringifyRuntimeArtifactItem(item),
+            1200,
+          )}`,
+      ),
+  ].join("\n");
+}
+
 function buildTaskGraphArtifactSection(
   execution: AutonomousTaskRuntimeResult | null,
 ): string {
@@ -232,8 +260,11 @@ function buildTaskGraphArtifactSection(
         `type: ${artifact.type}`,
         artifact.path ? `path: ${artifact.path}` : "",
         artifact.taskId ? `task_id: ${artifact.taskId}` : "",
+        artifact.type === "memory"
+          ? formatRuntimeArtifactMemoryItems(artifact.memoryItems)
+          : "",
         artifact.content
-          ? `content: ${compactRuntimeArtifactContent(artifact.content)}`
+          ? `${artifact.type === "memory" ? "raw_content" : "content"}: ${compactRuntimeArtifactContent(artifact.content)}`
           : "",
       ]
         .filter(Boolean)
@@ -459,7 +490,11 @@ export async function runJarvisUnifiedRuntimeTurn(
         },
       });
       querySubject = memoryPolicy.querySubject;
-      if (!memoryPolicy.allowFacts) {
+      if (taskGraphExecutionEnabled && memoryPolicy.contract.needMemory) {
+        console.error(
+          `🧭 [Jarvis] TaskGraph memory mode — generic fact/prewarm retrieval deferred to planned memory step(s). target=${memoryPolicy.contract.memoryTarget}, scopes=${memoryPolicy.contract.targetScopes.join(",") || "none"}`,
+        );
+      } else if (!memoryPolicy.allowFacts) {
         console.error(
           `🔍 [Jarvis] Intent-aware memory policy — skipping facts (${memoryPolicy.reasons.join(",") || "not_needed"}).`,
         );
@@ -890,6 +925,15 @@ export async function runJarvisUnifiedRuntimeTurn(
   const temporalRecallBoundary = buildTemporalRecallBoundary(
     runtimeResult.context.memoryContract,
   );
+  const taskArtifactSectionForLog = buildTaskGraphArtifactSection(
+    runtimeResult.context.taskGraphExecution,
+  );
+  const taskArtifacts =
+    runtimeResult.context.taskGraphExecution?.execution.artifacts ?? [];
+  const taskMemoryItemCount = taskArtifacts.reduce(
+    (count, artifact) => count + (artifact.memoryItems?.length ?? 0),
+    0,
+  );
   const fallbackSystemInstruction =
     defaultInstruction +
     "\n" +
@@ -900,7 +944,7 @@ export async function runJarvisUnifiedRuntimeTurn(
     injectionPlan.prewarmSection;
 
   console.error(
-    `🔄 [Jarvis] System Prompt Refreshed (subject=${querySubject}, memoryPolicy=${memoryPolicy.reasons.join(",") || "enabled"}). Facts injected: ${injectionPlan.factsInjected}/${retrievalCandidateCounts.facts}. Summary bullets: ${injectionPlan.summaryInjected}. Prewarmed memories: ${memoryPolicy.allowPrewarm ? injectionPlan.prewarmInjected : "disabled"}. Memory chars: ${injectionPlan.usedChars}. Rejected: ${injectionPlan.rejected.length}.`,
+    `🔄 [Jarvis] System Prompt Refreshed (subject=${querySubject}, memoryPolicy=${memoryPolicy.reasons.join(",") || "enabled"}). Facts injected: ${injectionPlan.factsInjected}/${retrievalCandidateCounts.facts}. Summary bullets: ${injectionPlan.summaryInjected}. Prewarmed memories: ${memoryPolicy.allowPrewarm ? injectionPlan.prewarmInjected : "disabled"}. Memory chars: ${injectionPlan.usedChars}. Task artifacts: ${taskArtifacts.length}, task artifact chars: ${taskArtifactSectionForLog.length}, task memory items: ${taskMemoryItemCount}. Rejected: ${injectionPlan.rejected.length}.`,
   );
 
   return {

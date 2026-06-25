@@ -556,6 +556,10 @@ describe("AgentRuntime", () => {
     expect(result.response.systemContext).toContain(
       "task_graph_memory_recall_completed",
     );
+    expect(result.response.systemContext).toContain("memory_items:");
+    expect(result.response.systemContext).toContain(
+      '{"text":"user likes tea and hiking"}',
+    );
   });
 
   it("suppresses recall_memory in the LLM loop after TaskGraph memory recall succeeds", async () => {

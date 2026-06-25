@@ -266,6 +266,32 @@ function compactArtifactContent(content: string, max = 4000): string {
   return `${normalized.slice(0, max)}...`;
 }
 
+function stringifyArtifactItem(item: unknown): string {
+  if (typeof item === "string") return item;
+  if (item === null || item === undefined) return "";
+  try {
+    return JSON.stringify(item);
+  } catch {
+    return String(item);
+  }
+}
+
+function formatArtifactMemoryItems(items: unknown[] | undefined): string {
+  if (!items || items.length === 0) return "";
+  return [
+    "memory_items:",
+    ...items
+      .slice(0, 20)
+      .map(
+        (item, index) =>
+          `  ${index + 1}. ${compactArtifactContent(
+            stringifyArtifactItem(item),
+            1200,
+          )}`,
+      ),
+  ].join("\n");
+}
+
 function formatTaskGraphArtifacts(context: RuntimeContext): string {
   const artifacts = context.taskGraphExecution?.execution.artifacts ?? [];
   if (artifacts.length === 0) return "";
@@ -278,8 +304,11 @@ function formatTaskGraphArtifacts(context: RuntimeContext): string {
         `type: ${artifact.type}`,
         artifact.path ? `path: ${artifact.path}` : "",
         artifact.taskId ? `task_id: ${artifact.taskId}` : "",
+        artifact.type === "memory"
+          ? formatArtifactMemoryItems(artifact.memoryItems)
+          : "",
         artifact.content
-          ? `content: ${compactArtifactContent(artifact.content)}`
+          ? `${artifact.type === "memory" ? "raw_content" : "content"}: ${compactArtifactContent(artifact.content)}`
           : "",
       ]
         .filter(Boolean)

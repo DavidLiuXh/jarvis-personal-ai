@@ -246,6 +246,161 @@ describe("runJarvisUnifiedRuntimeTurn", () => {
     expect(result.llmLoop?.finalText).toBe("done");
   });
 
+  it("passes TaskGraph recall artifacts into the LLM backend system context", async () => {
+    const executeTools = vi.fn(async (requests) =>
+      requests.map((request: any) => ({
+        name: request.name,
+        callId: request.callId,
+        status: "success",
+        output: "- 爱好骑自行车\n- 爱好逛胡同",
+      })),
+    );
+    const toolRouter = {
+      setCurrentMemoryContract: vi.fn(),
+      setCurrentStepMemoryDecisions: vi.fn(),
+      executeTools,
+    };
+    const recallStep = step({
+      type: "recall",
+      action: "recall",
+      target: "我的爱好",
+      operation: {
+        domain: "memory",
+        action: "recall",
+        targetType: "memory",
+        target: "我的爱好",
+        selector: "我的爱好",
+        scope: "user_memory",
+        riskLevel: "low",
+      },
+      riskLevel: "low",
+    });
+    const recallIntent = intent({
+      subject: "personal",
+      taskType: "recall",
+      needsMemory: true,
+      needsExternalKnowledge: false,
+      needsTool: false,
+      reason: "recall user hobbies",
+      evidence: ["还记得我的爱好吗？"],
+      semanticEvidence: {
+        personalContext: { present: true, reason: "personal", span: "我" },
+        memoryRecall: {
+          present: true,
+          target: "user_memory",
+          reason: "explicit recall",
+          span: "记得我的爱好",
+        },
+        actionRequest: {
+          present: true,
+          action: "recall",
+          object: "我的爱好",
+        },
+        entityHints: { tickers: [], technicalTerms: [], peopleOrCompanies: [] },
+      },
+      richIntent: {
+        userGoal: "还记得我的爱好吗？",
+        domain: "memory",
+        action: "recall",
+        primaryAction: "recall",
+        targets: [{ type: "memory", value: "我的爱好" }],
+        contextDependency: {
+          recentConversation: false,
+          longTermMemory: true,
+          externalWorld: false,
+          localWorkspace: false,
+        },
+        ambiguity: [],
+        riskLevel: "low",
+      },
+      intentSteps: [recallStep],
+    });
+    let backendSystemContext = "";
+    const result = await runJarvisUnifiedRuntimeTurn(
+      baseInput({
+        userPrompt: "还记得我的爱好吗？",
+        querySubject: "personal",
+        intent: recallIntent,
+        toolRouter,
+        jarvisConfig: {
+          memory: {},
+          agentRuntime: {
+            enabled: true,
+            executionMode: "execute",
+            autonomousTaskRuntime: {
+              enabled: true,
+              mode: "execute",
+              stateDir: path.dirname(tempDbPath()),
+            },
+          },
+        },
+        llmRuntime: {
+          options: {
+            backend: {
+              getModel: () => "mock",
+              getCapabilities: () => ({
+                streaming: true,
+                nativeToolCalling: true,
+                jsonMode: false,
+                multimodalInput: false,
+                maxContextTokens: 4096,
+                modes: ["native_tool_calling"],
+              }),
+              async *sendTurn(input: any) {
+                backendSystemContext =
+                  input.messages.find(
+                    (message: any) => message.role === "system",
+                  )?.blocks?.[0]?.text ?? "";
+                yield {
+                  type: "content" as const,
+                  text: "你喜欢骑自行车和逛胡同。",
+                };
+              },
+            },
+            promptCompiler: {
+              compileInitialTurn: ({ systemContext, initialMessages }: any) => [
+                ...(systemContext?.trim()
+                  ? [
+                      {
+                        role: "system",
+                        blocks: [{ type: "text", text: systemContext }],
+                      },
+                    ]
+                  : []),
+                ...initialMessages,
+              ],
+              compileToolResults: () => [],
+              compileRetryPrompt: () => [],
+            },
+            toolExecutor: { executeTools: vi.fn(async () => []) },
+            tools: [{ name: "recall_memory" }],
+          },
+          initialMessages: [
+            {
+              role: "user",
+              blocks: [{ type: "text", text: "还记得我的爱好吗？" }],
+            },
+          ],
+          signal: new AbortController().signal,
+        },
+      }),
+    );
+
+    expect(result.taskGraphExecution?.status).toBe("succeeded");
+    expect(executeTools).toHaveBeenCalledWith(
+      [expect.objectContaining({ name: "recall_memory" })],
+      expect.any(Object),
+    );
+    expect(result.llmLoop?.finalText).toBe("你喜欢骑自行车和逛胡同。");
+    expect(backendSystemContext).toContain("<runtime_task_artifacts>");
+    expect(backendSystemContext).toContain("memory_items:");
+    expect(backendSystemContext).toContain("爱好骑自行车");
+    expect(backendSystemContext).toContain("爱好逛胡同");
+    expect(backendSystemContext).toContain(
+      "recall_memory: disabled_for_this_turn",
+    );
+  });
+
   it("adds a temporal recall boundary and passes the exact date range for time-scoped conversation recall", async () => {
     const range = {
       from: Date.parse("2026-06-01T00:00:00+08:00"),
