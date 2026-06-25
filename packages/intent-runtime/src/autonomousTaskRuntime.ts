@@ -33,6 +33,8 @@ export type AutonomousTaskRuntimeInput = {
   graph?: TaskGraph;
   context: Omit<TaskGraphExecutorContext, "resumeState">;
   snapshotId?: string;
+  /** Execute from a clean state even when a durable snapshot already exists. */
+  disableResume?: boolean;
   signal?: AbortSignal;
 };
 
@@ -75,9 +77,11 @@ export class AutonomousTaskRuntime {
       buildTaskGraph(input.intent, buildTaskSpec(input.intent), {
         availableCapabilities: this.availableCapabilities,
       });
-    let previousSnapshot = input.snapshotId
-      ? await this.store.load(input.snapshotId)
-      : await this.store.load(graph.id);
+    let previousSnapshot = input.disableResume
+      ? null
+      : input.snapshotId
+        ? await this.store.load(input.snapshotId)
+        : await this.store.load(graph.id);
     const replanDecisions: ReplanDecision[] = [];
     let lastExecution: TaskGraphExecutionResult | null = null;
     let lastSnapshot: TaskGraphExecutionSnapshot | null = null;

@@ -361,6 +361,15 @@ describe("createJarvisTaskRuntime", () => {
       type: "memory",
       memoryItems: ["user likes tea", "user likes hiking"],
     });
+
+    const secondResult = await taskRuntime.execute({ ...input, graph: graph! });
+
+    expect(executeTools).toHaveBeenCalledTimes(2);
+    expect(secondResult?.status).toBe("succeeded");
+    expect(secondResult?.execution.artifacts[0]).toMatchObject({
+      type: "memory",
+      memoryItems: ["user likes tea", "user likes hiking"],
+    });
   });
 
   it("resumes persisted successful nodes without repeating deterministic tools", async () => {

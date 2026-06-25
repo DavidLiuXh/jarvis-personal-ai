@@ -1129,6 +1129,10 @@ function buildExecutableSubgraph(
   };
 }
 
+function hasVolatileRecallNode(graph: TaskGraph): boolean {
+  return graph.nodes.some((node) => node.kind === "recall");
+}
+
 function partialExecutionContract(
   fullGraph: TaskGraph,
   completedNodeIds: Set<string>,
@@ -1249,9 +1253,19 @@ export function createJarvisTaskRuntime(
       console.error(
         `🧭 [TaskGraph] executing deterministic nodes for graph=${input.graph.id} executedGraph=${executableGraph.id} nodes=${decision.executableNodeIds.join(",")}`,
       );
+      const disableResume = hasVolatileRecallNode(executableGraph);
+      if (disableResume) {
+        console.error(
+          `🧭 [TaskGraph] resume disabled for volatile recall node(s): ${executableGraph.nodes
+            .filter((node) => node.kind === "recall")
+            .map((node) => node.id)
+            .join(",")}`,
+        );
+      }
       const result = await runtime.run({
         intent: input.intent,
         graph: executableGraph,
+        disableResume,
         context: {
           userPrompt: input.context.userPrompt,
           finalResponse: input.context.response?.text,
