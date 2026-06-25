@@ -104,11 +104,17 @@ export function decideTaskGraphRecovery(
       blocking: true,
     };
   }
-  const failedOrBlocked = result.nodes.find(
-    (state) =>
-      !state.node.optional &&
-      (state.status === "failed" || state.status === "blocked"),
-  );
+  const failedOrBlocked =
+    result.nodes.find(
+      (state) =>
+        !state.node.optional &&
+        (state.status === "failed" || state.status === "blocked"),
+    ) ??
+    result.nodes.find(
+      (state) =>
+        state.node.optional &&
+        (state.status === "failed" || state.status === "blocked"),
+    );
   if (!failedOrBlocked) {
     return {
       action: "abort",

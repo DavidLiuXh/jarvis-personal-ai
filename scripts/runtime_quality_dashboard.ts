@@ -133,6 +133,20 @@ function successWithoutToolViolations(matrix: any) {
   });
 }
 
+function taskGraphDimensionCoverage(taskGraphQuality: any) {
+  const dimensions = taskGraphQuality?.dimensions ?? {};
+  return Object.fromEntries(
+    Object.entries(dimensions).map(([dimension, value]: [string, any]) => [
+      dimension,
+      {
+        reviewed: value?.reviewed ?? 0,
+        total: value?.total ?? 0,
+        passed: value?.passed ?? 0,
+      },
+    ]),
+  );
+}
+
 function buildGates(input: {
   matrix: any;
   llmBackend: any;
@@ -146,6 +160,13 @@ function buildGates(input: {
   );
   const leakageViolations = externalMemoryLeakageViolations(input.matrix);
   const successWithoutTool = successWithoutToolViolations(input.matrix);
+  const taskGraphCoverage = taskGraphDimensionCoverage(input.taskGraphQuality);
+  const taskGraphCoverageFailures = Object.entries(taskGraphCoverage).filter(
+    ([, value]: [string, any]) => value.reviewed < 10,
+  );
+  const taskGraphGateFailures = (input.taskGraphQuality?.gates ?? []).filter(
+    (gate: any) => gate.passed !== true,
+  );
   return [
     {
       id: "required_invariant_pass_rate",
@@ -210,6 +231,28 @@ function buildGates(input: {
       actual: `${input.taskGraphQuality?.passed ?? 0}/${input.taskGraphQuality?.total ?? 0}`,
       expected: "passed=total",
     },
+    {
+      id: "task_graph_dimension_reviewed_coverage",
+      passed:
+        input.taskGraphQuality !== null &&
+        Object.keys(taskGraphCoverage).length >= 7 &&
+        taskGraphCoverageFailures.length === 0,
+      severity: "blocker",
+      message:
+        "Each TaskGraph quality dimension must have >=10 reviewed cases.",
+      actual: taskGraphCoverage,
+      expected: "reviewed>=10 for every dimension",
+    },
+    {
+      id: "task_graph_internal_gates_pass",
+      passed:
+        input.taskGraphQuality !== null && taskGraphGateFailures.length === 0,
+      severity: "blocker",
+      message:
+        "TaskGraph quality internal gates must all pass, including golden traces.",
+      actual: taskGraphGateFailures.map((gate: any) => gate.id),
+      expected: [],
+    },
   ];
 }
 
@@ -256,6 +299,13 @@ function renderMarkdown(payload: any): string {
     gate.passed ? "PASS" : "FAIL",
     gate.message,
   ]);
+  const taskGraphDimensionRows = Object.entries(
+    payload.summary.taskGraphQuality.dimensions ?? {},
+  ).map(([dimension, value]: [string, any]) => [
+    dimension,
+    `${value.passed}/${value.total}`,
+    `${value.reviewed}`,
+  ]);
   const trend = payload.trend ?? {};
   return [
     "# Runtime Quality Dashboard",
@@ -272,6 +322,12 @@ function renderMarkdown(payload: any): string {
     "| Gate | Result | Meaning |",
     "| --- | --- | --- |",
     ...table(gateRows),
+    "",
+    "## TaskGraph Quality",
+    "",
+    "| Dimension | Result | Reviewed |",
+    "| --- | --- | --- |",
+    ...table(taskGraphDimensionRows),
     "",
     "## Runtime Trend",
     "",
@@ -375,6 +431,8 @@ function main() {
           taskGraphQuality.passed ?? 0,
           taskGraphQuality.total ?? 0,
         ),
+        dimensions: taskGraphDimensionCoverage(taskGraphQuality),
+        gates: taskGraphQuality.gates ?? [],
       },
     },
     trend: matrix.trend,

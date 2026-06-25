@@ -547,7 +547,7 @@ Status: completed for package-level durable state, resume, artifact registry, an
 
 ### Phase D: Full Quality Gate
 
-Status: completed for local package gate and runtime dashboard integration.
+Status: completed.
 
 范围：
 
@@ -565,6 +565,8 @@ Status: completed for local package gate and runtime dashboard integration.
 实现说明：
 
 - `scripts/run_task_graph_quality.ts` 输出 `evals/logs/task-graph-quality-latest.json/md`。
+- 当前 task graph quality matrix 包含 70 个 reviewed deterministic cases，每个 dimension 10 个 reviewed cases。
+- 每个 dimension 都包含 positive / negative / boundary case，覆盖 P0-P5 能力链路。
 - 当前 quality dimensions 覆盖：
   - `taskEvaluation`
   - `taskGraphPlanning`
@@ -573,21 +575,28 @@ Status: completed for local package gate and runtime dashboard integration.
   - `acceptanceValidation`
   - `replanning`
   - `durableState`
+- `scripts/run_task_graph_quality.ts` 支持读取 `evals/task_graph/reviewed-task-graph-cases.jsonl`，用于把真实使用中的 reviewed task graph failures 纳入同一份 quality report。
+- `packages/intent-runtime/src/taskGraphTrace.ts` 提供 golden trace 生成、trace health validation 和 readable diff。
+- golden trace 覆盖 `TaskSpec`、`TaskGraph`、node transitions、validators、artifacts、final response contract，并检测“未执行但成功”的状态。
 - `package.json` 新增 `task-graph:quality`，并已纳入 `runtime:quality`。
-- `scripts/runtime_quality_dashboard.ts` 已读取 task graph quality report，并新增 `task_graph_quality_eval_pass` gate。
+- `scripts/runtime_quality_dashboard.ts` 已读取 task graph quality report，并新增：
+  - `task_graph_quality_eval_pass`
+  - `task_graph_dimension_reviewed_coverage`
+  - `task_graph_internal_gates_pass`
+- runtime quality dashboard 显示每个 TaskGraph dimension 的 pass/total/reviewed 计数。
 
 已通过门控：
 
 - `npm run task-graph:quality`
 - `npx tsx scripts/runtime_quality_dashboard.ts --gate`
-- `npx vitest run packages/intent-runtime/src/taskGraph.test.ts packages/intent-runtime/src/taskGraphExecutor.test.ts packages/intent-runtime/src/taskGraphState.test.ts packages/intent-runtime/src/taskGraphRecovery.test.ts packages/intent-runtime/src/packageApi.test.ts`
+- `npx vitest run packages/intent-runtime/src/taskGraph.test.ts packages/intent-runtime/src/taskGraphExecutor.test.ts packages/intent-runtime/src/taskGraphState.test.ts packages/intent-runtime/src/taskGraphRecovery.test.ts packages/intent-runtime/src/taskGraphTrace.test.ts packages/intent-runtime/src/packageApi.test.ts`
 - `npm run runtime:build`
 
 当前边界：
 
 - 已完成 package-level autonomous task runtime 闭环；Jarvis 主请求路径尚未默认切到 `AutonomousTaskRuntime` 执行所有复杂任务。
 - `JsonFileTaskGraphExecutionStore` 已提供通用持久化 adapter；Jarvis 后续可选择将其落盘目录接到自身 runtime state 目录。
-- 当前 task graph quality 是 deterministic local gate；真实使用失败样本自动沉淀到 reviewed task graph eval 仍需要后续接入反馈采集流程。
+- 真实使用失败样本的自动采集仍依赖 Jarvis 运行时反馈链路；P7 已提供 reviewed JSONL 入口和 dashboard gate，后续只需要把采集器输出接到 `evals/task_graph/reviewed-task-graph-cases.jsonl`。
 
 ## 13. Definition Of Done
 
