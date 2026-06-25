@@ -15,3 +15,4 @@ export * from "./taskGraph.js";
 export * from "./taskGraphExecutor.js";
 export * from "./taskGraphRecovery.js";
 export * from "./taskGraphState.js";
+export * from "./taskGraphTrace.js";

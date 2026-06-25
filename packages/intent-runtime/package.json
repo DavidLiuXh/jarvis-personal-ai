@@ -53,6 +53,10 @@
     "./taskGraphState": {
       "types": "./dist/taskGraphState.d.ts",
       "import": "./dist/taskGraphState.js"
+    },
+    "./taskGraphTrace": {
+      "types": "./dist/taskGraphTrace.d.ts",
+      "import": "./dist/taskGraphTrace.js"
     }
   },
   "files": [

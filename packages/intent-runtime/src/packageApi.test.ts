@@ -11,8 +11,10 @@ import {
   TaskGraphExecutor,
   buildIntentExecutionPlan,
   buildTaskGraph,
+  buildTaskGraphGoldenTrace,
   decideTaskGraphRecovery,
   evaluateIntentConfidence,
+  validateTaskGraphGoldenTrace,
 } from "./index.js";
 import type { IntentModelClient } from "./index.js";
 import type { IntentFrame } from "../../memory-runtime/src/index.js";
@@ -154,6 +156,8 @@ describe("@jarvis/intent-runtime package API", () => {
     expect(TaskGraphExecutor).toBeTypeOf("function");
     expect(AutonomousTaskRuntime).toBeTypeOf("function");
     expect(decideTaskGraphRecovery).toBeTypeOf("function");
+    expect(buildTaskGraphGoldenTrace).toBeTypeOf("function");
+    expect(validateTaskGraphGoldenTrace).toBeTypeOf("function");
     expect(new InMemoryTaskGraphExecutionStore()).toBeTruthy();
   });
 
