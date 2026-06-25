@@ -119,7 +119,9 @@ function intent(overrides: Partial<IntentFrame> = {}): IntentFrame {
   };
 }
 
-function memoryContract(): MemoryContract {
+function memoryContract(
+  overrides: Partial<MemoryContract> = {},
+): MemoryContract {
   return {
     needMemory: true,
     subjectBoundary: "personal",
@@ -135,6 +137,7 @@ function memoryContract(): MemoryContract {
     },
     reasons: ["test"],
     policyTrace: [],
+    ...overrides,
   };
 }
 
@@ -168,11 +171,12 @@ function runtimeContext(
 function planInput(
   frame: IntentFrame,
   context = runtimeContext(),
+  contract = memoryContract(),
 ): TaskRuntimePlanInput {
   return {
     context,
     intent: frame,
-    memoryContract: memoryContract(),
+    memoryContract: contract,
     stepMemoryDecisions: [],
     skills: [],
   };
@@ -321,6 +325,14 @@ describe("createJarvisTaskRuntime", () => {
     const input = planInput(
       frame,
       runtimeContext({ userPrompt: "还记得我的爱好吗？" }),
+      memoryContract({
+        memoryTarget: "user_memory",
+        query: {
+          raw: "还记得我的爱好吗？",
+          rewritten: "爱好 hobbies",
+          entities: ["爱好"],
+        },
+      }),
     );
     const graph = await taskRuntime.plan(input);
 
@@ -335,7 +347,11 @@ describe("createJarvisTaskRuntime", () => {
       [
         expect.objectContaining({
           name: "recall_memory",
-          args: expect.objectContaining({ query: expect.any(String) }),
+          args: expect.objectContaining({ query: "爱好 hobbies" }),
+          metadata: expect.objectContaining({
+            memoryTarget: "user_memory",
+            targetScopes: ["fact", "entry"],
+          }),
         }),
       ],
       expect.any(Object),

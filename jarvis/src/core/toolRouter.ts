@@ -53,6 +53,7 @@ export type MemoryServiceHandle = {
   ) => Promise<string[]>;
   searchFacts: (
     query: string,
+    limit?: number,
   ) => Promise<Array<{ category: string; content: string }>>;
 };
 
@@ -551,6 +552,48 @@ type TaskCommandHandlerHandle = {
   ) => Promise<string>;
 };
 
+function memoryContractAllowsAnyRecall(contract: MemoryContract): boolean {
+  if (contract.subjectBoundary === "external" || !contract.needMemory) {
+    return false;
+  }
+  const allowFacts =
+    contract.targetScopes.includes("fact") &&
+    contract.constraints.allowPersonalFacts;
+  const allowEntries =
+    contract.targetScopes.includes("entry") &&
+    contract.constraints.allowEntries;
+  const allowSession =
+    contract.targetScopes.includes("session") &&
+    contract.constraints.allowSessionHistory;
+  return allowFacts || allowEntries || allowSession;
+}
+
+function memoryContractAllowsFactRecall(
+  contract: MemoryContract | null,
+): boolean {
+  return (
+    contract !== null &&
+    contract.subjectBoundary !== "external" &&
+    contract.needMemory &&
+    contract.targetScopes.includes("fact") &&
+    contract.constraints.allowPersonalFacts
+  );
+}
+
+function memoryContractAllowsHistoryRecall(
+  contract: MemoryContract | null,
+): boolean {
+  if (contract === null) return true;
+  return (
+    contract.subjectBoundary !== "external" &&
+    contract.needMemory &&
+    ((contract.targetScopes.includes("entry") &&
+      contract.constraints.allowEntries) ||
+      (contract.targetScopes.includes("session") &&
+        contract.constraints.allowSessionHistory))
+  );
+}
+
 /**
  * Routes tool call requests to either Jarvis-native handlers or the active
  * scheduler adapter, then assembles the response parts for the next LLM turn.
@@ -941,9 +984,7 @@ export class ToolRouter implements ToolExecutorAdapter {
       } else if (req.name === "recall_memory") {
         const memoryDenied =
           this.currentMemoryContract !== null &&
-          (this.currentMemoryContract.subjectBoundary === "external" ||
-            this.currentMemoryContract.needMemory === false ||
-            !this.currentMemoryContract.targetScopes.includes("entry"));
+          !memoryContractAllowsAnyRecall(this.currentMemoryContract);
         if (memoryDenied) {
           output =
             `PERSONAL MEMORY ACCESS DENIED by current MemoryContract. ` +
@@ -1051,15 +1092,50 @@ export class ToolRouter implements ToolExecutorAdapter {
           console.error(
             `🧠 [Jarvis] Active Recall initiated for: "${effectiveQuery}" (TimeWindow: ${windowLabel}, source=${twSource})`,
           );
-          const memories = await this.memoryService.search(
-            effectiveQuery,
-            limit,
-            timeWindowDays,
-            dateRange,
+          const shouldSearchFacts = memoryContractAllowsFactRecall(
+            this.currentMemoryContract,
           );
+          const shouldSearchHistory = memoryContractAllowsHistoryRecall(
+            this.currentMemoryContract,
+          );
+          const [facts, memories] = await Promise.all([
+            shouldSearchFacts
+              ? this.memoryService.searchFacts(effectiveQuery, limit)
+              : Promise.resolve([]),
+            shouldSearchHistory
+              ? this.memoryService.search(
+                  effectiveQuery,
+                  limit,
+                  timeWindowDays,
+                  dateRange,
+                )
+              : Promise.resolve([]),
+          ]);
+          if (this.currentMemoryContract !== null) {
+            console.error(
+              `🧠 [Jarvis] Active Recall scopes target=${this.currentMemoryContract.memoryTarget} facts=${shouldSearchFacts ? "on" : "off"} history=${shouldSearchHistory ? "on" : "off"}`,
+            );
+          }
+          const sections: string[] = [];
+          if (facts.length > 0) {
+            sections.push(
+              `STRUCTURED FACTS FOUND:\n${facts
+                .map((fact) => `- [${fact.category}] ${fact.content}`)
+                .join("\n")}`,
+            );
+          }
+          if (memories.length > 0) {
+            sections.push(
+              `LONG-TERM MEMORIES FOUND:\n${memories
+                .map((memory) => `- ${memory}`)
+                .join("\n")}`,
+            );
+          }
           output =
-            memories.length > 0
-              ? `LONG-TERM MEMORIES FOUND:\n${memories.map((m) => `- ${m}`).join("\n")}\n\nINSTRUCTION: Now synthesize this history into your final answer.`
+            sections.length > 0
+              ? `${sections.join(
+                  "\n\n",
+                )}\n\nINSTRUCTION: Now synthesize these retrieved memories into your final answer.`
               : `NO SPECIFIC MEMORIES FOUND for "${effectiveQuery}". Proceed with current knowledge.`;
         }
       } else if (req.name === "activate_skill") {

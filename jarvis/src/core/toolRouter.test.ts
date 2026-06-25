@@ -271,7 +271,43 @@ describe("ToolRouter", () => {
     expect(JSON.stringify(response)).toContain("memory item 1");
   });
 
-  it("recall_memory is denied when the MemoryContract forbids personal entries", async () => {
+  it("recall_memory searches structured facts when the MemoryContract allows fact scope", async () => {
+    const searchFacts = vi
+      .fn()
+      .mockResolvedValue([
+        { category: "behavior", content: "user likes hiking" },
+      ]);
+    const search = vi.fn().mockResolvedValue(["previous hiking discussion"]);
+    const { router } = makeRouter({ searchFacts, search });
+    router.setCurrentMemoryContract(
+      memoryContract({
+        targetScopes: ["fact", "entry"],
+        memoryTarget: "user_memory",
+        query: {
+          raw: "你记录了我有哪些爱好？",
+          rewritten: "爱好 hobbies",
+          entities: ["爱好"],
+        },
+      }),
+    );
+
+    const parts = await router.route(
+      [makeReq("recall_memory", { query: "爱好 hobbies", limit: 5 })],
+      new AbortController().signal,
+      vi.fn(),
+    );
+
+    expect(searchFacts).toHaveBeenCalledWith("爱好 hobbies", 5);
+    expect(search).toHaveBeenCalledWith("爱好 hobbies", 5, null, null);
+    const response = JSON.stringify(
+      (parts[0] as any).functionResponse.response,
+    );
+    expect(response).toContain("STRUCTURED FACTS FOUND");
+    expect(response).toContain("[behavior] user likes hiking");
+    expect(response).toContain("previous hiking discussion");
+  });
+
+  it("recall_memory is denied when the MemoryContract forbids personal memory", async () => {
     const search = vi.fn().mockResolvedValue(["should not be read"]);
     const { router } = makeRouter({ search });
     router.setCurrentMemoryContract(

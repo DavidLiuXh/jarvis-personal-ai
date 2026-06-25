@@ -31,6 +31,7 @@ import {
 } from "../intent-runtime/index.js";
 import type { JarvisConfig } from "./configManager.js";
 import type { IntentFrame } from "./intentResolver.js";
+import type { MemoryContract } from "../memory-runtime/index.js";
 import type { ToolRouter } from "./toolRouter.js";
 
 const IMPLEMENTED_CAPABILITIES = [
@@ -481,17 +482,34 @@ function deterministicTaskRequest(
   };
 }
 
+function getMemoryContract(
+  request: TaskNodeExecutionRequest,
+): MemoryContract | null {
+  const value = request.context.metadata?.memoryContract;
+  return value && typeof value === "object" ? (value as MemoryContract) : null;
+}
+
 function recallRequest(request: TaskNodeExecutionRequest): RuntimeToolRequest {
   const intent = getIntent(request);
+  const contract = getMemoryContract(request);
+  const query =
+    contract?.query.rewritten ||
+    contract?.query.raw ||
+    request.context.userPrompt ||
+    request.node.title;
   return {
     name: "recall_memory",
     callId: makeCallId(request.node.id, "recall_memory"),
     args: {
-      query: request.node.title || request.context.userPrompt,
+      query,
       limit: 5,
       time_window_days: intent?.timeWindowDays,
       date_from: intent?.dateFrom,
       date_to: intent?.dateTo,
+    },
+    metadata: {
+      memoryTarget: contract?.memoryTarget,
+      targetScopes: contract?.targetScopes,
     },
   };
 }
