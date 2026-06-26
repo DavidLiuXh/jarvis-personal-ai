@@ -668,7 +668,7 @@ function strongTopicDomains(text: string): Set<StrongTopicDomain> {
     domains.add("ai_technology");
   }
   if (
-    /\b(?:naaim|s&p|nasdaq|dow jones|stock market|equity exposure)\b|股市|股票|美股|投资经理|风险敞口|机构股票配置|市场情绪|标普|纳斯达克/i.test(
+    /\b(?:naaim|s&p|nasdaq|dow jones|stock market|equity exposure|market outlook|investment recommendation|investor advice|us market|u\.s\. market)\b|美国市场|市场前景|发展前景.{0,16}投资|投资者|投资建议|股市|股票|美股|投资经理|风险敞口|机构股票配置|市场情绪|标普|纳斯达克/i.test(
       text,
     )
   ) {
@@ -794,9 +794,24 @@ function hasDisjointTopicBoundaryDomains(args: {
   current: Set<TopicBoundaryDomain>;
   history: Set<TopicBoundaryDomain>;
 }): boolean {
-  if (args.current.size === 0 || args.history.size === 0) return false;
-  for (const domain of args.current) {
-    if (args.history.has(domain)) return false;
+  const semanticDomains = (domains: Set<TopicBoundaryDomain>) =>
+    new Set(
+      [...domains].filter(
+        (domain) =>
+          domain !== "workspace_action" &&
+          domain !== "schedule" &&
+          domain !== "system_command",
+      ),
+    );
+  const currentSemantic = semanticDomains(args.current);
+  const historySemantic = semanticDomains(args.history);
+  const current =
+    currentSemantic.size > 0 ? currentSemantic : new Set(args.current);
+  const history =
+    historySemantic.size > 0 ? historySemantic : new Set(args.history);
+  if (current.size === 0 || history.size === 0) return false;
+  for (const domain of current) {
+    if (history.has(domain)) return false;
   }
   return true;
 }

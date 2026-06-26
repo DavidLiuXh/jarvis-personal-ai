@@ -685,7 +685,7 @@ export function buildTaskGraph(
     context.availableCapabilities ?? [...DEFAULT_CAPABILITIES],
   );
   const steps = intent.intentSteps;
-  const nodes: TaskNode[] =
+  const rawNodes: TaskNode[] =
     steps.length > 0
       ? steps.map((step, index) => {
           const kind = nodeKindForStep(step, intent);
@@ -700,7 +700,7 @@ export function buildTaskGraph(
             context,
           ),
         ];
-  const edges = buildEdges(steps, nodes);
+  const { nodes, edges } = normalizeTaskGraphDataFlow(rawNodes);
   const blockedReasons = nodes
     .map((node) => node.blockedReason)
     .filter((reason): reason is string => Boolean(reason));
@@ -725,6 +725,99 @@ export function buildTaskGraph(
     );
   }
   return graph;
+}
+
+function hasInputFrom(node: TaskNode, sourceNodeId: string): boolean {
+  return node.inputs.some((input) => input.sourceNodeId === sourceNodeId);
+}
+
+function addInput(node: TaskNode, sourceNodeId: string): TaskNode {
+  if (hasInputFrom(node, sourceNodeId)) return node;
+  return {
+    ...node,
+    inputs: [
+      ...node.inputs,
+      {
+        sourceNodeId,
+        name: `${sourceNodeId}.output`,
+        required: true,
+      },
+    ],
+  };
+}
+
+function normalizeTaskGraphDataFlow(nodes: TaskNode[]): {
+  nodes: TaskNode[];
+  edges: TaskEdge[];
+} {
+  const kindById = new Map(nodes.map((node) => [node.id, node.kind]));
+  const researchNodeIds = nodes
+    .filter((node) => node.kind === "research")
+    .map((node) => node.id);
+  const analyzeNodeIds = nodes
+    .filter((node) => node.kind === "analyze")
+    .map((node) => node.id);
+
+  let normalized = nodes.map((node) => {
+    if (node.kind !== "research") return node;
+    return {
+      ...node,
+      inputs: node.inputs.filter((input) => {
+        const sourceKind = input.sourceNodeId
+          ? kindById.get(input.sourceNodeId)
+          : undefined;
+        return sourceKind !== "analyze" && sourceKind !== "respond";
+      }),
+    };
+  });
+
+  normalized = normalized.map((node) => {
+    if (node.kind === "analyze") {
+      return researchNodeIds.reduce(
+        (current, researchNodeId) => addInput(current, researchNodeId),
+        node,
+      );
+    }
+    if (node.kind === "write_file") {
+      const upstreamIds =
+        analyzeNodeIds.length > 0 ? analyzeNodeIds : researchNodeIds;
+      return upstreamIds.reduce(
+        (current, upstreamId) => addInput(current, upstreamId),
+        node,
+      );
+    }
+    return node;
+  });
+
+  const edges = normalized.flatMap((node) =>
+    node.inputs
+      .filter((input) => Boolean(input.sourceNodeId))
+      .map((input) => ({
+        from: input.sourceNodeId!,
+        to: node.id,
+        reason: "intent or inferred data dependency",
+      })),
+  );
+  return { nodes: sortTaskNodesByDependencies(normalized, edges), edges };
+}
+
+function sortTaskNodesByDependencies(
+  nodes: TaskNode[],
+  edges: TaskEdge[],
+): TaskNode[] {
+  const remaining = new Map(nodes.map((node) => [node.id, node]));
+  const sorted: TaskNode[] = [];
+  while (remaining.size > 0) {
+    const ready = [...remaining.values()].find((node) =>
+      edges
+        .filter((edge) => edge.to === node.id)
+        .every((edge) => !remaining.has(edge.from)),
+    );
+    if (!ready) return nodes;
+    sorted.push(ready);
+    remaining.delete(ready.id);
+  }
+  return sorted;
 }
 
 function buildNodeFromSpec(
@@ -826,19 +919,6 @@ function finalizeNode(
     ...node,
     blockedReason,
   };
-}
-
-function buildEdges(steps: IntentStep[], nodes: TaskNode[]): TaskEdge[] {
-  const nodeIds = new Set(nodes.map((node) => node.id));
-  return steps.flatMap((step) =>
-    step.dependsOn
-      .filter((dependency) => nodeIds.has(dependency) && nodeIds.has(step.id))
-      .map((dependency) => ({
-        from: dependency,
-        to: step.id,
-        reason: "intent step dependency",
-      })),
-  );
 }
 
 export function validateTaskSpec(spec: TaskSpec): TaskGateResult[] {

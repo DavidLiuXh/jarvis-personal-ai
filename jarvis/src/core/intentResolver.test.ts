@@ -2350,6 +2350,81 @@ ${modelResponse({
     );
   });
 
+  it("forces topic shift when the workflow repeats but the external business domain changes", async () => {
+    const resolver = makeResolver();
+    mockGenerate.mockResolvedValueOnce(
+      modelResponse({
+        query_subject: "mixed",
+        task_type: "execute",
+        needs_external_knowledge: true,
+        needs_tool: true,
+        semantic_evidence: {
+          personalContext: { present: false, reason: "", span: "" },
+          memoryRecall: {
+            present: false,
+            target: "none",
+            reason: "",
+            span: "",
+          },
+          actionRequest: {
+            present: true,
+            action: "create",
+            object: "保存到本地",
+          },
+          entityHints: {
+            tickers: [],
+            technicalTerms: ["AI Agent"],
+            peopleOrCompanies: [],
+          },
+        },
+        topic_analysis: {
+          history: {
+            label: "AI Agent development trends",
+            evidence: ["权威网站", "AI Agent", "发展趋势", "保存到本地"],
+            source_turns: [-2],
+            confidence: 1,
+          },
+          current: {
+            label: "US market outlook and investor advice",
+            evidence: ["美国市场发展前景", "投资者建议", "保存到本地"],
+            source_turns: [0],
+            confidence: 1,
+          },
+          relation: "subtopic",
+          relation_reason:
+            "model incorrectly keeps continuity because both requests share collect/analyze/save workflow",
+          confidence: 0.9,
+        },
+        references_recent_history: false,
+        topic_shifted: false,
+      }),
+    );
+
+    const intent = await resolver.resolve({
+      userPrompt:
+        "收集权威网站上的相关资料，分析一下美国市场发展前景和对投资者的建议，并保存到本地",
+      history: [
+        {
+          role: "user",
+          content:
+            "收集权威网站上的相关资料，分析一下最近AI Agent的发展趋势，并保存到本地",
+        },
+        {
+          role: "assistant",
+          content:
+            "我将收集权威来源，分析最近 AI Agent 的发展趋势，并保存到本地。",
+        },
+      ],
+    });
+
+    expect(intent.referencesRecentHistory).toBe(false);
+    expect(intent.topicShifted).toBe(true);
+    expect(intent.topicAnalysis).toMatchObject({ relation: "new_topic" });
+    expect(policyReasonCodes(intent)).toContain(
+      "TOPIC_DOMAIN_BOUNDARY_MISMATCH",
+    );
+  });
+
   it("uses semantic personal context, not only lexical profile phrases, for standalone personal topic boundaries", async () => {
     const resolver = makeResolver();
     mockGenerate.mockResolvedValueOnce(
@@ -2565,10 +2640,10 @@ ${modelResponse({
     expect(intent.topicAnalysis).toMatchObject({
       relation: "new_topic",
       relationReason:
-        "topic boundary domains diverged: current=conversation_history history=workspace_action",
+        "conversation-history recall targets an explicit prior artifact or topic rather than the current recent context",
     });
     expect(policyReasonCodes(intent)).toContain(
-      "TOPIC_DOMAIN_BOUNDARY_MISMATCH",
+      "CONVERSATION_HISTORY_ARTIFACT_TOPIC_SHIFT",
     );
   });
 

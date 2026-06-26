@@ -183,7 +183,11 @@ describe("task graph runtime planning", () => {
       "write_file",
     ]);
     expect(graph.edges).toEqual([
-      { from: "step-1", to: "step-2", reason: "intent step dependency" },
+      {
+        from: "step-1",
+        to: "step-2",
+        reason: "intent or inferred data dependency",
+      },
     ]);
     expect(graph.nodes[1].acceptanceCriteria).toEqual(
       expect.arrayContaining([
@@ -191,6 +195,79 @@ describe("task graph runtime planning", () => {
       ]),
     );
     expect(validateTaskGraph(graph).every((gate) => gate.ok)).toBe(true);
+  });
+
+  it("normalizes source acquisition before analysis when model step order is reversed", () => {
+    const analyze = makeStep({
+      id: "step-1",
+      type: "analyze",
+      action: "analyze external/domain context",
+      target:
+        "Collect authoritative data on AI Agent developments, analyze US market prospects and investment recommendations.",
+      operation: {
+        domain: "external_knowledge",
+        action: "analyze",
+        targetType: "external_entity",
+        target:
+          "Collect authoritative data on AI Agent developments, analyze US market prospects and investment recommendations.",
+        riskLevel: "medium",
+      },
+      riskLevel: "medium",
+    });
+    const research = makeStep({
+      id: "step-2",
+      type: "execute",
+      action: "produce requested artifact or change",
+      target: "authoritative websites",
+      operation: {
+        domain: "external_knowledge",
+        action: "create",
+        targetType: "external_entity",
+        target: "authoritative websites",
+        riskLevel: "medium",
+      },
+      dependsOn: ["step-1"],
+      riskLevel: "medium",
+    });
+    const intent = makeIntent({
+      taskType: "execute",
+      needsExternalKnowledge: true,
+      needsTool: true,
+      richIntent: {
+        ...makeIntent().richIntent,
+        userGoal:
+          "collect authoritative sites, analyze US market prospects, and save locally",
+        contextDependency: {
+          recentConversation: false,
+          longTermMemory: false,
+          localWorkspace: true,
+          externalWorld: true,
+        },
+      },
+      intentSteps: [analyze, research],
+    });
+
+    const graph = buildTaskGraph(intent);
+
+    expect(graph.nodes.map((node) => `${node.id}:${node.kind}`)).toEqual([
+      "step-2:research",
+      "step-1:analyze",
+    ]);
+    expect(graph.edges).toEqual([
+      {
+        from: "step-2",
+        to: "step-1",
+        reason: "intent or inferred data dependency",
+      },
+    ]);
+    expect(graph.nodes[0].inputs).toEqual([]);
+    expect(graph.nodes[1].inputs).toEqual([
+      {
+        sourceNodeId: "step-2",
+        name: "step-2.output",
+        required: true,
+      },
+    ]);
   });
 
   it("classifies source acquisition as research rather than file writing", () => {
