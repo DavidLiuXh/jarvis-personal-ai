@@ -200,7 +200,9 @@ describe("runJarvisUnifiedRuntimeTurn", () => {
 
     expect(result.memoryContract.subjectBoundary).toBe("external");
     expect(result.memoryContract.constraints.allowPersonalFacts).toBe(false);
-    expect(result.systemInstruction).toContain("allow_personal_facts: false");
+    expect(result.systemInstruction).toContain("external request");
+    expect(result.systemInstruction).not.toContain("allow_personal_facts:");
+    expect(result.systemInstruction).not.toContain("<runtime_memory_context>");
     expect(input.toolRouter.setCurrentMemoryContract).toHaveBeenCalledWith(
       result.memoryContract,
     );
@@ -419,16 +421,20 @@ describe("runJarvisUnifiedRuntimeTurn", () => {
       expect(result.taskGraphExecution?.status).toBe("succeeded");
       expect(executeTools).not.toHaveBeenCalled();
       expect(result.llmLoop?.finalText).toBe("你喜欢骑自行车和逛胡同。");
-      expect(backendSystemContext).toContain("<runtime_task_artifacts>");
-      expect(backendSystemContext).toContain("memory_items:");
+      expect(backendSystemContext).toContain("<retrieved_memory>");
       expect(backendSystemContext).toContain("爱好骑自行车");
       expect(backendSystemContext).toContain("爱好逛胡同");
+      expect(backendSystemContext).not.toContain("raw_content:");
+      expect(backendSystemContext).not.toContain("<runtime_memory_context>");
+      expect(backendSystemContext).not.toContain("<runtime_step_memory>");
+      expect(backendSystemContext).not.toContain("<runtime_task_graph>");
+      expect(backendSystemContext).not.toContain("- user: 还记得我的爱好吗？");
       expect(backendSystemContext).toContain(
         "recall_memory: disabled_for_this_turn",
       );
       const logs = logSpy.mock.calls.map((call) => call.join(" ")).join("\n");
       expect(logs).toContain("🧭 [TaskGraph] artifact content:");
-      expect(logs).toContain("memory_items:");
+      expect(logs).toContain("<retrieved_memory>");
       expect(logs).toContain("爱好骑自行车");
       expect(logs).toContain("爱好逛胡同");
     } finally {
@@ -565,8 +571,8 @@ describe("runJarvisUnifiedRuntimeTurn", () => {
       "analyze",
     ]);
     expect(result.taskGraphExecution).toBeNull();
-    expect(result.systemInstruction).toContain("<runtime_task_graph>");
-    expect(result.systemInstruction).toContain("execution: not_run");
+    expect(result.systemInstruction).not.toContain("<runtime_task_graph>");
+    expect(result.systemInstruction).not.toContain("execution: not_run");
   });
 
   it("executes deterministic TaskGraph nodes and injects the final response contract", async () => {
@@ -653,8 +659,8 @@ describe("runJarvisUnifiedRuntimeTurn", () => {
       ],
       expect.any(Object),
     );
-    expect(result.systemInstruction).toContain("<runtime_task_graph>");
-    expect(result.systemInstruction).toContain("status: succeeded");
+    expect(result.systemInstruction).not.toContain("<runtime_task_graph>");
+    expect(result.systemInstruction).not.toContain("status: succeeded");
     expect(result.systemInstruction).toContain(
       "All required task graph nodes passed acceptance",
     );

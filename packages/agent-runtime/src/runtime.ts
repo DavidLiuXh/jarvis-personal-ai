@@ -206,42 +206,12 @@ function defaultMemoryBudget(contract: MemoryContract): TokenBudget {
 }
 
 function formatMemoryDecision(contract: MemoryContract | null): string {
-  if (!contract) return "";
-  return [
-    "<memory_decision>",
-    `subject: ${contract.subjectBoundary}`,
-    `need_memory: ${contract.needMemory}`,
-    `target: ${contract.memoryTarget}`,
-    `scopes: ${contract.targetScopes.join(",") || "none"}`,
-    `allow_personal_facts: ${contract.constraints.allowPersonalFacts}`,
-    `allow_session_history: ${contract.constraints.allowSessionHistory}`,
-    `allow_entries: ${contract.constraints.allowEntries}`,
-    `query: ${contract.query.rewritten || contract.query.raw}`,
-    `reasons: ${contract.reasons.join(",") || "none"}`,
-    "</memory_decision>",
-  ].join("\n");
+  if (contract?.subjectBoundary !== "external") return "";
+  return "Runtime memory boundary: external request; do not use personal memory unless explicitly provided.";
 }
 
 function formatStepMemoryDecisions(decisions: StepMemoryDecision[]): string {
-  if (decisions.length === 0) return "";
-  return [
-    "<step_memory_decisions>",
-    ...decisions.map((decision) =>
-      [
-        `step: ${decision.stepId}`,
-        `type: ${decision.stepType}`,
-        `need_memory: ${decision.needMemory}`,
-        `target: ${decision.memoryTarget}`,
-        `scopes: ${decision.targetScopes.join(",") || "none"}`,
-        `query: ${decision.query}`,
-        `allow_personal_facts: ${decision.constraints.allowPersonalFacts}`,
-        `allow_session_history: ${decision.constraints.allowSessionHistory}`,
-        `allow_entries: ${decision.constraints.allowEntries}`,
-        `reasons: ${decision.reasons.join(",") || "none"}`,
-      ].join("; "),
-    ),
-    "</step_memory_decisions>",
-  ].join("\n");
+  return "";
 }
 
 function formatSkills(skills: RuntimeSkill[]): string {
@@ -276,46 +246,89 @@ function stringifyArtifactItem(item: unknown): string {
   }
 }
 
-function formatArtifactMemoryItems(items: unknown[] | undefined): string {
-  if (!items || items.length === 0) return "";
+function normalizePromptText(value: string): string {
+  return value.replace(/\s+/g, " ").trim().toLowerCase();
+}
+
+function shouldInjectArtifactItem(item: string, userPrompt?: string): boolean {
+  const text = item.trim();
+  if (!text) return false;
+  if (
+    userPrompt &&
+    normalizePromptText(text) === `user: ${normalizePromptText(userPrompt)}`
+  ) {
+    return false;
+  }
+  return true;
+}
+
+function formatArtifactMemoryItems(
+  items: unknown[] | undefined,
+  userPrompt?: string,
+): string {
+  const filtered =
+    items
+      ?.map(stringifyArtifactItem)
+      .filter((item) => shouldInjectArtifactItem(item, userPrompt)) ?? [];
+  if (filtered.length === 0) return "";
   return [
-    "memory_items:",
-    ...items
-      .slice(0, 20)
-      .map(
-        (item, index) =>
-          `  ${index + 1}. ${compactArtifactContent(
-            stringifyArtifactItem(item),
-            1200,
-          )}`,
-      ),
+    "<retrieved_memory>",
+    ...filtered
+      .slice(0, 12)
+      .map((item) => `- ${compactArtifactContent(item, 800)}`),
+    "</retrieved_memory>",
   ].join("\n");
 }
 
 function formatTaskGraphArtifacts(context: RuntimeContext): string {
   const artifacts = context.taskGraphExecution?.execution.artifacts ?? [];
   if (artifacts.length === 0) return "";
-  return [
-    "<runtime_task_artifacts>",
-    ...artifacts.map((artifact) =>
-      [
-        `id: ${artifact.id}`,
-        `node: ${artifact.nodeId}`,
-        `type: ${artifact.type}`,
-        artifact.path ? `path: ${artifact.path}` : "",
-        artifact.taskId ? `task_id: ${artifact.taskId}` : "",
-        artifact.type === "memory"
-          ? formatArtifactMemoryItems(artifact.memoryItems)
-          : "",
-        artifact.content
-          ? `${artifact.type === "memory" ? "raw_content" : "content"}: ${compactArtifactContent(artifact.content)}`
-          : "",
-      ]
-        .filter(Boolean)
-        .join("\n"),
-    ),
-    "</runtime_task_artifacts>",
-  ].join("\n");
+  return artifacts
+    .map((artifact) => {
+      if (artifact.type === "memory") {
+        return formatArtifactMemoryItems(
+          artifact.memoryItems,
+          context.userPrompt,
+        );
+      }
+      if (artifact.type === "file") {
+        return [
+          "<task_artifact>",
+          "type: file",
+          artifact.path ? `path: ${artifact.path}` : "",
+          artifact.exists !== undefined ? `exists: ${artifact.exists}` : "",
+          artifact.content
+            ? `content: ${compactArtifactContent(artifact.content, 1200)}`
+            : "",
+          "</task_artifact>",
+        ]
+          .filter(Boolean)
+          .join("\n");
+      }
+      if (artifact.type === "scheduled_task") {
+        return [
+          "<task_artifact>",
+          "type: scheduled_task",
+          artifact.taskId ? `task_id: ${artifact.taskId}` : "",
+          artifact.content
+            ? `content: ${compactArtifactContent(artifact.content, 800)}`
+            : "",
+          "</task_artifact>",
+        ]
+          .filter(Boolean)
+          .join("\n");
+      }
+      return artifact.content
+        ? [
+            "<task_artifact>",
+            `type: ${artifact.type}`,
+            `content: ${compactArtifactContent(artifact.content, 800)}`,
+            "</task_artifact>",
+          ].join("\n")
+        : "";
+    })
+    .filter(Boolean)
+    .join("\n\n");
 }
 
 function hasCompletedTaskGraphMemoryRecall(context: RuntimeContext): boolean {
@@ -547,7 +560,7 @@ function formatTaskGraphToolPolicy(context: RuntimeContext): string {
     "recall_memory: disabled_for_this_turn",
     `reason: ${completed ? "task_graph_memory_recall_completed" : "task_graph_owns_memory_recall"}`,
     completed
-      ? "Use the memory artifacts in runtime_task_artifacts. Do not request another memory recall unless the user asks for a new recall scope."
+      ? "Use the retrieved_memory artifacts already provided. Do not request another memory recall unless the user asks for a new recall scope."
       : "Honor the TaskGraph execution contract. Do not request memory recall outside the planned recall step.",
     "</runtime_tool_policy>",
   ].join("\n");

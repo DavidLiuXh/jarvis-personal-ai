@@ -229,50 +229,96 @@ function stringifyRuntimeArtifactItem(item: unknown): string {
   }
 }
 
+function normalizePromptText(value: string): string {
+  return value.replace(/\s+/g, " ").trim().toLowerCase();
+}
+
+function shouldInjectRuntimeArtifactItem(
+  item: string,
+  userPrompt?: string,
+): boolean {
+  const text = item.trim();
+  if (!text) return false;
+  if (
+    userPrompt &&
+    normalizePromptText(text) === `user: ${normalizePromptText(userPrompt)}`
+  ) {
+    return false;
+  }
+  return true;
+}
+
 function formatRuntimeArtifactMemoryItems(
   items: unknown[] | undefined,
+  userPrompt?: string,
 ): string {
-  if (!items || items.length === 0) return "";
+  const filtered =
+    items
+      ?.map(stringifyRuntimeArtifactItem)
+      .filter((item) => shouldInjectRuntimeArtifactItem(item, userPrompt)) ??
+    [];
+  if (filtered.length === 0) return "";
   return [
-    "memory_items:",
-    ...items
-      .slice(0, 20)
-      .map(
-        (item, index) =>
-          `  ${index + 1}. ${compactRuntimeArtifactContent(
-            stringifyRuntimeArtifactItem(item),
-            1200,
-          )}`,
-      ),
+    "<retrieved_memory>",
+    ...filtered
+      .slice(0, 12)
+      .map((item) => `- ${compactRuntimeArtifactContent(item, 800)}`),
+    "</retrieved_memory>",
   ].join("\n");
 }
 
 function buildTaskGraphArtifactSection(
   execution: AutonomousTaskRuntimeResult | null,
+  userPrompt?: string,
 ): string {
   const artifacts = execution?.execution.artifacts ?? [];
   if (artifacts.length === 0) return "";
-  return [
-    "<runtime_task_artifacts>",
-    ...artifacts.map((artifact) =>
-      [
-        `id: ${artifact.id}`,
-        `node: ${artifact.nodeId}`,
-        `type: ${artifact.type}`,
-        artifact.path ? `path: ${artifact.path}` : "",
-        artifact.taskId ? `task_id: ${artifact.taskId}` : "",
-        artifact.type === "memory"
-          ? formatRuntimeArtifactMemoryItems(artifact.memoryItems)
-          : "",
-        artifact.content
-          ? `${artifact.type === "memory" ? "raw_content" : "content"}: ${compactRuntimeArtifactContent(artifact.content)}`
-          : "",
-      ]
-        .filter(Boolean)
-        .join("\n"),
-    ),
-    "</runtime_task_artifacts>",
-  ].join("\n");
+  const sections = artifacts
+    .map((artifact) => {
+      if (artifact.type === "memory") {
+        return formatRuntimeArtifactMemoryItems(
+          artifact.memoryItems,
+          userPrompt,
+        );
+      }
+      if (artifact.type === "file") {
+        return [
+          "<task_artifact>",
+          "type: file",
+          artifact.path ? `path: ${artifact.path}` : "",
+          artifact.exists !== undefined ? `exists: ${artifact.exists}` : "",
+          artifact.content
+            ? `content: ${compactRuntimeArtifactContent(artifact.content, 1200)}`
+            : "",
+          "</task_artifact>",
+        ]
+          .filter(Boolean)
+          .join("\n");
+      }
+      if (artifact.type === "scheduled_task") {
+        return [
+          "<task_artifact>",
+          "type: scheduled_task",
+          artifact.taskId ? `task_id: ${artifact.taskId}` : "",
+          artifact.content
+            ? `content: ${compactRuntimeArtifactContent(artifact.content, 800)}`
+            : "",
+          "</task_artifact>",
+        ]
+          .filter(Boolean)
+          .join("\n");
+      }
+      return artifact.content
+        ? [
+            "<task_artifact>",
+            `type: ${artifact.type}`,
+            `content: ${compactRuntimeArtifactContent(artifact.content, 800)}`,
+            "</task_artifact>",
+          ].join("\n")
+        : "";
+    })
+    .filter(Boolean);
+  return sections.join("\n\n");
 }
 
 function shouldLogTaskGraphArtifactContent(config: JarvisConfig): boolean {
@@ -351,7 +397,7 @@ function buildTaskGraphToolPolicySection(
     "recall_memory: disabled_for_this_turn",
     `reason: ${completed ? "task_graph_memory_recall_completed" : "task_graph_owns_memory_recall"}`,
     completed
-      ? "Use the memory artifacts in runtime_task_artifacts. Do not request another memory recall unless the user asks for a new recall scope."
+      ? "Use the retrieved_memory artifacts already provided. Do not request another memory recall unless the user asks for a new recall scope."
       : "Honor the TaskGraph execution contract. Do not request memory recall outside the planned recall step.",
     "</runtime_tool_policy>",
   ].join("\n");
@@ -800,76 +846,16 @@ export async function runJarvisUnifiedRuntimeTurn(
           const executionInstruction =
             taskGraphInstruction ||
             (context.execution?.finalResponseContract.instruction ?? "");
-          const taskGraphSection = context.taskGraph
-            ? [
-                "<runtime_task_graph>",
-                `id: ${context.taskGraph.id}`,
-                `status: ${context.taskGraph.status}`,
-                context.taskGraphExecution
-                  ? `pre_execution_status: ${context.taskGraphExecution.status}`
-                  : "pre_execution_status: not_run",
-                `nodes: ${context.taskGraph.nodes
-                  .map((node) => `${node.id}:${node.kind}`)
-                  .join(",")}`,
-                context.taskGraphExecution
-                  ? `executed_nodes: ${context.taskGraphExecution.execution.nodes
-                      .map((state) => `${state.node.id}:${state.status}`)
-                      .join(",")}`
-                  : "",
-                context.taskGraphExecution
-                  ? `remaining_nodes: ${
-                      context.taskGraph.nodes
-                        .filter(
-                          (node) =>
-                            !context.taskGraphExecution?.execution.nodes.some(
-                              (state) => state.node.id === node.id,
-                            ),
-                        )
-                        .map((node) => `${node.id}:${node.kind}`)
-                        .join(",") || "none"
-                    }`
-                  : "",
-                context.taskGraphExecution
-                  ? `blocked: ${context.taskGraphExecution.execution.blockedReasons.join(";") || "none"}`
-                  : "execution: not_run",
-                context.taskGraphExecution
-                  ? `failed: ${context.taskGraphExecution.execution.failedReasons.join(";") || "none"}`
-                  : "",
-                "</runtime_task_graph>",
-              ]
-                .filter(Boolean)
-                .join("\n")
-            : "";
-          const memoryDecision = contract
-            ? [
-                "<runtime_memory_context>",
-                `subject: ${contract.subjectBoundary}`,
-                `need_memory: ${contract.needMemory}`,
-                `target: ${contract.memoryTarget}`,
-                `scopes: ${contract.targetScopes.join(",") || "none"}`,
-                `allow_personal_facts: ${contract.constraints.allowPersonalFacts}`,
-                `allow_session_history: ${contract.constraints.allowSessionHistory}`,
-                `allow_entries: ${contract.constraints.allowEntries}`,
-                `query: ${contract.query.rewritten || contract.query.raw}`,
-                "</runtime_memory_context>",
-              ].join("\n")
-            : "";
-          const stepMemory =
-            context.stepMemoryDecisions.length > 0
-              ? [
-                  "<runtime_step_memory>",
-                  ...context.stepMemoryDecisions.map(
-                    (decision) =>
-                      `${decision.stepId}: need_memory=${decision.needMemory}; target=${decision.memoryTarget}; scopes=${decision.targetScopes.join(",") || "none"}; query=${decision.query}; allow_personal_facts=${decision.constraints.allowPersonalFacts}; allow_entries=${decision.constraints.allowEntries}`,
-                  ),
-                  "</runtime_step_memory>",
-                ].join("\n")
+          const memoryDecision =
+            contract?.subjectBoundary === "external"
+              ? "Runtime memory boundary: external request; do not use personal memory unless explicitly provided."
               : "";
           const executionContract = executionInstruction
             ? `<runtime_execution_contract>\n${executionInstruction}\n</runtime_execution_contract>`
             : "";
           const taskArtifactSection = buildTaskGraphArtifactSection(
             context.taskGraphExecution,
+            context.userPrompt,
           );
           const taskGraphToolPolicy = buildTaskGraphToolPolicySection(
             context.taskGraphExecution,
@@ -888,8 +874,6 @@ export async function runJarvisUnifiedRuntimeTurn(
               protocol,
               intentPlanSection,
               memoryDecision,
-              stepMemory,
-              taskGraphSection,
               taskArtifactSection,
               taskGraphToolPolicy,
               executionContract,

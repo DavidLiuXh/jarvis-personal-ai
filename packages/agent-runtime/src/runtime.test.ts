@@ -332,7 +332,7 @@ describe("AgentRuntime", () => {
     ]);
     expect(result.context.execution?.status).toBe("succeeded");
     expect(result.response.canClaimSuccess).toBe(true);
-    expect(result.response.systemContext).toContain("<memory_decision>");
+    expect(result.response.systemContext).not.toContain("<memory_decision>");
     expect(result.response.systemContext).toContain("<runtime_skills>");
     expect(toolAdapter.executeTools).toHaveBeenCalledOnce();
     expect(events).toEqual([
@@ -384,8 +384,9 @@ describe("AgentRuntime", () => {
     expect(result.response.instructions.join("\n")).toContain(
       "external request",
     );
-    expect(result.response.systemContext).toContain(
-      "allow_personal_facts: false",
+    expect(result.response.systemContext).toContain("external request");
+    expect(result.response.systemContext).not.toContain(
+      "allow_personal_facts:",
     );
   });
 
@@ -556,10 +557,14 @@ describe("AgentRuntime", () => {
     expect(result.response.systemContext).toContain(
       "task_graph_memory_recall_completed",
     );
-    expect(result.response.systemContext).toContain("memory_items:");
+    expect(result.response.systemContext).toContain("<retrieved_memory>");
     expect(result.response.systemContext).toContain(
-      '{"text":"user likes tea and hiking"}',
+      "user likes tea and hiking",
     );
+    expect(result.response.systemContext).not.toContain(
+      "<runtime_task_artifacts>",
+    );
+    expect(result.response.systemContext).not.toContain("raw_content:");
   });
 
   it("suppresses recall_memory in the LLM loop after TaskGraph memory recall succeeds", async () => {
