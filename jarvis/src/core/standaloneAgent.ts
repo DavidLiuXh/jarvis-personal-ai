@@ -130,6 +130,7 @@ function createPromptDiagnostics(config: JarvisConfig, label: string) {
   return {
     enabled: config.llmBackend?.promptDiagnostics === true,
     label,
+    outputFile: config.llmBackend?.promptDiagnosticsFile,
     includeTools: config.llmBackend?.promptDiagnosticsIncludeTools !== false,
     includeMetadata:
       config.llmBackend?.promptDiagnosticsIncludeMetadata === true,

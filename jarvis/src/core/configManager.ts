@@ -182,6 +182,11 @@ export interface JarvisConfig {
      * local debugging. Default: false.
      */
     promptDiagnostics?: boolean;
+    /**
+     * JSONL file for compiled prompt diagnostics. Default:
+     * ~/.gemini-jarvis/logs/llm-prompt-diagnostics.jsonl.
+     */
+    promptDiagnosticsFile?: string;
     /** Include full tool schemas in prompt diagnostics. Default: true. */
     promptDiagnosticsIncludeTools?: boolean;
     /** Include runtime metadata in prompt diagnostics. Default: false. */
@@ -674,6 +679,11 @@ export class ConfigManager {
       llmBackend: {
         provider: "gemini",
         promptDiagnostics: false,
+        promptDiagnosticsFile: path.join(
+          JARVIS_HOME,
+          "logs",
+          "llm-prompt-diagnostics.jsonl",
+        ),
         promptDiagnosticsIncludeTools: true,
         promptDiagnosticsIncludeMetadata: false,
         openai: {

@@ -6,6 +6,8 @@
  * step enforcement, and final-response safety checks.
  */
 
+import fs from "node:fs";
+import path from "node:path";
 import type {
   RuntimeToolRequest,
   RuntimeToolResult,
@@ -141,6 +143,7 @@ export type ToolLoopPromptDiagnosticsOptions = {
   label?: string;
   includeTools?: boolean;
   includeMetadata?: boolean;
+  outputFile?: string;
 };
 
 export type ToolLoopRuntimeOptions = {
@@ -360,6 +363,8 @@ function emitPromptDiagnostics(
   if (diagnostics?.enabled !== true) return;
   const includeTools = diagnostics.includeTools !== false;
   const payload = {
+    event: "LLMPromptDiagnostics.full_prompt",
+    timestamp: new Date().toISOString(),
     label: diagnostics.label ?? options.backend.getModel(),
     model: options.backend.getModel(),
     turnIndex: input.turnIndex,
@@ -375,6 +380,28 @@ function emitPromptDiagnostics(
         : undefined,
     messages: input.messages.map(serializeMessage),
   };
+  if (diagnostics.outputFile?.trim()) {
+    try {
+      fs.mkdirSync(path.dirname(diagnostics.outputFile), { recursive: true });
+      fs.appendFileSync(
+        diagnostics.outputFile,
+        `${JSON.stringify(payload)}\n`,
+        "utf8",
+      );
+      return;
+    } catch (error) {
+      const message = `[LLMPromptDiagnostics] failed_to_write ${JSON.stringify({
+        outputFile: diagnostics.outputFile,
+        error: error instanceof Error ? error.message : String(error),
+      })}`;
+      if (options.onLog) {
+        options.onLog(message);
+      } else {
+        console.error(message);
+      }
+      return;
+    }
+  }
   const line = `[LLMPromptDiagnostics] full_prompt ${JSON.stringify(payload)}`;
   if (options.onLog) {
     options.onLog(line);

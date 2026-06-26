@@ -4,6 +4,9 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import type {
   RuntimeToolRequest,
@@ -626,5 +629,52 @@ describe("ToolLoopRuntime", () => {
       role: "user",
       blocks: [{ type: "text", text: "hello" }],
     });
+  });
+
+  it("writes prompt diagnostics to a JSONL file when outputFile is configured", async () => {
+    const logs: string[] = [];
+    const outputFile = path.join(
+      fs.mkdtempSync(path.join(os.tmpdir(), "llm-prompt-diagnostics-")),
+      "prompt.jsonl",
+    );
+    const runtime = new ToolLoopRuntime({
+      backend: backendFromTurns([[{ type: "content", text: "done" }]]),
+      promptCompiler: compiler(),
+      toolExecutor: toolExecutor(() => ({
+        name: "noop",
+        callId: "noop-1",
+        status: "success",
+        output: {},
+      })),
+      promptDiagnostics: {
+        enabled: true,
+        label: "file-loop",
+        includeTools: false,
+        outputFile,
+      },
+      onLog: (message) => logs.push(message),
+    });
+
+    await runtime.run({
+      userPrompt: "hello",
+      systemContext: "system",
+      initialMessages: [
+        { role: "user", blocks: [{ type: "text", text: "hello" }] },
+      ],
+      signal: new AbortController().signal,
+    });
+
+    expect(logs).toEqual([]);
+    const lines = fs.readFileSync(outputFile, "utf8").trim().split("\n");
+    expect(lines).toHaveLength(1);
+    const payload = JSON.parse(lines[0]);
+    expect(payload).toMatchObject({
+      event: "LLMPromptDiagnostics.full_prompt",
+      label: "file-loop",
+      model: "mock-backend",
+      toolChoice: "auto",
+    });
+    expect(payload.timestamp).toEqual(expect.any(String));
+    expect(payload.messages).toEqual(expect.any(Array));
   });
 });
