@@ -1018,200 +1018,70 @@ function buildIntentPrompt(
 
   return `
 Today is ${todayStr} (${todayName}).
-You are Jarvis's intent resolver. Produce an IntentFrame seed for the user's request.
+You are Jarvis's intent resolver. Return ONLY one valid JSON object. No markdown. No prose.
 
-DIMENSION 0 — Multi-Dimensional Classifiers (P0/P1)
-Classify each dimension independently before writing legacy compatibility fields.
-Return a top-level "classifiers" object with subject, task, memory, action, topic, and steps.
-- Do not let workflow similarity override semantic domain boundaries.
-- "collect/analyze/save" can be the same workflow while the topic is still new.
-- Topic continuity requires at least one of:
-  1. semantic_domain_continuity=true,
-  2. entity_continuity=true,
-  3. requires_previous_context=true.
-- If only workflow_continuity=true, then topic_shifted=true unless the current request explicitly refers to prior context.
-- If topic_shifted=false, explain the exact previous fact/entity/context required by the current request. If you can only say "same report/analyze/save workflow", set topic_shifted=true.
+Classify independently, then mirror the decisions into legacy fields.
 
-DIMENSION 1 — Knowledge Depth (1-100)
-1-25: Basic fact retrieval, simple summaries.
-26-50: Integrating concepts, standard workflows.
-51-75: Deep expertise, cross-disciplinary analysis.
-76-100: Cross-domain fusion, abstract thinking, system design.
+Allowed values:
+- subject/query_subject: personal, external, mixed
+- task/task_type: chat, recall, analyze, execute, delegate, schedule
+- memory target: conversation_history, user_memory, external_past_event, current_context_reference, none
+- action: create, read, update, delete, list, append, rename, pause, resume, cancel, send, resend, forward, retry, forget, consolidate, execute, schedule, answer, analyze, delegate, recall
+- topic relation: same_topic, subtopic, adjacent_topic, new_topic, current_context_reference, unknown
+- rich domain: task_management, memory_management, code_modification, system_control, general_chat, external_knowledge, investment_analysis, unknown
+- target type: memory, file, code, external_entity, agent, task, channel, calendar, current_context
 
-DIMENSION 2 — Operational Difficulty (1-100)
-1-25: Reading, simple input — no multi-step execution.
-26-50: Multi-step operations, standard tools.
-51-75: Skilled tool usage, process design.
-76-100: Algorithm design, debugging, architectural decisions.
+Core rules:
+- External topic + "my/based on me/结合我/适合我/我的/我们之前" => mixed or personal, not external.
+- Past conversation/user memory questions => personal recall.
+- Pure outside-world questions with no user context => external and needsMemory=false.
+- Same workflow does NOT mean same topic. collect/analyze/save can repeat while topic_shifted=true.
+- topic_shifted=false requires semantic_domain_continuity OR entity_continuity OR requires_previous_context.
+- If only workflow_continuity is true, set topic_shifted=true.
+- "这个/上述/继续/that/above" can mean requires_previous_context=true.
+- "之前/以前/上次讨论..." usually requests conversation_history recall, not current-context reference.
+- ${timeNote}
 
-DIMENSION 3 — Query Subject (CRITICAL for memory retrieval)
-- "personal": About the USER's own history, habits, preferences, past decisions, or past conversations. ANY question about what was discussed, even if the topic is external.
-- "external": PURELY about the outside world with NO user history reference.
-- "mixed": Needs BOTH personal context AND external knowledge.
-
-KEY RULE: "what did we discuss on Monday" → personal, even if the topic is external.
-MIXED RULE: External topic + any request to tailor, compare, recommend, decide, prioritize, or explain using the user's goals/preferences/history/context → mixed.
-PERSONAL-CONTEXT CUES: "for me", "based on my", "my preference", "my context", "按我的", "结合我", "适合我", "我该", "我的", "我们之前" → mixed or personal, never external.
-IF UNSURE between external and mixed, choose mixed.
-
-DIMENSION 4 — Task Type
-- "chat": answer conversationally without a specific action.
-- "recall": retrieve or summarize past conversations, memories, or user history.
-- "analyze": evaluate, compare, recommend, diagnose, or synthesize.
-- "execute": modify files, run commands, operate tools, or complete a workflow.
-- "delegate": launch or route to a specialized agent.
-- "schedule": reminders, recurring tasks, timers, or future follow-up.
-
-DIMENSION 5 — Capability Needs
-- needs_external_knowledge=true when current outside-world knowledge or general domain facts are needed.
-- needs_tool=true when the user asks Jarvis to act via tools, files, commands, web, or external agents.
-- needs_scheduling=true only for reminders, timers, recurring work, or future follow-up.
-- candidate_agents should contain likely specialized agent ids if obvious, otherwise [].
-
-DIMENSION 5B — Structured Semantic Evidence
-Return semantic_evidence to explain the labels:
-- personalContext.present=true only when the request explicitly depends on the user's goals, preferences, identity, project, or prior personal context.
-- memoryRecall.target:
-  - "conversation_history": asks about what the user and Jarvis discussed before.
-  - "user_memory": asks about stored user facts/preferences/history.
-  - "external_past_event": asks about a past outside-world event, e.g. "上次苹果发布会发布了什么".
-  - "current_context_reference": refers to the current recent conversation, e.g. "这个/that/继续".
-  - "none": no memory recall.
-- actionRequest.present=true only when the user asks Jarvis to do something operational. action is "read"|"write"|"run"|"schedule"|"delegate"|"none".
-- entityHints may be empty when uncertain. A focused entity extractor can refine tickers and technical terms later.
-- rich_intent expresses the user's concrete goal/action/targets/context.
-  - domain:
-    - "task_management": reminders, timers, calendar, recurring tasks, todo lists.
-    - "memory_management": saving/deleting facts, searching past conversations, updating preferences.
-    - "code_modification": editing files, refactoring, fixing bugs, writing tests.
-    - "system_control": running shell commands, managing system processes, hardware control.
-    - "general_chat": greetings, casual talk, philosophical questions.
-    - "external_knowledge": general facts, news, search engine queries.
-    - "investment_analysis": stock analysis, financial reports, market trends.
-    - "unknown": ambiguous or unclassifiable.
-  - action: "create"|"read"|"update"|"delete"|"list"|"append"|"rename"|"pause"|"resume"|"cancel"|"send"|"resend"|"forward"|"retry"|"forget"|"consolidate"|"execute"|"schedule"|"answer"|"analyze"|"delegate"|"recall".
-  - Keep subject/task_type for compatibility, but fill rich_intent domain/action whenever possible.
-
-DIMENSION 5C — Multi-Intent Steps
-Return intent_steps as a compact ordered plan of the meaningful sub-intents in the user request.
-- Keep task_type as the dominant primary intent for backward compatibility.
-- For a single-intent request, one step is enough.
-- For multi-intent requests, include all materially distinct steps, such as recall user context, analyze an external entity, write/output an artifact, delegate to an agent, or schedule a reminder.
-- Use ids "step-1", "step-2", etc. depends_on references earlier ids when one step requires another.
-- type must be one of "chat"|"recall"|"analyze"|"execute"|"delegate"|"schedule".
-- requires_confirmation=true only for high-risk operations or ambiguous schedule/delegate/write actions.
-- operation is the structured per-step CRUD/lifecycle contract. Fill it per step:
-  - domain: "task_management"|"memory_management"|"code_modification"|"system_control"|"general_chat"|"external_knowledge"|"investment_analysis"|"unknown".
-  - action: "create"|"read"|"update"|"delete"|"list"|"append"|"rename"|"pause"|"resume"|"cancel"|"send"|"resend"|"forward"|"retry"|"forget"|"consolidate"|"execute"|"schedule"|"answer"|"analyze"|"delegate"|"recall".
-  - target_type: "memory"|"file"|"code"|"external_entity"|"agent"|"task"|"channel"|"calendar"|"current_context".
-  - target is the concrete object or selector; selector can repeat target when no id exists.
-  - scope: "current_session"|"long_term"|"workspace"|"external"|"scheduled_tasks"|"channel" when obvious.
-
-DIMENSION 6 — Time Window
-${timeNote}
-
-DIMENSION 7 — Topic Shift (only meaningful when conversation history is present)
-
-Step 1 — Summarize: What is the main topic/domain of the recent history? (1 phrase)
-Step 2 — Identify: What is the domain/intent of the new request? (1 phrase)
-Step 3 — Check: Does the new request directly reference something in the CURRENT recent history?
-  YES (references_recent_history=true): Uses pronouns/references pointing to what was JUST discussed.
-    e.g. 它/这个/那个/这些/那些/上述/this/that/these/those/follow-up on what you just said
-  NO (references_recent_history=false): Mentions past time ("之前"/"以前"/"上次") to REQUEST retrieval of older history, OR introduces a new subject with no tie to the current exchange.
-  KEY DISTINCTION: "你之前说的那个方案" → references recent history (true). "帮我获取之前讨论的xxx" → requests retrieval of older history, not referencing this conversation (false).
-Step 4 — Decide:
-  - true (SHIFT): references_recent_history=false AND the new domain/intent differs from recent history.
-  - false (NO SHIFT): references_recent_history=true, OR the new request continues/follows up the same domain.
-
-Examples:
-  History: "严格避免幻觉" | New: "帮我获取下之前讨论onnx的总结" → task_type="recall", query_subject="personal", references_recent_history=false, topic_shifted=true
-  History: "分析英伟达财报" | New: "超微电脑股价呢" → task_type="analyze", query_subject="external", references_recent_history=true ("呢" refers to prior context), topic_shifted=false
-  History: "实现reranker功能" | New: "继续" → task_type="execute", references_recent_history=true, topic_shifted=false
-  History: "今天天气怎么样" | New: "帮我写一份投资分析报告" → task_type="execute", query_subject="external", references_recent_history=false, topic_shifted=true
-  History: "讨论onnx部署" | New: "你之前说的那个超时参数怎么设" → task_type="chat", query_subject="personal", references_recent_history=true, topic_shifted=false
-
-DIMENSION 7B — Grounded Topic Analysis
-Return topic_analysis in addition to legacy history_topic/new_topic.
-Grounding rules:
-- topic_analysis.history.label must be a faithful compact label of the relevant recent history.
-- topic_analysis.current.label must be a faithful compact label of the current user request.
-- Each label must be supported by evidence spans copied or closely paraphrased from the provided text.
-- Do not introduce unstated lifecycle/stage words such as architecture/design/implementation unless supported by evidence.
-- source_turns uses negative indexes over the Recent Conversation Context: -1 is the most recent turn, -2 the turn before it.
-- relation:
-  - "current_context_reference": current request directly refers to the recent conversation with pronouns/follow-up wording.
-  - "same_topic": same domain and same intent.
-  - "subtopic": current request narrows or deepens the recent topic.
-  - "adjacent_topic": shares a broad domain but changes intent, layer, or focus.
-  - "new_topic": unrelated domain.
-  - "unknown": insufficient grounding.
-Use topic_analysis.confidence to express confidence in the topic grounding and relation.
-
-SCORING FORMULA
-complexity_score = knowledge_score * 0.6 + operation_score * 0.4 (round to integer)
-
-OUTPUT RULES
-- Respond ONLY with a raw JSON object. No markdown, no explanation.
-- All fields required. time_window_days / date_from / date_to may be null.
-- confidence is 0-1.
-- confidence_by_dimension gives independent 0-1 confidence for subject, taskType, memoryTarget, action, entityHints, topicShift, and richIntent.
-- evidence is an array of short strings naming cues you used.
-- semantic_evidence is required and must follow the schema below.
-
-Required compact schema:
+Return this exact shape with real values:
 {
-  "knowledge_score": 1-100,
-  "operation_score": 1-100,
-  "complexity_score": 1-100,
-  "complexity_reasoning": "one sentence",
-  "query_subject": "personal|external|mixed",
-  "task_type": "chat|recall|analyze|execute|delegate|schedule",
-  "needs_external_knowledge": true|false,
-  "needs_tool": true|false,
-  "needs_scheduling": true|false,
+  "knowledge_score": 50,
+  "operation_score": 50,
+  "complexity_score": 50,
+  "complexity_reasoning": "",
+  "query_subject": "external",
+  "task_type": "chat",
+  "needs_external_knowledge": false,
+  "needs_tool": false,
+  "needs_scheduling": false,
   "candidate_agents": [],
-  "confidence": 0-1,
-  "confidence_by_dimension": {"subject": 0-1, "taskType": 0-1, "memoryTarget": 0-1, "action": 0-1, "entityHints": 0-1, "topicShift": 0-1, "richIntent": 0-1},
+  "confidence": 0.8,
+  "confidence_by_dimension": {"subject": 0.8, "taskType": 0.8, "memoryTarget": 0.8, "action": 0.8, "entityHints": 0.8, "topicShift": 0.8, "richIntent": 0.8},
   "evidence": [],
   "classifiers": {
-    "subject": {"value": "personal|external|mixed", "confidence": 0-1, "reason": "", "evidence": []},
-    "task": {"value": "chat|recall|analyze|execute|delegate|schedule", "confidence": 0-1, "reason": "", "evidence": []},
-    "memory": {"value": "conversation_history|user_memory|external_past_event|current_context_reference|none", "confidence": 0-1, "reason": "", "evidence": []},
-    "action": {"value": "create|read|update|delete|list|append|rename|pause|resume|cancel|send|resend|forward|retry|forget|consolidate|execute|schedule|answer|analyze|delegate|recall", "confidence": 0-1, "reason": "", "evidence": []},
-    "topic": {
-      "history_domain": "",
-      "current_domain": "",
-      "semantic_domain_continuity": true|false,
-      "workflow_continuity": true|false,
-      "entity_continuity": true|false,
-      "shared_entities": [],
-      "shared_workflow": [],
-      "requires_previous_context": true|false,
-      "relation": "same_topic|subtopic|adjacent_topic|new_topic|current_context_reference|unknown",
-      "topic_shifted": true|false,
-      "confidence": 0-1,
-      "reason": "",
-      "evidence": []
-    },
-    "steps": {"primary_task": "chat|recall|analyze|execute|delegate|schedule", "is_multi_intent": true|false, "confidence": 0-1, "reason": "", "evidence": []}
+    "subject": {"value": "external", "confidence": 0.8, "reason": "", "evidence": []},
+    "task": {"value": "chat", "confidence": 0.8, "reason": "", "evidence": []},
+    "memory": {"value": "none", "confidence": 0.8, "reason": "", "evidence": []},
+    "action": {"value": "answer", "confidence": 0.8, "reason": "", "evidence": []},
+    "topic": {"history_domain": "", "current_domain": "", "semantic_domain_continuity": false, "workflow_continuity": false, "entity_continuity": false, "shared_entities": [], "shared_workflow": [], "requires_previous_context": false, "relation": "unknown", "topic_shifted": false, "confidence": 0.8, "reason": "", "evidence": []},
+    "steps": {"primary_task": "chat", "is_multi_intent": false, "confidence": 0.8, "reason": "", "evidence": []}
   },
   "semantic_evidence": {
-    "personalContext": {"present": true|false, "reason": "", "span": ""},
-    "memoryRecall": {"present": true|false, "target": "conversation_history|user_memory|external_past_event|current_context_reference|none", "reason": "", "span": ""},
-    "actionRequest": {"present": true|false, "action": "read|write|run|schedule|delegate|none", "object": ""},
+    "personalContext": {"present": false, "reason": "", "span": ""},
+    "memoryRecall": {"present": false, "target": "none", "reason": "", "span": ""},
+    "actionRequest": {"present": false, "action": "none", "object": ""},
     "entityHints": {"tickers": [], "technicalTerms": [], "peopleOrCompanies": []}
   },
   "rich_intent": {
     "userGoal": "",
-    "domain": "task_management|memory_management|code_modification|system_control|general_chat|external_knowledge|investment_analysis|unknown",
-    "action": "create|read|update|delete|list|append|rename|pause|resume|cancel|send|resend|forward|retry|forget|consolidate|execute|schedule|answer|analyze|delegate|recall",
-    "targets": [{"type": "memory|file|code|external_entity|agent|task|channel|calendar|current_context", "value": ""}],
-    "contextDependency": {"recentConversation": true|false, "longTermMemory": true|false, "localWorkspace": true|false, "externalWorld": true|false},
-    "ambiguity": [{"field": "", "reason": "", "severity": "low|medium|high"}],
-    "riskLevel": "low|medium|high"
+    "domain": "general_chat",
+    "action": "answer",
+    "targets": [],
+    "contextDependency": {"recentConversation": false, "longTermMemory": false, "localWorkspace": false, "externalWorld": false},
+    "ambiguity": [],
+    "riskLevel": "low"
   },
   "intent_steps": [
-    {"id": "step-1", "type": "chat|recall|analyze|execute|delegate|schedule", "action": "", "target": "", "operation": {"domain": "task_management|memory_management|code_modification|system_control|general_chat|external_knowledge|investment_analysis|unknown", "action": "create|read|update|delete|list|append|rename|pause|resume|cancel|send|resend|forward|retry|forget|consolidate|execute|schedule|answer|analyze|delegate|recall", "target_type": "memory|file|code|external_entity|agent|task|channel|calendar|current_context", "target": "", "target_id": "", "selector": "", "scope": "current_session|long_term|workspace|external|scheduled_tasks|channel", "risk_level": "low|medium|high"}, "depends_on": [], "requires_confirmation": false, "risk_level": "low|medium|high"}
+    {"id": "step-1", "type": "chat", "action": "answer", "target": "", "operation": {"domain": "general_chat", "action": "answer", "target_type": "current_context", "target": "", "target_id": "", "selector": "", "scope": "current_session", "risk_level": "low"}, "depends_on": [], "requires_confirmation": false, "risk_level": "low"}
   ],
   "time_window_days": null,
   "date_from": null,
@@ -1219,14 +1089,14 @@ Required compact schema:
   "history_topic": "",
   "new_topic": "",
   "topic_analysis": {
-    "history": {"label": "", "evidence": [], "source_turns": [], "confidence": 0-1},
-    "current": {"label": "", "evidence": [], "source_turns": [0], "confidence": 0-1},
-    "relation": "same_topic|subtopic|adjacent_topic|new_topic|current_context_reference|unknown",
+    "history": {"label": "", "evidence": [], "source_turns": [], "confidence": 0.5},
+    "current": {"label": "", "evidence": [], "source_turns": [0], "confidence": 0.8},
+    "relation": "unknown",
     "relation_reason": "",
-    "confidence": 0-1
+    "confidence": 0.8
   },
-  "references_recent_history": true|false,
-  "topic_shifted": true|false
+  "references_recent_history": false,
+  "topic_shifted": false
 }
 `.trim();
 }
@@ -1312,67 +1182,28 @@ function parseEntityHintsObject(raw: string): RawEntityHintsResult {
 
 function buildIntentRepairPrompt(raw: string): string {
   return `
-The text below was intended to be the raw JSON object for Jarvis intent routing,
-but it is not valid JSON.
+Repair the text into ONE valid JSON object for Jarvis intent routing.
+Return ONLY JSON. No markdown. No explanation.
 
-Repair it into one valid raw JSON object. Preserve the original meaning as much
-as possible. Do not add markdown, comments, or explanations.
-
-Required top-level fields:
+Required keys:
 knowledge_score, operation_score, complexity_score, complexity_reasoning,
 query_subject, task_type, needs_external_knowledge, needs_tool,
-needs_scheduling, candidate_agents, confidence, evidence, semantic_evidence,
-classifiers, confidence_by_dimension, rich_intent, intent_steps, topic_analysis,
+needs_scheduling, candidate_agents, confidence, confidence_by_dimension,
+evidence, classifiers, semantic_evidence, rich_intent, intent_steps,
 time_window_days, date_from, date_to, history_topic, new_topic,
-references_recent_history, topic_shifted.
+topic_analysis, references_recent_history, topic_shifted.
 
-Required semantic_evidence shape:
-{
-  "personalContext": {"present": true|false, "reason": "", "span": ""},
-  "memoryRecall": {"present": true|false, "target": "conversation_history"|"user_memory"|"external_past_event"|"current_context_reference"|"none", "reason": "", "span": ""},
-  "actionRequest": {"present": true|false, "action": "read"|"write"|"run"|"schedule"|"delegate"|"none", "object": ""},
-  "entityHints": {"tickers": [], "technicalTerms": [], "peopleOrCompanies": []}
-}
+Use null for unknown dates/time_window. Use [] for unknown arrays.
+Use valid JSON booleans true/false, not strings.
 
-Required confidence_by_dimension shape:
-{"subject": 0-1, "taskType": 0-1, "memoryTarget": 0-1, "action": 0-1, "entityHints": 0-1, "topicShift": 0-1, "richIntent": 0-1}
+If a field is missing, infer conservatively:
+query_subject="mixed", task_type="chat", confidence=0.5,
+classifiers.subject.value=query_subject,
+classifiers.task.value=task_type,
+classifiers.memory.value=semantic_evidence.memoryRecall.target or "none",
+classifiers.action.value=rich_intent.action or "answer".
 
-Required classifiers shape:
-{
-  "subject": {"value": "personal"|"external"|"mixed", "confidence": 0-1, "reason": "", "evidence": []},
-  "task": {"value": "chat"|"recall"|"analyze"|"execute"|"delegate"|"schedule", "confidence": 0-1, "reason": "", "evidence": []},
-  "memory": {"value": "conversation_history"|"user_memory"|"external_past_event"|"current_context_reference"|"none", "confidence": 0-1, "reason": "", "evidence": []},
-  "action": {"value": "create"|"read"|"update"|"delete"|"list"|"append"|"rename"|"pause"|"resume"|"cancel"|"send"|"resend"|"forward"|"retry"|"forget"|"consolidate"|"execute"|"schedule"|"answer"|"analyze"|"delegate"|"recall", "confidence": 0-1, "reason": "", "evidence": []},
-  "topic": {"history_domain": "", "current_domain": "", "semantic_domain_continuity": true|false, "workflow_continuity": true|false, "entity_continuity": true|false, "shared_entities": [], "shared_workflow": [], "requires_previous_context": true|false, "relation": "same_topic"|"subtopic"|"adjacent_topic"|"new_topic"|"current_context_reference"|"unknown", "topic_shifted": true|false, "confidence": 0-1, "reason": "", "evidence": []},
-  "steps": {"primary_task": "chat"|"recall"|"analyze"|"execute"|"delegate"|"schedule", "is_multi_intent": true|false, "confidence": 0-1, "reason": "", "evidence": []}
-}
-
-Required rich_intent shape:
-{
-  "userGoal": "",
-  "domain": "task_management"|"memory_management"|"code_modification"|"system_control"|"general_chat"|"external_knowledge"|"investment_analysis"|"unknown",
-  "action": "create"|"read"|"update"|"delete"|"list"|"append"|"rename"|"pause"|"resume"|"cancel"|"send"|"resend"|"forward"|"retry"|"forget"|"consolidate"|"execute"|"schedule"|"answer"|"analyze"|"delegate"|"recall",
-  "targets": [{"type": "memory"|"file"|"code"|"external_entity"|"agent"|"task"|"channel"|"calendar"|"current_context", "value": ""}],
-  "contextDependency": {"recentConversation": true|false, "longTermMemory": true|false, "localWorkspace": true|false, "externalWorld": true|false},
-  "ambiguity": [{"field": "", "reason": "", "severity": "low"|"medium"|"high"}],
-  "riskLevel": "low"|"medium"|"high"
-}
-
-Required intent_steps shape:
-[
-  {"id": "step-1", "type": "chat"|"recall"|"analyze"|"execute"|"delegate"|"schedule", "action": "", "target": "", "operation": {"domain": "task_management"|"memory_management"|"code_modification"|"system_control"|"general_chat"|"external_knowledge"|"investment_analysis"|"unknown", "action": "create"|"read"|"update"|"delete"|"list"|"append"|"rename"|"pause"|"resume"|"cancel"|"send"|"resend"|"forward"|"retry"|"forget"|"consolidate"|"execute"|"schedule"|"answer"|"analyze"|"delegate"|"recall", "target_type": "memory"|"file"|"code"|"external_entity"|"agent"|"task"|"channel"|"calendar"|"current_context", "target": "", "target_id": "", "selector": "", "scope": "current_session"|"long_term"|"workspace"|"external"|"scheduled_tasks"|"channel", "risk_level": "low"|"medium"|"high"}, "depends_on": [], "requires_confirmation": false, "risk_level": "low"|"medium"|"high"}
-]
-
-Required topic_analysis shape:
-{
-  "history": {"label": "", "evidence": [], "source_turns": [], "confidence": 0-1},
-  "current": {"label": "", "evidence": [], "source_turns": [0], "confidence": 0-1},
-  "relation": "same_topic"|"subtopic"|"adjacent_topic"|"new_topic"|"current_context_reference"|"unknown",
-  "relation_reason": "",
-  "confidence": 0-1
-}
-
-Invalid JSON text:
+Invalid text:
 ${raw}
 `.trim();
 }

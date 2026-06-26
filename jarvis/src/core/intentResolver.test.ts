@@ -158,7 +158,9 @@ describe("IntentResolver", () => {
       numCtx: 8192,
       temperature: 0,
     });
-    expect(String(mockGenerate.mock.calls[0]?.[1])).toContain('"classifiers"');
+    const intentPrompt = String(mockGenerate.mock.calls[0]?.[1]);
+    expect(intentPrompt).toContain('"classifiers"');
+    expect(intentPrompt.length).toBeLessThan(6000);
     expect(intent.classifiers?.subject.value).toBe("mixed");
   });
 
@@ -369,7 +371,7 @@ ${modelResponse({
       temperature: 0,
     });
     expect(mockGenerate.mock.calls[1]?.[1]).toContain(
-      "Repair it into one valid raw JSON object",
+      "Return ONLY JSON. No markdown. No explanation.",
     );
   });
 
