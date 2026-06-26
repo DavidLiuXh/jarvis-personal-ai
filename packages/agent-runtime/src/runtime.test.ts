@@ -666,8 +666,152 @@ describe("AgentRuntime", () => {
       signal: new AbortController().signal,
     });
 
-    expect(observedTools[0]).toEqual(["task_add"]);
+    expect(observedTools[0]).toEqual([]);
     expect(toolAdapter.executeTools).not.toHaveBeenCalled();
     expect(result.context.llmLoop?.finalText).toBe("done");
+  });
+
+  it("selects only intent-relevant tools when no TaskGraph has taken ownership", async () => {
+    const frame = intent({
+      taskType: "schedule",
+      needsMemory: false,
+      needsTool: true,
+      needsScheduling: true,
+      intentSteps: [step()],
+    });
+    const intentRuntime = new DefaultIntentRuntime(
+      new StaticIntentResolverAdapter(async () => frame),
+    );
+    const memory = memoryRuntime(
+      memoryContract({ needMemory: false, memoryTarget: "none" }),
+    );
+    const observedTools: string[][] = [];
+    const runtime = new AgentRuntime(intentRuntime, memory.runtime, undefined, {
+      llmLoop: {
+        backend: {
+          getModel: () => "mock",
+          getCapabilities: () => ({
+            streaming: true,
+            nativeToolCalling: true,
+            jsonMode: false,
+            multimodalInput: false,
+            maxContextTokens: 4096,
+            modes: ["native_tool_calling"],
+          }),
+          async *sendTurn(input) {
+            observedTools.push(input.tools?.map((tool) => tool.name) ?? []);
+            yield { type: "content", text: "scheduled" };
+          },
+        },
+        promptCompiler: {
+          compileInitialTurn: ({ initialMessages }) => initialMessages,
+          compileToolResults: () => [],
+          compileRetryPrompt: () => [],
+        },
+        toolExecutor: toolExecutor((request) => ({
+          name: request.name,
+          callId: request.callId,
+          status: "success",
+          output: {},
+        })),
+        tools: [
+          { name: "recall_memory" },
+          { name: "task_add" },
+          { name: "task_list" },
+          { name: "write_file" },
+          { name: "run_shell_command" },
+        ],
+      },
+    });
+
+    await runtime.handleTurn({
+      sessionId: "s1",
+      userPrompt: "明天早上9点提醒我复盘",
+      llmInitialMessages: [
+        {
+          role: "user",
+          blocks: [{ type: "text", text: "明天早上9点提醒我复盘" }],
+        },
+      ],
+      signal: new AbortController().signal,
+    });
+
+    expect(observedTools[0]).toEqual(["task_add", "task_list"]);
+  });
+
+  it("sends no tools for plain answer intents", async () => {
+    const frame = intent({
+      taskType: "answer",
+      needsMemory: false,
+      needsTool: false,
+      needsScheduling: false,
+      intentSteps: [],
+      richIntent: {
+        ...intent().richIntent,
+        action: "answer",
+        primaryAction: "answer",
+        contextDependency: {
+          recentConversation: false,
+          longTermMemory: false,
+          localWorkspace: false,
+          externalWorld: false,
+        },
+        targets: [],
+      },
+    });
+    const intentRuntime = new DefaultIntentRuntime(
+      new StaticIntentResolverAdapter(async () => frame),
+    );
+    const memory = memoryRuntime(
+      memoryContract({ needMemory: false, memoryTarget: "none" }),
+    );
+    const observedTools: string[][] = [];
+    const runtime = new AgentRuntime(intentRuntime, memory.runtime, undefined, {
+      llmLoop: {
+        backend: {
+          getModel: () => "mock",
+          getCapabilities: () => ({
+            streaming: true,
+            nativeToolCalling: true,
+            jsonMode: false,
+            multimodalInput: false,
+            maxContextTokens: 4096,
+            modes: ["native_tool_calling"],
+          }),
+          async *sendTurn(input) {
+            observedTools.push(input.tools?.map((tool) => tool.name) ?? []);
+            yield { type: "content", text: "answer" };
+          },
+        },
+        promptCompiler: {
+          compileInitialTurn: ({ initialMessages }) => initialMessages,
+          compileToolResults: () => [],
+          compileRetryPrompt: () => [],
+        },
+        toolExecutor: toolExecutor((request) => ({
+          name: request.name,
+          callId: request.callId,
+          status: "success",
+          output: {},
+        })),
+        tools: [
+          { name: "recall_memory" },
+          { name: "task_add" },
+          { name: "write_file" },
+          { name: "run_shell_command" },
+        ],
+      },
+    });
+
+    await runtime.handleTurn({
+      sessionId: "s1",
+      userPrompt: "你好",
+      llmInitialMessages: [
+        { role: "user", blocks: [{ type: "text", text: "你好" }] },
+      ],
+      signal: new AbortController().signal,
+    });
+
+    expect(observedTools[0]).toEqual([]);
   });
 });

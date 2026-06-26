@@ -341,6 +341,204 @@ function hasTaskGraphRecallNode(context: RuntimeContext): boolean {
   );
 }
 
+const TOOL_NAMES_BY_TASK_GRAPH_KIND: Record<string, string[]> = {
+  recall: ["recall_memory"],
+  schedule: [
+    "task_add",
+    "task_update",
+    "task_delete",
+    "task_toggle",
+    "task_list",
+  ],
+  push: ["push_to_channel"],
+  read_file: ["read_file", "read_many_files", "glob", "grep"],
+  write_file: ["write_file", "read_file", "read_many_files", "glob", "grep"],
+  run_shell: ["run_shell_command"],
+  research: ["run_shell_command"],
+  delegate: ["activate_skill"],
+};
+
+const TOOL_NAMES_BY_TASK_TYPE: Record<string, string[]> = {
+  recall: ["recall_memory"],
+  schedule: [
+    "task_add",
+    "task_update",
+    "task_delete",
+    "task_toggle",
+    "task_list",
+  ],
+  execute: [
+    "read_file",
+    "read_many_files",
+    "glob",
+    "grep",
+    "write_file",
+    "run_shell_command",
+    "push_to_channel",
+    "task_add",
+    "task_update",
+    "task_delete",
+    "task_toggle",
+    "task_list",
+  ],
+  delegate: ["activate_skill"],
+  send: ["push_to_channel"],
+};
+
+function addToolsByTaskStep(
+  allowed: Set<string>,
+  step: IntentFrame["intentSteps"][number],
+): void {
+  const sources = [
+    step.type,
+    step.action,
+    step.target,
+    step.operation.action,
+    step.operation.domain,
+    step.operation.targetType,
+    step.operation.scope ?? "",
+  ]
+    .join(" ")
+    .toLowerCase();
+  if (step.type === "recall" || step.operation.targetType === "memory") {
+    allowed.add("recall_memory");
+  }
+  if (
+    step.type === "schedule" ||
+    step.operation.targetType === "task" ||
+    step.operation.scope === "scheduled_tasks"
+  ) {
+    for (const name of TOOL_NAMES_BY_TASK_TYPE.schedule) allowed.add(name);
+  }
+  if (
+    step.operation.targetType === "channel" ||
+    /\b(?:send|push)\b|推送|发送|微信|飞书/.test(sources)
+  ) {
+    allowed.add("push_to_channel");
+  }
+  if (
+    step.operation.targetType === "file" ||
+    step.operation.targetType === "code" ||
+    step.operation.scope === "workspace" ||
+    /\b(?:file|workspace|read|write|save|open|grep|glob)\b|文件|保存|读取|打开|搜索/.test(
+      sources,
+    )
+  ) {
+    for (const name of ["read_file", "read_many_files", "glob", "grep"]) {
+      allowed.add(name);
+    }
+    if (
+      /\b(?:write|save|append|create|modify|update)\b|保存|写入|修改|更新|创建/.test(
+        sources,
+      )
+    ) {
+      allowed.add("write_file");
+    }
+  }
+  if (
+    step.operation.action === "execute" ||
+    /\b(?:shell|command|curl|fetch|crawl|research|search|collect)\b|命令|抓取|爬取|检索|收集/.test(
+      sources,
+    )
+  ) {
+    allowed.add("run_shell_command");
+  }
+  if (step.operation.targetType === "agent" || step.type === "delegate") {
+    allowed.add("activate_skill");
+  }
+}
+
+function completedTaskGraphToolNames(context: RuntimeContext): Set<string> {
+  const completed = new Set<string>();
+  const execution = context.taskGraphExecution?.execution;
+  if (!execution) return completed;
+  for (const state of execution.nodes) {
+    if (state.status !== "succeeded") continue;
+    for (const name of TOOL_NAMES_BY_TASK_GRAPH_KIND[state.node.kind] ?? []) {
+      completed.add(name);
+    }
+  }
+  return completed;
+}
+
+function allowedToolNamesForContext(
+  context: RuntimeContext,
+): Set<string> | null {
+  const graph = context.taskGraph;
+  if (graph) {
+    const completedNodeIds = new Set(
+      context.taskGraphExecution?.execution.nodes
+        .filter((state) => state.status === "succeeded")
+        .map((state) => state.node.id) ?? [],
+    );
+    const allowed = new Set<string>();
+    for (const node of graph.nodes) {
+      if (completedNodeIds.has(node.id)) continue;
+      for (const name of TOOL_NAMES_BY_TASK_GRAPH_KIND[node.kind] ?? []) {
+        allowed.add(name);
+      }
+    }
+    return allowed;
+  }
+
+  const intent = context.intent;
+  if (!intent) return null;
+  const allowed = new Set<string>();
+  for (const name of TOOL_NAMES_BY_TASK_TYPE[intent.taskType] ?? []) {
+    allowed.add(name);
+  }
+  if (intent.needsMemory) allowed.add("recall_memory");
+  if (intent.candidateAgents.length > 0) allowed.add("activate_skill");
+  for (const step of intent.intentSteps) addToolsByTaskStep(allowed, step);
+
+  const dependency = intent.richIntent.contextDependency;
+  if (dependency.localWorkspace) {
+    for (const name of ["read_file", "read_many_files", "glob", "grep"]) {
+      allowed.add(name);
+    }
+  }
+  if (dependency.externalWorld && intent.needsTool) {
+    allowed.add("run_shell_command");
+  }
+  if (intent.richIntent.targets.some((target) => target.type === "channel")) {
+    allowed.add("push_to_channel");
+  }
+  if (intent.richIntent.targets.some((target) => target.type === "task")) {
+    for (const name of TOOL_NAMES_BY_TASK_TYPE.schedule) allowed.add(name);
+  }
+  if (intent.richIntent.targets.some((target) => target.type === "file")) {
+    for (const name of [
+      "read_file",
+      "read_many_files",
+      "glob",
+      "grep",
+      "write_file",
+    ]) {
+      allowed.add(name);
+    }
+  }
+  return allowed;
+}
+
+function withSelectedTools(
+  options: ToolLoopRuntimeOptions,
+  context: RuntimeContext,
+): ToolLoopRuntimeOptions {
+  if (!options.tools) return options;
+  const allowed = allowedToolNamesForContext(context);
+  const completed = completedTaskGraphToolNames(context);
+  const selected = options.tools.filter((tool) => {
+    if (completed.has(tool.name)) return false;
+    return !allowed || allowed.has(tool.name);
+  });
+  const before = options.tools.length;
+  const after = selected.length;
+  options.onLog?.(
+    `🧰 [AgentRuntime] Tool selection: ${before}→${after}; allowed=${allowed ? [...allowed].sort().join(",") || "-" : "all"}; suppressed=${[...completed].sort().join(",") || "-"}`,
+  );
+  return { ...options, tools: selected };
+}
+
 function formatTaskGraphToolPolicy(context: RuntimeContext): string {
   if (!hasTaskGraphRecallNode(context)) return "";
   const completed = hasCompletedTaskGraphMemoryRecall(context);
@@ -638,13 +836,17 @@ export class AgentRuntime {
       if (this.options.llmLoop && input.llmInitialMessages) {
         const shouldSuppressRecallMemoryTool =
           deferMemoryRetrieval && hasTaskGraphRecallNode(context);
+        const selectedLlmLoopOptions = withSelectedTools(
+          this.options.llmLoop,
+          context,
+        );
         const llmLoopOptions = shouldSuppressRecallMemoryTool
           ? withSuppressedTool(
-              this.options.llmLoop,
+              selectedLlmLoopOptions,
               "recall_memory",
               "TaskGraph owns memory recall for this turn.",
             )
-          : this.options.llmLoop;
+          : selectedLlmLoopOptions;
         context.llmLoop = await new ToolLoopRuntime(llmLoopOptions).run({
           userPrompt: context.userPrompt,
           systemContext:
