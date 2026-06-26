@@ -250,6 +250,46 @@ function stringifyOutput(value: unknown): string {
   }
 }
 
+function normalizeMemoryItemText(value: string): string {
+  return value
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/^\[[^\]]+\]\s*/, "")
+    .replace(/^(user|assistant|jarvis):\s*/i, "")
+    .trim()
+    .toLowerCase();
+}
+
+function memoryItemMatchesQuery(
+  item: string,
+  queryCandidates: string[],
+): boolean {
+  const normalized = normalizeMemoryItemText(item);
+  if (!normalized) return true;
+  return queryCandidates.some(
+    (candidate) =>
+      candidate.length > 0 && normalized === normalizeMemoryItemText(candidate),
+  );
+}
+
+function dedupeMemoryItems(
+  items: string[],
+  queryCandidates: string[] = [],
+): string[] {
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const item of items) {
+    const text = item.trim();
+    if (!text) continue;
+    if (memoryItemMatchesQuery(text, queryCandidates)) continue;
+    const key = normalizeMemoryItemText(text);
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    result.push(text);
+  }
+  return result;
+}
+
 function outputIndicatesFailure(output: unknown): boolean {
   return /(^|[^\w])(error|failed|denied|blocked|not available|requires|❌|失败|不可用|被拒绝)([^\w]|$)/i.test(
     stringifyOutput(output),
@@ -391,13 +431,21 @@ function recallArtifacts(
   result: RuntimeToolResult,
 ): TaskRuntimeArtifact[] {
   const text = stringifyOutput(result.output);
+  const queryCandidates = [
+    request.context.userPrompt,
+    request.node.title,
+    request.node.outputSpec?.description,
+  ].filter((value): value is string => Boolean(value?.trim()));
   const noMemory = /NO SPECIFIC MEMORIES FOUND/i.test(text);
   const items = noMemory
     ? []
-    : text
-        .split(/\r?\n/)
-        .filter((line) => line.trim().startsWith("- "))
-        .map((line) => line.replace(/^-\s*/, "").trim());
+    : dedupeMemoryItems(
+        text
+          .split(/\r?\n/)
+          .filter((line) => line.trim().startsWith("- "))
+          .map((line) => line.replace(/^-\s*/, "").trim()),
+        queryCandidates,
+      );
   return [
     {
       id: `${request.node.id}-memory`,
@@ -438,11 +486,32 @@ function runtimeRecallArtifacts(
   request: TaskNodeExecutionRequest,
   retrieval: MemoryRetrievalResult,
 ): TaskRuntimeArtifact[] {
-  const factItems = retrieval.facts.map(factMemoryItem);
-  const entryItems = retrieval.entries.map(entryMemoryItem);
-  const sessionItems = retrieval.session
-    .map(sessionMemoryItem)
-    .filter((item) => item.trim());
+  const rawFactItems = retrieval.facts.map(factMemoryItem);
+  const rawEntryItems = retrieval.entries.map(entryMemoryItem);
+  const queryCandidates = [
+    request.context.userPrompt,
+    retrieval.contract.query.raw,
+    retrieval.contract.query.rewritten,
+    ...retrieval.contract.query.entities,
+  ].filter((value): value is string => Boolean(value?.trim()));
+  const factAndEntryItems = dedupeMemoryItems(
+    [...rawFactItems, ...rawEntryItems],
+    queryCandidates,
+  );
+  const rawFactItemSet = new Set(rawFactItems);
+  const factItems = factAndEntryItems.filter((item) =>
+    rawFactItemSet.has(item),
+  );
+  const entryItems = factAndEntryItems.filter(
+    (item) => !rawFactItemSet.has(item),
+  );
+  const usedKeys = new Set(
+    [...factItems, ...entryItems].map(normalizeMemoryItemText),
+  );
+  const sessionItems = dedupeMemoryItems(
+    retrieval.session.map(sessionMemoryItem).filter((item) => item.trim()),
+    queryCandidates,
+  ).filter((item) => !usedKeys.has(normalizeMemoryItemText(item)));
   const memoryItems = [...factItems, ...entryItems, ...sessionItems];
   const sections = [
     factItems.length > 0
@@ -476,9 +545,12 @@ function runtimeRecallArtifacts(
       metadata: {
         source: "memory_runtime",
         noMemory: memoryItems.length === 0,
-        factCount: retrieval.facts.length,
-        entryCount: retrieval.entries.length,
-        sessionCount: retrieval.session.length,
+        factCount: factItems.length,
+        entryCount: entryItems.length,
+        sessionCount: sessionItems.length,
+        rawFactCount: retrieval.facts.length,
+        rawEntryCount: retrieval.entries.length,
+        rawSessionCount: retrieval.session.length,
         memoryTarget: retrieval.contract.memoryTarget,
         targetScopes: retrieval.contract.targetScopes,
       },

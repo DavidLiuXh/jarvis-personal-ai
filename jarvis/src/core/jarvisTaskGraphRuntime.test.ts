@@ -304,6 +304,32 @@ describe("createJarvisTaskRuntime", () => {
             score: 0.9,
             reason: "sqlite_entry",
           },
+          {
+            item: {
+              id: "entry-2",
+              scope: "entry",
+              kind: "conversation",
+              content: "user: 还记得我的爱好吗？",
+              entities: ["爱好"],
+              timestamp: now,
+              sourceRefs: ["s1"],
+            },
+            score: 0.88,
+            reason: "sqlite_entry",
+          },
+          {
+            item: {
+              id: "entry-3",
+              scope: "entry",
+              kind: "conversation",
+              content: "爱好骑自行车",
+              entities: ["爱好"],
+              timestamp: now,
+              sourceRefs: ["s1"],
+            },
+            score: 0.85,
+            reason: "sqlite_entry",
+          },
         ],
       } satisfies MemoryRetrievalResult;
     });
@@ -403,11 +429,12 @@ describe("createJarvisTaskRuntime", () => {
     expect(result?.status).toBe("succeeded");
     expect(result?.execution.artifacts[0]).toMatchObject({
       type: "memory",
-      memoryItems: [
-        "[behavior] 爱好逛胡同",
-        "[behavior] 爱好骑自行车",
-        "user: 还记得我的爱好吗？",
-      ],
+      memoryItems: ["[behavior] 爱好逛胡同", "[behavior] 爱好骑自行车"],
+      metadata: expect.objectContaining({
+        factCount: 2,
+        entryCount: 0,
+        rawEntryCount: 3,
+      }),
     });
 
     const secondResult = await taskRuntime.execute({ ...input, graph: graph! });
@@ -417,11 +444,7 @@ describe("createJarvisTaskRuntime", () => {
     expect(secondResult?.status).toBe("succeeded");
     expect(secondResult?.execution.artifacts[0]).toMatchObject({
       type: "memory",
-      memoryItems: [
-        "[behavior] 爱好逛胡同",
-        "[behavior] 爱好骑自行车",
-        "user: 还记得我的爱好吗？",
-      ],
+      memoryItems: ["[behavior] 爱好逛胡同", "[behavior] 爱好骑自行车"],
     });
   });
 
