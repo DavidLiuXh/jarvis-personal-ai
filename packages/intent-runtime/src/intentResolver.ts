@@ -661,14 +661,14 @@ type TopicBoundaryDomain =
 function strongTopicDomains(text: string): Set<StrongTopicDomain> {
   const domains = new Set<StrongTopicDomain>();
   if (
-    /\b(?:ai|llm|gemini|openai|chatgpt|claude|llama|agentic)\b|人工智能|大模型|智能体|生成式\s*ai/i.test(
+    /\b(?:ai|llm|gemini|openai|chatgpt|claude|llama|agentic|lora|qlora|adapter|fine[-\s]?tuning|finetuning|prompt tuning|machine learning|deep learning|transformer)\b|人工智能|大模型|智能体|生成式\s*ai|机器学习|深度学习|微调|参数高效|低秩适配/i.test(
       text,
     )
   ) {
     domains.add("ai_technology");
   }
   if (
-    /\b(?:naaim|s&p|nasdaq|dow jones|stock market|equity exposure|market outlook|investment recommendation|investor advice|us market|u\.s\. market)\b|美国市场|市场前景|发展前景.{0,16}投资|投资者|投资建议|股市|股票|美股|投资经理|风险敞口|机构股票配置|市场情绪|标普|纳斯达克/i.test(
+    /\b(?:naaim|s&p|nasdaq|dow jones|stock market|equity exposure|market outlook|investment analysis|investment recommendation|investor advice|us market|u\.s\. market|share price|stock price|valuation)\b|美国市场|市场前景|发展前景.{0,16}投资|投资者|投资建议|投资分析|投资专家|股价|走势预测|估值|股市|股票|美股|投资经理|风险敞口|机构股票配置|市场情绪|标普|纳斯达克/i.test(
       text,
     )
   ) {
@@ -818,6 +818,8 @@ function hasDisjointTopicBoundaryDomains(args: {
 
 function hasBroadTopicEntityContinuity(args: {
   prompt: string;
+  recentTurns: ConversationTurn[];
+  semanticEvidence: IntentEvidence;
   parsedTopicAnalysis: Record<string, unknown>;
 }): boolean {
   const topicHistory = asRecord(args.parsedTopicAnalysis.history);
@@ -842,6 +844,16 @@ function hasBroadTopicEntityContinuity(args: {
   const evidenceDomains = strongTopicDomains(historyEvidence);
   if (evidenceDomains.size > 0 && currentDomains.size > 0) {
     return [...currentDomains].some((domain) => evidenceDomains.has(domain));
+  }
+
+  const historyHasStrongDomain =
+    historyDomains.size > 0 || evidenceDomains.size > 0;
+  if (historyHasStrongDomain && currentDomains.size === 0) {
+    const entityTerms = collectSpecificEntityTerms(
+      args.prompt,
+      args.semanticEvidence,
+    );
+    return recentHistoryContainsEntityTerms(args.recentTurns, entityTerms);
   }
 
   return true;
@@ -3344,6 +3356,8 @@ export class IntentResolver {
       broadTopicalHistory &&
       hasBroadTopicEntityContinuity({
         prompt,
+        recentTurns,
+        semanticEvidence,
         parsedTopicAnalysis,
       });
     if (broadTopicEntityDrilldown) {

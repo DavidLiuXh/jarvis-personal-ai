@@ -744,6 +744,72 @@ ${modelResponse({
     );
   });
 
+  it("keeps ML method comparison as a new topic after an investment report", async () => {
+    const resolver = makeResolver();
+    mockGenerate.mockResolvedValueOnce(
+      modelResponse({
+        query_subject: "external",
+        task_type: "analyze",
+        references_recent_history: false,
+        topic_shifted: true,
+        topic_analysis: {
+          relation: "new_topic",
+          history: {
+            label: "Meituan investment analysis",
+            evidence: ["美团", "股价走势", "投资专家", "行业分析报告"],
+            source_turns: [-1],
+            confidence: 1,
+          },
+          current: {
+            label: "machine learning optimization methods",
+            evidence: ["LoRA", "当前是否有比LoRA更好的方法？"],
+            source_turns: [0],
+            confidence: 1,
+          },
+          confidence: 1,
+        },
+        semantic_evidence: {
+          personalContext: { present: false, reason: "", span: "" },
+          memoryRecall: {
+            present: false,
+            target: "none",
+            reason: "",
+            span: "",
+          },
+          actionRequest: { present: false, action: "read", object: "" },
+          entityHints: {
+            tickers: [],
+            technicalTerms: ["LoRA"],
+            peopleOrCompanies: [],
+          },
+        },
+      }),
+    );
+
+    const intent = await resolver.resolve({
+      userPrompt: "是否有比LoRA更好的方法？",
+      history: [
+        {
+          role: "user",
+          content:
+            "我需要你想投资专家和行业分析专家一样，对美团作深入分析，需要你给出独道见解和对其发展和股价走势的预测，形成报告。",
+        },
+        {
+          role: "assistant",
+          content:
+            "报告已生成并保存为 `Meituan_3690_Investment_Analysis_2026Q2.md`。核心判断：美团是中国互联网剩者为王逻辑的代表，12个月目标 200-240 港元。",
+        },
+      ],
+    });
+
+    expect(intent.topicShifted).toBe(true);
+    expect(intent.referencesRecentHistory).toBe(false);
+    expect(intent.topicAnalysis.relation).toBe("new_topic");
+    expect(policyReasonCodes(intent)).not.toContain(
+      "BROAD_TOPIC_ENTITY_DRILLDOWN",
+    );
+  });
+
   it("upgrades external to mixed for personal-context cues", async () => {
     const resolver = makeResolver();
     mockGenerate.mockResolvedValueOnce(
