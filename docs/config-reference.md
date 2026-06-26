@@ -74,6 +74,20 @@ npm start
 
 vLLM, local gateways, and other services exposing a generic OpenAI-compatible API use `"provider": "openai"` with an appropriate `baseUrl`, `model`, and `apiKeyEnv`. DeepSeek uses `"provider": "deepseek"` so its thinking and reasoning semantics stay out of the generic OpenAI-compatible adapter. If local routing is enabled, standalone backends use backend-neutral `routing.targets.pro` / `routing.targets.flash`; when they are unset, both routing branches fall back to the selected backend default model. The supported main-chat providers are currently `gemini`, `openai`, and `deepseek`; native Anthropic and Ollama main-chat protocols are not yet implemented.
 
+Prompt diagnostics can print the exact compiled messages sent to the active LLM backend:
+
+```json
+{
+  "llmBackend": {
+    "promptDiagnostics": true,
+    "promptDiagnosticsIncludeTools": true,
+    "promptDiagnosticsIncludeMetadata": false
+  }
+}
+```
+
+When enabled, Jarvis logs `[LLMPromptDiagnostics] full_prompt ...` before each backend request. The payload includes full system/user/tool messages and can contain personal memory, so keep it off outside local debugging.
+
 Use the Gemini compatibility runtime:
 
 ```json
@@ -138,6 +152,12 @@ Gemini mode uses Gemini CLI authentication, model selection, and compatibility t
     // "openai": OpenAI-compatible standalone runtime
     // "deepseek": DeepSeek standalone runtime
     "provider": "gemini",
+
+    // Print the exact compiled LLM backend prompt before each request.
+    // This may include personal memory; enable only for local debugging.
+    "promptDiagnostics": false,
+    "promptDiagnosticsIncludeTools": true,
+    "promptDiagnosticsIncludeMetadata": false,
 
     // Only used when provider = "openai".
     "openai": {

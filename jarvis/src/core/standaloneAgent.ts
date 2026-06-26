@@ -126,6 +126,16 @@ export function createStandaloneBackend(input: {
   };
 }
 
+function createPromptDiagnostics(config: JarvisConfig, label: string) {
+  return {
+    enabled: config.llmBackend?.promptDiagnostics === true,
+    label,
+    includeTools: config.llmBackend?.promptDiagnosticsIncludeTools !== false,
+    includeMetadata:
+      config.llmBackend?.promptDiagnosticsIncludeMetadata === true,
+  };
+}
+
 function createStandaloneToolExecutor(input: {
   toolRouter: ToolRouter;
   emitToolCallResponse: (response: ToolCallResponse) => void;
@@ -572,6 +582,10 @@ export class StandaloneJarvisAgent
           value: request,
         }),
       onLog: console.error,
+      promptDiagnostics: createPromptDiagnostics(
+        this.jarvisConfig,
+        `standalone:${backendModel}`,
+      ),
       planner: createStandaloneToolLoopPlanner({
         stepRuntime,
         toolRouter: this.toolRouter,

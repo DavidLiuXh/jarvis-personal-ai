@@ -12,6 +12,9 @@
   },
   "llmBackend": {
     "provider": "deepseek",
+    "promptDiagnostics": false,
+    "promptDiagnosticsIncludeTools": true,
+    "promptDiagnosticsIncludeMetadata": false,
     "openai": {
       "apiKeyEnv": "OPENAI_API_KEY",
       "model": "gpt-4.1",

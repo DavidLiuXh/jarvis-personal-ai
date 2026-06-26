@@ -74,6 +74,20 @@ npm start
 
 提供通用 OpenAI-compatible API 的 vLLM、本地网关或其他服务使用 `"provider": "openai"`，并修改 `baseUrl`、`model` 和 `apiKeyEnv`。DeepSeek 使用 `"provider": "deepseek"`，这样 thinking 和 reasoning 语义不会污染通用 OpenAI-compatible adapter。如果启用了本地 routing，standalone backend 会使用后端无关的 `routing.targets.pro` / `routing.targets.flash`；未配置时两个分支都会退回所选 backend 的默认模型。当前主对话后端正式支持 `gemini`、`openai` 和 `deepseek`；Anthropic 与 Ollama 的原生主对话协议尚未接入。
 
+Prompt diagnostics 可打印实际传给当前 LLM backend 的完整编译后 messages：
+
+```json
+{
+  "llmBackend": {
+    "promptDiagnostics": true,
+    "promptDiagnosticsIncludeTools": true,
+    "promptDiagnosticsIncludeMetadata": false
+  }
+}
+```
+
+开启后，Jarvis 会在每次 backend request 前输出 `[LLMPromptDiagnostics] full_prompt ...`。日志包含完整 system/user/tool messages，可能包含个人记忆，只建议本地调试时开启。
+
 使用 Gemini compatibility runtime：
 
 ```json
@@ -138,6 +152,12 @@ Gemini 模式使用 Gemini CLI 的认证、模型和兼容工具链。首次安�
     // "openai"：OpenAI-compatible standalone runtime
     // "deepseek"：DeepSeek standalone runtime
     "provider": "gemini",
+
+    // 每次请求前打印实际传给 LLM backend 的完整编译后 prompt。
+    // 可能包含个人记忆，只建议本地调试时开启。
+    "promptDiagnostics": false,
+    "promptDiagnosticsIncludeTools": true,
+    "promptDiagnosticsIncludeMetadata": false,
 
     // 仅 provider = "openai" 时生效。
     "openai": {

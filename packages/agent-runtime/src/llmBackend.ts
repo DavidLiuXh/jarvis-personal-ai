@@ -136,6 +136,13 @@ export type ToolLoopPlanner = {
   describeState?(): string;
 };
 
+export type ToolLoopPromptDiagnosticsOptions = {
+  enabled?: boolean;
+  label?: string;
+  includeTools?: boolean;
+  includeMetadata?: boolean;
+};
+
 export type ToolLoopRuntimeOptions = {
   backend: LlmBackend;
   promptCompiler: PromptCompiler;
@@ -155,6 +162,7 @@ export type ToolLoopRuntimeOptions = {
   onMetadata?: (metadata: Record<string, unknown>) => void;
   onLog?: (message: string) => void;
   onRetryExhausted?: (error: unknown) => void | Promise<void>;
+  promptDiagnostics?: ToolLoopPromptDiagnosticsOptions;
 };
 
 export type ToolLoopRunInput = {
@@ -294,6 +302,87 @@ function appendAssistantMessage(
   ];
 }
 
+function safeJson(value: unknown): unknown {
+  if (value === null || value === undefined) return value;
+  if (typeof value !== "object") return value;
+  try {
+    return JSON.parse(JSON.stringify(value));
+  } catch {
+    return String(value);
+  }
+}
+
+function serializeBlock(block: LlmContentBlock): Record<string, unknown> {
+  if (block.type === "text") return { type: block.type, text: block.text };
+  if (block.type === "inline_data") {
+    return {
+      type: block.type,
+      mimeType: block.mimeType,
+      dataChars: block.data.length,
+    };
+  }
+  if (block.type === "tool_call") {
+    return {
+      type: block.type,
+      name: block.name,
+      callId: block.callId,
+      args: safeJson(block.args),
+    };
+  }
+  return {
+    type: block.type,
+    name: block.name,
+    callId: block.callId,
+    result: safeJson(block.result),
+  };
+}
+
+function serializeMessage(message: LlmMessage): Record<string, unknown> {
+  return {
+    role: message.role,
+    blocks: message.blocks.map(serializeBlock),
+    ...(message.metadata ? { metadata: safeJson(message.metadata) } : {}),
+  };
+}
+
+function emitPromptDiagnostics(
+  options: ToolLoopRuntimeOptions,
+  input: {
+    messages: LlmMessage[];
+    tools?: LlmToolSchema[];
+    toolChoice?: "auto" | "none" | "required";
+    metadata?: Record<string, unknown>;
+    turnIndex: number;
+    retryCount: number;
+  },
+): void {
+  const diagnostics = options.promptDiagnostics;
+  if (diagnostics?.enabled !== true) return;
+  const includeTools = diagnostics.includeTools !== false;
+  const payload = {
+    label: diagnostics.label ?? options.backend.getModel(),
+    model: options.backend.getModel(),
+    turnIndex: input.turnIndex,
+    retryCount: input.retryCount,
+    toolChoice: input.toolChoice ?? "auto",
+    messageCount: input.messages.length,
+    tools: includeTools
+      ? (input.tools ?? [])
+      : (input.tools ?? []).map((tool) => tool.name),
+    metadata:
+      diagnostics.includeMetadata === true
+        ? safeJson(input.metadata)
+        : undefined,
+    messages: input.messages.map(serializeMessage),
+  };
+  const line = `[LLMPromptDiagnostics] full_prompt ${JSON.stringify(payload)}`;
+  if (options.onLog) {
+    options.onLog(line);
+  } else {
+    console.error(line);
+  }
+}
+
 export class ToolLoopRuntime {
   constructor(private readonly options: ToolLoopRuntimeOptions) {}
 
@@ -318,6 +407,7 @@ export class ToolLoopRuntime {
     let toolIterations = 0;
     let consecutiveToolFailures = 0;
     let intentToolEnforcements = 0;
+    let turnIndex = 0;
 
     while (true) {
       let retryCount = 0;
@@ -332,13 +422,20 @@ export class ToolLoopRuntime {
           let turnMetadata: Record<string, unknown> = {};
           let turnTextAccumulated = "";
 
+          const turnInput = {
+            messages,
+            tools: this.options.tools,
+            toolChoice: this.options.toolChoice,
+            metadata: input.metadata,
+          };
+          emitPromptDiagnostics(this.options, {
+            ...turnInput,
+            turnIndex,
+            retryCount,
+          });
+
           for await (const event of this.options.backend.sendTurn(
-            {
-              messages,
-              tools: this.options.tools,
-              toolChoice: this.options.toolChoice,
-              metadata: input.metadata,
-            },
+            turnInput,
             input.signal,
           )) {
             if (event.type === "content") {
@@ -357,6 +454,7 @@ export class ToolLoopRuntime {
               this.options.onMetadata?.(event.value);
             }
           }
+          turnIndex += 1;
 
           const toolCallRequests = withUniqueToolCallIds(rawToolCallRequests);
           toolCallRequests.forEach((request) =>

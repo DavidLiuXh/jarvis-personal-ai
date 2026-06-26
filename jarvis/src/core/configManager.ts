@@ -176,6 +176,16 @@ export interface JarvisConfig {
    */
   llmBackend?: {
     provider?: "gemini" | "openai" | "deepseek";
+    /**
+     * Emit the exact compiled LLM backend prompt/messages before each backend
+     * request. This can include personal memory and should be enabled only for
+     * local debugging. Default: false.
+     */
+    promptDiagnostics?: boolean;
+    /** Include full tool schemas in prompt diagnostics. Default: true. */
+    promptDiagnosticsIncludeTools?: boolean;
+    /** Include runtime metadata in prompt diagnostics. Default: false. */
+    promptDiagnosticsIncludeMetadata?: boolean;
     openai?: {
       apiKey?: string;
       apiKeyEnv?: string;
@@ -663,6 +673,9 @@ export class ConfigManager {
       },
       llmBackend: {
         provider: "gemini",
+        promptDiagnostics: false,
+        promptDiagnosticsIncludeTools: true,
+        promptDiagnosticsIncludeMetadata: false,
         openai: {
           apiKeyEnv: "OPENAI_API_KEY",
           model: "gpt-4.1",

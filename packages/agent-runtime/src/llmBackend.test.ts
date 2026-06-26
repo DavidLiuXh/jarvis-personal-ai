@@ -557,4 +557,74 @@ describe("ToolLoopRuntime", () => {
     ).rejects.toThrow("fetch failed");
     expect(exhausted).toHaveBeenCalledOnce();
   });
+
+  it("emits full compiled prompt diagnostics before backend calls", async () => {
+    const logs: string[] = [];
+    const runtime = new ToolLoopRuntime({
+      backend: backendFromTurns([[{ type: "content", text: "done" }]]),
+      promptCompiler: {
+        ...compiler(),
+        compileInitialTurn: ({ systemContext, initialMessages }) => [
+          {
+            role: "system",
+            blocks: [{ type: "text", text: systemContext ?? "" }],
+          },
+          ...initialMessages,
+        ],
+      },
+      toolExecutor: toolExecutor((request) => ({
+        name: request.name,
+        callId: request.callId,
+        status: "success",
+        output: {},
+      })),
+      tools: [
+        {
+          name: "recall_memory",
+          description: "Recall memory",
+          parameters: { type: "object" },
+        },
+      ],
+      promptDiagnostics: {
+        enabled: true,
+        label: "test-loop",
+        includeTools: true,
+      },
+      onLog: (message) => logs.push(message),
+    });
+
+    await runtime.run({
+      userPrompt: "hello",
+      systemContext: "<runtime_task_artifacts>facts</runtime_task_artifacts>",
+      initialMessages: [
+        { role: "user", blocks: [{ type: "text", text: "hello" }] },
+      ],
+      signal: new AbortController().signal,
+    });
+
+    expect(logs).toHaveLength(1);
+    expect(logs[0]).toContain("[LLMPromptDiagnostics] full_prompt ");
+    const payload = JSON.parse(
+      logs[0].replace("[LLMPromptDiagnostics] full_prompt ", ""),
+    );
+    expect(payload).toMatchObject({
+      label: "test-loop",
+      model: "mock-backend",
+      messageCount: 2,
+      tools: [expect.objectContaining({ name: "recall_memory" })],
+    });
+    expect(payload.messages[0]).toMatchObject({
+      role: "system",
+      blocks: [
+        {
+          type: "text",
+          text: "<runtime_task_artifacts>facts</runtime_task_artifacts>",
+        },
+      ],
+    });
+    expect(payload.messages[1]).toMatchObject({
+      role: "user",
+      blocks: [{ type: "text", text: "hello" }],
+    });
+  });
 });

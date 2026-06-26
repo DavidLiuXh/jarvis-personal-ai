@@ -44,6 +44,16 @@ export type JarvisToolLoopRuntimeInput = {
   log?: (message: string) => void;
 };
 
+function createPromptDiagnostics(config: JarvisConfig, label: string) {
+  return {
+    enabled: config.llmBackend?.promptDiagnostics === true,
+    label,
+    includeTools: config.llmBackend?.promptDiagnosticsIncludeTools !== false,
+    includeMetadata:
+      config.llmBackend?.promptDiagnosticsIncludeMetadata === true,
+  };
+}
+
 export function createJarvisToolExecutor(input: {
   toolRouter: ToolRouter;
   emitToolCallResponse: (response: ToolCallResponse) => void;
@@ -195,6 +205,7 @@ export function createJarvisToolLoopOptions(
         value: request,
       }),
     onLog: log,
+    promptDiagnostics: createPromptDiagnostics(input.config, "gemini-cli"),
     onRetryExhausted: async () => {
       if (!input.cleanOnFailure) return;
       input.cleanOrphanedTurn();
