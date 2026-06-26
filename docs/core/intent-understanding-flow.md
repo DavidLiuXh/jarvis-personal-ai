@@ -403,10 +403,56 @@ type RoutingResult = {
 - `confidence`
 - `confidence_by_dimension`
 - `semantic_evidence`
+- `classifiers`
 - `rich_intent`
 - 时间窗口和 topic shift
 
 这里本地模型不是直接控制执行，而是产出一个候选结构。
+
+### 7.1.1 多维 classifier 层
+
+当前 `IntentFrame` 不再只依赖 `query_subject`、`task_type`、`topic_shifted` 这些扁平字段。
+本地模型会先输出 `classifiers`：
+
+- `classifiers.subject`：独立判断 `personal` / `external` / `mixed`；
+- `classifiers.task`：独立判断主任务类型；
+- `classifiers.memory`：独立判断 memory target；
+- `classifiers.action`：独立判断 CRUD / lifecycle action；
+- `classifiers.topic`：独立判断 topic boundary；
+- `classifiers.steps`：独立判断是否是 multi-intent。
+
+这么做的原因是：自然语言请求经常同时包含“语义主题”“操作流程”“上下文引用”“输出形式”。
+如果让本地模型一次性给出一个总判断，它容易把不同维度互相污染，例如：
+
+- 两个请求都包含“收集、分析、保存”，但语义领域已经从 AI Agent 切到美国市场；
+- 前一轮是美团投资报告，后一轮是 LoRA 方法比较，都是“分析”，但主题完全不同；
+- 当前请求有一个实体名，并不代表它一定是上一轮报告的 drilldown。
+
+因此 topic classifier 被要求显式输出：
+
+```ts
+{
+  historyDomain: string;
+  currentDomain: string;
+  semanticDomainContinuity: boolean;
+  workflowContinuity: boolean;
+  entityContinuity: boolean;
+  sharedEntities: string[];
+  sharedWorkflow: string[];
+  requiresPreviousContext: boolean;
+  relation: TopicRelation;
+  topicShifted: boolean;
+}
+```
+
+关键约束：
+
+- `workflowContinuity=true` 不能单独证明 `topicShifted=false`；
+- 只有 `semanticDomainContinuity=true`、`entityContinuity=true` 或 `requiresPreviousContext=true` 时，才允许认为 topic 连续；
+- 如果模型只能解释为“同样是分析/报告/保存”，应输出 `topicShifted=true`。
+
+Resolver 会优先读取 `classifiers`，再投影到兼容字段 `subject`、`taskType`、`semanticEvidence.memoryRecall.target` 和 `topicAnalysis`。
+旧模型或旧 eval case 如果没有输出 `classifiers`，则继续从 legacy 字段回填，保持兼容。
 
 ### 7.2 IntentFrame 的核心字段
 

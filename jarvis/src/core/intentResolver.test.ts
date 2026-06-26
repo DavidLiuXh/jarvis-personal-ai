@@ -158,6 +158,105 @@ describe("IntentResolver", () => {
       numCtx: 8192,
       temperature: 0,
     });
+    expect(String(mockGenerate.mock.calls[0]?.[1])).toContain('"classifiers"');
+    expect(intent.classifiers?.subject.value).toBe("mixed");
+  });
+
+  it("prefers multi-dimensional classifiers over legacy flat labels", async () => {
+    const resolver = makeResolver();
+    mockGenerate.mockResolvedValueOnce(
+      modelResponse({
+        query_subject: "external",
+        task_type: "chat",
+        semantic_evidence: {
+          personalContext: {
+            present: true,
+            reason: "tailor to user context",
+            span: "结合我的情况",
+          },
+          memoryRecall: {
+            present: false,
+            target: "none",
+            reason: "",
+            span: "",
+          },
+          actionRequest: { present: false, action: "none", object: "" },
+          entityHints: {
+            tickers: [],
+            technicalTerms: ["LoRA"],
+            peopleOrCompanies: [],
+          },
+        },
+        classifiers: {
+          subject: {
+            value: "mixed",
+            confidence: 0.94,
+            reason: "uses personal context plus external ML knowledge",
+            evidence: ["结合我的情况", "LoRA"],
+          },
+          task: {
+            value: "analyze",
+            confidence: 0.93,
+            reason: "asks for comparison and recommendation",
+            evidence: ["更好的方法"],
+          },
+          memory: {
+            value: "none",
+            confidence: 0.9,
+            reason: "no recall request",
+            evidence: [],
+          },
+          action: {
+            value: "analyze",
+            confidence: 0.92,
+            reason: "comparison analysis",
+            evidence: ["比LoRA更好"],
+          },
+          topic: {
+            history_domain: "investment_analysis",
+            current_domain: "machine_learning",
+            semantic_domain_continuity: false,
+            workflow_continuity: false,
+            entity_continuity: false,
+            shared_entities: [],
+            shared_workflow: [],
+            requires_previous_context: false,
+            relation: "new_topic",
+            topic_shifted: true,
+            confidence: 0.95,
+            reason: "different semantic domain",
+            evidence: ["LoRA"],
+          },
+          steps: {
+            primary_task: "analyze",
+            is_multi_intent: false,
+            confidence: 0.9,
+            reason: "single comparison request",
+            evidence: ["更好的方法"],
+          },
+        },
+      }),
+    );
+
+    const intent = await resolver.resolve({
+      userPrompt: "结合我的情况，是否有比LoRA更好的方法？",
+      history: [
+        {
+          role: "user",
+          content: "帮我分析一下美团的投资价值。",
+        },
+        {
+          role: "assistant",
+          content: "美团投资分析报告已生成。",
+        },
+      ],
+    });
+
+    expect(intent.subject).toBe("mixed");
+    expect(intent.taskType).toBe("analyze");
+    expect(intent.topicShifted).toBe(true);
+    expect(intent.topicAnalysis.relation).toBe("new_topic");
+    expect(intent.classifiers?.topic.currentDomain).toBe("machine_learning");
   });
 
   it("can resolve intent through an injected model client", async () => {

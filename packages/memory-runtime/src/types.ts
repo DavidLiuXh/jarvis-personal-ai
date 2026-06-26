@@ -214,6 +214,46 @@ export type TopicAnalysis = {
   lowGrounding: boolean;
 };
 
+export type IntentClassifierDecision<T extends string> = {
+  value: T;
+  confidence: number;
+  reason: string;
+  evidence: string[];
+};
+
+export type IntentTopicClassifier = {
+  historyDomain: string;
+  currentDomain: string;
+  semanticDomainContinuity: boolean;
+  workflowContinuity: boolean;
+  entityContinuity: boolean;
+  sharedEntities: string[];
+  sharedWorkflow: string[];
+  requiresPreviousContext: boolean;
+  relation: TopicRelation;
+  topicShifted: boolean;
+  confidence: number;
+  reason: string;
+  evidence: string[];
+};
+
+export type IntentStepClassifier = {
+  primaryTask: IntentTaskType;
+  isMultiIntent: boolean;
+  confidence: number;
+  reason: string;
+  evidence: string[];
+};
+
+export type IntentClassifiers = {
+  subject: IntentClassifierDecision<QuerySubject>;
+  task: IntentClassifierDecision<IntentTaskType>;
+  memory: IntentClassifierDecision<MemoryRecallTarget>;
+  action: IntentClassifierDecision<RichIntentAction>;
+  topic: IntentTopicClassifier;
+  steps: IntentStepClassifier;
+};
+
 export type IntentPolicyStage =
   | "normalize"
   | "guardrail"
@@ -269,6 +309,7 @@ export type IntentFrame = {
   confidenceByDimension: IntentConfidenceByDimension;
   evidence: string[];
   semanticEvidence: IntentEvidence;
+  classifiers?: IntentClassifiers;
   richIntent: RichIntent;
   intentSteps: IntentStep[];
   topicAnalysis: TopicAnalysis;

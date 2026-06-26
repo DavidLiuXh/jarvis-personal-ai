@@ -22,6 +22,7 @@ import type {
   ActionRequestType,
   ConversationTurn,
   GroundedTopic,
+  IntentClassifiers,
   IntentConfidenceByDimension,
   IntentEvidence,
   IntentFrame,
@@ -43,6 +44,7 @@ export type {
   ActionRequestType,
   ConversationTurn,
   GroundedTopic,
+  IntentClassifiers,
   IntentConfidenceByDimension,
   IntentEvidence,
   IntentFrame,
@@ -85,6 +87,7 @@ type RawIntentModelResult = {
   confidence_by_dimension?: unknown;
   evidence?: unknown;
   semantic_evidence?: unknown;
+  classifiers?: unknown;
   time_window_days?: number | null;
   date_from?: string | null;
   date_to?: string | null;
@@ -1017,6 +1020,18 @@ function buildIntentPrompt(
 Today is ${todayStr} (${todayName}).
 You are Jarvis's intent resolver. Produce an IntentFrame seed for the user's request.
 
+DIMENSION 0 — Multi-Dimensional Classifiers (P0/P1)
+Classify each dimension independently before writing legacy compatibility fields.
+Return a top-level "classifiers" object with subject, task, memory, action, topic, and steps.
+- Do not let workflow similarity override semantic domain boundaries.
+- "collect/analyze/save" can be the same workflow while the topic is still new.
+- Topic continuity requires at least one of:
+  1. semantic_domain_continuity=true,
+  2. entity_continuity=true,
+  3. requires_previous_context=true.
+- If only workflow_continuity=true, then topic_shifted=true unless the current request explicitly refers to prior context.
+- If topic_shifted=false, explain the exact previous fact/entity/context required by the current request. If you can only say "same report/analyze/save workflow", set topic_shifted=true.
+
 DIMENSION 1 — Knowledge Depth (1-100)
 1-25: Basic fact retrieval, simple summaries.
 26-50: Integrating concepts, standard workflows.
@@ -1158,6 +1173,28 @@ Required compact schema:
   "confidence": 0-1,
   "confidence_by_dimension": {"subject": 0-1, "taskType": 0-1, "memoryTarget": 0-1, "action": 0-1, "entityHints": 0-1, "topicShift": 0-1, "richIntent": 0-1},
   "evidence": [],
+  "classifiers": {
+    "subject": {"value": "personal|external|mixed", "confidence": 0-1, "reason": "", "evidence": []},
+    "task": {"value": "chat|recall|analyze|execute|delegate|schedule", "confidence": 0-1, "reason": "", "evidence": []},
+    "memory": {"value": "conversation_history|user_memory|external_past_event|current_context_reference|none", "confidence": 0-1, "reason": "", "evidence": []},
+    "action": {"value": "create|read|update|delete|list|append|rename|pause|resume|cancel|send|resend|forward|retry|forget|consolidate|execute|schedule|answer|analyze|delegate|recall", "confidence": 0-1, "reason": "", "evidence": []},
+    "topic": {
+      "history_domain": "",
+      "current_domain": "",
+      "semantic_domain_continuity": true|false,
+      "workflow_continuity": true|false,
+      "entity_continuity": true|false,
+      "shared_entities": [],
+      "shared_workflow": [],
+      "requires_previous_context": true|false,
+      "relation": "same_topic|subtopic|adjacent_topic|new_topic|current_context_reference|unknown",
+      "topic_shifted": true|false,
+      "confidence": 0-1,
+      "reason": "",
+      "evidence": []
+    },
+    "steps": {"primary_task": "chat|recall|analyze|execute|delegate|schedule", "is_multi_intent": true|false, "confidence": 0-1, "reason": "", "evidence": []}
+  },
   "semantic_evidence": {
     "personalContext": {"present": true|false, "reason": "", "span": ""},
     "memoryRecall": {"present": true|false, "target": "conversation_history|user_memory|external_past_event|current_context_reference|none", "reason": "", "span": ""},
@@ -1285,9 +1322,9 @@ Required top-level fields:
 knowledge_score, operation_score, complexity_score, complexity_reasoning,
 query_subject, task_type, needs_external_knowledge, needs_tool,
 needs_scheduling, candidate_agents, confidence, evidence, semantic_evidence,
-confidence_by_dimension, rich_intent, intent_steps, topic_analysis, time_window_days,
-date_from, date_to, history_topic, new_topic, references_recent_history,
-topic_shifted.
+classifiers, confidence_by_dimension, rich_intent, intent_steps, topic_analysis,
+time_window_days, date_from, date_to, history_topic, new_topic,
+references_recent_history, topic_shifted.
 
 Required semantic_evidence shape:
 {
@@ -1299,6 +1336,16 @@ Required semantic_evidence shape:
 
 Required confidence_by_dimension shape:
 {"subject": 0-1, "taskType": 0-1, "memoryTarget": 0-1, "action": 0-1, "entityHints": 0-1, "topicShift": 0-1, "richIntent": 0-1}
+
+Required classifiers shape:
+{
+  "subject": {"value": "personal"|"external"|"mixed", "confidence": 0-1, "reason": "", "evidence": []},
+  "task": {"value": "chat"|"recall"|"analyze"|"execute"|"delegate"|"schedule", "confidence": 0-1, "reason": "", "evidence": []},
+  "memory": {"value": "conversation_history"|"user_memory"|"external_past_event"|"current_context_reference"|"none", "confidence": 0-1, "reason": "", "evidence": []},
+  "action": {"value": "create"|"read"|"update"|"delete"|"list"|"append"|"rename"|"pause"|"resume"|"cancel"|"send"|"resend"|"forward"|"retry"|"forget"|"consolidate"|"execute"|"schedule"|"answer"|"analyze"|"delegate"|"recall", "confidence": 0-1, "reason": "", "evidence": []},
+  "topic": {"history_domain": "", "current_domain": "", "semantic_domain_continuity": true|false, "workflow_continuity": true|false, "entity_continuity": true|false, "shared_entities": [], "shared_workflow": [], "requires_previous_context": true|false, "relation": "same_topic"|"subtopic"|"adjacent_topic"|"new_topic"|"current_context_reference"|"unknown", "topic_shifted": true|false, "confidence": 0-1, "reason": "", "evidence": []},
+  "steps": {"primary_task": "chat"|"recall"|"analyze"|"execute"|"delegate"|"schedule", "is_multi_intent": true|false, "confidence": 0-1, "reason": "", "evidence": []}
+}
 
 Required rich_intent shape:
 {
@@ -1640,6 +1687,114 @@ function normalizeConfidenceByDimension(
     entityHints: normalizeConfidence(root.entityHints ?? fallback),
     topicShift: normalizeConfidence(root.topicShift ?? fallback),
     richIntent: normalizeConfidence(root.richIntent ?? fallback),
+  };
+}
+
+function normalizeClassifierDecision<T extends string>(args: {
+  value: unknown;
+  fallbackValue: T;
+  normalizeValue: (value: unknown) => T | null;
+}): {
+  value: T;
+  confidence: number;
+  reason: string;
+  evidence: string[];
+} {
+  const root = asRecord(args.value);
+  return {
+    value: args.normalizeValue(root.value) ?? args.fallbackValue,
+    confidence: normalizeConfidence(root.confidence ?? 0.5),
+    reason: normalizeOptionalString(root.reason) ?? "",
+    evidence: normalizeStringArray(root.evidence),
+  };
+}
+
+function normalizeQuerySubject(value: unknown): QuerySubject | null {
+  const raw = typeof value === "string" ? value.toLowerCase().trim() : "";
+  const aliased = QUERY_SUBJECT_ALIASES.get(raw);
+  if (aliased) return aliased;
+  return VALID_SUBJECTS.has(raw as QuerySubject) ? (raw as QuerySubject) : null;
+}
+
+function normalizeIntentClassifiers(args: {
+  value: unknown;
+  fallbackSubject: QuerySubject;
+  fallbackTaskType: IntentTaskType;
+  fallbackMemoryTarget: MemoryRecallTarget;
+  fallbackAction: RichIntentAction;
+  fallbackTopicRelation: TopicRelation;
+  fallbackTopicShifted: boolean;
+}): IntentClassifiers {
+  const root = asRecord(args.value);
+  const topic = asRecord(root.topic);
+  const steps = asRecord(root.steps);
+  return {
+    subject: normalizeClassifierDecision({
+      value: root.subject,
+      fallbackValue: args.fallbackSubject,
+      normalizeValue: normalizeQuerySubject,
+    }),
+    task: normalizeClassifierDecision({
+      value: root.task,
+      fallbackValue: args.fallbackTaskType,
+      normalizeValue: normalizeIntentStepType,
+    }),
+    memory: normalizeClassifierDecision({
+      value: root.memory,
+      fallbackValue: args.fallbackMemoryTarget,
+      normalizeValue: normalizeMemoryRecallTarget,
+    }),
+    action: normalizeClassifierDecision({
+      value: root.action,
+      fallbackValue: args.fallbackAction,
+      normalizeValue: normalizeRichIntentAction,
+    }),
+    topic: {
+      historyDomain: normalizeOptionalString(topic.history_domain) ?? "",
+      currentDomain: normalizeOptionalString(topic.current_domain) ?? "",
+      semanticDomainContinuity:
+        topic.semantic_domain_continuity === true ||
+        topic.semanticDomainContinuity === true,
+      workflowContinuity:
+        topic.workflow_continuity === true || topic.workflowContinuity === true,
+      entityContinuity:
+        topic.entity_continuity === true || topic.entityContinuity === true,
+      sharedEntities:
+        normalizeStringArray(topic.shared_entities).length > 0
+          ? normalizeStringArray(topic.shared_entities)
+          : normalizeStringArray(topic.sharedEntities),
+      sharedWorkflow:
+        normalizeStringArray(topic.shared_workflow).length > 0
+          ? normalizeStringArray(topic.shared_workflow)
+          : normalizeStringArray(topic.sharedWorkflow),
+      requiresPreviousContext:
+        topic.requires_previous_context === true ||
+        topic.requiresPreviousContext === true,
+      relation:
+        normalizeTopicRelation(topic.relation) === "unknown"
+          ? args.fallbackTopicRelation
+          : normalizeTopicRelation(topic.relation),
+      topicShifted:
+        typeof topic.topic_shifted === "boolean"
+          ? topic.topic_shifted
+          : typeof topic.topicShifted === "boolean"
+            ? topic.topicShifted
+            : args.fallbackTopicShifted,
+      confidence: normalizeConfidence(topic.confidence ?? 0.5),
+      reason: normalizeOptionalString(topic.reason) ?? "",
+      evidence: normalizeStringArray(topic.evidence),
+    },
+    steps: {
+      primaryTask:
+        normalizeIntentStepType(steps.primary_task) ??
+        normalizeIntentStepType(steps.primaryTask) ??
+        args.fallbackTaskType,
+      isMultiIntent:
+        steps.is_multi_intent === true || steps.isMultiIntent === true,
+      confidence: normalizeConfidence(steps.confidence ?? 0.5),
+      reason: normalizeOptionalString(steps.reason) ?? "",
+      evidence: normalizeStringArray(steps.evidence),
+    },
   };
 }
 
@@ -3070,10 +3225,45 @@ export class IntentResolver {
       normalizeInvestmentEntityHints,
       normalizeTechnicalEntityHints,
     });
+    const seedSemanticEvidence = normalizeIntentEvidence(
+      parsed.semantic_evidence,
+    );
+    const seedSubject =
+      normalizeQuerySubject(parsed.query_subject) ?? FALLBACK_QUERY_SUBJECT;
+    const seedTaskType = normalizeIntentStepType(parsed.task_type) ?? "chat";
+    const seedTopicAnalysis = asRecord(parsed.topic_analysis);
+    const classifiers = normalizeIntentClassifiers({
+      value: parsed.classifiers,
+      fallbackSubject: seedSubject,
+      fallbackTaskType: seedTaskType,
+      fallbackMemoryTarget: seedSemanticEvidence.memoryRecall.target,
+      fallbackAction: normalizeRichIntentAction(
+        asRecord(parsed.rich_intent).action,
+      ),
+      fallbackTopicRelation: normalizeTopicRelation(seedTopicAnalysis.relation),
+      fallbackTopicShifted: parsed.topic_shifted === true,
+    });
+    let classifierSeedEvidence = seedSemanticEvidence;
+    if (
+      classifiers.memory.value !== classifierSeedEvidence.memoryRecall.target &&
+      classifiers.memory.confidence >= 0.6
+    ) {
+      classifierSeedEvidence = {
+        ...classifierSeedEvidence,
+        memoryRecall: {
+          ...classifierSeedEvidence.memoryRecall,
+          present: classifiers.memory.value !== "none",
+          target: classifiers.memory.value,
+          reason:
+            classifiers.memory.reason ||
+            classifierSeedEvidence.memoryRecall.reason,
+        },
+      };
+    }
     const memoryRefinedEvidence = await this.refineMemoryTarget(
       prompt,
       recentTurns,
-      normalizeIntentEvidence(parsed.semantic_evidence),
+      classifierSeedEvidence,
       parsed.task_type,
     );
     let semanticEvidence = await this.refineEntityHints(
@@ -3147,15 +3337,11 @@ export class IntentResolver {
       throw new Error(`Invalid complexity_score: ${parsed.complexity_score}`);
     }
 
-    const rawSubject = parsed.query_subject?.toLowerCase().trim();
-    const normalizedSubject = rawSubject
-      ? (QUERY_SUBJECT_ALIASES.get(rawSubject) ?? rawSubject)
-      : undefined;
-    let subject: QuerySubject = VALID_SUBJECTS.has(
-      normalizedSubject as QuerySubject,
-    )
-      ? (normalizedSubject as QuerySubject)
-      : FALLBACK_QUERY_SUBJECT;
+    const rawSubject = String(parsed.query_subject ?? classifiers.subject.value)
+      .toLowerCase()
+      .trim();
+    const normalizedSubject = classifiers.subject.value;
+    let subject: QuerySubject = classifiers.subject.value;
 
     const evidence = normalizeEvidenceStrings(parsed.evidence);
     if (
@@ -3225,7 +3411,7 @@ export class IntentResolver {
       }
     }
 
-    let taskType = inferTaskType(prompt, parsed.task_type);
+    let taskType = inferTaskType(prompt, classifiers.task.value);
     const taskState = runIntentPolicyRules(
       { taskType, cues, prompt, evidence },
       policyRegistry.task,
@@ -3251,12 +3437,29 @@ export class IntentResolver {
     const delegateDowngraded = agentState.delegateDowngraded;
     evidence.splice(0, evidence.length, ...agentState.evidence);
 
-    const parsedTopicAnalysis = asRecord(parsed.topic_analysis);
+    const parsedTopicAnalysis = {
+      ...asRecord(parsed.topic_analysis),
+      relation:
+        classifiers.topic.relation === "unknown"
+          ? asRecord(parsed.topic_analysis).relation
+          : classifiers.topic.relation,
+      relation_reason:
+        classifiers.topic.reason ||
+        normalizeOptionalString(
+          asRecord(parsed.topic_analysis).relation_reason,
+        ) ||
+        "",
+      confidence: Math.max(
+        normalizeConfidence(asRecord(parsed.topic_analysis).confidence),
+        classifiers.topic.confidence,
+      ),
+    };
     const rawTopicRelation = normalizeTopicRelation(
       parsedTopicAnalysis.relation,
     );
     const modelCurrentContextReference =
       parsed.references_recent_history === true ||
+      classifiers.topic.requiresPreviousContext ||
       rawTopicRelation === "current_context_reference";
     const lexicalCurrentContextCue = hasCurrentContextReferenceCue(prompt);
     const specificEntityTerms = collectSpecificEntityTerms(
@@ -3343,13 +3546,20 @@ export class IntentResolver {
                 ? false
                 : topicRelation === "new_topic"
                   ? true
-                  : parsed.topic_shifted === true;
+                  : classifiers.topic.topicShifted;
     const broadTopicalHistory = hasBroadTopicalHistory(
       recentTurns,
       parsedTopicAnalysis,
     );
+    const classifierRejectsTopicContinuity =
+      classifiers.topic.confidence >= 0.7 &&
+      classifiers.topic.semanticDomainContinuity === false &&
+      classifiers.topic.entityContinuity === false &&
+      classifiers.topic.requiresPreviousContext === false &&
+      classifiers.topic.topicShifted === true;
     const broadTopicEntityDrilldown =
       !referencesRecentHistory &&
+      !classifierRejectsTopicContinuity &&
       topicShifted &&
       topicRelation === "new_topic" &&
       hasEntityStatusDrilldown(prompt, semanticEvidence) &&
@@ -3828,6 +4038,7 @@ export class IntentResolver {
         this.options.modelSource ??
         (this.options.modelClient ? "model" : "local-intent/ollama"),
       semanticEvidence,
+      classifiers,
       richIntent,
       intentSteps,
       topicAnalysis,
