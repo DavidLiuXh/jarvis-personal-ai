@@ -415,7 +415,11 @@ describe("AgentRuntime", () => {
 
     expect(result.context.execution?.status).toBe("blocked");
     expect(result.response.canClaimSuccess).toBe(false);
-    expect(result.response.systemContext).toContain("Do not claim completion");
+    expect(result.response.systemContext).toContain("<execution_contract>");
+    expect(result.response.systemContext).toContain("status: partial");
+    expect(result.response.systemContext).toContain(
+      "do not claim failed or blocked steps succeeded",
+    );
   });
 
   it("can orchestrate the backend LLM tool loop from handleTurn", async () => {

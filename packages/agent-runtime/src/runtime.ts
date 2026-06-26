@@ -566,6 +566,41 @@ function formatTaskGraphToolPolicy(context: RuntimeContext): string {
   ].join("\n");
 }
 
+type CompactExecutionContract = {
+  canClaimSuccess: boolean;
+  incompleteNodes?: Array<{ nodeId: string; status: string; reason: string }>;
+  incompleteSteps?: Array<{ stepId: string; status: string; reason: string }>;
+};
+
+function compactReason(reason: string, max = 160): string {
+  const normalized = reason.replace(/\s+/g, " ").trim();
+  if (normalized.length <= max) return normalized;
+  return `${normalized.slice(0, max)}...`;
+}
+
+function formatCompactExecutionContract(
+  contract: CompactExecutionContract | null | undefined,
+): string {
+  if (!contract) return "";
+  const incomplete = [
+    ...(contract.incompleteNodes ?? []).map(
+      (node) => `${node.nodeId}:${node.status}:${compactReason(node.reason)}`,
+    ),
+    ...(contract.incompleteSteps ?? []).map(
+      (step) => `${step.stepId}:${step.status}:${compactReason(step.reason)}`,
+    ),
+  ];
+  return [
+    `status: ${contract.canClaimSuccess ? "succeeded" : "partial"}`,
+    contract.canClaimSuccess
+      ? "answer_scope: use provided artifacts; may claim completed work; do not repeat completed recall/tool steps"
+      : "answer_scope: report completed parts only; do not claim failed or blocked steps succeeded",
+    incomplete.length > 0 ? `incomplete: ${incomplete.join("; ")}` : "",
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
 function withSuppressedTool(
   options: ToolLoopRuntimeOptions,
   toolName: string,
@@ -618,22 +653,19 @@ export class DefaultResponseComposer implements ResponseComposer {
     const memoryText = context.memoryInjection?.text ?? "";
     const taskArtifacts = formatTaskGraphArtifacts(context);
     const taskToolPolicy = formatTaskGraphToolPolicy(context);
-    const taskGraphInstruction =
-      context.taskGraphExecution?.execution.finalResponseContract.instruction ??
-      "";
-    const executionInstruction =
-      taskGraphInstruction ||
-      (context.execution?.finalResponseContract.instruction ?? "");
-    const canClaimSuccess =
-      context.taskGraphExecution?.execution.finalResponseContract
-        .canClaimSuccess ??
-      context.execution?.finalResponseContract.canClaimSuccess ??
-      true;
+    const finalResponseContract =
+      context.taskGraphExecution?.execution.finalResponseContract ??
+      context.execution?.finalResponseContract ??
+      null;
+    const executionContract = formatCompactExecutionContract(
+      finalResponseContract,
+    );
+    const canClaimSuccess = finalResponseContract?.canClaimSuccess ?? true;
     const instructions = [
       context.memoryContract?.subjectBoundary === "external"
         ? "Treat this as an external request. Do not use or infer personal memory unless explicitly provided by runtime context."
         : "",
-      executionInstruction,
+      executionContract,
     ].filter(Boolean);
     const systemContext = [
       memoryDecision,
@@ -642,8 +674,8 @@ export class DefaultResponseComposer implements ResponseComposer {
       memoryText,
       taskArtifacts,
       taskToolPolicy,
-      executionInstruction
-        ? `<execution_contract>\n${executionInstruction}\n</execution_contract>`
+      executionContract
+        ? `<execution_contract>\n${executionContract}\n</execution_contract>`
         : "",
     ]
       .filter((part) => part.trim())

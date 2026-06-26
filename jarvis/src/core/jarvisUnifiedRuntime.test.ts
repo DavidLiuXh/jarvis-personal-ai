@@ -660,8 +660,12 @@ describe("runJarvisUnifiedRuntimeTurn", () => {
       expect.any(Object),
     );
     expect(result.systemInstruction).not.toContain("<runtime_task_graph>");
-    expect(result.systemInstruction).not.toContain("status: succeeded");
+    expect(result.systemInstruction).toContain("<runtime_execution_contract>");
+    expect(result.systemInstruction).toContain("status: succeeded");
     expect(result.systemInstruction).toContain(
+      "do not repeat completed recall/tool steps",
+    );
+    expect(result.systemInstruction).not.toContain(
       "All required task graph nodes passed acceptance",
     );
   });

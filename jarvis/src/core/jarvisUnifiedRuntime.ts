@@ -403,6 +403,43 @@ function buildTaskGraphToolPolicySection(
   ].join("\n");
 }
 
+type CompactExecutionContract = {
+  canClaimSuccess: boolean;
+  incompleteNodes?: Array<{ nodeId: string; status: string; reason: string }>;
+  incompleteSteps?: Array<{ stepId: string; status: string; reason: string }>;
+};
+
+function compactExecutionReason(reason: string, max = 160): string {
+  const normalized = reason.replace(/\s+/g, " ").trim();
+  if (normalized.length <= max) return normalized;
+  return `${normalized.slice(0, max)}...`;
+}
+
+function formatCompactExecutionContract(
+  contract: CompactExecutionContract | null | undefined,
+): string {
+  if (!contract) return "";
+  const incomplete = [
+    ...(contract.incompleteNodes ?? []).map(
+      (node) =>
+        `${node.nodeId}:${node.status}:${compactExecutionReason(node.reason)}`,
+    ),
+    ...(contract.incompleteSteps ?? []).map(
+      (step) =>
+        `${step.stepId}:${step.status}:${compactExecutionReason(step.reason)}`,
+    ),
+  ];
+  return [
+    `status: ${contract.canClaimSuccess ? "succeeded" : "partial"}`,
+    contract.canClaimSuccess
+      ? "answer_scope: use provided artifacts; may claim completed work; do not repeat completed recall/tool steps"
+      : "answer_scope: report completed parts only; do not claim failed or blocked steps succeeded",
+    incomplete.length > 0 ? `incomplete: ${incomplete.join("; ")}` : "",
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
 function extractSummaryCandidatesFromSection(
   section: string,
 ): SummaryCandidate[] {
@@ -840,18 +877,16 @@ export async function runJarvisUnifiedRuntimeTurn(
               "Memory runtime did not produce an injection plan before response composition",
             );
           }
-          const taskGraphInstruction =
-            context.taskGraphExecution?.execution.finalResponseContract
-              .instruction ?? "";
-          const executionInstruction =
-            taskGraphInstruction ||
-            (context.execution?.finalResponseContract.instruction ?? "");
+          const finalResponseContract =
+            context.taskGraphExecution?.execution.finalResponseContract ??
+            context.execution?.finalResponseContract ??
+            null;
           const memoryDecision =
             contract?.subjectBoundary === "external"
               ? "Runtime memory boundary: external request; do not use personal memory unless explicitly provided."
               : "";
-          const executionContract = executionInstruction
-            ? `<runtime_execution_contract>\n${executionInstruction}\n</runtime_execution_contract>`
+          const executionContract = finalResponseContract
+            ? `<runtime_execution_contract>\n${formatCompactExecutionContract(finalResponseContract)}\n</runtime_execution_contract>`
             : "";
           const taskArtifactSection = buildTaskGraphArtifactSection(
             context.taskGraphExecution,
@@ -883,12 +918,12 @@ export async function runJarvisUnifiedRuntimeTurn(
             ]
               .filter(Boolean)
               .join("\n\n"),
-            instructions: [executionInstruction].filter(Boolean),
-            canClaimSuccess:
-              context.taskGraphExecution?.execution.finalResponseContract
-                .canClaimSuccess ??
-              context.execution?.finalResponseContract.canClaimSuccess ??
-              true,
+            instructions: [
+              finalResponseContract
+                ? formatCompactExecutionContract(finalResponseContract)
+                : "",
+            ].filter(Boolean),
+            canClaimSuccess: finalResponseContract?.canClaimSuccess ?? true,
             metadata: { source: "jarvis_agent_runtime" },
           };
         },
