@@ -913,6 +913,7 @@ export async function runJarvisUnifiedRuntimeTurn(
         config: input.jarvisConfig,
         toolRouter: input.toolRouter,
         sessionId: input.sessionId,
+        memoryRecall: (contract) => memoryRuntime.retrieve(contract),
       }),
       deferMemoryRetrievalForTaskGraph: taskGraphExecutionEnabled,
       observer: (event) => {

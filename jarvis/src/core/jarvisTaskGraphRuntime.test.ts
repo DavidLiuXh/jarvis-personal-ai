@@ -10,6 +10,7 @@ import type {
   IntentFrame,
   IntentStep,
   MemoryContract,
+  MemoryRetrievalResult,
 } from "../memory-runtime/index.js";
 import { createJarvisTaskRuntime } from "./jarvisTaskGraphRuntime.js";
 
@@ -251,17 +252,65 @@ describe("createJarvisTaskRuntime", () => {
 
   it("executes recall-only graphs through Jarvis memory recall instead of delegating to LLM active recall", async () => {
     const stateDir = tempStateDir();
-    const executeTools = vi.fn(async (requests) =>
-      requests.map((request: any) => ({
-        name: request.name,
-        callId: request.callId,
-        status: "success",
-        output: "- user likes tea\n- user likes hiking",
-      })),
-    );
+    const executeTools = vi.fn(async () => []);
+    const memoryRecall = vi.fn(async (contract: MemoryContract) => {
+      const now = "2026-06-26T00:00:00.000Z";
+      return {
+        contract,
+        session: [],
+        facts: [
+          {
+            item: {
+              id: "1050",
+              scope: "fact",
+              subject: "profile",
+              content: "爱好逛胡同",
+              confidence: 0.8,
+              sourceRefs: ["test"],
+              createdAt: now,
+              updatedAt: now,
+              metadata: { category: "behavior", importance: 6 },
+            },
+            score: 0.3,
+            reason: "sqlite_fact",
+          },
+          {
+            item: {
+              id: "1049",
+              scope: "fact",
+              subject: "profile",
+              content: "爱好骑自行车",
+              confidence: 0.8,
+              sourceRefs: ["test"],
+              createdAt: now,
+              updatedAt: now,
+              metadata: { category: "behavior", importance: 6 },
+            },
+            score: 0.29,
+            reason: "sqlite_fact",
+          },
+        ],
+        entries: [
+          {
+            item: {
+              id: "entry-1",
+              scope: "entry",
+              kind: "conversation",
+              content: "user: 还记得我的爱好吗？",
+              entities: ["爱好"],
+              timestamp: now,
+              sourceRefs: ["s1"],
+            },
+            score: 0.9,
+            reason: "sqlite_entry",
+          },
+        ],
+      } satisfies MemoryRetrievalResult;
+    });
     const taskRuntime = createJarvisTaskRuntime({
       sessionId: "s1",
       toolRouter: { executeTools } as any,
+      memoryRecall,
       config: {
         agentRuntime: {
           autonomousTaskRuntime: {
@@ -343,32 +392,36 @@ describe("createJarvisTaskRuntime", () => {
 
     const result = await taskRuntime.execute({ ...input, graph: graph! });
 
-    expect(executeTools).toHaveBeenCalledWith(
-      [
-        expect.objectContaining({
-          name: "recall_memory",
-          args: expect.objectContaining({ query: "爱好 hobbies" }),
-          metadata: expect.objectContaining({
-            memoryTarget: "user_memory",
-            targetScopes: ["fact", "entry"],
-          }),
-        }),
-      ],
-      expect.any(Object),
+    expect(executeTools).not.toHaveBeenCalled();
+    expect(memoryRecall).toHaveBeenCalledWith(
+      expect.objectContaining({
+        memoryTarget: "user_memory",
+        targetScopes: ["fact", "entry"],
+        query: expect.objectContaining({ rewritten: "爱好 hobbies" }),
+      }),
     );
     expect(result?.status).toBe("succeeded");
     expect(result?.execution.artifacts[0]).toMatchObject({
       type: "memory",
-      memoryItems: ["user likes tea", "user likes hiking"],
+      memoryItems: [
+        "[behavior] 爱好逛胡同",
+        "[behavior] 爱好骑自行车",
+        "user: 还记得我的爱好吗？",
+      ],
     });
 
     const secondResult = await taskRuntime.execute({ ...input, graph: graph! });
 
-    expect(executeTools).toHaveBeenCalledTimes(2);
+    expect(executeTools).not.toHaveBeenCalled();
+    expect(memoryRecall).toHaveBeenCalledTimes(2);
     expect(secondResult?.status).toBe("succeeded");
     expect(secondResult?.execution.artifacts[0]).toMatchObject({
       type: "memory",
-      memoryItems: ["user likes tea", "user likes hiking"],
+      memoryItems: [
+        "[behavior] 爱好逛胡同",
+        "[behavior] 爱好骑自行车",
+        "user: 还记得我的爱好吗？",
+      ],
     });
   });
 

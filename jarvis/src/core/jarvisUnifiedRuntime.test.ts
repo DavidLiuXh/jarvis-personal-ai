@@ -247,14 +247,34 @@ describe("runJarvisUnifiedRuntimeTurn", () => {
   });
 
   it("passes TaskGraph recall artifacts into the LLM backend system context", async () => {
-    const executeTools = vi.fn(async (requests) =>
-      requests.map((request: any) => ({
-        name: request.name,
-        callId: request.callId,
-        status: "success",
-        output: "- 爱好骑自行车\n- 爱好逛胡同",
-      })),
-    );
+    const sqliteStore = new SqliteMemoryStore({
+      dbPath: tempDbPath(),
+      enableVectors: false,
+    });
+    const now = "2026-06-26T00:00:00.000Z";
+    await sqliteStore.upsertFact({
+      id: "hobby-bike",
+      scope: "fact",
+      subject: "profile",
+      content: "爱好骑自行车",
+      confidence: 0.8,
+      sourceRefs: ["test"],
+      createdAt: now,
+      updatedAt: now,
+      metadata: { category: "behavior", importance: 6 },
+    });
+    await sqliteStore.upsertFact({
+      id: "hobby-hutong",
+      scope: "fact",
+      subject: "profile",
+      content: "爱好逛胡同",
+      confidence: 0.8,
+      sourceRefs: ["test"],
+      createdAt: now,
+      updatedAt: now,
+      metadata: { category: "behavior", importance: 6 },
+    });
+    const executeTools = vi.fn(async () => []);
     const toolRouter = {
       setCurrentMemoryContract: vi.fn(),
       setCurrentStepMemoryDecisions: vi.fn(),
@@ -324,6 +344,11 @@ describe("runJarvisUnifiedRuntimeTurn", () => {
           querySubject: "personal",
           intent: recallIntent,
           toolRouter,
+          memoryService: {
+            skillIndexBuilding: false,
+            getRuntimeSqliteMemoryStore: () => sqliteStore,
+            searchConversationHistoryLexical: vi.fn().mockResolvedValue([]),
+          },
           jarvisConfig: {
             memory: { writeObservability: true },
             agentRuntime: {
@@ -392,10 +417,7 @@ describe("runJarvisUnifiedRuntimeTurn", () => {
       );
 
       expect(result.taskGraphExecution?.status).toBe("succeeded");
-      expect(executeTools).toHaveBeenCalledWith(
-        [expect.objectContaining({ name: "recall_memory" })],
-        expect.any(Object),
-      );
+      expect(executeTools).not.toHaveBeenCalled();
       expect(result.llmLoop?.finalText).toBe("你喜欢骑自行车和逛胡同。");
       expect(backendSystemContext).toContain("<runtime_task_artifacts>");
       expect(backendSystemContext).toContain("memory_items:");

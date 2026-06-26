@@ -31,7 +31,10 @@ import {
 } from "../intent-runtime/index.js";
 import type { JarvisConfig } from "./configManager.js";
 import type { IntentFrame } from "./intentResolver.js";
-import type { MemoryContract } from "../memory-runtime/index.js";
+import type {
+  MemoryContract,
+  MemoryRetrievalResult,
+} from "../memory-runtime/index.js";
 import type { ToolRouter } from "./toolRouter.js";
 
 const IMPLEMENTED_CAPABILITIES = [
@@ -63,6 +66,7 @@ type JarvisTaskGraphRuntimeOptions = {
   config: JarvisConfig;
   toolRouter: ToolRouter;
   sessionId: string;
+  memoryRecall?: (contract: MemoryContract) => Promise<MemoryRetrievalResult>;
 };
 
 function enabledConfig(config: JarvisConfig) {
@@ -404,6 +408,109 @@ function recallArtifacts(
       metadata: { noMemory, tool: result.name },
     },
   ];
+}
+
+function factMemoryItem(fact: MemoryRetrievalResult["facts"][number]): string {
+  const category =
+    typeof fact.item.metadata?.category === "string"
+      ? fact.item.metadata.category
+      : fact.item.subject;
+  return `[${category}] ${fact.item.content}`;
+}
+
+function entryMemoryItem(
+  entry: MemoryRetrievalResult["entries"][number],
+): string {
+  return entry.item.content;
+}
+
+function sessionMemoryItem(
+  session: MemoryRetrievalResult["session"][number],
+): string {
+  if (session.item.summary?.trim()) return session.item.summary.trim();
+  return session.item.turns
+    .map((turn) => `${turn.role}: ${turn.content}`)
+    .filter((line) => line.trim())
+    .join("\n");
+}
+
+function runtimeRecallArtifacts(
+  request: TaskNodeExecutionRequest,
+  retrieval: MemoryRetrievalResult,
+): TaskRuntimeArtifact[] {
+  const factItems = retrieval.facts.map(factMemoryItem);
+  const entryItems = retrieval.entries.map(entryMemoryItem);
+  const sessionItems = retrieval.session
+    .map(sessionMemoryItem)
+    .filter((item) => item.trim());
+  const memoryItems = [...factItems, ...entryItems, ...sessionItems];
+  const sections = [
+    factItems.length > 0
+      ? ["FACT MEMORIES:", ...factItems.map((item) => `- ${item}`)].join("\n")
+      : "",
+    entryItems.length > 0
+      ? ["ENTRY MEMORIES:", ...entryItems.map((item) => `- ${item}`)].join("\n")
+      : "",
+    sessionItems.length > 0
+      ? ["SESSION MEMORIES:", ...sessionItems.map((item) => `- ${item}`)].join(
+          "\n",
+        )
+      : "",
+  ].filter(Boolean);
+  const query =
+    retrieval.contract.query.rewritten || retrieval.contract.query.raw;
+  const content =
+    sections.length > 0
+      ? [
+          ...sections,
+          "INSTRUCTION: Synthesize the retrieved memory items into the final answer. Do not request another recall for this same scope.",
+        ].join("\n\n")
+      : `NO SPECIFIC MEMORIES FOUND for ${JSON.stringify(query)}.`;
+  return [
+    {
+      id: `${request.node.id}-memory`,
+      nodeId: request.node.id,
+      type: "memory",
+      memoryItems,
+      content,
+      metadata: {
+        source: "memory_runtime",
+        noMemory: memoryItems.length === 0,
+        factCount: retrieval.facts.length,
+        entryCount: retrieval.entries.length,
+        sessionCount: retrieval.session.length,
+        memoryTarget: retrieval.contract.memoryTarget,
+        targetScopes: retrieval.contract.targetScopes,
+      },
+    },
+  ];
+}
+
+async function executeRuntimeMemoryRecall(
+  memoryRecall: (contract: MemoryContract) => Promise<MemoryRetrievalResult>,
+  request: TaskNodeExecutionRequest,
+): Promise<TaskNodeExecutionResult> {
+  const contract = getMemoryContract(request);
+  if (!contract) {
+    return {
+      status: "blocked",
+      error: `Memory contract missing for ${request.node.id}.`,
+    };
+  }
+  console.error(
+    `🧠 [TaskGraph] runtime memory recall started node=${request.node.id} target=${contract.memoryTarget} scopes=${contract.targetScopes.join(",") || "none"} query=${JSON.stringify(contract.query.rewritten || contract.query.raw)}`,
+  );
+  const retrieval = await memoryRecall(contract);
+  const artifacts = runtimeRecallArtifacts(request, retrieval);
+  console.error(
+    `🧠 [TaskGraph] runtime memory recall finished node=${request.node.id} facts=${retrieval.facts.length} entries=${retrieval.entries.length} session=${retrieval.session.length} items=${artifacts[0]?.memoryItems?.length ?? 0}`,
+  );
+  return {
+    status: "succeeded",
+    output: artifacts[0]?.content,
+    artifacts,
+    metadata: { source: "memory_runtime" },
+  };
 }
 
 function taskArtifacts(
@@ -772,7 +879,10 @@ function llmAdapter(
   };
 }
 
-function createAdapters(toolRouter: ToolRouter): TaskGraphCapabilityAdapter[] {
+function createAdapters(
+  toolRouter: ToolRouter,
+  memoryRecall?: (contract: MemoryContract) => Promise<MemoryRetrievalResult>,
+): TaskGraphCapabilityAdapter[] {
   return [
     llmAdapter("llm.respond"),
     llmAdapter("llm.analyze"),
@@ -780,13 +890,15 @@ function createAdapters(toolRouter: ToolRouter): TaskGraphCapabilityAdapter[] {
       id: "jarvis-memory-recall",
       capabilities: ["memory.recall"],
       execute: (request, signal) =>
-        executeOneTool(
-          toolRouter,
-          request,
-          signal,
-          recallRequest(request),
-          (result) => recallArtifacts(request, result),
-        ),
+        memoryRecall
+          ? executeRuntimeMemoryRecall(memoryRecall, request)
+          : executeOneTool(
+              toolRouter,
+              request,
+              signal,
+              recallRequest(request),
+              (result) => recallArtifacts(request, result),
+            ),
     },
     {
       id: "jarvis-file-read",
@@ -1200,7 +1312,7 @@ export function createJarvisTaskRuntime(
 ): TaskRuntime | undefined {
   const cfg = enabledConfig(options.config);
   if (cfg?.enabled !== true) return undefined;
-  const adapters = createAdapters(options.toolRouter);
+  const adapters = createAdapters(options.toolRouter, options.memoryRecall);
   const mode = cfg.mode ?? "plan_only";
   const observability =
     cfg.observability ?? options.config.agentRuntime?.observability === true;
