@@ -23,6 +23,17 @@ const HISTORY_CODING: ConversationTurn[] = [
   },
 ];
 
+const HISTORY_AI_NEWS: ConversationTurn[] = [
+  {
+    role: "user",
+    content: "汇总今天 AI 领域的热门新闻和技术动态，并推送到 7t3r。",
+  },
+  {
+    role: "assistant",
+    content: "我会整理今天 AI 领域的新闻和技术动态并推送到 7t3r。",
+  },
+];
+
 function makeResolver() {
   return new IntentResolver({
     baseUrl: "http://localhost:11434",
@@ -961,6 +972,69 @@ ${modelResponse({
 
     expect(intent.subject).toBe("mixed");
     expect(intent.evidence).toContain("personal_context_with_external_entity");
+  });
+
+  it("does not treat path-anchored '这些文档' as recent-history anaphora", async () => {
+    const resolver = makeResolver();
+    mockGenerate.mockResolvedValueOnce(
+      modelResponse({
+        query_subject: "external",
+        task_type: "execute",
+        needs_external_knowledge: false,
+        needs_tool: true,
+        topic_shifted: false,
+        references_recent_history: false,
+        semantic_evidence: {
+          personalContext: { present: false, reason: "", span: "" },
+          memoryRecall: {
+            present: false,
+            target: "none",
+            reason: "self-contained workspace request",
+            span: "这些文档",
+          },
+          actionRequest: {
+            present: true,
+            action: "write",
+            object: "美国市场分析文档",
+          },
+          entityHints: {
+            tickers: [],
+            technicalTerms: [],
+            peopleOrCompanies: [],
+          },
+        },
+        history_topic: "AI news roundup and push delivery",
+        new_topic: "US market document analysis",
+        topic_analysis: {
+          history: {
+            label: "AI news roundup",
+            evidence: ["AI 领域", "技术动态", "7t3r"],
+            source_turns: [-2, -1],
+            confidence: 0.9,
+          },
+          current: {
+            label: "US market review from local documents",
+            evidence: ["美国市场预测", "这些文档", "本地文档"],
+            source_turns: [0],
+            confidence: 0.9,
+          },
+          relation: "new_topic",
+          relation_reason: "different domain and task target",
+          confidence: 0.9,
+        },
+      }),
+    );
+
+    const intent = await resolver.resolve({
+      userPrompt:
+        "在/Users/lw/Documents/投资/美国市场预测目录下是最近一段时间对美国市场的预测，分析和复盘。你以这些文档作参考，结合你对美国市场的认识，完成一篇有深度的，观点独到的分析，保存在本地文档中。",
+      history: HISTORY_AI_NEWS,
+    });
+
+    expect(intent.referencesRecentHistory).toBe(false);
+    expect(intent.topicShifted).toBe(true);
+    expect(intent.semanticEvidence.memoryRecall.target).toBe("none");
+    expect(intent.topicAnalysis.relation).toBe("new_topic");
   });
 
   it("forces topicShifted=false for anaphoric current-history references", async () => {
@@ -2886,6 +2960,102 @@ ${modelResponse({
         "topic boundary domains diverged: current=external_finance history=system_command",
       ),
     });
+    expect(policyReasonCodes(intent)).toContain(
+      "TOPIC_DOMAIN_BOUNDARY_MISMATCH",
+    );
+  });
+
+  it("forces topic shift for standalone clock queries after unrelated history", async () => {
+    const resolver = makeResolver();
+    mockGenerate.mockResolvedValueOnce(
+      modelResponse({
+        query_subject: "general_chat",
+        task_type: "chat",
+        needs_external_knowledge: false,
+        semantic_evidence: {
+          personalContext: { present: false, reason: "", span: "" },
+          memoryRecall: {
+            present: false,
+            target: "none",
+            reason: "",
+            span: "",
+          },
+          actionRequest: { present: false, action: "none", object: "" },
+          entityHints: {
+            tickers: [],
+            technicalTerms: [],
+            peopleOrCompanies: [],
+          },
+        },
+        intent_steps: [
+          {
+            id: "step-1",
+            type: "chat",
+            action: "answer",
+            target: "current time",
+            depends_on: [],
+            requires_confirmation: false,
+            risk_level: "low",
+          },
+        ],
+        history_topic: "general_chat",
+        new_topic: "general_chat",
+        topic_analysis: {
+          history: {
+            label: "general_chat",
+            evidence: [
+              "在/Users/lw/Documents/投资/美国市场预测目录下是最近一段时间对美国市场的预测，分析和复盘。",
+              "AI 领域今日要闻 | 2026年6月28日",
+              "Hi Jarvis",
+            ],
+            source_turns: [-5, -3, -1],
+            confidence: 1,
+          },
+          current: {
+            label: "general_chat",
+            evidence: ["现在是几点"],
+            source_turns: [0],
+            confidence: 1,
+          },
+          relation: "same_topic",
+          relation_reason: "model over-bucketed both sides as general chat",
+          confidence: 1,
+        },
+        references_recent_history: false,
+        topic_shifted: false,
+      }),
+    );
+
+    const intent = await resolver.resolve({
+      userPrompt: "现在是几点",
+      history: [
+        {
+          role: "user",
+          content:
+            "在/Users/lw/Documents/投资/美国市场预测目录下是最近一段时间对美国市场的预测，分析和复盘。",
+        },
+        {
+          role: "assistant",
+          content: "我已经完成美国市场预测文档分析。",
+        },
+        {
+          role: "assistant",
+          content: "AI 领域今日要闻 | 2026年6月28日",
+        },
+        { role: "user", content: "Hi Jarvis" },
+      ],
+    });
+
+    expect(intent.taskType).toBe("chat");
+    expect(intent.referencesRecentHistory).toBe(false);
+    expect(intent.topicShifted).toBe(true);
+    expect(intent.topicAnalysis).toMatchObject({
+      relation: "new_topic",
+      relationReason: expect.stringContaining(
+        "topic boundary domains diverged",
+      ),
+    });
+    expect(intent.topicAnalysis.relationReason).toContain("time_query");
     expect(policyReasonCodes(intent)).toContain(
       "TOPIC_DOMAIN_BOUNDARY_MISMATCH",
     );

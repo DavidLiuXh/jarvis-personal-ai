@@ -350,7 +350,7 @@ describe("buildIntentAwareMemoryPolicy", () => {
     expect(policy.reasons).not.toContain("tool_task_without_memory_dependency");
   });
 
-  it("uses only entry history for time-scoped conversation-history recall", () => {
+  it("uses session and entry history for time-scoped conversation-history recall", () => {
     const policy = buildIntentAwareMemoryPolicy({
       userPrompt: "汇总下昨天我们都讨论了哪些内容",
       querySubject: "personal",
@@ -366,12 +366,14 @@ describe("buildIntentAwareMemoryPolicy", () => {
     });
 
     expect(policy.allowFacts).toBe(false);
-    expect(policy.allowSummary).toBe(false);
+    expect(policy.allowSummary).toBe(true);
     expect(policy.allowPrewarm).toBe(true);
-    expect(policy.contract.targetScopes).toEqual(["entry"]);
+    expect(policy.contract.query.rewritten).toBeUndefined();
+    expect(policy.contract.query.raw).toBe("汇总下昨天我们都讨论了哪些内容");
+    expect(policy.contract.targetScopes).toEqual(["session", "entry"]);
     expect(policy.contract.constraints).toMatchObject({
       allowPersonalFacts: false,
-      allowSessionHistory: false,
+      allowSessionHistory: true,
       allowEntries: true,
     });
     expect(policy.reasons).toContain("time_scoped_conversation_history");

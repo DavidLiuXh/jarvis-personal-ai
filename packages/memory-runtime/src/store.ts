@@ -7,6 +7,7 @@
 import type {
   EntryMemory,
   FactMemory,
+  DateRange,
   MemoryContract,
   MemoryItem,
   SessionMemory,
@@ -104,6 +105,7 @@ export class DefaultMemoryStore
     options: {
       sessionId?: string;
       limit?: number;
+      dateRange?: DateRange | null;
       contract?: MemoryContract;
     } = {},
   ): Promise<SessionMemorySearchResult[]> {
@@ -112,7 +114,19 @@ export class DefaultMemoryStore
           (session) => session.sessionId === options.sessionId,
         )
       : Array.from(this.sessions.values());
-    const results = sessions
+    const filteredSessions = options.dateRange
+      ? sessions.filter((session) =>
+          session.turns.some((turn) => {
+            const ms = Date.parse(turn.timestamp ?? "");
+            return (
+              Number.isFinite(ms) &&
+              ms >= options.dateRange!.from &&
+              ms < options.dateRange!.to
+            );
+          }),
+        )
+      : sessions;
+    const results = filteredSessions
       .map((session) => {
         const text = [
           session.summary ?? "",

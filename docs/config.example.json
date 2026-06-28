@@ -108,6 +108,9 @@
   },
   "security": {
     "jailbreak": false,
+    "workspace": {
+      "readOnlyRoots": ["/Users/lw/Documents/投资"]
+    },
     "shell": {
       "allowNetworkFetchCommands": true,
       "networkFetchCommands": ["curl", "wget"]

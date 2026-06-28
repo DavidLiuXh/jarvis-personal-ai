@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -160,5 +160,77 @@ describe("WorkspaceTools", () => {
       ok: true,
       result: { exit_code: 0, stdout: "curl" },
     });
+  });
+
+  it("allows reads from configured read-only roots but blocks writes there", async () => {
+    const readOnlyRoot = await mkdtemp(
+      path.join(os.tmpdir(), "jarvis-readonly-root-"),
+    );
+    try {
+      await mkdir(path.join(readOnlyRoot, "reports"), { recursive: true });
+      await writeFile(
+        path.join(readOnlyRoot, "reports", "market.md"),
+        "market notes\n",
+      );
+      await mkdir(path.join(readOnlyRoot, "reports", "nested"), {
+        recursive: true,
+      });
+      await writeFile(
+        path.join(readOnlyRoot, "reports", "nested", "deep.md"),
+        "nested notes\n",
+      );
+      await writeFile(
+        path.join(readOnlyRoot, "reports", "ignore.txt"),
+        "ignore me\n",
+      );
+      const toolsWithReadOnlyRoot = new WorkspaceTools({
+        root,
+        readOnlyRoots: [readOnlyRoot],
+      });
+
+      const read = await toolsWithReadOnlyRoot.execute({
+        name: "read_file",
+        callId: "read-external",
+        args: { file_path: path.join(readOnlyRoot, "reports", "market.md") },
+      });
+      const many = await toolsWithReadOnlyRoot.execute({
+        name: "read_many_files",
+        callId: "read-many-external",
+        args: {
+          paths: [path.join(readOnlyRoot, "reports")],
+          include: "*.md",
+          recursive: false,
+        },
+      });
+      const glob = await toolsWithReadOnlyRoot.execute({
+        name: "glob",
+        callId: "glob-external",
+        args: { path: path.join(readOnlyRoot, "reports"), pattern: "**/*.md" },
+      });
+      const write = await toolsWithReadOnlyRoot.execute({
+        name: "write_file",
+        callId: "write-external",
+        args: {
+          file_path: path.join(readOnlyRoot, "reports", "new.md"),
+          content: "nope",
+        },
+      });
+
+      expect(read).toMatchObject({
+        ok: true,
+        result: { path: "reports/market.md", content: "market notes\n" },
+      });
+      expect(JSON.stringify(many)).toContain("market notes");
+      expect(JSON.stringify(many)).not.toContain("nested notes");
+      expect(JSON.stringify(many)).not.toContain("ignore me");
+      expect(glob).toMatchObject({
+        ok: true,
+        result: { matches: ["reports/market.md", "reports/nested/deep.md"] },
+      });
+      expect(write.ok).toBe(false);
+      expect(write.error).toContain("Path escapes workspace root");
+    } finally {
+      await rm(readOnlyRoot, { recursive: true, force: true });
+    }
   });
 });

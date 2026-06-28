@@ -365,9 +365,19 @@ const TOOL_NAMES_BY_TASK_GRAPH_KIND: Record<string, string[]> = {
   ],
   push: ["push_to_channel"],
   read_file: ["read_file", "read_many_files", "glob", "grep"],
+  list_directory: ["read_file", "read_many_files", "glob", "grep"],
+  read_many_files: ["read_file", "read_many_files", "glob", "grep"],
   write_file: ["write_file", "read_file", "read_many_files", "glob", "grep"],
+  write_artifact: [
+    "write_file",
+    "read_file",
+    "read_many_files",
+    "glob",
+    "grep",
+  ],
   run_shell: ["run_shell_command"],
   research: ["run_shell_command"],
+  extract_evidence: [],
   delegate: ["activate_skill"],
 };
 
@@ -880,7 +890,7 @@ export class AgentRuntime {
       context.response = await this.responseComposer.compose({ context });
       if (this.options.llmLoop && input.llmInitialMessages) {
         const shouldSuppressRecallMemoryTool =
-          deferMemoryRetrieval && hasTaskGraphRecallNode(context);
+          deferMemoryRetrieval && hasCompletedTaskGraphMemoryRecall(context);
         const selectedLlmLoopOptions = withSelectedTools(
           this.options.llmLoop,
           context,

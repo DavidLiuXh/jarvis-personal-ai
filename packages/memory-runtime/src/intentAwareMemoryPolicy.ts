@@ -37,6 +37,13 @@ export type IntentAwareMemoryPolicyConfig = {
 };
 
 const LOW_CONFIDENCE_THRESHOLD = 0.55;
+const GENERIC_MEMORY_TARGET_VALUES = new Set([
+  "conversation_history",
+  "user_memory",
+  "current_context_reference",
+  "external_past_event",
+  "memory",
+]);
 
 function shouldUseIntentQueryExpansion(intent: IntentFrame): boolean {
   return !(
@@ -52,7 +59,10 @@ function buildTargetQuery(userPrompt: string, intent: IntentFrame): string {
   }
   const targetText = intent.richIntent.targets
     .map((target) => target.value)
-    .filter(Boolean)
+    .filter((value) => {
+      const normalized = value.trim().toLowerCase();
+      return normalized && !GENERIC_MEMORY_TARGET_VALUES.has(normalized);
+    })
     .join(" ");
   const entityText = [
     ...intent.semanticEvidence.entityHints.tickers,
@@ -240,7 +250,7 @@ export function buildIntentAwareMemoryPolicy(args: {
       hasExplicitTimeRange(intent)
     ) {
       allowFacts = false;
-      allowSummary = false;
+      allowSummary = true;
       allowPrewarm = true;
       reasons.push("time_scoped_conversation_history");
     }
@@ -275,7 +285,10 @@ export function buildIntentAwareMemoryPolicy(args: {
             ...intent.semanticEvidence.entityHints.technicalTerms,
             ...intent.semanticEvidence.entityHints.peopleOrCompanies,
           ]),
-        ).filter(Boolean)
+        ).filter((value) => {
+          const normalized = value.trim().toLowerCase();
+          return normalized && !GENERIC_MEMORY_TARGET_VALUES.has(normalized);
+        })
       : [];
   const factQuery =
     allowFacts && (querySubject === "personal" || querySubject === "mixed")

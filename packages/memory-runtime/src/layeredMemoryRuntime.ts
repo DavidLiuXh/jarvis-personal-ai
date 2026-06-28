@@ -121,6 +121,7 @@ export class DefaultLayeredMemoryRuntime {
       this.options.stores.session?.searchSession(input.query, {
         sessionId: this.options.sessionId,
         limit: input.limit,
+        dateRange: input.contract?.query.timeRange ?? null,
         contract: input.contract,
       }) ?? []
     );

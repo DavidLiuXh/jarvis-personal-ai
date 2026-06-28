@@ -1163,4 +1163,153 @@ describe("createJarvisTaskRuntime", () => {
       logSpy.mockRestore();
     }
   });
+
+  it("pre-executes repaired local directory reads before deferred analysis", async () => {
+    const logSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const stateDir = tempStateDir();
+    const executeTools = vi.fn(async (requests) =>
+      requests.map((request: any) => ({
+        name: request.name,
+        callId: request.callId,
+        status: "success",
+        output: {
+          ok: true,
+          path: request.args.path ?? request.args.paths?.[0],
+          content: "market forecast notes",
+        },
+      })),
+    );
+    try {
+      const taskRuntime = createJarvisTaskRuntime({
+        sessionId: "s1",
+        toolRouter: { executeTools } as any,
+        config: {
+          agentRuntime: {
+            autonomousTaskRuntime: {
+              enabled: true,
+              mode: "execute",
+              stateDir,
+            },
+          },
+        } as any,
+      })!;
+      const userPrompt =
+        "在/Users/lw/Documents/投资/美国市场预测目录下是最近一段时间对美国市场的预测，分析和复盘。以这些文档作参考，完成一篇分析，保存在本地文档中。";
+      const frame = intent({
+        subject: "external",
+        taskType: "execute",
+        needsMemory: false,
+        needsScheduling: false,
+        richIntent: {
+          ...intent().richIntent,
+          userGoal:
+            "perform a deep unique analysis of US market predictions and save final document",
+          action: "create",
+          primaryAction: "create",
+          contextDependency: {
+            recentConversation: false,
+            longTermMemory: false,
+            externalWorld: false,
+            localWorkspace: true,
+          },
+        },
+        intentSteps: [
+          step({
+            id: "step-1",
+            type: "analyze",
+            action: "execute",
+            target: "local_file_analysis",
+            operation: {
+              domain: "data_analysis",
+              action: "analyze",
+              targetType: "file",
+              target: "local_file_analysis",
+              riskLevel: "medium",
+            },
+            riskLevel: "medium",
+          }),
+          step({
+            id: "step-2",
+            type: "analyze",
+            action: "analyze",
+            target: "analysis_generation",
+            operation: {
+              domain: "data_analysis",
+              action: "analyze",
+              targetType: "external_entity",
+              target: "analysis_generation",
+              riskLevel: "medium",
+            },
+            dependsOn: ["step-1"],
+            riskLevel: "medium",
+          }),
+          step({
+            id: "step-3",
+            type: "chat",
+            action: "save",
+            target: "final_document",
+            operation: {
+              domain: "document_generation",
+              action: "answer",
+              targetType: "current_context",
+              target: "final_document",
+              riskLevel: "low",
+            },
+            dependsOn: ["step-2"],
+            riskLevel: "low",
+          }),
+        ],
+      });
+      const input = planInput(
+        frame,
+        runtimeContext({ userPrompt }),
+        memoryContract({ subjectBoundary: "external", needMemory: false }),
+      );
+      const graph = await taskRuntime.plan(input);
+
+      expect(graph?.nodes.map((node) => node.kind)).toEqual([
+        "read_many_files",
+        "analyze",
+        "analyze",
+        "respond",
+        "write_file",
+      ]);
+      expect(
+        await taskRuntime.shouldExecute?.({ ...input, graph: graph! }),
+      ).toBe(true);
+
+      const result = await taskRuntime.execute({ ...input, graph: graph! });
+
+      expect(executeTools).toHaveBeenCalledWith(
+        [
+          expect.objectContaining({
+            name: "read_many_files",
+            args: expect.objectContaining({
+              paths: ["/Users/lw/Documents/投资/美国市场预测"],
+              include: "*.md",
+              recursive: false,
+            }),
+          }),
+        ],
+        expect.any(AbortSignal),
+      );
+      expect(result?.execution.graph.nodes).toHaveLength(1);
+      expect(result?.execution.finalResponseContract.canClaimSuccess).toBe(
+        false,
+      );
+      expect(result?.execution.finalResponseContract.incompleteNodes).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ nodeId: "step-1", status: "pending" }),
+          expect.objectContaining({
+            nodeId: "repair-write-final-artifact",
+            status: "pending",
+          }),
+        ]),
+      );
+      const logs = logSpy.mock.calls.map((call) => String(call[0])).join("\n");
+      expect(logs).not.toContain("repair-read-local-input:missing_file_path");
+    } finally {
+      logSpy.mockRestore();
+    }
+  });
 });

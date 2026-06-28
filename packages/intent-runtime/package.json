@@ -42,6 +42,22 @@
       "types": "./dist/taskGraph.d.ts",
       "import": "./dist/taskGraph.js"
     },
+    "./taskGraphCompiler": {
+      "types": "./dist/taskGraphCompiler.d.ts",
+      "import": "./dist/taskGraphCompiler.js"
+    },
+    "./taskGraphGapDetector": {
+      "types": "./dist/taskGraphGapDetector.d.ts",
+      "import": "./dist/taskGraphGapDetector.js"
+    },
+    "./taskGraphPlanner": {
+      "types": "./dist/taskGraphPlanner.d.ts",
+      "import": "./dist/taskGraphPlanner.js"
+    },
+    "./taskGraphRepair": {
+      "types": "./dist/taskGraphRepair.d.ts",
+      "import": "./dist/taskGraphRepair.js"
+    },
     "./taskGraphExecutor": {
       "types": "./dist/taskGraphExecutor.d.ts",
       "import": "./dist/taskGraphExecutor.js"

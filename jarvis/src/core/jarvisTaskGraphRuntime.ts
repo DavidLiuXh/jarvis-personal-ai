@@ -16,8 +16,10 @@ import {
   buildTaskGraph,
   buildTaskSpec,
   DefaultTaskGraphCapabilityRegistry,
+  detectTaskGraphGaps,
   IntentStepRuntime,
   JsonFileTaskGraphExecutionStore,
+  repairTaskGraphGaps,
   type RuntimeToolRequest,
   type RuntimeToolResult,
   type TaskFinalResponseContract,
@@ -54,13 +56,21 @@ const DETERMINISTIC_NODE_KINDS = new Set([
   "recall",
   "research",
   "write_file",
+  "write_artifact",
   "read_file",
+  "list_directory",
+  "read_many_files",
   "run_shell",
   "schedule",
   "push",
 ]);
 
-const PRE_LLM_BLOCKING_NODE_KINDS = new Set(["analyze", "respond", "delegate"]);
+const PRE_LLM_BLOCKING_NODE_KINDS = new Set([
+  "analyze",
+  "extract_evidence",
+  "respond",
+  "delegate",
+]);
 
 type JarvisTaskGraphRuntimeOptions = {
   config: JarvisConfig;
@@ -329,6 +339,21 @@ function extractPath(text: string): string | null {
   return match?.[1]?.replace(/\.markdown$/i, ".md") ?? null;
 }
 
+const LOCAL_PATH_RE =
+  /(?:^|[\s"'“”‘’([{，。；;：:在])((?:~|\/Users|\/Volumes|\/tmp|\/private|\/var|\/opt|\/[A-Za-z0-9._-]+)(?:\/[^\s"'“”‘’()[\]{}，。；;：:!?？]+)+)/i;
+const LOCAL_PATH_BOUNDARY_RE =
+  /(目录下|文件夹下|路径下|下是|里面|中是|[，。；;：:!?？\s])/;
+
+function extractLocalPath(text: string): string | null {
+  const raw = text.match(LOCAL_PATH_RE)?.[1];
+  if (!raw) return null;
+  const boundary = raw.search(LOCAL_PATH_BOUNDARY_RE);
+  const trimmed = (boundary >= 0 ? raw.slice(0, boundary) : raw)
+    .replace(/(?:目录|文件夹|路径)$/u, "")
+    .trim();
+  return trimmed || null;
+}
+
 function safeFileName(text: string): string {
   const normalized = text
     .toLowerCase()
@@ -396,7 +421,10 @@ function workspaceArtifact(
       : parsed;
   const pathValue =
     typeof payload?.path === "string" ? payload.path : deriveFilePath(request);
-  if (request.node.kind === "write_file") {
+  if (
+    request.node.kind === "write_file" ||
+    request.node.kind === "write_artifact"
+  ) {
     return [
       {
         id: `${request.node.id}-file`,
@@ -409,7 +437,11 @@ function workspaceArtifact(
       },
     ];
   }
-  if (request.node.kind === "read_file") {
+  if (
+    request.node.kind === "read_file" ||
+    request.node.kind === "list_directory" ||
+    request.node.kind === "read_many_files"
+  ) {
     return [
       {
         id: `${request.node.id}-file`,
@@ -434,7 +466,7 @@ function recallArtifacts(
   const queryCandidates = [
     request.context.userPrompt,
     request.node.title,
-    request.node.outputSpec?.description,
+    ...request.node.outputs.map((output) => output.description),
   ].filter((value): value is string => Boolean(value?.trim()));
   const noMemory = /NO SPECIFIC MEMORIES FOUND/i.test(text);
   const items = noMemory
@@ -482,6 +514,16 @@ function sessionMemoryItem(
     .join("\n");
 }
 
+function timestampInRange(
+  timestamp: string | undefined,
+  range: MemoryRetrievalResult["contract"]["query"]["timeRange"],
+): boolean {
+  if (!range) return true;
+  if (!timestamp) return false;
+  const ms = Date.parse(timestamp);
+  return Number.isFinite(ms) && ms >= range.from && ms < range.to;
+}
+
 function runtimeRecallArtifacts(
   request: TaskNodeExecutionRequest,
   retrieval: MemoryRetrievalResult,
@@ -513,6 +555,19 @@ function runtimeRecallArtifacts(
     queryCandidates,
   ).filter((item) => !usedKeys.has(normalizeMemoryItemText(item)));
   const memoryItems = [...factItems, ...entryItems, ...sessionItems];
+  const timeRange = retrieval.contract.query.timeRange;
+  const timeScopedEntryCount = timeRange
+    ? retrieval.entries.filter((entry) =>
+        timestampInRange(entry.item.timestamp, timeRange),
+      ).length
+    : null;
+  const timeScopedSessionCount = timeRange
+    ? retrieval.session.filter((session) =>
+        session.item.turns.some((turn) =>
+          timestampInRange(turn.timestamp, timeRange),
+        ),
+      ).length
+    : null;
   const sections = [
     factItems.length > 0
       ? ["FACT MEMORIES:", ...factItems.map((item) => `- ${item}`)].join("\n")
@@ -553,6 +608,11 @@ function runtimeRecallArtifacts(
         rawSessionCount: retrieval.session.length,
         memoryTarget: retrieval.contract.memoryTarget,
         targetScopes: retrieval.contract.targetScopes,
+        timeRange: timeRange
+          ? { from: timeRange.from, to: timeRange.to }
+          : undefined,
+        timeScopedEntryCount,
+        timeScopedSessionCount,
       },
     },
   ];
@@ -716,10 +776,31 @@ function fileWriteRequest(
 function fileReadRequest(
   request: TaskNodeExecutionRequest,
 ): RuntimeToolRequest | null {
-  const filePath = extractPath(
-    `${request.node.title} ${request.context.userPrompt}`,
-  );
+  const source = `${request.node.title} ${request.context.userPrompt}`;
+  const filePath = extractPath(source) ?? extractLocalPath(source);
   if (!filePath) return null;
+  if (request.node.kind === "read_many_files") {
+    return {
+      name: "read_many_files",
+      callId: makeCallId(request.node.id, "read_many_files"),
+      args: {
+        paths: [filePath],
+        path: filePath,
+        include: "*.md",
+        recursive: false,
+      },
+    };
+  }
+  if (request.node.kind === "list_directory") {
+    return {
+      name: "glob",
+      callId: makeCallId(request.node.id, "glob"),
+      args: {
+        path: filePath,
+        pattern: "*.md",
+      },
+    };
+  }
   return {
     name: "read_file",
     callId: makeCallId(request.node.id, "read_file"),
@@ -1038,7 +1119,8 @@ function createAdapters(
 function hasCurrentContextWriteSource(input: TaskRuntimeExecuteInput): boolean {
   return (
     input.intent.referencesRecentHistory === true ||
-    input.intent.memoryTarget === "current_context_reference" ||
+    input.intent.semanticEvidence.memoryRecall.target ===
+      "current_context_reference" ||
     input.intent.richIntent.contextDependency.recentConversation === true
   );
 }
@@ -1069,7 +1151,7 @@ function deterministicNodeInputReady(
   if (node.blockedReason) {
     return { ok: false, reason: `blocked:${node.blockedReason}` };
   }
-  if (node.kind === "write_file") {
+  if (node.kind === "write_file" || node.kind === "write_artifact") {
     if (hasSafeDependency(node, safeNodeIds)) {
       return { ok: true, reason: "dependency_artifact_available" };
     }
@@ -1089,8 +1171,13 @@ function deterministicNodeInputReady(
       ? { ok: true, reason: "research_query_available" }
       : { ok: false, reason: "missing_research_query" };
   }
-  if (node.kind === "read_file") {
-    return extractPath(`${node.title} ${input.context.userPrompt}`)
+  if (
+    node.kind === "read_file" ||
+    node.kind === "list_directory" ||
+    node.kind === "read_many_files"
+  ) {
+    const source = `${node.title} ${input.context.userPrompt}`;
+    return (extractPath(source) ?? extractLocalPath(source))
       ? { ok: true, reason: "file_path_available" }
       : { ok: false, reason: "missing_file_path" };
   }
@@ -1409,11 +1496,35 @@ export function createJarvisTaskRuntime(
   return {
     mode,
     async plan(input: TaskRuntimePlanInput) {
-      const graph = buildTaskGraph(input.intent, buildTaskSpec(input.intent), {
-        availableCapabilities: IMPLEMENTED_CAPABILITIES as unknown as string[],
-        channelAvailable: input.context.interactiveChannel,
-        memoryBoundary: input.memoryContract.subjectBoundary,
+      const legacyGraph = buildTaskGraph(
+        input.intent,
+        buildTaskSpec(input.intent),
+        {
+          availableCapabilities:
+            IMPLEMENTED_CAPABILITIES as unknown as string[],
+          channelAvailable: input.context.interactiveChannel,
+          memoryBoundary: input.memoryContract.subjectBoundary,
+        },
+      );
+      const gaps = detectTaskGraphGaps(input.intent, legacyGraph, {
+        userPrompt: input.context.userPrompt,
+        currentContent: input.context.currentContent,
+        artifacts: input.context.artifacts,
       });
+      const repair =
+        gaps.length > 0
+          ? repairTaskGraphGaps(input.intent, legacyGraph, gaps, {
+              userPrompt: input.context.userPrompt,
+              currentContent: input.context.currentContent,
+              artifacts: input.context.artifacts,
+            })
+          : { graph: legacyGraph, repairs: [], rejectedReasons: [] };
+      if (gaps.length > 0) {
+        console.error(
+          `🧭 [TaskGraph] gap repair gaps=${gaps.map((gap) => gap.kind).join(",")} repairs=${repair.repairs.map((item) => item.kind).join(",") || "-"} rejected=${repair.rejectedReasons.join(",") || "-"}`,
+        );
+      }
+      const graph = repair.graph;
       logTaskGraphPlan(graph, input, {
         mode,
         observability,

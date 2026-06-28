@@ -185,6 +185,7 @@ export class JarvisSessionMemoryStore implements SessionMemoryStore {
     query: string,
     options?: {
       limit?: number;
+      dateRange?: MemoryContract["query"]["timeRange"] | null;
       maxDistance?: number;
       contract?: MemoryContract;
     },

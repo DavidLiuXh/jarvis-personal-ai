@@ -646,6 +646,13 @@ Gemini mode uses Gemini CLI authentication, model selection, and compatibility t
     // WARNING: disables safety guardrails. Default: false
     "jailbreak": false,
 
+    "workspace": {
+      // Additional absolute directories that Jarvis-native workspace tools may read.
+      // These roots are read-only: write_file remains limited to the main workspace root.
+      // Default: []
+      "readOnlyRoots": ["/Users/lw/Documents/投资"],
+    },
+
     "shell": {
       // Allow shell-based network fetch commands such as curl/wget.
       // This maps to Gemini CLI shell allow rules and Jarvis-native workspace tools.

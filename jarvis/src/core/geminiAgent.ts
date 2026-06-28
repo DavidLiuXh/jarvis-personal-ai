@@ -235,6 +235,8 @@ export class JarvisAgent extends EventEmitter {
       undefined,
       new WorkspaceTools({
         root: this.cwd,
+        readOnlyRoots:
+          this.jarvisConfig.security?.workspace?.readOnlyRoots ?? [],
         allowNetworkFetchCommands:
           this.jarvisConfig.security?.shell?.allowNetworkFetchCommands,
         networkFetchCommands:
@@ -604,6 +606,8 @@ export class JarvisAgent extends EventEmitter {
         undefined,
         new WorkspaceTools({
           root: this.cwd,
+          readOnlyRoots:
+            this.jarvisConfig.security?.workspace?.readOnlyRoots ?? [],
           allowNetworkFetchCommands:
             this.jarvisConfig.security?.shell?.allowNetworkFetchCommands,
           networkFetchCommands:

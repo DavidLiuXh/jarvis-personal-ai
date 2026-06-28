@@ -323,6 +323,7 @@ export class SqliteMemoryStore
     options: {
       sessionId?: string;
       limit?: number;
+      dateRange?: MemoryContract["query"]["timeRange"] | null;
       maxDistance?: number;
       contract?: MemoryContract;
     } = {},
@@ -337,10 +338,21 @@ export class SqliteMemoryStore
           )
         : [];
     const vectorScores = new Map(vectorRows.map((row) => [row.id, row.score]));
-    const where = options.sessionId ? "WHERE session_id = ?" : "";
-    const args = options.sessionId
-      ? [options.sessionId, Math.max(limit * 8, 50)]
-      : [Math.max(limit * 8, 50)];
+    const whereParts: string[] = [];
+    const args: unknown[] = [];
+    if (options.sessionId) {
+      whereParts.push("session_id = ?");
+      args.push(options.sessionId);
+    }
+    if (options.dateRange) {
+      whereParts.push(
+        "EXISTS (SELECT 1 FROM memories WHERE memories.sessionId = summary_chunks_index.session_id AND memories.timestamp >= ? AND memories.timestamp < ?)",
+      );
+      args.push(options.dateRange.from, options.dateRange.to);
+    }
+    const where =
+      whereParts.length > 0 ? `WHERE ${whereParts.join(" AND ")}` : "";
+    args.push(Math.max(limit * 8, 50));
     const rows = this.db
       .prepare(
         `SELECT id, session_id, chunk_text FROM summary_chunks_index ${where} ORDER BY id DESC LIMIT ?`,

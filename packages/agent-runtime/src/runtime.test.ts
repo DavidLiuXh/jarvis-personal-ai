@@ -285,6 +285,53 @@ function recallTaskGraphResult(
   };
 }
 
+function failedRecallTaskGraphResult(
+  graph = recallTaskGraph(),
+): AutonomousTaskRuntimeResult {
+  return {
+    status: "failed",
+    graph,
+    execution: {
+      status: "failed",
+      graph,
+      nodes: [
+        {
+          node: graph.nodes[0],
+          status: "failed",
+          attempts: 1,
+          output: { noMemory: true },
+          artifacts: [],
+          acceptanceResults: [
+            {
+              criterionId: "step-1-memory-retrieved",
+              ok: false,
+              blocking: true,
+              reason: "no memory retrieval evidence observed",
+            },
+          ],
+          lastError: "no memory retrieval evidence observed",
+        },
+      ],
+      artifacts: [],
+      blockedReasons: [],
+      failedReasons: ["step-1:no memory retrieval evidence observed"],
+      finalResponseContract: {
+        canClaimSuccess: false,
+        incompleteNodes: [
+          {
+            nodeId: "step-1",
+            status: "failed",
+            reason: "no memory retrieval evidence observed",
+          },
+        ],
+        instruction: "Do not claim memory recall succeeded.",
+      },
+    },
+    snapshot: {} as AutonomousTaskRuntimeResult["snapshot"],
+    replanDecisions: [],
+  };
+}
+
 function toolExecutor(
   fn: (request: RuntimeToolRequest) => RuntimeToolResult,
 ): ToolExecutorAdapter {
@@ -677,6 +724,118 @@ describe("AgentRuntime", () => {
 
     expect(observedTools[0]).toEqual([]);
     expect(toolAdapter.executeTools).not.toHaveBeenCalled();
+    expect(result.context.llmLoop?.finalText).toBe("done");
+  });
+
+  it("keeps recall_memory available when TaskGraph memory recall does not complete", async () => {
+    const frame = intent({
+      taskType: "recall",
+      needsMemory: true,
+      intentSteps: [
+        step({
+          type: "recall",
+          action: "recall",
+          target: "conversation_history",
+          operation: {
+            domain: "memory",
+            action: "recall",
+            targetType: "memory",
+            target: "conversation_history",
+            selector: "yesterday discussion",
+            scope: "conversation_history",
+            riskLevel: "low",
+          },
+          riskLevel: "low",
+        }),
+      ],
+    });
+    const graph = recallTaskGraph();
+    const intentRuntime = new DefaultIntentRuntime(
+      new StaticIntentResolverAdapter(async () => frame),
+    );
+    const memory = memoryRuntime();
+    const toolAdapter = toolExecutor((request) => ({
+      name: request.name,
+      callId: request.callId,
+      status: "success",
+      output: { ok: true, result: ["yesterday discussion"] },
+    }));
+    const observedTools: string[][] = [];
+    let backendTurns = 0;
+    const runtime = new AgentRuntime(intentRuntime, memory.runtime, undefined, {
+      taskRuntime: {
+        mode: "execute",
+        plan: vi.fn(async () => graph),
+        execute: vi.fn(async () => failedRecallTaskGraphResult(graph)),
+      },
+      deferMemoryRetrievalForTaskGraph: true,
+      llmLoop: {
+        backend: {
+          getModel: () => "mock",
+          getCapabilities: () => ({
+            streaming: true,
+            nativeToolCalling: true,
+            jsonMode: false,
+            multimodalInput: false,
+            maxContextTokens: 4096,
+            modes: ["native_tool_calling"],
+          }),
+          async *sendTurn(input) {
+            observedTools.push(input.tools?.map((tool) => tool.name) ?? []);
+            backendTurns++;
+            if (backendTurns === 1) {
+              yield {
+                type: "tool_call",
+                request: {
+                  name: "recall_memory",
+                  callId: "recall-1",
+                  args: { query: "昨天我们讨论了哪些问题？" },
+                },
+              };
+            } else {
+              yield { type: "content", text: "done" };
+            }
+          },
+        },
+        promptCompiler: {
+          compileInitialTurn: ({ initialMessages }) => initialMessages,
+          compileToolResults: () => [
+            {
+              role: "tool",
+              blocks: [
+                {
+                  type: "tool_result",
+                  name: "recall_memory",
+                  callId: "recall-1",
+                  result: { ok: true },
+                },
+              ],
+            },
+          ],
+          compileRetryPrompt: () => [],
+        },
+        toolExecutor: toolAdapter,
+        tools: [{ name: "recall_memory" }, { name: "task_add" }],
+      },
+    });
+
+    const result = await runtime.handleTurn({
+      sessionId: "s1",
+      userPrompt: "昨天我们讨论了哪些问题？",
+      llmInitialMessages: [
+        {
+          role: "user",
+          blocks: [{ type: "text", text: "昨天我们讨论了哪些问题？" }],
+        },
+      ],
+      signal: new AbortController().signal,
+    });
+
+    expect(observedTools[0]).toEqual(["recall_memory"]);
+    expect(toolAdapter.executeTools).toHaveBeenCalledWith(
+      [expect.objectContaining({ name: "recall_memory" })],
+      expect.any(AbortSignal),
+    );
     expect(result.context.llmLoop?.finalText).toBe("done");
   });
 

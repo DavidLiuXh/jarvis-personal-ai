@@ -82,8 +82,12 @@ export type TaskGraphNodeKind =
   | "recall"
   | "research"
   | "analyze"
+  | "extract_evidence"
   | "write_file"
+  | "write_artifact"
   | "read_file"
+  | "list_directory"
+  | "read_many_files"
   | "run_shell"
   | "schedule"
   | "push"
@@ -514,10 +518,14 @@ function capabilitiesForNodeKind(kind: TaskGraphNodeKind): string[] {
     case "research":
       return ["web.search"];
     case "analyze":
+    case "extract_evidence":
       return ["llm.analyze"];
     case "write_file":
+    case "write_artifact":
       return ["file.write"];
     case "read_file":
+    case "list_directory":
+    case "read_many_files":
       return ["file.read"];
     case "run_shell":
       return ["shell.run"];
@@ -536,7 +544,7 @@ function outputForNode(
   kind: TaskGraphNodeKind,
   nodeId: string,
 ): TaskOutputSpec[] {
-  if (kind === "write_file") {
+  if (kind === "write_file" || kind === "write_artifact") {
     return [
       {
         id: `${nodeId}-file`,
@@ -577,6 +585,28 @@ function outputForNode(
       },
     ];
   }
+  if (kind === "list_directory" || kind === "read_many_files") {
+    return [
+      {
+        id: `${nodeId}-sources`,
+        type: "source",
+        description:
+          "Local workspace source collection gathered for downstream analysis or response.",
+        required: true,
+      },
+    ];
+  }
+  if (kind === "extract_evidence") {
+    return [
+      {
+        id: `${nodeId}-report`,
+        type: "report",
+        description:
+          "Structured evidence extracted from source material for downstream analysis.",
+        required: true,
+      },
+    ];
+  }
   return [
     {
       id: `${nodeId}-message`,
@@ -591,7 +621,7 @@ function acceptanceForNode(
   kind: TaskGraphNodeKind,
   nodeId: string,
 ): AcceptanceCriteria[] {
-  if (kind === "write_file") {
+  if (kind === "write_file" || kind === "write_artifact") {
     return [
       criteria(
         `${nodeId}-file-exists`,
@@ -642,6 +672,28 @@ function acceptanceForNode(
         "source_count",
         "The node gathered source evidence for downstream analysis.",
         { nodeId, minSources: 1 },
+        "step",
+      ),
+    ];
+  }
+  if (kind === "list_directory" || kind === "read_many_files") {
+    return [
+      criteria(
+        `${nodeId}-source-count`,
+        "source_count",
+        "The node gathered local source evidence for downstream analysis.",
+        { nodeId, minSources: 1 },
+        "step",
+      ),
+    ];
+  }
+  if (kind === "extract_evidence") {
+    return [
+      criteria(
+        `${nodeId}-response-contains`,
+        "response_contains",
+        "The node extracted evidence from its local source material.",
+        { nodeId },
         "step",
       ),
     ];

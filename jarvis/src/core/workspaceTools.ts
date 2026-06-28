@@ -23,6 +23,7 @@ export type WorkspaceToolResult = {
 
 type WorkspaceToolOptions = {
   root: string;
+  readOnlyRoots?: string[];
   maxReadBytes?: number;
   maxReadLines?: number;
   maxSearchResults?: number;
@@ -77,6 +78,10 @@ function asStringArray(value: unknown): string[] {
   }
   if (typeof value === "string") return [value];
   return [];
+}
+
+function asBoolean(value: unknown, fallback: boolean): boolean {
+  return typeof value === "boolean" ? value : fallback;
 }
 
 function normalizeSlash(value: string): string {
@@ -157,6 +162,7 @@ function containsNetworkFetchCommand(
 
 export class WorkspaceTools {
   private readonly root: string;
+  private readonly readOnlyRoots: string[];
   private readonly maxReadBytes: number;
   private readonly maxReadLines: number;
   private readonly maxSearchResults: number;
@@ -167,6 +173,9 @@ export class WorkspaceTools {
 
   constructor(options: WorkspaceToolOptions) {
     this.root = path.resolve(options.root);
+    this.readOnlyRoots = (options.readOnlyRoots ?? []).map((item) =>
+      path.resolve(item),
+    );
     this.maxReadBytes = options.maxReadBytes ?? DEFAULT_MAX_READ_BYTES;
     this.maxReadLines = options.maxReadLines ?? DEFAULT_MAX_READ_LINES;
     this.maxSearchResults =
@@ -224,6 +233,36 @@ export class WorkspaceTools {
     return resolved;
   }
 
+  private resolveReadablePath(input: string): {
+    path: string;
+    displayRoot: string;
+  } {
+    const raw = input.trim();
+    if (!raw) throw new Error("Path is required.");
+    const candidates = path.isAbsolute(raw)
+      ? [
+          { root: this.root, resolved: path.resolve(raw) },
+          ...this.readOnlyRoots.map((root) => ({
+            root,
+            resolved: path.resolve(raw),
+          })),
+        ]
+      : [
+          { root: this.root, resolved: path.resolve(this.root, raw) },
+          ...this.readOnlyRoots.map((root) => ({
+            root,
+            resolved: path.resolve(root, raw),
+          })),
+        ];
+    for (const candidate of candidates) {
+      const relative = path.relative(candidate.root, candidate.resolved);
+      if (!relative.startsWith("..") && !path.isAbsolute(relative)) {
+        return { path: candidate.resolved, displayRoot: candidate.root };
+      }
+    }
+    throw new Error(`Path escapes workspace root/readOnlyRoots: ${input}`);
+  }
+
   private assertReadablePath(filePath: string): void {
     const base = path.basename(filePath);
     if (SENSITIVE_BASENAMES.has(base)) {
@@ -234,9 +273,10 @@ export class WorkspaceTools {
   private async readFile(
     request: WorkspaceToolRequest,
   ): Promise<WorkspaceToolResult> {
-    const filePath = this.resolveWorkspacePath(
+    const readable = this.resolveReadablePath(
       asString(request.args.file_path || request.args.path),
     );
+    const filePath = readable.path;
     this.assertReadablePath(filePath);
     const stat = await fs.stat(filePath);
     if (!stat.isFile()) throw new Error("Path is not a file.");
@@ -260,7 +300,7 @@ export class WorkspaceTools {
       ok: true,
       tool: request.name,
       result: {
-        path: path.relative(this.root, filePath),
+        path: path.relative(readable.displayRoot, filePath),
         start_line: startLine,
         end_line: startLine + finalLines.length - 1,
         total_lines: lines.length,
@@ -306,14 +346,41 @@ export class WorkspaceTools {
   ): Promise<WorkspaceToolResult> {
     const paths = asStringArray(request.args.paths || request.args.file_paths);
     if (paths.length === 0) throw new Error("paths is required.");
+    const include = asString(request.args.include || request.args.file_pattern);
+    const includeRe = include ? globToRegExp(include) : null;
+    const recursive = asBoolean(request.args.recursive, true);
     const results = [];
     for (const item of paths.slice(0, 50)) {
-      const response = await this.readFile({
-        ...request,
-        name: "read_file",
-        args: { ...request.args, file_path: item },
-      });
-      results.push(response);
+      const readable = this.resolveReadablePath(item);
+      const stat = await fs.stat(readable.path);
+      if (stat.isDirectory()) {
+        const files = recursive
+          ? this.walk(readable.path)
+          : this.walkShallow(readable.path);
+        for await (const filePath of files) {
+          const fileStat = await fs.stat(filePath);
+          if (!fileStat.isFile()) continue;
+          const relative = normalizeSlash(
+            path.relative(readable.path, filePath),
+          );
+          if (includeRe && !includeRe.test(relative)) continue;
+          const response = await this.readFile({
+            ...request,
+            name: "read_file",
+            args: { ...request.args, file_path: filePath },
+          });
+          results.push(response);
+          if (results.length >= 50) break;
+        }
+      } else {
+        const response = await this.readFile({
+          ...request,
+          name: "read_file",
+          args: { ...request.args, file_path: item },
+        });
+        results.push(response);
+      }
+      if (results.length >= 50) break;
     }
     return { ok: true, tool: request.name, result: { files: results } };
   }
@@ -323,10 +390,14 @@ export class WorkspaceTools {
   ): Promise<WorkspaceToolResult> {
     const pattern = asString(request.args.pattern || request.args.glob);
     if (!pattern) throw new Error("pattern is required.");
+    const pathArg = asString(request.args.path, ".");
+    const readableRoot = this.resolveReadablePath(pathArg);
     const matches = [];
     const re = globToRegExp(pattern);
-    for await (const filePath of this.walk(this.root)) {
-      const relative = normalizeSlash(path.relative(this.root, filePath));
+    for await (const filePath of this.walk(readableRoot.path)) {
+      const relative = normalizeSlash(
+        path.relative(readableRoot.displayRoot, filePath),
+      );
       if (re.test(relative)) {
         matches.push(relative);
         if (matches.length >= this.maxSearchResults) break;
@@ -350,13 +421,16 @@ export class WorkspaceTools {
     if (!pattern) throw new Error("pattern is required.");
     const include = asString(request.args.include || request.args.file_pattern);
     const pathArg = asString(request.args.path, ".");
-    const root = this.resolveWorkspacePath(pathArg);
+    const readableRoot = this.resolveReadablePath(pathArg);
+    const root = readableRoot.path;
     const flags = request.args.ignore_case === false ? "g" : "gi";
     const re = new RegExp(pattern, flags);
     const includeRe = include ? globToRegExp(include) : null;
     const matches = [];
     for await (const filePath of this.walk(root)) {
-      const relative = normalizeSlash(path.relative(this.root, filePath));
+      const relative = normalizeSlash(
+        path.relative(readableRoot.displayRoot, filePath),
+      );
       if (includeRe && !includeRe.test(relative)) continue;
       this.assertReadablePath(filePath);
       const stat = await fs.stat(filePath);
@@ -481,6 +555,20 @@ export class WorkspaceTools {
       } else if (entry.isFile()) {
         yield fullPath;
       }
+    }
+  }
+
+  private async *walkShallow(root: string): AsyncGenerator<string> {
+    const stat = await fs.stat(root);
+    if (stat.isFile()) {
+      yield root;
+      return;
+    }
+    const entries = await fs.readdir(root, { withFileTypes: true });
+    for (const entry of entries) {
+      if (entry.name.startsWith(".")) continue;
+      if (!entry.isFile()) continue;
+      yield path.join(root, entry.name);
     }
   }
 }

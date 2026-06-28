@@ -635,6 +635,13 @@ Gemini 模式使用 Gemini CLI 的认证、模型和兼容工具链。首次安�
     // 警告：会禁用安全防护机制。默认：false
     "jailbreak": false,
 
+    "workspace": {
+      // 允许 Jarvis-native workspace tools 额外读取的绝对目录。
+      // 这些目录只读：write_file 仍然只能写入主 workspace root。
+      // 默认：[]
+      "readOnlyRoots": ["/Users/lw/Documents/投资"],
+    },
+
     "shell": {
       // 允许基于 shell 的网络抓取命令，例如 curl/wget。
       // 该配置会同时映射到 Gemini CLI shell allow 规则和 Jarvis-native workspace tools。

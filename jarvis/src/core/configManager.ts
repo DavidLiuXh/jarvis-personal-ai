@@ -464,6 +464,14 @@ export interface JarvisConfig {
   };
   security: {
     jailbreak: boolean;
+    workspace?: {
+      /**
+       * Additional absolute directories that Jarvis-native workspace tools may
+       * read from. These roots are read-only: write_file remains limited to the
+       * main workspace root.
+       */
+      readOnlyRoots?: string[];
+    };
     shell: {
       /**
        * Allow shell-based network fetch commands such as curl/wget.
@@ -615,6 +623,9 @@ export class ConfigManager {
       },
       security: {
         jailbreak: false,
+        workspace: {
+          readOnlyRoots: [],
+        },
         shell: {
           allowNetworkFetchCommands: true,
           networkFetchCommands: ["curl", "wget"],
@@ -734,6 +745,10 @@ export class ConfigManager {
           security: {
             ...defaults.security,
             ...saved.security,
+            workspace: {
+              ...defaults.security.workspace,
+              ...saved.security?.workspace,
+            },
             shell: {
               ...defaults.security.shell,
               ...saved.security?.shell,

@@ -268,6 +268,8 @@ const NON_TICKER_ACRONYMS = new Set([
 
 const ANAPHORA_RE =
   /它|这个|那个|这些|那些|上述|刚才|this\b|that\b|these\b|those\b|follow[- ]?up/i;
+const EXPLICIT_LOCAL_ARTIFACT_RE =
+  /(?:^|[\s(\["'`])(?:\.{1,2}\/|~\/|[A-Za-z]:\\|\/)[^\s)\]"'`]+|\b[\w.-]+\.(?:md|markdown|txt|pdf|docx?|xlsx?|csv|json|yaml|yml|ts|tsx|js|jsx|py|java|go|rs|cpp|c|h)\b|目录下|文件夹|workspace|仓库路径|repo path|local file|本地文档/i;
 
 const LOW_CONFIDENCE_THRESHOLD = 0.55;
 
@@ -551,11 +553,19 @@ function normalizeTechnicalEntityHints(
   };
 }
 
+function hasExplicitLocalArtifactAnchor(prompt: string): boolean {
+  return EXPLICIT_LOCAL_ARTIFACT_RE.test(prompt);
+}
+
 function hasAnaphoricReference(
   prompt: string,
   history: ConversationTurn[],
 ): boolean {
-  return history.length > 0 && ANAPHORA_RE.test(prompt);
+  return (
+    history.length > 0 &&
+    ANAPHORA_RE.test(prompt) &&
+    !hasExplicitLocalArtifactAnchor(prompt)
+  );
 }
 
 function hasCurrentContextReferenceCue(prompt: string): boolean {
@@ -656,6 +666,7 @@ type TopicBoundaryDomain =
   | "system_command"
   | "personal_memory"
   | "conversation_history"
+  | "time_query"
   | "external_ai_technology"
   | "external_finance"
   | "schedule"
@@ -713,6 +724,13 @@ function topicBoundaryDomainsFromText(text: string): Set<TopicBoundaryDomain> {
   }
   if (hasConversationHistoryRecallCue(text)) {
     domains.add("conversation_history");
+  }
+  if (
+    /(?:现在|当前|此刻|目前).{0,8}(?:几点|几时|时间)|(?:几点了|几点钟|什么时间了|现在时间)|\b(?:what time is it|current time|local time)\b/i.test(
+      text,
+    )
+  ) {
+    domains.add("time_query");
   }
   if (
     USER_MEMORY_RECALL_CUE_RE.test(text) ||

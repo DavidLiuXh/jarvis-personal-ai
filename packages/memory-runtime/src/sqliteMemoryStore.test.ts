@@ -69,6 +69,65 @@ describe("SqliteMemoryStore", () => {
     store.close();
   });
 
+  it("filters session summary search by date range through session entries", async () => {
+    const store = new SqliteMemoryStore({ dbPath: dbPath() });
+    await store.upsertEntry({
+      id: "entry-yesterday",
+      scope: "entry",
+      kind: "conversation",
+      content: "Discussed Universal Memory yesterday.",
+      entities: ["memory"],
+      timestamp: "2026-06-01T10:00:00+08:00",
+      sourceRefs: ["session-yesterday"],
+    });
+    await store.upsertSession({
+      scope: "session",
+      sessionId: "session-yesterday",
+      turns: [
+        {
+          role: "user",
+          content: "Universal Memory yesterday",
+          timestamp: "2026-06-01T10:00:00+08:00",
+        },
+      ],
+      summary: "Universal Memory discussion from yesterday.",
+    });
+    await store.upsertEntry({
+      id: "entry-today",
+      scope: "entry",
+      kind: "conversation",
+      content: "Discussed Universal Memory today.",
+      entities: ["memory"],
+      timestamp: "2026-06-02T10:00:00+08:00",
+      sourceRefs: ["session-today"],
+    });
+    await store.upsertSession({
+      scope: "session",
+      sessionId: "session-today",
+      turns: [
+        {
+          role: "user",
+          content: "Universal Memory today",
+          timestamp: "2026-06-02T10:00:00+08:00",
+        },
+      ],
+      summary: "Universal Memory discussion from today.",
+    });
+
+    const results = await store.searchSession("Universal Memory discussion", {
+      limit: 5,
+      dateRange: {
+        from: Date.parse("2026-06-01T00:00:00+08:00"),
+        to: Date.parse("2026-06-02T00:00:00+08:00"),
+      },
+    });
+
+    expect(results.map((result) => result.sessionId)).toEqual([
+      "session-yesterday",
+    ]);
+    store.close();
+  });
+
   it("logs retrieved fact item previews for diagnostics", async () => {
     const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     const store = new SqliteMemoryStore({ dbPath: dbPath() });

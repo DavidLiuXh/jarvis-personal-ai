@@ -71,6 +71,7 @@ export interface SessionMemoryStore {
     options?: {
       sessionId?: string;
       limit?: number;
+      dateRange?: DateRange | null;
       maxDistance?: number;
       contract?: MemoryContract;
     },
@@ -195,6 +196,7 @@ export class DefaultMemoryRetriever {
     let results = await this.options.stores.session.searchSession(query, {
       sessionId: this.options.sessionId,
       limit: this.options.sessionLimit ?? 2,
+      dateRange: contract.query.timeRange ?? null,
       maxDistance: this.options.sessionMaxDistance,
       contract,
     });
