@@ -56,7 +56,6 @@ import { JarvisEventType, type JarvisAgentLike } from "./types.js";
 import { createDefaultRuntimeToolRegistry } from "./jarvisToolRegistry.js";
 import { WorkspaceTools } from "./workspaceTools.js";
 import { JarvisNativeSkillRuntime } from "./skillRuntime.js";
-import type { SessionMemory } from "../memory-runtime/index.js";
 
 export type StandaloneRoutingTargetModels = {
   defaultModel: string;
@@ -479,28 +478,18 @@ export class StandaloneJarvisAgent
     this.llmHistory = (runtimeTurn.llmLoop?.messages ?? [])
       .filter((message) => message.role !== "system")
       .slice(-24);
-    const now = new Date().toISOString();
-    const session: SessionMemory = {
-      scope: "session",
+    await this.options.memoryService.appendSessionTurn({
       sessionId: this.options.sessionId,
-      turns: [
-        {
-          role: "user",
-          content: userPrompt,
-          timestamp: now,
-          metadata: { backend: "standalone" },
-        },
-        {
-          role: "assistant",
-          content: assistantText,
-          timestamp: new Date().toISOString(),
-          metadata: { backend: "standalone" },
-        },
-      ],
-    };
-    await this.options.memoryService
-      .getRuntimeSqliteMemoryStore()
-      .upsertSession(session);
+      role: "user",
+      content: userPrompt,
+      metadata: { backend: "standalone" },
+    });
+    await this.options.memoryService.appendSessionTurn({
+      sessionId: this.options.sessionId,
+      role: "assistant",
+      content: assistantText,
+      metadata: { backend: "standalone" },
+    });
     if (!this.options.lightweight) {
       void this.distillFactsInBackground(userPrompt, assistantText);
     }

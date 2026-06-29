@@ -149,6 +149,32 @@ describe("ToolRouter", () => {
     expect((parts[0] as any).functionResponse.id).toBe(req.callId);
   });
 
+  it("denies high-risk shell tools when no explicit confirmation handler is available", async () => {
+    const workspaceRoot = await mkdtemp(
+      path.join(os.tmpdir(), "jarvis-tools-"),
+    );
+    const { router } = makeRouter({ workspaceRoot });
+    const onToolResponse = vi.fn();
+
+    const parts = await router.route(
+      [makeReq("run_shell_command", { command: "echo should-not-run" })],
+      new AbortController().signal,
+      onToolResponse,
+    );
+
+    expect(onToolResponse).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: "run_shell_command",
+        status: "denied",
+        output: expect.stringContaining("requires explicit user confirmation"),
+      }),
+    );
+    expect(JSON.stringify(parts)).toContain(
+      "SIDE_EFFECT_CONFIRMATION_REQUIRED",
+    );
+    await rm(workspaceRoot, { recursive: true, force: true });
+  });
+
   it("save_memory: explicit remember-intent raises importance", async () => {
     const { router, saveFactToRuntime } = makeRouter();
 

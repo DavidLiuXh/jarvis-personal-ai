@@ -2797,6 +2797,69 @@ describe("MemoryService skill index", () => {
     }
   });
 
+  it("searchConversationHistoryLexical reads new Jarvis session JSONL turns", async () => {
+    const { MemoryService } = await import("./memory.js");
+    const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "jarvis-home-"));
+    const sessionsDir = path.join(
+      tmpHome,
+      ".gemini-jarvis",
+      "storage",
+      "sessions",
+    );
+    fs.mkdirSync(sessionsDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(sessionsDir, "session-2026-06-28-runtime.jsonl"),
+      [
+        JSON.stringify({
+          kind: "session",
+          schemaVersion: 1,
+          sessionId: "runtime",
+        }),
+        JSON.stringify({
+          kind: "turn",
+          role: "user",
+          content: "昨天 TaskGraph 的 session history 问题是什么？",
+          timestamp: "2026-06-28T12:00:00.000Z",
+        }),
+        JSON.stringify({
+          kind: "turn",
+          role: "assistant",
+          content:
+            "问题是主链路切到 AgentRuntime 后没有继续写 raw session 文件。",
+          timestamp: "2026-06-28T12:01:00.000Z",
+        }),
+      ].join("\n") + "\n",
+    );
+
+    const homedirSpy = vi.spyOn(os, "homedir").mockReturnValue(tmpHome);
+    try {
+      const service = new (MemoryService as new (
+        root: string,
+        dbPath?: string,
+      ) => InstanceType<typeof MemoryService>)(
+        "",
+        fs.mkdtempSync(path.join(os.tmpdir(), "jarvis-memory-db-")),
+      );
+
+      const results = await service.searchConversationHistoryLexical(
+        "昨天 TaskGraph session history",
+        {
+          limit: 5,
+          dateRange: {
+            from: Date.parse("2026-06-28T00:00:00+08:00"),
+            to: Date.parse("2026-06-29T00:00:00+08:00"),
+          },
+        },
+      );
+
+      expect(results).toHaveLength(1);
+      expect(results[0].text).toContain("TaskGraph");
+      expect(results[0].text).toContain("raw session");
+    } finally {
+      homedirSpy.mockRestore();
+    }
+  });
+
   // P0: Chinese entity extraction via bigram approach
   it("searchConversationHistoryLexical extracts entity bigrams and matches recall query", async () => {
     const { MemoryService } = await import("./memory.js");

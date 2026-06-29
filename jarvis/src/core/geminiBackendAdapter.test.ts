@@ -16,10 +16,15 @@ import {
 
 function mockGeminiClient(events: any[]) {
   const calls: any[] = [];
+  const systemInstructions: string[] = [];
   return {
     calls,
+    systemInstructions,
     getCurrentSequenceModel: () => "gemini-test",
-    getChat: () => ({ getModel: () => "gemini-chat" }),
+    getChat: () => ({
+      getModel: () => "gemini-chat",
+      setSystemInstruction: (text: string) => systemInstructions.push(text),
+    }),
     async *sendMessageStream(
       parts: any[],
       signal: AbortSignal,
@@ -87,6 +92,28 @@ describe("Gemini backend adapter", () => {
       status: "success",
       output: { result: "sent" },
     });
+  });
+
+  it("sets runtime system context as Gemini system instruction instead of user parts", async () => {
+    const client = mockGeminiClient([
+      { type: GeminiEventType.Content, value: "done" },
+    ]);
+    const backend = new GeminiCliBackendAdapter(client, "prompt-system");
+
+    for await (const _event of backend.sendTurn(
+      {
+        messages: [
+          { role: "system", blocks: [{ type: "text", text: "SYSTEM RULES" }] },
+          { role: "user", blocks: [{ type: "text", text: "hello" }] },
+        ],
+      },
+      new AbortController().signal,
+    )) {
+      // drain
+    }
+
+    expect(client.systemInstructions).toEqual(["SYSTEM RULES"]);
+    expect(client.calls[0].parts).toEqual([{ text: "hello" }]);
   });
 
   it("compiles initial and tool-result messages without exposing Gemini Part[] to runtime", () => {

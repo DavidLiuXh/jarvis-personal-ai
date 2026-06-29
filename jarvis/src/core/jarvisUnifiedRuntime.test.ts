@@ -537,7 +537,7 @@ describe("runJarvisUnifiedRuntimeTurn", () => {
     );
 
     expect(searchConversationHistoryLexical).toHaveBeenCalledWith(
-      expect.stringContaining("conversation_history"),
+      expect.stringContaining("昨天我们讨论"),
       { limit: 8, dateRange: range },
     );
     expect(result.systemInstruction).toContain("<temporal_recall_boundary>");

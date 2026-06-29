@@ -33,6 +33,11 @@ import {
   summarizeChunkPreview,
 } from "./sessionSummarizer.js";
 import {
+  extractSessionMessageText,
+  listSessionTranscriptFiles,
+  parseSessionTranscriptFile,
+} from "./sessionTranscript.js";
+import {
   ollamaGenerateWithRetry,
   ollamaEmbedWithRetry,
 } from "./ollamaClient.js";
@@ -97,28 +102,6 @@ function formatRuntimeMemoryWriteItem(item: MemoryWriteEventItem): string {
     fields.push(`preview=${JSON.stringify(item.contentPreview)}`);
   }
   return fields.length > 0 ? ` ${fields.join(" ")}` : "";
-}
-
-function extractSessionMessageText(content: unknown): string {
-  if (typeof content === "string") return content;
-  if (Array.isArray(content)) {
-    return content
-      .map((part) => {
-        if (typeof part === "string") return part;
-        if (part && typeof part === "object" && "text" in part) {
-          const text = (part as { text?: unknown }).text;
-          return typeof text === "string" ? text : "";
-        }
-        return "";
-      })
-      .filter(Boolean)
-      .join("\n");
-  }
-  if (content && typeof content === "object" && "text" in content) {
-    const text = (content as { text?: unknown }).text;
-    return typeof text === "string" ? text : "";
-  }
-  return "";
 }
 
 /**
@@ -1504,6 +1487,27 @@ ${factsText}
     timestamp?: string | number;
     metadata?: Record<string, unknown>;
   }): Promise<void> {
+    const timestamp =
+      typeof input.timestamp === "number"
+        ? new Date(input.timestamp).toISOString()
+        : (input.timestamp ?? new Date().toISOString());
+    if (this.sessionStore.appendTurn) {
+      try {
+        await this.sessionStore.appendTurn({
+          sessionId: input.sessionId,
+          turn: {
+            role: input.role,
+            content: input.content,
+            timestamp,
+            metadata: input.metadata,
+          },
+        });
+      } catch (error: any) {
+        console.error(
+          `⚠️ [SessionStore] Failed to append raw transcript turn: ${error?.message ?? String(error)}`,
+        );
+      }
+    }
     await this.sqliteMemoryStore.upsertSession({
       scope: "session",
       sessionId: input.sessionId,
@@ -1511,10 +1515,7 @@ ${factsText}
         {
           role: input.role,
           content: input.content,
-          timestamp:
-            typeof input.timestamp === "number"
-              ? new Date(input.timestamp).toISOString()
-              : (input.timestamp ?? new Date().toISOString()),
+          timestamp,
           metadata: input.metadata,
         },
       ],
@@ -3226,30 +3227,19 @@ ${insightsSection}</knowledge>
     if (this.isBackfillingSessionEvents) return;
     this.isBackfillingSessionEvents = true;
 
-    const chatsDir = path.join(
-      os.homedir(),
-      ".gemini-jarvis",
-      "storage",
-      "chats",
-    );
-    if (!fs.existsSync(chatsDir)) {
-      this.isBackfillingSessionEvents = false;
-      return;
-    }
-
-    const files = fs
-      .readdirSync(chatsDir)
-      .filter((f) => f.endsWith(".json") || f.endsWith(".jsonl"));
+    const files = listSessionTranscriptFiles();
 
     // Determine which files need processing and their last processed timestamp
     type FileState = {
       file: string;
+      filePath: string;
       lastMsgTime: number; // 0 = never processed
       isLegacyDone: boolean; // events_extracted=1 but events_last_msg_time=0
     };
 
     const candidates: FileState[] = [];
-    for (const file of files) {
+    for (const transcriptFile of files) {
+      const file = `${transcriptFile.source}:${transcriptFile.name}`;
       const row = this.db
         .prepare(
           "SELECT events_extracted, events_last_msg_time FROM processed_files WHERE filename = ?",
@@ -3260,7 +3250,12 @@ ${insightsSection}</knowledge>
 
       if (!row) {
         // Never seen this file
-        candidates.push({ file, lastMsgTime: 0, isLegacyDone: false });
+        candidates.push({
+          file,
+          filePath: transcriptFile.filePath,
+          lastMsgTime: 0,
+          isLegacyDone: false,
+        });
       } else if (row.events_extracted === 1 && !row.events_last_msg_time) {
         // Legacy: already fully processed, skip
         continue;
@@ -3268,10 +3263,10 @@ ${insightsSection}</knowledge>
         // New format: process incrementally only if file mtime changed since
         // last processing. Compare mtime vs mtime (not vs message timestamp)
         // to avoid false positives from sub-millisecond filesystem jitter.
-        const stats = fs.statSync(path.join(chatsDir, file));
-        if (stats.mtimeMs > (row as any).last_mtime) {
+        if (transcriptFile.mtime > (row as any).last_mtime) {
           candidates.push({
             file,
+            filePath: transcriptFile.filePath,
             lastMsgTime: row.events_last_msg_time ?? 0,
             isLegacyDone: false,
           });
@@ -3290,10 +3285,9 @@ ${insightsSection}</knowledge>
 
     let totalEvents = 0;
     let totalFiles = 0;
-    for (const { file, lastMsgTime } of candidates) {
+    for (const { file, filePath, lastMsgTime } of candidates) {
       await new Promise((r) => setImmediate(r));
       try {
-        const filePath = path.join(chatsDir, file);
         const allMessages = this.parseSessionMessages(filePath);
 
         // Only process messages newer than lastMsgTime
@@ -3482,72 +3476,22 @@ Events:`;
     timestamp?: string | number;
     toolCalls?: unknown[];
   }> {
-    const content = fs.readFileSync(filePath, "utf8");
-    if (!filePath.endsWith(".jsonl")) {
-      const parsed = JSON.parse(content) as {
-        messages?: Array<{
-          type: string;
-          content: unknown;
-          timestamp?: string | number;
-          toolCalls?: unknown[];
-        }>;
-      };
-      return (parsed.messages ?? []).map((msg) => ({
-        ...msg,
-        content: extractSessionMessageText(msg.content),
-      }));
-    }
-    // .jsonl: skip first line (metadata), parse remaining lines as messages
-    const lines = content.split("\n").filter((l) => l.trim());
-    const messages: Array<{
-      type: string;
-      content: string;
-      timestamp?: string | number;
-      toolCalls?: unknown[];
-    }> = [];
-    for (let i = 1; i < lines.length; i++) {
-      try {
-        const msg = JSON.parse(lines[i]) as {
-          type?: string;
-          content?: unknown;
-          timestamp?: string | number;
-          toolCalls?: unknown[];
-        };
-        if (msg.type && msg.content !== undefined) {
-          messages.push({
-            type: msg.type,
-            content: extractSessionMessageText(msg.content),
-            timestamp: msg.timestamp,
-            toolCalls: msg.toolCalls,
-          });
-        }
-      } catch {
-        /* skip malformed lines */
-      }
-    }
-    return messages;
+    return parseSessionTranscriptFile(filePath).messages.map((msg) => ({
+      ...msg,
+      content: extractSessionMessageText(msg.content),
+    }));
   }
 
   private async syncHistoricalSessions() {
-    const chatsDir = path.join(
-      os.homedir(),
-      ".gemini-jarvis",
-      "storage",
-      "chats",
-    );
-    if (!fs.existsSync(chatsDir)) return;
-
-    const files = fs
-      .readdirSync(chatsDir)
-      .filter((f) => f.endsWith(".json") || f.endsWith(".jsonl"));
-    for (const file of files) {
-      const filePath = path.join(chatsDir, file);
-      const stats = fs.statSync(filePath);
+    const files = listSessionTranscriptFiles();
+    for (const transcriptFile of files) {
+      const file = `${transcriptFile.source}:${transcriptFile.name}`;
+      const filePath = transcriptFile.filePath;
       const processed = this.db
         .prepare("SELECT last_mtime FROM processed_files WHERE filename = ?")
         .get(file) as any;
 
-      if (!processed || processed.last_mtime < stats.mtimeMs) {
+      if (!processed || processed.last_mtime < transcriptFile.mtime) {
         debugLogger.debug(
           `[MemoryService] Syncing historical session: ${file}`,
         );
@@ -3563,7 +3507,7 @@ Events:`;
               assistantMsg.type === "gemini"
             ) {
               this.enqueue(
-                file.replace(/\.(json|jsonl)$/, ""),
+                transcriptFile.name.replace(/\.(json|jsonl)$/, ""),
                 userMsg.content,
                 assistantMsg.content,
               );
@@ -3573,7 +3517,7 @@ Events:`;
             .prepare(
               "INSERT OR REPLACE INTO processed_files (filename, last_mtime) VALUES (?, ?)",
             )
-            .run(file, stats.mtimeMs);
+            .run(file, transcriptFile.mtime);
         } catch (e) {}
       }
     }

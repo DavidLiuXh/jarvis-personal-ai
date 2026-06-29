@@ -57,10 +57,7 @@ import {
   type BackgroundTaskRunner,
 } from "./backgroundTaskRunner.js";
 import { RuntimeIntentFeedbackCollector } from "./runtimeIntentFeedbackCollector.js";
-import {
-  type MemoryContract,
-  type SessionMemory,
-} from "../memory-runtime/index.js";
+import { type MemoryContract } from "../memory-runtime/index.js";
 import { type ToolLoopRuntimeOptions } from "../agent-runtime/index.js";
 import {
   geminiPartsToLlmMessages,
@@ -78,6 +75,29 @@ import type {
   RuntimeContentPart,
   RuntimeConversationContent,
 } from "./runtimeTypes.js";
+
+function conversationHistoryFromGeminiChat(
+  history: Array<{ role?: string; parts?: Array<Record<string, unknown>> }>,
+): Array<{ role: "user" | "assistant"; content: string }> {
+  return history.flatMap((turn) => {
+    const content =
+      turn.parts
+        ?.map((part) => {
+          const text = part.text;
+          return typeof text === "string" ? text : "";
+        })
+        .join("") ?? "";
+    if (!content.trim()) return [];
+    return [
+      {
+        role: (turn.role === "user" ? "user" : "assistant") as
+          | "user"
+          | "assistant",
+        content,
+      },
+    ];
+  });
+}
 
 function shouldIsolateTimeScopedConversationRecall(
   intent: IntentFrame | null,
@@ -882,25 +902,16 @@ export class JarvisAgent extends EventEmitter {
         let conversationHistory: Array<{
           role: "user" | "assistant";
           content: string;
-        }> = [];
+        }> = conversationHistoryFromGeminiChat(
+          this.client.getChat().getHistory() as Array<{
+            role?: string;
+            parts?: Array<Record<string, unknown>>;
+          }>,
+        );
         // Declared here so the restore after the if-block can reference it.
         let originalGetModel: (() => string) | null = null;
         if (this.localModelRouter) {
-          const rawHistory = this.client.getChat().getHistory();
-          const history = rawHistory.flatMap((turn) => {
-            const content =
-              turn.parts?.map((p: any) => p.text ?? "").join("") ?? "";
-            if (!content.trim()) return [];
-            return [
-              {
-                role: (turn.role === "user" ? "user" : "assistant") as
-                  | "user"
-                  | "assistant",
-                content,
-              },
-            ];
-          });
-          conversationHistory = history;
+          const history = conversationHistory;
           let result = await this.localModelRouter.route(userPrompt, history);
           // Use setActiveModel (not setModel) to avoid broadcasting on the
           // global coreEvents singleton, which would disrupt all live
@@ -1164,37 +1175,27 @@ export class JarvisAgent extends EventEmitter {
             typeof this.client.config.getModel === "function"
               ? this.client.config.getModel()
               : undefined;
-          const timestamp = new Date().toISOString();
-          const session: SessionMemory = {
-            scope: "session",
+          await this.memoryService.appendSessionTurn({
             sessionId: this.sessionId,
-            turns: [
-              {
-                role: "user",
-                content: userPrompt,
-                timestamp,
-                metadata: {
-                  backend: backendProvider,
-                  model,
-                  source: "jarvis-main-response",
-                },
-              },
-              {
-                role: "assistant",
-                content: finalAssistantText,
-                timestamp: new Date().toISOString(),
-                metadata: {
-                  backend: backendProvider,
-                  model,
-                  source: "jarvis-main-response",
-                  toolsCalled: [...allToolsCalled],
-                },
-              },
-            ],
-          };
-          await this.memoryService
-            .getRuntimeSqliteMemoryStore()
-            .upsertSession(session);
+            role: "user",
+            content: userPrompt,
+            metadata: {
+              backend: backendProvider,
+              model,
+              source: "jarvis-main-response",
+            },
+          });
+          await this.memoryService.appendSessionTurn({
+            sessionId: this.sessionId,
+            role: "assistant",
+            content: finalAssistantText,
+            metadata: {
+              backend: backendProvider,
+              model,
+              source: "jarvis-main-response",
+              toolsCalled: [...allToolsCalled],
+            },
+          });
         } catch (error: any) {
           console.error(
             `⚠️ [SessionStore] Failed to append transcript turn: ${error?.message ?? String(error)}`,

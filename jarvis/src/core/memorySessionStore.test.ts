@@ -8,7 +8,7 @@ import type {
 } from "../memory-runtime/index.js";
 
 describe("MemoryService session store integration", () => {
-  it("appends transcript turns through the runtime SQLite memory store", async () => {
+  it("appends transcript turns through the raw session store and runtime SQLite memory store", async () => {
     const { MemoryService } = await import("./memory.js");
     const appendTurn = vi.fn<(input: SessionAppendInput) => Promise<void>>();
     const store: SessionStore = {
@@ -37,7 +37,14 @@ describe("MemoryService session store integration", () => {
       metadata: { backend: "openai", model: "gpt-4.1" },
     });
 
-    expect(appendTurn).not.toHaveBeenCalled();
+    expect(appendTurn).toHaveBeenCalledWith({
+      sessionId: "s1",
+      turn: expect.objectContaining({
+        role: "assistant",
+        content: "done",
+        metadata: { backend: "openai", model: "gpt-4.1" },
+      }),
+    });
     const entries = await service.getRuntimeSqliteMemoryStore().listEntries();
     expect(entries).toEqual([
       expect.objectContaining({

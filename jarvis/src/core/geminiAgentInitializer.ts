@@ -15,7 +15,6 @@ import {
   ROOT_SCHEDULER_ID,
   ApprovalMode,
   LlmRole,
-  type ConversationRecord,
 } from "../../../gemini-cli/packages/core/src/index.js";
 
 // @ts-expect-error - Relative import
@@ -34,6 +33,11 @@ import {
 } from "./sessionSummarizer.js";
 import { buildHistoryFromMessages } from "./resumeFromDisk.js";
 import {
+  listSessionTranscriptFiles,
+  parseSessionTranscriptFile,
+  sessionTranscriptRootsFromProjectTempDir,
+} from "./sessionTranscript.js";
+import {
   addToolsToGeminiRegistry,
   createDefaultRuntimeToolRegistry,
 } from "./jarvisToolRegistry.js";
@@ -41,48 +45,6 @@ import {
 type DynamicRegistryHandle = {
   getDynamicToolSchemas: () => unknown[];
 };
-
-/**
- * Parse a session file that may be either:
- * - .json: single JSON object with a `messages` array
- * - .jsonl: first line is session metadata, subsequent lines are individual messages
- *
- * Returns { messages, record } where record is the ConversationRecord metadata.
- */
-function parseSessionFile(filePath: string): {
-  messages: SessionMessage[];
-  record: ConversationRecord;
-} {
-  const content = fs.readFileSync(filePath, "utf8");
-  const isJsonl = filePath.endsWith(".jsonl");
-
-  if (!isJsonl) {
-    // Legacy .json format: single object with messages array
-    const parsed = JSON.parse(content) as ConversationRecord & {
-      messages?: SessionMessage[];
-    };
-    return { messages: parsed.messages ?? [], record: parsed };
-  }
-
-  // .jsonl format: first line = metadata, rest = individual message objects
-  const lines = content.split("\n").filter((l) => l.trim());
-  if (lines.length === 0)
-    return { messages: [], record: {} as ConversationRecord };
-
-  const record = JSON.parse(lines[0]) as ConversationRecord;
-  const messages: SessionMessage[] = [];
-  for (let i = 1; i < lines.length; i++) {
-    try {
-      const msg = JSON.parse(lines[i]) as SessionMessage;
-      if (msg.type && msg.content !== undefined) {
-        messages.push(msg);
-      }
-    } catch {
-      /* skip malformed lines */
-    }
-  }
-  return { messages, record };
-}
 
 export type InitializeResult = {
   client: GeminiClient;
@@ -394,12 +356,14 @@ export class AgentInitializer {
         "../../../gemini-cli/packages/core/src/agents/registry.js"
       );
 
-      // Jarvis session files live in ~/.gemini-jarvis/storage/chats/
-      const chatsDir = path.join(
-        os.homedir(),
-        ".gemini-jarvis",
-        "storage",
-        "chats",
+      const roots = sessionTranscriptRootsFromProjectTempDir(
+        this.config.storage.getProjectTempDir(),
+      );
+      const sessionDirs = [
+        roots.jarvisSessionsDir,
+        roots.geminiChatsDir,
+      ].filter(
+        (dir, index, all) => fs.existsSync(dir) && all.indexOf(dir) === index,
       );
       // Write skills to ~/.gemini/skills/ — where Jarvis loads them from
       const skillsDir = path.join(os.homedir(), ".gemini", "skills");
@@ -417,12 +381,17 @@ export class AgentInitializer {
         "../../../gemini-cli/packages/core/src/services/memoryService.js"
       );
       const state = await readExtractionState(statePath);
-      const { sessionIndex, newSessionIds } = await buildSessionIndex(
-        chatsDir,
-        state,
-      );
+      const sessionIndexes: string[] = [];
+      const newSessionIds: string[] = [];
+      for (const dir of sessionDirs) {
+        const indexed = await buildSessionIndex(dir, state);
+        sessionIndexes.push(indexed.sessionIndex);
+        newSessionIds.push(...indexed.newSessionIds);
+      }
+      const sessionIndex = sessionIndexes.filter(Boolean).join("\n");
+      const uniqueNewSessionIds = Array.from(new Set(newSessionIds));
 
-      if (newSessionIds.length === 0) {
+      if (uniqueNewSessionIds.length === 0) {
         debugLogger.debug(
           "[AgentInitializer] triggerSkillExtraction: no new sessions, skipping.",
         );
@@ -430,7 +399,7 @@ export class AgentInitializer {
       }
 
       console.error(
-        `🧠 [Jarvis] Skill extraction started: ${newSessionIds.length} new session(s) to analyze...`,
+        `🧠 [Jarvis] Skill extraction started: ${uniqueNewSessionIds.length} new session(s) to analyze...`,
       );
 
       const agentDefinition = SkillExtractionAgent(
@@ -477,7 +446,7 @@ export class AgentInitializer {
           ...state.runs,
           {
             timestamp: Date.now(),
-            processedSessionIds: newSessionIds,
+            processedSessionIds: uniqueNewSessionIds,
             skillsCreated: [],
             durationMs: 0,
           },
@@ -503,26 +472,15 @@ export class AgentInitializer {
       return;
     }
 
-    const chatsDir = path.join(
+    const roots = sessionTranscriptRootsFromProjectTempDir(
       client.config.storage.getProjectTempDir(),
-      "chats",
     );
     const memoryDir = path.join(os.homedir(), ".gemini-jarvis", "memory");
     const recentTurns = this.jarvisConfig.session?.recentTurnsOnResume ?? 20;
 
     try {
-      if (!fs.existsSync(chatsDir)) return;
-
       // 1. Collect all session files sorted by mtime (oldest first)
-      // Support both .json (legacy) and .jsonl (current gemini-cli format)
-      const allFiles = fs
-        .readdirSync(chatsDir)
-        .filter((f) => f.endsWith(".json") || f.endsWith(".jsonl"))
-        .map((f) => ({
-          name: f,
-          mtime: fs.statSync(path.join(chatsDir, f)).mtimeMs,
-        }))
-        .sort((a, b) => a.mtime - b.mtime);
+      const allFiles = listSessionTranscriptFiles(roots);
 
       if (allFiles.length === 0) return;
 
@@ -560,7 +518,7 @@ export class AgentInitializer {
       const newMessages: SessionMessage[] = [];
       for (const file of newOrUpdatedFiles) {
         try {
-          const { messages } = parseSessionFile(path.join(chatsDir, file.name));
+          const { messages } = parseSessionTranscriptFile(file.filePath);
           newMessages.push(...messages);
         } catch {
           /* skip unreadable file */
@@ -635,7 +593,7 @@ export class AgentInitializer {
       const allMessages: SessionMessage[] = [];
       for (const file of allFiles) {
         try {
-          const { messages } = parseSessionFile(path.join(chatsDir, file.name));
+          const { messages } = parseSessionTranscriptFile(file.filePath);
           allMessages.push(...messages);
         } catch {
           /* skip unreadable file */
@@ -651,13 +609,13 @@ export class AgentInitializer {
 
       // 8. Use the latest session file as the active recording target
       const latestFile = allFiles[allFiles.length - 1];
-      const { record: latestRecord } = parseSessionFile(
-        path.join(chatsDir, latestFile.name),
+      const { record: latestRecord } = parseSessionTranscriptFile(
+        latestFile.filePath,
       );
 
       await client.resumeChat(history, {
         conversation: latestRecord,
-        filePath: path.join(chatsDir, latestFile.name),
+        filePath: latestFile.filePath,
       });
 
       // 9. Stats log

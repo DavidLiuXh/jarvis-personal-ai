@@ -441,6 +441,26 @@ function isNativeTool(name: string): boolean {
   );
 }
 
+function requiresSideEffectConfirmation(request: ToolCallRequest): boolean {
+  if (request.name === "run_shell_command") return true;
+  if (/^task_(delete|remove|cancel|update|edit)$/i.test(request.name))
+    return true;
+  return false;
+}
+
+function formatToolCallForConfirmation(request: ToolCallRequest): string {
+  const args = JSON.stringify(request.args ?? {});
+  return `${request.name} ${args.length > 500 ? `${args.slice(0, 500)}...` : args}`;
+}
+
+function confirmationAccepted(answers: Record<string, string>): boolean {
+  return Object.values(answers).some((value) =>
+    /^(allow|allowed|approve|approved|yes|y|proceed|confirm|confirmed|允许|同意|确认|继续|执行)$/i.test(
+      String(value).trim(),
+    ),
+  );
+}
+
 type ChannelRegistryHandle = {
   pushSafe: (channel: string, chatId: string, text: string) => Promise<boolean>;
 };
@@ -697,6 +717,48 @@ export class ToolRouter implements ToolExecutorAdapter {
     this.askUserHandler = fn;
   }
 
+  private async confirmSideEffectToolCall(
+    request: ToolCallRequest,
+  ): Promise<{ allowed: boolean; message?: string }> {
+    if (!requiresSideEffectConfirmation(request)) {
+      return { allowed: true };
+    }
+    if (!this.askUserHandler) {
+      return {
+        allowed: false,
+        message:
+          `Tool call requires explicit user confirmation but no interactive ask_user handler is available: ` +
+          formatToolCallForConfirmation(request),
+      };
+    }
+    try {
+      const answers = await this.askUserHandler([
+        {
+          type: "yesno",
+          header: "确认执行",
+          question: `是否允许 Jarvis 执行这个有副作用的工具调用？\n${formatToolCallForConfirmation(request)}`,
+          options: [
+            {
+              label: "允许",
+              description: "允许 Jarvis 执行该工具调用。",
+            },
+            {
+              label: "拒绝",
+              description: "阻止该工具调用。",
+            },
+          ],
+        },
+      ]);
+      if (confirmationAccepted(answers)) return { allowed: true };
+      return { allowed: false, message: "User rejected tool execution." };
+    } catch (error: any) {
+      return {
+        allowed: false,
+        message: `User confirmation failed: ${error?.message ?? String(error)}`,
+      };
+    }
+  }
+
   constructor(
     private memoryService: MemoryServiceHandle,
     private dynamicRegistry: DynamicRegistryHandle,
@@ -833,6 +895,29 @@ export class ToolRouter implements ToolExecutorAdapter {
         userPrompt: this.currentUserPrompt,
       });
       if (decision.allowed) {
+        const confirmation = await this.confirmSideEffectToolCall(request);
+        if (!confirmation.allowed) {
+          const output =
+            confirmation.message ??
+            `Tool call denied because explicit user confirmation was not provided.`;
+          onToolResponse({
+            name: request.name,
+            status: "denied",
+            output,
+            callId: request.callId,
+          });
+          deniedNativeParts.push({
+            functionResponse: {
+              id: request.callId,
+              name: request.name,
+              response: {
+                error: output,
+                reasonCode: "SIDE_EFFECT_CONFIRMATION_REQUIRED",
+              },
+            },
+          });
+          continue;
+        }
         allowedNativeRequests.push(request);
         continue;
       }

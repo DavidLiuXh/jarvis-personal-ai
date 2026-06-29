@@ -1121,8 +1121,27 @@ function hasCurrentContextWriteSource(input: TaskRuntimeExecuteInput): boolean {
     input.intent.referencesRecentHistory === true ||
     input.intent.semanticEvidence.memoryRecall.target ===
       "current_context_reference" ||
-    input.intent.richIntent.contextDependency.recentConversation === true
+    input.intent.richIntent.contextDependency.recentConversation === true ||
+    isCurrentContentSaveRequest(input.context.userPrompt)
   );
+}
+
+function isCurrentContentSaveRequest(userPrompt: string): boolean {
+  const normalized = userPrompt.trim().toLowerCase();
+  if (!normalized) return false;
+  const asksToWrite =
+    /(?:保存|存到|写入|写到|导出|落盘|生成|整理成|save|write|export)/iu.test(
+      normalized,
+    );
+  const targetsDocument =
+    /(?:本地|文档|文件|markdown|md|txt|doc|document|file|\.[a-z0-9]{1,8}\b)/iu.test(
+      normalized,
+    );
+  const refersToExistingContent =
+    /(?:帮我|上面|上述|刚才|前面|这个|这份|这篇|内容|回答|分析|讲解|it|this|that)/iu.test(
+      normalized,
+    );
+  return asksToWrite && targetsDocument && refersToExistingContent;
 }
 
 function hasConcreteContextContent(input: TaskRuntimeExecuteInput): boolean {
@@ -1215,7 +1234,7 @@ type TaskGraphExecutionDecision = {
   deterministicNodeIds: string[];
   llmBlockingNodeIds: string[];
   deferredNodeIds: string[];
-  skippedNodeReasons: string[];
+  deferredNodeReasons: string[];
 };
 
 function evaluateExecutionDecision(
@@ -1231,7 +1250,7 @@ function evaluateExecutionDecision(
       deterministicNodeIds: [],
       llmBlockingNodeIds: [],
       deferredNodeIds: [],
-      skippedNodeReasons: [],
+      deferredNodeReasons: [],
     };
   }
   if (graph.blockedReasons.length > 0) {
@@ -1241,20 +1260,27 @@ function evaluateExecutionDecision(
     .filter((node) => PRE_LLM_BLOCKING_NODE_KINDS.has(node.kind))
     .map((node) => node.id);
   if (llmBlockingNodeIds.length > 0) {
-    reasons.push(`llm_nodes_deferred=${llmBlockingNodeIds.join(",")}`);
+    reasons.push(
+      `llm_nodes_deferred_to_main_loop=${llmBlockingNodeIds.join(",")}`,
+    );
   }
   const deterministicNodeIds = graph.nodes
     .filter((node) => DETERMINISTIC_NODE_KINDS.has(node.kind))
     .map((node) => node.id);
   const safeNodeIds = new Set<string>();
-  const skippedNodeReasons = new Map<string, string>();
+  const deferredNodeReasons = new Map<string, string>();
   let progressed = true;
   while (progressed) {
     progressed = false;
     for (const node of graph.nodes) {
       if (safeNodeIds.has(node.id)) continue;
       if (!DETERMINISTIC_NODE_KINDS.has(node.kind)) {
-        skippedNodeReasons.set(node.id, `non_deterministic:${node.kind}`);
+        deferredNodeReasons.set(
+          node.id,
+          PRE_LLM_BLOCKING_NODE_KINDS.has(node.kind)
+            ? `deferred_to_main_llm_loop:${node.kind}`
+            : `deferred_non_deterministic:${node.kind}`,
+        );
         continue;
       }
       const dependencyIds = node.inputs
@@ -1264,7 +1290,7 @@ function evaluateExecutionDecision(
         (dependencyId) => !safeNodeIds.has(dependencyId),
       );
       if (unmetDependency) {
-        skippedNodeReasons.set(
+        deferredNodeReasons.set(
           node.id,
           `waiting_for_unexecuted_dependency:${unmetDependency}`,
         );
@@ -1272,11 +1298,11 @@ function evaluateExecutionDecision(
       }
       const readiness = deterministicNodeInputReady(input, node, safeNodeIds);
       if (!readiness.ok) {
-        skippedNodeReasons.set(node.id, readiness.reason);
+        deferredNodeReasons.set(node.id, readiness.reason);
         continue;
       }
       safeNodeIds.add(node.id);
-      skippedNodeReasons.delete(node.id);
+      deferredNodeReasons.delete(node.id);
       progressed = true;
     }
   }
@@ -1287,7 +1313,11 @@ function evaluateExecutionDecision(
     .filter((node) => !safeNodeIds.has(node.id))
     .map((node) => node.id);
   if (deterministicNodeIds.length === 0) {
-    reasons.push("no_deterministic_nodes");
+    reasons.push(
+      llmBlockingNodeIds.length === graph.nodes.length
+        ? "llm_only_graph_deferred_to_main_loop"
+        : "no_deterministic_nodes",
+    );
   }
   if (executableNodeIds.length > 0) {
     reasons.push("deterministic_nodes_available");
@@ -1299,7 +1329,7 @@ function evaluateExecutionDecision(
     deterministicNodeIds,
     llmBlockingNodeIds,
     deferredNodeIds,
-    skippedNodeReasons: [...skippedNodeReasons.entries()].map(
+    deferredNodeReasons: [...deferredNodeReasons.entries()].map(
       ([nodeId, reason]) => `${nodeId}:${reason}`,
     ),
   };
@@ -1315,9 +1345,9 @@ function logExecutionDecision(
       `deterministic=${decision.deterministicNodeIds.join(",") || "-"} llmBlocking=${decision.llmBlockingNodeIds.join(",") || "-"} ` +
       `deferred=${decision.deferredNodeIds.join(",") || "-"}`,
   );
-  if (decision.skippedNodeReasons.length > 0) {
+  if (decision.deferredNodeReasons.length > 0) {
     console.error(
-      `🧭 [TaskGraph] execution skip reasons:\n${decision.skippedNodeReasons
+      `🧭 [TaskGraph] execution deferred reasons:\n${decision.deferredNodeReasons
         .map((reason) => `  - ${reason}`)
         .join("\n")}`,
     );

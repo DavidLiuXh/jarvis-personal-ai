@@ -81,8 +81,19 @@ function blockToPart(block: LlmContentBlock): Part {
   } as Part;
 }
 
+function systemContextFromMessages(messages: LlmMessage[]): string {
+  return messages
+    .filter((message) => message.role === "system")
+    .flatMap((message) => message.blocks)
+    .map((block) => (block.type === "text" ? block.text : ""))
+    .filter((text) => text.trim())
+    .join("\n\n");
+}
+
 function messagesToParts(messages: LlmMessage[]): Part[] {
-  return messages.flatMap((message) => message.blocks.map(blockToPart));
+  return messages
+    .filter((message) => message.role !== "system")
+    .flatMap((message) => message.blocks.map(blockToPart));
 }
 
 function resultToGeminiResponse(result: RuntimeToolResult): unknown {
@@ -203,6 +214,10 @@ export class GeminiCliBackendAdapter implements LlmBackend {
     input: LlmTurnInput,
     signal: AbortSignal,
   ): AsyncIterable<LlmEvent> {
+    const systemContext = systemContextFromMessages(input.messages);
+    if (systemContext.trim()) {
+      this.client.getChat().setSystemInstruction(systemContext);
+    }
     const responseStream = this.client.sendMessageStream(
       messagesToParts(input.messages),
       signal,

@@ -448,6 +448,181 @@ describe("createJarvisTaskRuntime", () => {
     });
   });
 
+  it("recalls time-scoped conversation history with session and entry scopes", async () => {
+    const stateDir = tempStateDir();
+    const executeTools = vi.fn(async () => []);
+    const timeRange = {
+      from: Date.parse("2026-06-27T00:00:00+08:00"),
+      to: Date.parse("2026-06-28T00:00:00+08:00"),
+    };
+    const memoryRecall = vi.fn(async (contract: MemoryContract) => ({
+      contract,
+      facts: [],
+      session: [
+        {
+          item: {
+            scope: "session" as const,
+            sessionId: "session-yesterday",
+            summary:
+              "昨天讨论了 TaskGraph 修复、美国市场预测文档读取、conversation history 召回策略。",
+            turns: [
+              {
+                role: "user" as const,
+                content: "昨天我们讨论了哪些问题？",
+                timestamp: "2026-06-27T10:00:00+08:00",
+              },
+            ],
+          },
+          score: 0.92,
+          reason: "sqlite_summary",
+        },
+      ],
+      entries: [
+        {
+          item: {
+            id: "entry-yesterday",
+            scope: "entry" as const,
+            kind: "conversation" as const,
+            content:
+              "User: 修复 TaskGraph 路径读取和 conversation_history recall。",
+            entities: ["TaskGraph", "conversation_history"],
+            timestamp: "2026-06-27T11:00:00+08:00",
+            sourceRefs: ["session-yesterday"],
+          },
+          score: 0.83,
+          reason: "sqlite_entry",
+        },
+      ],
+    }));
+    const taskRuntime = createJarvisTaskRuntime({
+      sessionId: "s1",
+      toolRouter: { executeTools } as any,
+      memoryRecall,
+      config: {
+        agentRuntime: {
+          autonomousTaskRuntime: {
+            enabled: true,
+            mode: "execute",
+            stateDir,
+            observability: false,
+          },
+        },
+      } as any,
+    })!;
+    const recallStep = step({
+      type: "recall",
+      action: "recall",
+      target: "conversation_history",
+      operation: {
+        domain: "memory",
+        action: "recall",
+        targetType: "memory",
+        target: "conversation_history",
+        selector: "昨天我们讨论了哪些问题？",
+        scope: "conversation_history",
+        riskLevel: "low",
+      },
+      riskLevel: "low",
+    });
+    const frame = intent({
+      taskType: "recall",
+      needsScheduling: false,
+      timeWindowDays: null,
+      dateFrom: "2026-06-27",
+      dateTo: "2026-06-27",
+      resolvedDateRange: timeRange,
+      semanticEvidence: {
+        personalContext: { present: false, reason: "", span: "" },
+        memoryRecall: {
+          present: true,
+          target: "conversation_history",
+          reason: "asks about yesterday's discussion",
+          span: "昨天我们讨论了哪些问题",
+        },
+        actionRequest: {
+          present: true,
+          action: "recall",
+          object: "昨天我们讨论了哪些问题",
+        },
+        entityHints: { tickers: [], technicalTerms: [], peopleOrCompanies: [] },
+      },
+      richIntent: {
+        ...intent().richIntent,
+        userGoal: "昨天我们讨论了哪些问题？",
+        domain: "memory",
+        action: "recall",
+        primaryAction: "recall",
+        targets: [{ type: "memory", value: "conversation_history" }],
+        contextDependency: {
+          recentConversation: false,
+          longTermMemory: true,
+          externalWorld: false,
+          localWorkspace: false,
+        },
+        riskLevel: "low",
+      },
+      intentSteps: [recallStep],
+    });
+    const contract = memoryContract({
+      memoryTarget: "conversation_history",
+      targetScopes: ["session", "entry"],
+      query: {
+        raw: "昨天我们讨论了哪些问题？",
+        entities: [],
+        timeRange,
+      },
+      constraints: {
+        allowPersonalFacts: false,
+        allowSessionHistory: true,
+        allowEntries: true,
+        maxChars: 1800,
+      },
+      reasons: ["time_scoped_conversation_history"],
+    });
+    const input = planInput(
+      frame,
+      runtimeContext({ userPrompt: "昨天我们讨论了哪些问题？" }),
+      contract,
+    );
+    const graph = await taskRuntime.plan(input);
+
+    expect(graph?.nodes.map((node) => node.kind)).toEqual(["recall"]);
+
+    const result = await taskRuntime.execute({ ...input, graph: graph! });
+
+    expect(memoryRecall).toHaveBeenCalledWith(
+      expect.objectContaining({
+        memoryTarget: "conversation_history",
+        targetScopes: ["session", "entry"],
+        query: expect.objectContaining({
+          raw: "昨天我们讨论了哪些问题？",
+          timeRange,
+        }),
+      }),
+    );
+    expect(memoryRecall.mock.calls[0]?.[0].query).not.toHaveProperty(
+      "rewritten",
+    );
+    expect(result?.status).toBe("succeeded");
+    expect(result?.execution.artifacts[0]).toMatchObject({
+      type: "memory",
+      memoryItems: expect.arrayContaining([
+        expect.stringContaining("昨天讨论了 TaskGraph 修复"),
+        expect.stringContaining("修复 TaskGraph 路径读取"),
+      ]),
+      metadata: expect.objectContaining({
+        memoryTarget: "conversation_history",
+        targetScopes: ["session", "entry"],
+        rawSessionCount: 1,
+        rawEntryCount: 1,
+        sessionCount: 1,
+        entryCount: 1,
+        timeScopedSessionCount: 1,
+        timeScopedEntryCount: 1,
+      }),
+    });
+  });
+
   it("resumes persisted successful nodes without repeating deterministic tools", async () => {
     const stateDir = tempStateDir();
     const executeTools = vi.fn(async (requests) =>
@@ -664,6 +839,106 @@ describe("createJarvisTaskRuntime", () => {
       exists: true,
       content: "hello world",
     });
+  });
+
+  it("writes current content for follow-up save-to-local-document requests", async () => {
+    const stateDir = tempStateDir();
+    const executeTools = vi.fn(async (requests) =>
+      requests.map((request: any) => ({
+        name: request.name,
+        callId: request.callId,
+        status: "success",
+        output: JSON.stringify({
+          ok: true,
+          tool: "write_file",
+          result: {
+            path: request.args.file_path,
+            mode: "overwrite",
+            bytes: request.args.content.length,
+          },
+        }),
+      })),
+    );
+    const taskRuntime = createJarvisTaskRuntime({
+      sessionId: "s1",
+      toolRouter: { executeTools } as any,
+      config: {
+        agentRuntime: {
+          autonomousTaskRuntime: {
+            enabled: true,
+            mode: "execute",
+            stateDir,
+          },
+        },
+      } as any,
+    })!;
+    const writeStep = step({
+      type: "chat",
+      action: "save",
+      target: "本地文档",
+      operation: {
+        domain: "general_chat",
+        action: "create",
+        targetType: "current_context",
+        target: "本地文档",
+        selector: "本地文档",
+        scope: "workspace",
+        riskLevel: "low",
+      },
+      riskLevel: "low",
+    });
+    const frame = intent({
+      subject: "mixed",
+      taskType: "chat",
+      needsScheduling: false,
+      referencesRecentHistory: false,
+      semanticEvidence: {
+        ...intent().semanticEvidence,
+        memoryRecall: { present: false, target: "none", reason: "", span: "" },
+        actionRequest: {
+          present: true,
+          action: "save",
+          object: "本地文档",
+        },
+      },
+      richIntent: {
+        ...intent().richIntent,
+        userGoal: "帮我保存到本地文档",
+        domain: "general_chat",
+        action: "answer",
+        primaryAction: "chat",
+        contextDependency: {
+          recentConversation: false,
+          longTermMemory: false,
+          externalWorld: false,
+          localWorkspace: false,
+        },
+      },
+      intentSteps: [writeStep],
+    });
+    const input = planInput(
+      frame,
+      runtimeContext({
+        userPrompt: "帮我保存到本地文档",
+        currentContent: "PPO 到 DPO 的算法演进分析",
+      }),
+    );
+    const graph = await taskRuntime.plan(input);
+    const result = await taskRuntime.execute({ ...input, graph: graph! });
+
+    expect(result?.status).toBe("succeeded");
+    expect(executeTools).toHaveBeenCalledWith(
+      [
+        expect.objectContaining({
+          name: "write_file",
+          args: expect.objectContaining({
+            content: "PPO 到 DPO 的算法演进分析",
+            mode: "overwrite",
+          }),
+        }),
+      ],
+      expect.any(Object),
+    );
   });
 
   it("pre-executes only deterministic upstream nodes before LLM-dependent nodes", async () => {
@@ -955,7 +1230,7 @@ describe("createJarvisTaskRuntime", () => {
       const logs = logSpy.mock.calls.map((call) => String(call[0])).join("\n");
       expect(logs).toContain("executable=step-1");
       expect(logs).toContain("llmBlocking=step-2");
-      expect(logs).toContain("step-2:non_deterministic:analyze");
+      expect(logs).toContain("step-2:deferred_to_main_llm_loop:analyze");
     } finally {
       logSpy.mockRestore();
     }
@@ -1156,7 +1431,7 @@ describe("createJarvisTaskRuntime", () => {
       expect(executeTools).not.toHaveBeenCalled();
       const logs = logSpy.mock.calls.map((call) => String(call[0])).join("\n");
       expect(logs).toContain("execute=false");
-      expect(logs).toContain("llm_nodes_deferred=step-1");
+      expect(logs).toContain("llm_nodes_deferred_to_main_loop=step-1");
       expect(logs).toContain("llmBlocking=step-1");
       expect(logs).toContain("step-2:waiting_for_unexecuted_dependency:step-1");
     } finally {
